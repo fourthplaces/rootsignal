@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "modules/ai-client",
-    "modules/taproot-core",
-    "modules/taproot-domains",
-    "modules/taproot-server",
+    "modules/rootsignal-core",
+    "modules/rootsignal-domains",
+    "modules/rootsignal-server",
     "modules/twilio-rs",
 ]
 resolver = "2"
@@ -66,6 +66,11 @@ chrono = { version = "0.4", features = ["serde"] }
 strsim = "0.11"
 petgraph = "0.7"
 
+# URL / network validation
+url = "2.5"
+ipnet = "2.9"
+regex = "1.10"
+
 # Environment
 dotenvy = "0.15"
 
@@ -78,6 +83,6 @@ jsonwebtoken = "9"
 
 # Local crates
 ai-client = { path = "modules/ai-client" }
-taproot-core = { path = "modules/taproot-core" }
-taproot-domains = { path = "modules/taproot-domains" }
+rootsignal-core = { path = "modules/rootsignal-core" }
+rootsignal-domains = { path = "modules/rootsignal-domains" }
 twilio = { path = "modules/twilio-rs" }

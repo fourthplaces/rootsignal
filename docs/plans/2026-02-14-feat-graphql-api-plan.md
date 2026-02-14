@@ -45,7 +45,7 @@ GraphQL solves all of these: clients ask for exactly the data they need in a sin
 ### Module Structure
 
 ```
-crates/taproot-server/src/
+modules/taproot-server/src/
   main.rs              # Add schema construction, pass to router
   routes.rs            # Add /graphql routes alongside existing routes
   graphql/
@@ -133,25 +133,25 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
   - `async-graphql-axum = "7"`
   - Add to `taproot-server/Cargo.toml` as `.workspace = true`
 
-- [x] Create `crates/taproot-server/src/graphql/mod.rs`
+- [x] Create `modules/taproot-server/src/graphql/mod.rs`
   - Define `QueryRoot` as `#[derive(MergedObject, Default)]` composing domain query structs
   - Define `AppSchema` type alias
   - Implement `build_schema(pool: PgPool) -> AppSchema` with `.data(pool)`, `.limit_depth(10)`, `.limit_complexity(1000)`
 
-- [x] Create `crates/taproot-server/src/graphql/context.rs`
+- [x] Create `modules/taproot-server/src/graphql/context.rs`
   - `pub struct Locale(pub String)` newtype
   - `pub fn extract_locale(headers: &HeaderMap, explicit: Option<&str>) -> Locale` — reuse logic from `parse_accept_language`
 
-- [x] Create `crates/taproot-server/src/graphql/error.rs`
+- [x] Create `modules/taproot-server/src/graphql/error.rs`
   - `AppError` enum: `NotFound`, `Db(sqlx::Error)`, `InvalidInput`
   - `impl From<AppError> for async_graphql::Error` with error extensions (`code`, `status`)
 
-- [x] Create `crates/taproot-server/src/graphql/listings/types.rs`
+- [x] Create `modules/taproot-server/src/graphql/listings/types.rs`
   - `GqlListing` wrapping `Listing` fields (exclude `relevance_breakdown`)
   - Derive `SimpleObject` with `#[graphql(complex)]`
   - Custom `ListingEdge` with optional `distance_miles`, `zip_code`, `location_city`
 
-- [x] Create `crates/taproot-server/src/graphql/listings/mod.rs`
+- [x] Create `modules/taproot-server/src/graphql/listings/mod.rs`
   - `ListingQuery` with:
     - `listing(id: Uuid) -> Result<GqlListing>` — single lookup
     - `listings(first, after, locale, zipCode, radiusMiles, ...filters) -> Result<ListingConnection>` — cursor-paginated
@@ -175,7 +175,7 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 
 **Tasks:**
 
-- [x] Create `crates/taproot-server/src/graphql/loaders.rs` with DataLoader implementations:
+- [x] Create `modules/taproot-server/src/graphql/loaders.rs` with DataLoader implementations:
   - `EntityByIdLoader` — batch `SELECT * FROM entities WHERE id = ANY($1)`
   - `ServiceByIdLoader` — batch `SELECT * FROM services WHERE id = ANY($1)`
   - `TagsForLoader` — batch `SELECT * FROM taggables t JOIN tags ON ... WHERE (t.taggable_type, t.taggable_id) IN ...`
@@ -297,14 +297,14 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 
 ### Internal References
 - Brainstorm: `docs/brainstorms/2026-02-14-graphql-api-brainstorm.md`
-- Current REST routes: `crates/taproot-server/src/routes.rs`
-- Listing models: `crates/taproot-domains/src/listings/models/listing.rs`
-- Entity models: `crates/taproot-domains/src/entities/models/entity.rs`
-- Domain module index: `crates/taproot-domains/src/lib.rs`
-- ServerDeps: `crates/taproot-core/src/deps.rs`
-- AppConfig: `crates/taproot-core/src/config.rs`
-- Translation model: `crates/taproot-domains/src/entities/models/translation.rs`
-- Heat map: `crates/taproot-domains/src/heat_map.rs`
+- Current REST routes: `modules/taproot-server/src/routes.rs`
+- Listing models: `modules/taproot-domains/src/listings/models/listing.rs`
+- Entity models: `modules/taproot-domains/src/entities/models/entity.rs`
+- Domain module index: `modules/taproot-domains/src/lib.rs`
+- ServerDeps: `modules/taproot-core/src/deps.rs`
+- AppConfig: `modules/taproot-core/src/config.rs`
+- Translation model: `modules/taproot-domains/src/entities/models/translation.rs`
+- Heat map: `modules/taproot-domains/src/heat_map.rs`
 
 ### External References
 - [async-graphql Book](https://async-graphql.github.io/async-graphql/en/)

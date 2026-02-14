@@ -90,7 +90,7 @@ CREATE INDEX idx_listings_embedding ON listings
 **New activity: `generate_embeddings.rs`**
 
 ```
-crates/taproot-domains/src/extraction/activities/generate_embeddings.rs
+modules/taproot-domains/src/extraction/activities/generate_embeddings.rs
 ```
 
 - Query: `SELECT id, title, description FROM listings WHERE embedding IS NULL ORDER BY created_at ASC LIMIT $1`
@@ -106,9 +106,9 @@ crates/taproot-domains/src/extraction/activities/generate_embeddings.rs
 
 **Files changed:**
 - `migrations/017_clusters.sql` (new)
-- `crates/taproot-domains/src/extraction/activities/generate_embeddings.rs` (new)
-- `crates/taproot-domains/src/extraction/activities/mod.rs` (add pub mod)
-- `crates/taproot-domains/src/extraction/restate/mod.rs` (add embedding step to workflow)
+- `modules/taproot-domains/src/extraction/activities/generate_embeddings.rs` (new)
+- `modules/taproot-domains/src/extraction/activities/mod.rs` (add pub mod)
+- `modules/taproot-domains/src/extraction/restate/mod.rs` (add embedding step to workflow)
 
 ### Phase 2: Clustering Tables and Models
 
@@ -152,7 +152,7 @@ CREATE INDEX idx_cluster_items_cluster ON cluster_items(cluster_id);
 **Domain module:**
 
 ```
-crates/taproot-domains/src/clustering/
+modules/taproot-domains/src/clustering/
   mod.rs
   models/
     mod.rs
@@ -180,8 +180,8 @@ crates/taproot-domains/src/clustering/
 
 **Files changed:**
 - `migrations/017_clusters.sql` (continued)
-- `crates/taproot-domains/src/clustering/` (new module, 6 files)
-- `crates/taproot-domains/src/lib.rs` (add `pub mod clustering;`)
+- `modules/taproot-domains/src/clustering/` (new module, 6 files)
+- `modules/taproot-domains/src/lib.rs` (add `pub mod clustering;`)
 
 ### Phase 3: Clustering Algorithm
 
@@ -294,9 +294,9 @@ Implement as a standalone, testable function.
 - `petgraph` — connected components / union-find for cluster merging
 
 **Files changed:**
-- `crates/taproot-domains/src/clustering/activities/cluster_listings.rs` (new)
-- `crates/taproot-core/src/config.rs` (add clustering config fields)
-- `crates/taproot-domains/Cargo.toml` (add geo, strsim, petgraph deps)
+- `modules/taproot-domains/src/clustering/activities/cluster_listings.rs` (new)
+- `modules/taproot-core/src/config.rs` (add clustering config fields)
+- `modules/taproot-domains/Cargo.toml` (add geo, strsim, petgraph deps)
 
 ### Phase 4: Restate Workflow
 
@@ -323,8 +323,8 @@ pub trait ClusteringJob {
 **Triggering:** Chain from `ExtractWorkflow` completion, or call on-demand via Restate API.
 
 **Files changed:**
-- `crates/taproot-domains/src/clustering/restate/mod.rs` (new)
-- `crates/taproot-server/src/main.rs` (register workflow with Restate endpoint)
+- `modules/taproot-domains/src/clustering/restate/mod.rs` (new)
+- `modules/taproot-server/src/main.rs` (register workflow with Restate endpoint)
 
 ### Phase 5: Cluster-Aware Search API
 
@@ -372,8 +372,8 @@ GET /api/listings/:id/cluster
 ```
 
 **Files changed:**
-- `crates/taproot-domains/src/listings/models/listing.rs` (modify find_active query)
-- `crates/taproot-server/src/routes.rs` (add cluster provenance endpoint)
+- `modules/taproot-domains/src/listings/models/listing.rs` (modify find_active query)
+- `modules/taproot-server/src/routes.rs` (add cluster provenance endpoint)
 
 ## ERD
 
@@ -472,11 +472,11 @@ erDiagram
 ### Internal
 - Brainstorm: `docs/brainstorms/2026-02-14-clustering-infrastructure-brainstorm.md`
 - Polymorphic pattern: `migrations/011_tags.sql` (taggables)
-- Current dedup: `crates/taproot-domains/src/extraction/activities/normalize.rs:35-61`
-- Embedding service: `crates/taproot-core/src/deps.rs:10-14`
-- Restate workflow pattern: `crates/taproot-domains/src/extraction/restate/mod.rs`
-- Virtual object pattern: `crates/taproot-domains/src/scraping/restate/mod.rs:108`
-- Listing model: `crates/taproot-domains/src/listings/models/listing.rs`
+- Current dedup: `modules/taproot-domains/src/extraction/activities/normalize.rs:35-61`
+- Embedding service: `modules/taproot-core/src/deps.rs:10-14`
+- Restate workflow pattern: `modules/taproot-domains/src/extraction/restate/mod.rs`
+- Virtual object pattern: `modules/taproot-domains/src/scraping/restate/mod.rs:108`
+- Listing model: `modules/taproot-domains/src/listings/models/listing.rs`
 - Signal architecture: `docs/architecture/signal-service-architecture.md`
 
 ### External Research

@@ -42,8 +42,8 @@ Taproot currently has no admin interface. All data management happens through di
 
 ```
 taproot/
-├── crates/                    # Rust workspace (existing)
-├── packages/
+├── modules/                    # Rust workspace (existing)
+├── modules/
 │   ├── api-client-js/         # @taproot/api-client
 │   │   ├── package.json
 │   │   ├── codegen.ts
@@ -109,9 +109,9 @@ taproot/
 
 **4. Auth is config-list based.** No users table. Admin phone numbers in env var (`ADMIN_PHONE_NUMBERS`). JWT contains phone number + `is_admin` flag. Queries remain public; mutations require admin JWT.
 
-**5. Twilio-rs: copy into taproot as a new crate.** Simpler than git dependency. Small crate (~200 lines). Path: `crates/twilio-rs/`.
+**5. Twilio-rs: copy into taproot as a new crate.** Simpler than git dependency. Small crate (~200 lines). Path: `modules/twilio-rs/`.
 
-**6. Codegen uses exported SDL file.** Add a binary/script that calls `schema.sdl()` and writes to `packages/api-client-js/schema.graphql`. No running server needed for codegen.
+**6. Codegen uses exported SDL file.** Add a binary/script that calls `schema.sdl()` and writes to `modules/api-client-js/schema.graphql`. No running server needed for codegen.
 
 **7. Soft delete for listings and entities.** Set `status = 'archived'`. No cascade. Block archival of entities with active listings.
 
@@ -141,26 +141,26 @@ Set up the monorepo infrastructure and auth building blocks. No UI yet.
 
 **1a. pnpm workspace scaffolding**
 
-- `packages/` directory
+- `modules/` directory
 - Root `package.json` with `"private": true`, `"packageManager": "pnpm@..."`, graphql resolution
-- `pnpm-workspace.yaml` listing `packages/*`
+- `pnpm-workspace.yaml` listing `modules/*`
 - `.npmrc` with `shamefully-hoist=true` (Next.js compatibility)
-- Update `.gitignore`: `node_modules/`, `.next/`, `packages/*/gql/`, `.pnpm-store/`
+- Update `.gitignore`: `node_modules/`, `.next/`, `modules/*/gql/`, `.pnpm-store/`
 
 **1b. SDL export from Rust**
 
 - Add a `bin/export-schema.rs` (or integration test) in `taproot-server` that builds the schema and calls `schema.sdl()`
-- Writes output to `packages/api-client-js/schema.graphql`
+- Writes output to `modules/api-client-js/schema.graphql`
 - Add a `Makefile` or shell script: `make schema` runs the export
 
 **1c. api-client-js scaffold**
 
-- `packages/api-client-js/package.json` — name `@taproot/api-client`, deps: `graphql`, `@graphql-codegen/cli`, `@graphql-codegen/client-preset`
-- `packages/api-client-js/codegen.ts` — reads `schema.graphql`, outputs to `gql/`
-- `packages/api-client-js/src/client.ts` — minimal fetch-based GraphQL client:
+- `modules/api-client-js/package.json` — name `@taproot/api-client`, deps: `graphql`, `@graphql-codegen/cli`, `@graphql-codegen/client-preset`
+- `modules/api-client-js/codegen.ts` — reads `schema.graphql`, outputs to `gql/`
+- `modules/api-client-js/src/client.ts` — minimal fetch-based GraphQL client:
 
 ```typescript
-// packages/api-client-js/src/client.ts
+// modules/api-client-js/src/client.ts
 type GraphQLResponse<T> = { data?: T; errors?: Array<{ message: string }> };
 
 export function createClient(url: string, headers?: Record<string, string>) {
@@ -184,7 +184,7 @@ export function createClient(url: string, headers?: Record<string, string>) {
 
 **1d. twilio-rs crate**
 
-- Copy `/Users/craig/Developer/fourthplaces/mntogether/packages/twilio-rs/` → `crates/twilio-rs/`
+- Copy `/Users/craig/Developer/fourthplaces/mntogether/modules/twilio-rs/` → `modules/twilio-rs/`
 - Add to workspace members in root `Cargo.toml`
 - Verify it builds
 
@@ -192,7 +192,7 @@ export function createClient(url: string, headers?: Record<string, string>) {
 
 - Add to `AppConfig`: `jwt_secret`, `twilio_account_sid`, `twilio_auth_token`, `twilio_verify_service_sid`, `admin_phone_numbers` (comma-separated)
 - Add to `.env.example`
-- New module: `crates/taproot-server/src/graphql/auth/`
+- New module: `modules/taproot-server/src/graphql/auth/`
   - `mod.rs` — `AuthMutation` struct with `send_verification_code` and `verify_code`
   - `jwt.rs` — encode/decode JWT (24h expiry, claims: phone, is_admin)
   - `middleware.rs` — Axum extractor that reads `auth_token` cookie → validates JWT → injects `AdminClaims` into request extensions
@@ -234,7 +234,7 @@ Build the Rust mutation layer. Still no UI — test via GraphiQL.
 - `archiveListing` sets `status = 'archived'`, does not delete
 
 ```rust
-// crates/taproot-server/src/graphql/listings/mutations.rs
+// modules/taproot-server/src/graphql/listings/mutations.rs
 #[derive(InputObject)]
 pub struct CreateListingInput {
     pub title: String,
@@ -285,7 +285,7 @@ Build the Next.js admin app consuming the mutations from Phase 2.
 
 **3a. Next.js scaffold**
 
-- `packages/admin-app/package.json` — deps: `next`, `react`, `react-dom`, `tailwindcss`, `@taproot/api-client` (`workspace:*`)
+- `modules/admin-app/package.json` — deps: `next`, `react`, `react-dom`, `tailwindcss`, `@taproot/api-client` (`workspace:*`)
 - `next.config.ts` — standalone output, TypeScript strict
 - `tailwind.config.ts`
 - Root layout with Tailwind globals
@@ -368,35 +368,35 @@ Build the Next.js admin app consuming the mutations from Phase 2.
 ## Acceptance Criteria
 
 ### Phase 1
-- [ ] `pnpm install` works from repo root
-- [ ] `make schema` exports SDL to `packages/api-client-js/schema.graphql`
-- [ ] `pnpm codegen` generates TypeScript types matching the GraphQL schema
-- [ ] `twilio-rs` crate builds and passes tests
-- [ ] `sendVerificationCode` and `verifyCode` mutations work in GraphiQL
-- [ ] JWT cookie is set on successful verification
-- [ ] Mutations reject requests without valid admin JWT
-- [ ] `observations.review_status` column exists with `pending` default
+- [x] `pnpm install` works from repo root
+- [x] `make schema` exports SDL to `modules/api-client-js/schema.graphql`
+- [x] `pnpm codegen` generates TypeScript types matching the GraphQL schema
+- [x] `twilio-rs` crate builds and passes tests
+- [x] `sendVerificationCode` and `verifyCode` mutations work in GraphiQL
+- [x] JWT cookie is set on successful verification
+- [x] Mutations reject requests without valid admin JWT
+- [x] `observations.review_status` column exists with `pending` default
 
 ### Phase 2
-- [ ] All CRUD mutations work in GraphiQL with valid admin JWT
-- [ ] `archiveEntity` with active listings returns error
-- [ ] `reviewObservation` transitions status correctly
-- [ ] Workflow trigger mutations successfully invoke Restate workflows
-- [ ] `workflowStatus` query returns current status
+- [x] All CRUD mutations work in GraphiQL with valid admin JWT
+- [x] `archiveEntity` with active listings returns error
+- [x] `reviewObservation` transitions status correctly
+- [x] Workflow trigger mutations successfully invoke Restate workflows
+- [x] `workflowStatus` query returns current status
 
 ### Phase 3
-- [ ] Admin can log in via phone OTP
-- [ ] Admin can create, edit, and archive listings
-- [ ] Admin can manage entities and services
-- [ ] Admin can approve/reject observations from the review queue
-- [ ] Admin can trigger scrape workflows and see status
-- [ ] Dashboard shows aggregate stats
+- [x] Admin can log in via phone OTP
+- [x] Admin can create, edit, and archive listings
+- [x] Admin can manage entities and services
+- [x] Admin can approve/reject observations from the review queue
+- [x] Admin can trigger scrape workflows and see status
+- [x] Dashboard shows aggregate stats
 
 ### Phase 4
 - [ ] Stale updates return conflict error
 - [ ] OTP rate limiting works
 - [ ] Mutation audit logging in place
-- [ ] Dev workflow documented
+- [x] Dev workflow documented
 
 ## Dependencies & Risks
 
@@ -413,8 +413,8 @@ Build the Next.js admin app consuming the mutations from Phase 2.
 
 - Brainstorm: `docs/brainstorms/2026-02-14-admin-app-brainstorm.md`
 - GraphQL plan: `docs/plans/2026-02-14-feat-graphql-api-plan.md`
-- mntogether admin-app (reference): `/Users/craig/Developer/fourthplaces/mntogether/packages/admin-app/`
-- mntogether auth domain: `/Users/craig/Developer/fourthplaces/mntogether/packages/server/src/domains/auth/`
-- mntogether twilio-rs: `/Users/craig/Developer/fourthplaces/mntogether/packages/twilio-rs/`
-- Existing GraphQL schema: `crates/taproot-server/src/graphql/mod.rs`
-- AppConfig: `crates/taproot-core/src/config.rs`
+- mntogether admin-app (reference): `/Users/craig/Developer/fourthplaces/mntogether/modules/admin-app/`
+- mntogether auth domain: `/Users/craig/Developer/fourthplaces/mntogether/modules/server/src/domains/auth/`
+- mntogether twilio-rs: `/Users/craig/Developer/fourthplaces/mntogether/modules/twilio-rs/`
+- Existing GraphQL schema: `modules/taproot-server/src/graphql/mod.rs`
+- AppConfig: `modules/taproot-core/src/config.rs`

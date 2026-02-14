@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS tag_kinds (
 ## Phase 2: Dynamic Tag Instructions (port from mntogether)
 
 ### Add TagKindConfig model
-**New file:** `crates/taproot-domains/src/entities/models/tag_kind.rs`
+**New file:** `modules/taproot-domains/src/entities/models/tag_kind.rs`
 
 Port from mntogether `packages/server/src/domains/tag/models/tag_kind_config.rs`:
 - `TagKindConfig` struct with `find_all`, `find_for_resource_type`, `tag_count_for_slug`
@@ -98,7 +98,7 @@ Output format:
 ## Phase 3: Type System Updates
 
 ### Update ExtractedListing struct
-**File:** `crates/taproot-core/src/types.rs`
+**File:** `modules/taproot-core/src/types.rs`
 
 Add fields (all Optional):
 - `signal_domain: Option<String>`
@@ -110,7 +110,7 @@ Add fields (all Optional):
 - `populations: Option<Vec<String>>`
 
 ### Update Listing + ListingDetail structs
-**File:** `crates/taproot-domains/src/listings/models/listing.rs`
+**File:** `modules/taproot-domains/src/listings/models/listing.rs`
 
 Add only the new DB columns: `expires_at`, `freshness_score`, `relevance_score`, `relevance_breakdown`. Update `ListingDetail::find_active` SELECT.
 
@@ -119,7 +119,7 @@ Add only the new DB columns: `expires_at`, `freshness_score`, `relevance_score`,
 ## Phase 4: Extraction Prompt
 
 ### Replace SYSTEM_PROMPT with dynamic taxonomy
-**File:** `crates/taproot-domains/src/extraction/activities/extract.rs`
+**File:** `modules/taproot-domains/src/extraction/activities/extract.rs`
 
 Replace hardcoded `SYSTEM_PROMPT` with:
 1. **Static preamble** — extraction role, rules, output format, field definitions
@@ -132,7 +132,7 @@ The static preamble defines the shape of the output (ExtractedListing fields) an
 ## Phase 5: Normalization Updates
 
 ### Persist new fields + all tags
-**File:** `crates/taproot-domains/src/extraction/activities/normalize.rs`
+**File:** `modules/taproot-domains/src/extraction/activities/normalize.rs`
 
 1. Update listings INSERT to bind: `expires_at`, `freshness_score` (default 1.0)
 2. Compute `expires_at` from explicit value or fall back to timing_end
@@ -154,7 +154,7 @@ The static preamble defines the shape of the output (ExtractedListing fields) an
 Following mntogether's pattern: all business logic in `#[restate_sdk::service]`.
 
 ### ListingsService
-**New file:** `crates/taproot-domains/src/listings/restate/mod.rs`
+**New file:** `modules/taproot-domains/src/listings/restate/mod.rs`
 
 ```rust
 #[restate_sdk::service]
@@ -189,7 +189,7 @@ EXISTS (
 This means adding a new filter dimension requires zero code changes to the query — just add the parameter.
 
 ### TagsService
-**New file:** `crates/taproot-domains/src/entities/restate/tags.rs`
+**New file:** `modules/taproot-domains/src/entities/restate/tags.rs`
 
 Port from mntogether:
 ```rust
@@ -203,7 +203,7 @@ pub trait TagsService {
 ```
 
 ### Model: Listing::find_filtered()
-**File:** `crates/taproot-domains/src/listings/models/listing.rs`
+**File:** `modules/taproot-domains/src/listings/models/listing.rs`
 
 `sqlx::QueryBuilder` with:
 - Tag filters: uniform EXISTS subqueries (see above)
@@ -213,10 +213,10 @@ pub trait TagsService {
 - Order: relevance_score DESC NULLS LAST, created_at DESC
 
 ### Hotspot::find_by_id
-**File:** `crates/taproot-domains/src/entities/models/hotspot.rs`
+**File:** `modules/taproot-domains/src/entities/models/hotspot.rs`
 
 ### Register services
-**File:** `crates/taproot-server/src/main.rs`
+**File:** `modules/taproot-server/src/main.rs`
 
 ```rust
 .bind(taproot_domains::listings::ListingsServiceImpl::with_deps(server_deps.clone()).serve())
@@ -227,7 +227,7 @@ pub trait TagsService {
 
 ## Phase 7: Assessment Page Updates
 
-**File:** `crates/taproot-server/src/routes.rs`
+**File:** `modules/taproot-server/src/routes.rs`
 
 Axum assessment page stays as direct DB queries (internal tool). Add breakdowns by:
 - Signal domain (tag kind)
@@ -244,20 +244,20 @@ Axum assessment page stays as direct DB queries (internal tool). Add breakdowns 
 |------|--------|
 | `migrations/016_extend_listings.sql` | **NEW** — expires_at, freshness_score, relevance_score, relevance_breakdown |
 | `migrations/017_tag_kinds_and_full_taxonomy.sql` | **NEW** — tag_kinds table + all tags (9 kinds, ~120 values) |
-| `crates/taproot-domains/src/entities/models/tag_kind.rs` | **NEW** — TagKindConfig + build_tag_instructions |
-| `crates/taproot-domains/src/entities/models/mod.rs` | Register tag_kind module |
-| `crates/taproot-domains/src/entities/mod.rs` | Re-export TagKindConfig |
-| `crates/taproot-domains/src/entities/restate/tags.rs` | **NEW** — TagsService (Restate service) |
-| `crates/taproot-domains/src/entities/restate/mod.rs` | **NEW** — register tags module |
-| `crates/taproot-domains/src/listings/restate/mod.rs` | **NEW** — ListingsService (Restate service) |
-| `crates/taproot-domains/src/listings/mod.rs` | Register restate module |
-| `crates/taproot-core/src/types.rs` | Add 7 fields to ExtractedListing |
-| `crates/taproot-domains/src/extraction/activities/extract.rs` | Dynamic prompt via build_tag_instructions |
-| `crates/taproot-domains/src/extraction/activities/normalize.rs` | Tag all dimensions via Taggable::tag() |
-| `crates/taproot-domains/src/listings/models/listing.rs` | find_filtered, update structs |
-| `crates/taproot-domains/src/entities/models/hotspot.rs` | Add find_by_id |
-| `crates/taproot-server/src/main.rs` | Register ListingsService + TagsService |
-| `crates/taproot-server/src/routes.rs` | Assessment page with tag-based breakdowns |
+| `modules/taproot-domains/src/entities/models/tag_kind.rs` | **NEW** — TagKindConfig + build_tag_instructions |
+| `modules/taproot-domains/src/entities/models/mod.rs` | Register tag_kind module |
+| `modules/taproot-domains/src/entities/mod.rs` | Re-export TagKindConfig |
+| `modules/taproot-domains/src/entities/restate/tags.rs` | **NEW** — TagsService (Restate service) |
+| `modules/taproot-domains/src/entities/restate/mod.rs` | **NEW** — register tags module |
+| `modules/taproot-domains/src/listings/restate/mod.rs` | **NEW** — ListingsService (Restate service) |
+| `modules/taproot-domains/src/listings/mod.rs` | Register restate module |
+| `modules/taproot-core/src/types.rs` | Add 7 fields to ExtractedListing |
+| `modules/taproot-domains/src/extraction/activities/extract.rs` | Dynamic prompt via build_tag_instructions |
+| `modules/taproot-domains/src/extraction/activities/normalize.rs` | Tag all dimensions via Taggable::tag() |
+| `modules/taproot-domains/src/listings/models/listing.rs` | find_filtered, update structs |
+| `modules/taproot-domains/src/entities/models/hotspot.rs` | Add find_by_id |
+| `modules/taproot-server/src/main.rs` | Register ListingsService + TagsService |
+| `modules/taproot-server/src/routes.rs` | Assessment page with tag-based breakdowns |
 
 ---
 

@@ -37,5 +37,5 @@ tarpaulin-report.html
 # Node / JS
 node_modules/
 .next/
-packages/*/gql/
+modules/*/gql/
 .pnpm-store/

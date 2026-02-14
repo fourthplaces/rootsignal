@@ -136,25 +136,25 @@ New migration `017_translations_and_embeddings.sql` and Rust model files.
   - Drop `embedding` column from `listings`
   - Indexes on both tables for polymorphic lookups and locale filtering
   - HNSW index on `embeddings.embedding` for vector similarity search
-- [x] Create `crates/taproot-domains/src/entities/models/translation.rs`
+- [x] Create `modules/taproot-domains/src/entities/models/translation.rs`
   - `Translation` struct with `sqlx::FromRow`
   - `Translation::create()` — upsert (ON CONFLICT DO UPDATE)
   - `Translation::find_for(type, id, locale)` — all translations for a record in a locale
   - `Translation::find_field(type, id, field, locale)` — single field translation
-- [x] Create `crates/taproot-domains/src/entities/models/embedding.rs`
+- [x] Create `modules/taproot-domains/src/entities/models/embedding.rs`
   - `Embedding` struct with `sqlx::FromRow`
   - `Embedding::upsert(type, id, locale, vector, hash)` — idempotent insert/update
   - `Embedding::find_for(type, id, locale)` — get embedding for a record
   - `Embedding::search_similar(vector, limit, threshold)` — cosine similarity search
-- [x] Register new models in `crates/taproot-domains/src/entities/models/mod.rs`
+- [x] Register new models in `modules/taproot-domains/src/entities/models/mod.rs`
 
 **Files:**
 
 ```
 migrations/017_translations_and_embeddings.sql
-crates/taproot-domains/src/entities/models/translation.rs
-crates/taproot-domains/src/entities/models/embedding.rs
-crates/taproot-domains/src/entities/models/mod.rs (edit)
+modules/taproot-domains/src/entities/models/translation.rs
+modules/taproot-domains/src/entities/models/embedding.rs
+modules/taproot-domains/src/entities/models/mod.rs (edit)
 ```
 
 **Migration SQL:**
@@ -213,9 +213,9 @@ Update AI extraction to detect source language.
 
 **Tasks:**
 
-- [x] Add `source_locale` field to `ExtractedListing` in `crates/taproot-core/src/types.rs`
-- [x] Update extraction system prompt in `crates/taproot-domains/src/extraction/activities/extract.rs` to instruct AI to detect content language and return `source_locale`
-- [x] Update `normalize_extraction()` in `crates/taproot-domains/src/extraction/activities/normalize.rs` to:
+- [x] Add `source_locale` field to `ExtractedListing` in `modules/taproot-core/src/types.rs`
+- [x] Update extraction system prompt in `modules/taproot-domains/src/extraction/activities/extract.rs` to instruct AI to detect content language and return `source_locale`
+- [x] Update `normalize_extraction()` in `modules/taproot-domains/src/extraction/activities/normalize.rs` to:
   - Read `source_locale` from extracted data
   - Fall back to source-level config if AI returns null
   - Write `source_locale` to `listings`, `entities`, `services` tables
@@ -224,9 +224,9 @@ Update AI extraction to detect source language.
 **Files:**
 
 ```
-crates/taproot-core/src/types.rs (edit)
-crates/taproot-domains/src/extraction/activities/extract.rs (edit)
-crates/taproot-domains/src/extraction/activities/normalize.rs (edit)
+modules/taproot-core/src/types.rs (edit)
+modules/taproot-domains/src/extraction/activities/extract.rs (edit)
+modules/taproot-domains/src/extraction/activities/normalize.rs (edit)
 ```
 
 **ExtractedListing change:**
@@ -273,7 +273,7 @@ New domain module for translation activities and Restate workflow.
 
 **Tasks:**
 
-- [x] Create `crates/taproot-domains/src/translation/` module structure:
+- [x] Create `modules/taproot-domains/src/translation/` module structure:
   - `mod.rs` — module exports
   - `activities/mod.rs` — activity exports
   - `activities/translate.rs` — translation activity
@@ -295,20 +295,20 @@ New domain module for translation activities and Restate workflow.
   - Step 2: Generate English embedding (blocking)
   - Step 3: For each remaining target locale, translate (parallel via separate `ctx.run()` calls)
   - Track status via `ctx.set("status", ...)`
-- [x] Add `TranslationService` trait to `crates/taproot-core/src/deps.rs` for AI translation
-- [x] Register `TranslateWorkflowImpl` in `crates/taproot-server/src/main.rs`
+- [x] Add `TranslationService` trait to `modules/taproot-core/src/deps.rs` for AI translation
+- [x] Register `TranslateWorkflowImpl` in `modules/taproot-server/src/main.rs`
 
 **Files:**
 
 ```
-crates/taproot-domains/src/translation/mod.rs (new)
-crates/taproot-domains/src/translation/activities/mod.rs (new)
-crates/taproot-domains/src/translation/activities/translate.rs (new)
-crates/taproot-domains/src/translation/activities/embed.rs (new)
-crates/taproot-domains/src/translation/restate/mod.rs (new)
-crates/taproot-domains/src/lib.rs (edit — add translation module)
-crates/taproot-core/src/deps.rs (edit — add TranslationService trait)
-crates/taproot-server/src/main.rs (edit — register workflow)
+modules/taproot-domains/src/translation/mod.rs (new)
+modules/taproot-domains/src/translation/activities/mod.rs (new)
+modules/taproot-domains/src/translation/activities/translate.rs (new)
+modules/taproot-domains/src/translation/activities/embed.rs (new)
+modules/taproot-domains/src/translation/restate/mod.rs (new)
+modules/taproot-domains/src/lib.rs (edit — add translation module)
+modules/taproot-core/src/deps.rs (edit — add TranslationService trait)
+modules/taproot-server/src/main.rs (edit — register workflow)
 ```
 
 **TranslateWorkflow structure:**
@@ -345,7 +345,7 @@ Wire translation into the extraction pipeline.
 
 **Tasks:**
 
-- [x] Update `ExtractWorkflow` in `crates/taproot-domains/src/extraction/restate/mod.rs` to trigger `TranslateWorkflow` after normalization
+- [x] Update `ExtractWorkflow` in `modules/taproot-domains/src/extraction/restate/mod.rs` to trigger `TranslateWorkflow` after normalization
   - After each listing is normalized, send a `TranslateRequest` to Restate
   - Fire-and-forget for the translation (don't block extraction on translation completion)
   - Also trigger for the entity and service created during normalization
@@ -356,7 +356,7 @@ Wire translation into the extraction pipeline.
 **Files:**
 
 ```
-crates/taproot-domains/src/extraction/restate/mod.rs (edit)
+modules/taproot-domains/src/extraction/restate/mod.rs (edit)
 ```
 
 **Integration pattern** (in ExtractWorkflow, after normalization step):
@@ -392,13 +392,13 @@ Surface translations in the REST API.
   - `locale` — what locale is being served
   - `source_locale` — original language of the content
   - `is_fallback` — true if serving a fallback locale (e.g., requested `so` but got `en`)
-- [x] Update `ListingDetail` struct in `crates/taproot-server/src/routes.rs`
+- [x] Update `ListingDetail` struct in `modules/taproot-server/src/routes.rs`
 - [ ] Add `GET /api/tags?locale=es` — return tags with translated display_names
 
 **Files:**
 
 ```
-crates/taproot-server/src/routes.rs (edit)
+modules/taproot-server/src/routes.rs (edit)
 ```
 
 **Updated ListingDetail:**
@@ -491,7 +491,7 @@ Translate existing seeded tag display_names.
 ```
 migrations/018_seed_tag_translations.sql (new, if hard-coded)
   OR
-crates/taproot-domains/src/translation/activities/seed_tags.rs (new, if AI-translated)
+modules/taproot-domains/src/translation/activities/seed_tags.rs (new, if AI-translated)
 ```
 
 ## Acceptance Criteria
@@ -542,9 +542,9 @@ crates/taproot-domains/src/translation/activities/seed_tags.rs (new, if AI-trans
 - Brainstorm: `docs/brainstorms/2026-02-14-multi-language-support-brainstorm.md`
 - Clustering brainstorm: `docs/brainstorms/2026-02-14-clustering-infrastructure-brainstorm.md`
 - Architecture: `docs/architecture/signal-service-architecture.md`
-- Extraction activity: `crates/taproot-domains/src/extraction/activities/extract.rs`
-- Normalization activity: `crates/taproot-domains/src/extraction/activities/normalize.rs`
-- ExtractWorkflow: `crates/taproot-domains/src/extraction/restate/mod.rs`
-- Polymorphic pattern reference: `crates/taproot-domains/src/entities/models/tag.rs`
-- Core types: `crates/taproot-core/src/types.rs`
+- Extraction activity: `modules/taproot-domains/src/extraction/activities/extract.rs`
+- Normalization activity: `modules/taproot-domains/src/extraction/activities/normalize.rs`
+- ExtractWorkflow: `modules/taproot-domains/src/extraction/restate/mod.rs`
+- Polymorphic pattern reference: `modules/taproot-domains/src/entities/models/tag.rs`
+- Core types: `modules/taproot-core/src/types.rs`
 - Listings migration: `migrations/008_listings.sql`

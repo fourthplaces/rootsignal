@@ -18,12 +18,12 @@ Two new JS/TS packages in the existing taproot monorepo:
 
 ## Package Structure
 
-Monorepo — new `packages/` directory at the repo root alongside `crates/`:
+Monorepo — new `modules/` directory at the repo root alongside `modules/`:
 
 ```
 taproot/
-├── crates/           # Rust workspace (existing)
-├── packages/
+├── modules/           # Rust workspace (existing)
+├── modules/
 │   ├── api-client-js/  # GraphQL codegen + typed client
 │   └── admin-app/      # Next.js admin interface
 ├── pnpm-workspace.yaml
