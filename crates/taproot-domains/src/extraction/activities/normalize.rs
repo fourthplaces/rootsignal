@@ -2,7 +2,7 @@ use anyhow::Result;
 use taproot_core::{ExtractedListing, ServerDeps};
 use uuid::Uuid;
 
-use crate::entities::{Contact, Entity, Location, Locationable, Notable, Organization, Service, Taggable};
+use crate::entities::{Contact, Entity, Location, Locationable, Notable, Organization, Schedule, Service, Taggable};
 
 /// Extraction row with the data we need for normalization.
 #[derive(Debug, sqlx::FromRow)]
@@ -100,13 +100,13 @@ pub async fn normalize_extraction(
 
     let source_locale = listing_data.source_locale.as_deref().unwrap_or("en");
 
-    let timing_start = listing_data
+    let valid_from = listing_data
         .start_time
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    let timing_end = listing_data
+    let valid_to = listing_data
         .end_time
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -117,14 +117,14 @@ pub async fn normalize_extraction(
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .or(timing_end);
+        .or(valid_to);
 
     // ── Create listing ──────────────────────────────────────────────────────
 
     let listing = sqlx::query_as::<_, (Uuid,)>(
         r#"
-        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, timing_start, timing_end, source_locale, expires_at, freshness_score)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1.0)
+        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, source_locale, expires_at, freshness_score)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1.0)
         RETURNING id
         "#,
     )
@@ -134,14 +134,53 @@ pub async fn normalize_extraction(
     .bind(service_id)
     .bind(&listing_data.source_url)
     .bind(&listing_data.location_text)
-    .bind(timing_start)
-    .bind(timing_end)
     .bind(source_locale)
     .bind(expires_at)
     .fetch_one(pool)
     .await?;
 
     let listing_id = listing.0;
+
+    // ── Create schedule ─────────────────────────────────────────────────────
+
+    if valid_from.is_some() || valid_to.is_some() || listing_data.is_recurring == Some(true) {
+        let is_recurring = listing_data.is_recurring.unwrap_or(false);
+        let (freq, byday, description) = if is_recurring {
+            let desc = listing_data.recurrence_description.as_deref();
+            // Parse simple recurrence patterns into iCal fields
+            let freq = desc.and_then(|d| {
+                let lower = d.to_lowercase();
+                if lower.contains("daily") {
+                    Some("DAILY")
+                } else if lower.contains("weekly") {
+                    Some("WEEKLY")
+                } else if lower.contains("monthly") {
+                    Some("MONTHLY")
+                } else {
+                    None
+                }
+            });
+            (freq, None::<&str>, desc)
+        } else {
+            (None, None, None)
+        };
+
+        let _ = Schedule::create(
+            "listing",
+            listing_id,
+            None,        // dtstart
+            freq,
+            byday,
+            None,        // bymonthday
+            description,
+            valid_from,
+            valid_to,
+            None,        // opens_at
+            None,        // closes_at
+            pool,
+        )
+        .await;
+    }
 
     // ── Create listing_extraction provenance ─────────────────────────────────
 

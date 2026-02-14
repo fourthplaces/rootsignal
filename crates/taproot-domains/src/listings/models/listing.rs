@@ -14,8 +14,6 @@ pub struct Listing {
     pub service_id: Option<Uuid>,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub timing_start: Option<DateTime<Utc>>,
-    pub timing_end: Option<DateTime<Utc>>,
     pub source_locale: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub freshness_score: f32,
@@ -53,10 +51,11 @@ impl Listing {
     pub async fn find_recent(days: i32, pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>(
             r#"
-            SELECT * FROM listings
-            WHERE status = 'active'
-              AND timing_start > NOW() - ($1 || ' days')::INTERVAL
-            ORDER BY timing_start ASC
+            SELECT DISTINCT l.* FROM listings l
+            JOIN schedules s ON s.scheduleable_type = 'listing' AND s.scheduleable_id = l.id
+            WHERE l.status = 'active'
+              AND s.valid_from > NOW() - ($1 || ' days')::INTERVAL
+            ORDER BY l.created_at DESC
             "#,
         )
         .bind(days)
@@ -215,8 +214,7 @@ pub struct ListingDetail {
     pub entity_type: Option<String>,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub timing_start: Option<DateTime<Utc>>,
-    pub timing_end: Option<DateTime<Utc>>,
+    pub schedule_description: Option<String>,
     pub created_at: DateTime<Utc>,
     pub source_locale: String,
     pub locale: String,
@@ -259,7 +257,8 @@ impl ListingDetail {
                 l.status,
                 e.name as entity_name, e.entity_type,
                 l.source_url, l.location_text,
-                l.timing_start, l.timing_end, l.created_at,
+                COALESCE(s.description, to_char(s.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
+                l.created_at,
                 l.source_locale,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN $1
@@ -272,6 +271,12 @@ impl ListingDetail {
                 END as is_fallback
             FROM listings l
             LEFT JOIN entities e ON e.id = l.entity_id
+            LEFT JOIN LATERAL (
+                SELECT description, valid_from FROM schedules
+                WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+                ORDER BY valid_from DESC NULLS LAST
+                LIMIT 1
+            ) s ON true
             LEFT JOIN translations t_title
                 ON t_title.translatable_type = 'listing'
                 AND t_title.translatable_id = l.id
@@ -318,7 +323,8 @@ impl ListingDetail {
                 l.id, l.title, l.description, l.status,
                 e.name as entity_name, e.entity_type,
                 l.source_url, l.location_text,
-                l.timing_start, l.timing_end, l.created_at,
+                COALESCE(sch.description, to_char(sch.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
+                l.created_at,
                 l.source_locale,
                 l.source_locale as locale,
                 false as is_fallback
@@ -326,6 +332,12 @@ impl ListingDetail {
             JOIN cluster_items ci2 ON ci2.cluster_id = ci.cluster_id AND ci2.item_type = 'listing'
             JOIN listings l ON l.id = ci2.item_id
             LEFT JOIN entities e ON e.id = l.entity_id
+            LEFT JOIN LATERAL (
+                SELECT description, valid_from FROM schedules
+                WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+                ORDER BY valid_from DESC NULLS LAST
+                LIMIT 1
+            ) sch ON true
             WHERE ci.item_type = 'listing' AND ci.item_id = $1
               AND ci2.item_id != $1
             ORDER BY ci2.similarity_score DESC NULLS LAST
@@ -349,8 +361,7 @@ pub struct ListingWithDistance {
     pub entity_type: Option<String>,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub timing_start: Option<DateTime<Utc>>,
-    pub timing_end: Option<DateTime<Utc>>,
+    pub schedule_description: Option<String>,
     pub created_at: DateTime<Utc>,
     pub source_locale: String,
     pub locale: String,
@@ -389,7 +400,8 @@ impl ListingWithDistance {
                 l.status,
                 e.name as entity_name, e.entity_type,
                 l.source_url, l.location_text,
-                l.timing_start, l.timing_end, l.created_at,
+                COALESCE(sch.description, to_char(sch.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
+                l.created_at,
                 l.source_locale,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN "#,
@@ -409,6 +421,12 @@ impl ListingWithDistance {
                 loc.city as location_city
             FROM listings l
             CROSS JOIN center
+            LEFT JOIN LATERAL (
+                SELECT description, valid_from FROM schedules
+                WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+                ORDER BY valid_from DESC NULLS LAST
+                LIMIT 1
+            ) sch ON true
             JOIN locationables la ON la.locatable_type = 'listing' AND la.locatable_id = l.id
             JOIN locations loc ON loc.id = la.location_id
             LEFT JOIN entities e ON e.id = l.entity_id
@@ -479,7 +497,7 @@ impl ListingWithDistance {
 
         qb.push(
             "GROUP BY l.id, l.title, l.description, l.status, e.name, e.entity_type, \
-             l.source_url, l.location_text, l.timing_start, l.timing_end, l.created_at, \
+             l.source_url, l.location_text, sch.description, sch.valid_from, l.created_at, \
              l.source_locale, t_title.content, t_desc.content, en_title.content, en_desc.content, \
              loc.postal_code, loc.city \
              HAVING MIN(haversine_distance(center.latitude, center.longitude, loc.latitude, loc.longitude)) <= ",
@@ -625,7 +643,7 @@ impl ListingStats {
             .0;
 
         let recent_7d = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM listings WHERE timing_start > NOW() - INTERVAL '7 days'",
+            "SELECT COUNT(DISTINCT s.scheduleable_id) FROM schedules s JOIN listings l ON l.id = s.scheduleable_id WHERE s.scheduleable_type = 'listing' AND s.valid_from > NOW() - INTERVAL '7 days'",
         )
         .fetch_one(pool)
         .await?

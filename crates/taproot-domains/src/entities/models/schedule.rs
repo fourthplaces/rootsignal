@@ -28,13 +28,18 @@ impl Schedule {
         dtstart: Option<&str>,
         freq: Option<&str>,
         byday: Option<&str>,
+        bymonthday: Option<&str>,
         description: Option<&str>,
+        valid_from: Option<DateTime<Utc>>,
+        valid_to: Option<DateTime<Utc>>,
+        opens_at: Option<NaiveTime>,
+        closes_at: Option<NaiveTime>,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO schedules (scheduleable_type, scheduleable_id, dtstart, freq, byday, description)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO schedules (scheduleable_type, scheduleable_id, dtstart, freq, byday, bymonthday, description, valid_from, valid_to, opens_at, closes_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (scheduleable_type, scheduleable_id, dtstart) DO NOTHING
             RETURNING *
             "#,
@@ -44,7 +49,12 @@ impl Schedule {
         .bind(dtstart)
         .bind(freq)
         .bind(byday)
+        .bind(bymonthday)
         .bind(description)
+        .bind(valid_from)
+        .bind(valid_to)
+        .bind(opens_at)
+        .bind(closes_at)
         .fetch_one(pool)
         .await
         .map_err(Into::into)

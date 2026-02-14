@@ -221,9 +221,10 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
         .iter()
         .map(|l| {
             let timing = l
-                .timing_start
-                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| "-".to_string());
+                .schedule_description
+                .as_deref()
+                .unwrap_or("-")
+                .to_string();
             let source = l
                 .source_url
                 .as_deref()

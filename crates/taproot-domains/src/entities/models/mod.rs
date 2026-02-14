@@ -7,6 +7,7 @@ pub mod location;
 pub mod member;
 pub mod note;
 pub mod observation;
+pub mod proposal;
 pub mod schedule;
 pub mod service;
 pub mod source;
