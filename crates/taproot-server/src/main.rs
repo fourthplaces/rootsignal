@@ -12,6 +12,9 @@ use taproot_domains::scraping::restate::{
 use taproot_domains::extraction::restate::ExtractWorkflow;
 use taproot_domains::investigations::restate::InvestigateWorkflow;
 use taproot_domains::translation::restate::TranslateWorkflow;
+use taproot_domains::clustering::ClusteringJob;
+use taproot_domains::listings::restate::ListingsService;
+use taproot_domains::entities::restate::tags::TagsService;
 
 /// Wrapper to make OpenAi implement our dyn-compatible EmbeddingService trait.
 struct OpenAiEmbeddingService {
@@ -129,6 +132,18 @@ async fn main() -> Result<()> {
         )
         .bind(
             taproot_domains::translation::TranslateWorkflowImpl::with_deps(server_deps.clone())
+                .serve(),
+        )
+        .bind(
+            taproot_domains::listings::ListingsServiceImpl::with_deps(server_deps.clone())
+                .serve(),
+        )
+        .bind(
+            taproot_domains::entities::TagsServiceImpl::with_deps(server_deps.clone())
+                .serve(),
+        )
+        .bind(
+            taproot_domains::clustering::ClusteringJobImpl::with_deps(server_deps.clone())
                 .serve(),
         )
         .build();

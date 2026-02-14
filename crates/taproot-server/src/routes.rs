@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::Html,
     routing::get,
@@ -7,13 +7,18 @@ use axum::{
 };
 use serde::Deserialize;
 use sqlx::PgPool;
-use taproot_domains::listings::{ListingDetail, ListingStats};
+use serde::Serialize;
+use taproot_domains::heat_map::HeatMapPoint;
+use taproot_domains::listings::{ListingDetail, ListingFilters, ListingStats, ListingWithDistance};
+use uuid::Uuid;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
         .route("/", get(assessment_page))
         .route("/api/stats", get(api_stats))
         .route("/api/listings", get(api_listings))
+        .route("/api/listings/:id/cluster", get(api_listing_cluster))
+        .route("/api/heatmap", get(api_heatmap))
         .route("/health", get(health))
         .with_state(pool)
 }
@@ -33,6 +38,10 @@ async fn api_stats(State(pool): State<PgPool>) -> Json<ListingStats> {
         listings_by_type: vec![],
         listings_by_role: vec![],
         listings_by_category: vec![],
+        listings_by_domain: vec![],
+        listings_by_urgency: vec![],
+        listings_by_confidence: vec![],
+        listings_by_capacity: vec![],
         recent_7d: 0,
     });
     Json(stats)
@@ -43,6 +52,8 @@ struct ListingsQuery {
     limit: Option<i64>,
     offset: Option<i64>,
     locale: Option<String>,
+    zip_code: Option<String>,
+    radius_miles: Option<f64>,
 }
 
 /// Parse Accept-Language header to extract the primary locale.
@@ -79,6 +90,16 @@ async fn api_listings(
     Json(listings)
 }
 
+async fn api_listing_cluster(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Json<Vec<ListingDetail>> {
+    let siblings = ListingDetail::cluster_siblings(id, &pool)
+        .await
+        .unwrap_or_default();
+    Json(siblings)
+}
+
 async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
     let stats = ListingStats::compute(&pool).await.unwrap_or_else(|_| ListingStats {
         total_listings: 0,
@@ -90,6 +111,10 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
         listings_by_type: vec![],
         listings_by_role: vec![],
         listings_by_category: vec![],
+        listings_by_domain: vec![],
+        listings_by_urgency: vec![],
+        listings_by_confidence: vec![],
+        listings_by_capacity: vec![],
         recent_7d: 0,
     });
 
@@ -113,6 +138,34 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
 
     let category_rows: String = stats
         .listings_by_category
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let domain_rows: String = stats
+        .listings_by_domain
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let urgency_rows: String = stats
+        .listings_by_urgency
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let confidence_rows: String = stats
+        .listings_by_confidence
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let capacity_rows: String = stats
+        .listings_by_capacity
         .iter()
         .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
         .collect::<Vec<_>>()
@@ -193,6 +246,18 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
     <h2>By Category</h2>
     <table><tr><th>Category</th><th>Count</th></tr>{category_rows}</table>
 
+    <h2>By Signal Domain</h2>
+    <table><tr><th>Domain</th><th>Count</th></tr>{domain_rows}</table>
+
+    <h2>By Urgency</h2>
+    <table><tr><th>Urgency</th><th>Count</th></tr>{urgency_rows}</table>
+
+    <h2>By Confidence</h2>
+    <table><tr><th>Confidence</th><th>Count</th></tr>{confidence_rows}</table>
+
+    <h2>By Capacity Status</h2>
+    <table><tr><th>Status</th><th>Count</th></tr>{capacity_rows}</table>
+
     <h2>Sample Listings (30 random)</h2>
     <table>
         <tr><th>Title</th><th>Entity</th><th>Type</th><th>Location</th><th>Timing</th><th>Source</th></tr>
@@ -215,6 +280,10 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
         type_rows = type_rows,
         role_rows = role_rows,
         category_rows = category_rows,
+        domain_rows = domain_rows,
+        urgency_rows = urgency_rows,
+        confidence_rows = confidence_rows,
+        capacity_rows = capacity_rows,
         listing_rows = listing_rows,
     );
 
