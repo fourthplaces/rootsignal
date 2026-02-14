@@ -102,24 +102,73 @@ pub struct ListingDetail {
     pub timing_start: Option<DateTime<Utc>>,
     pub timing_end: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub source_locale: String,
+    pub locale: String,
+    pub is_fallback: bool,
 }
 
 impl ListingDetail {
+    /// Find active listings with default English locale (no translation joins).
     pub async fn find_active(limit: i64, offset: i64, pool: &PgPool) -> Result<Vec<Self>> {
+        Self::find_active_localized(limit, offset, "en", pool).await
+    }
+
+    /// Find active listings with translated content for the given locale.
+    /// Fallback chain: requested locale → English → source text.
+    pub async fn find_active_localized(
+        limit: i64,
+        offset: i64,
+        locale: &str,
+        pool: &PgPool,
+    ) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>(
             r#"
             SELECT
-                l.id, l.title, l.description, l.status,
+                l.id,
+                COALESCE(t_title.content, en_title.content, l.title) as title,
+                COALESCE(t_desc.content, en_desc.content, l.description) as description,
+                l.status,
                 e.name as entity_name, e.entity_type,
                 l.source_url, l.location_text,
-                l.timing_start, l.timing_end, l.created_at
+                l.timing_start, l.timing_end, l.created_at,
+                l.source_locale,
+                CASE
+                    WHEN t_title.content IS NOT NULL THEN $1
+                    WHEN en_title.content IS NOT NULL THEN 'en'
+                    ELSE l.source_locale
+                END as locale,
+                CASE
+                    WHEN t_title.content IS NOT NULL THEN false
+                    ELSE true
+                END as is_fallback
             FROM listings l
             LEFT JOIN entities e ON e.id = l.entity_id
+            LEFT JOIN translations t_title
+                ON t_title.translatable_type = 'listing'
+                AND t_title.translatable_id = l.id
+                AND t_title.field_name = 'title'
+                AND t_title.locale = $1
+            LEFT JOIN translations t_desc
+                ON t_desc.translatable_type = 'listing'
+                AND t_desc.translatable_id = l.id
+                AND t_desc.field_name = 'description'
+                AND t_desc.locale = $1
+            LEFT JOIN translations en_title
+                ON en_title.translatable_type = 'listing'
+                AND en_title.translatable_id = l.id
+                AND en_title.field_name = 'title'
+                AND en_title.locale = 'en'
+            LEFT JOIN translations en_desc
+                ON en_desc.translatable_type = 'listing'
+                AND en_desc.translatable_id = l.id
+                AND en_desc.field_name = 'description'
+                AND en_desc.locale = 'en'
             WHERE l.status = 'active'
             ORDER BY l.created_at DESC
-            LIMIT $1 OFFSET $2
+            LIMIT $2 OFFSET $3
             "#,
         )
+        .bind(locale)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)

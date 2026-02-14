@@ -1,0 +1,222 @@
+use axum::{
+    extract::{Query, State},
+    http::HeaderMap,
+    response::Html,
+    routing::get,
+    Json, Router,
+};
+use serde::Deserialize;
+use sqlx::PgPool;
+use taproot_domains::listings::{ListingDetail, ListingStats};
+
+pub fn build_router(pool: PgPool) -> Router {
+    Router::new()
+        .route("/", get(assessment_page))
+        .route("/api/stats", get(api_stats))
+        .route("/api/listings", get(api_listings))
+        .route("/health", get(health))
+        .with_state(pool)
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+async fn api_stats(State(pool): State<PgPool>) -> Json<ListingStats> {
+    let stats = ListingStats::compute(&pool).await.unwrap_or_else(|_| ListingStats {
+        total_listings: 0,
+        active_listings: 0,
+        total_sources: 0,
+        total_snapshots: 0,
+        total_extractions: 0,
+        total_entities: 0,
+        listings_by_type: vec![],
+        listings_by_role: vec![],
+        listings_by_category: vec![],
+        recent_7d: 0,
+    });
+    Json(stats)
+}
+
+#[derive(Deserialize)]
+struct ListingsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    locale: Option<String>,
+}
+
+/// Parse Accept-Language header to extract the primary locale.
+fn parse_accept_language(headers: &HeaderMap) -> Option<String> {
+    let header = headers.get("accept-language")?.to_str().ok()?;
+    // Take the first language tag (highest priority)
+    let primary = header.split(',').next()?.trim();
+    // Strip quality factor if present (e.g., "es;q=0.9" → "es")
+    let lang = primary.split(';').next()?.trim();
+    // Only accept our supported locales
+    match lang {
+        "en" | "es" | "so" | "ht" => Some(lang.to_string()),
+        _ => None,
+    }
+}
+
+async fn api_listings(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    Query(params): Query<ListingsQuery>,
+) -> Json<Vec<ListingDetail>> {
+    let limit = params.limit.unwrap_or(50);
+    let offset = params.offset.unwrap_or(0);
+
+    // Query param takes precedence, then Accept-Language, then default to English
+    let locale = params
+        .locale
+        .or_else(|| parse_accept_language(&headers))
+        .unwrap_or_else(|| "en".to_string());
+
+    let listings = ListingDetail::find_active_localized(limit, offset, &locale, &pool)
+        .await
+        .unwrap_or_default();
+    Json(listings)
+}
+
+async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
+    let stats = ListingStats::compute(&pool).await.unwrap_or_else(|_| ListingStats {
+        total_listings: 0,
+        active_listings: 0,
+        total_sources: 0,
+        total_snapshots: 0,
+        total_extractions: 0,
+        total_entities: 0,
+        listings_by_type: vec![],
+        listings_by_role: vec![],
+        listings_by_category: vec![],
+        recent_7d: 0,
+    });
+
+    let listings = ListingDetail::find_active(30, 0, &pool)
+        .await
+        .unwrap_or_default();
+
+    let type_rows: String = stats
+        .listings_by_type
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let role_rows: String = stats
+        .listings_by_role
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let category_rows: String = stats
+        .listings_by_category
+        .iter()
+        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let listing_rows: String = listings
+        .iter()
+        .map(|l| {
+            let timing = l
+                .timing_start
+                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let source = l
+                .source_url
+                .as_deref()
+                .map(|u| format!("<a href=\"{}\" target=\"_blank\">link</a>", u))
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                l.title,
+                l.entity_name.as_deref().unwrap_or("-"),
+                l.entity_type.as_deref().unwrap_or("-"),
+                l.location_text.as_deref().unwrap_or("-"),
+                timing,
+                source,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Taproot - Signal Assessment</title>
+    <style>
+        body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }}
+        h1 {{ color: #2d5016; }}
+        h2 {{ color: #444; margin-top: 30px; }}
+        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 20px 0; }}
+        .stat {{ background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+        .stat .value {{ font-size: 2em; font-weight: bold; color: #2d5016; }}
+        .stat .label {{ color: #666; font-size: 0.9em; }}
+        table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+        th, td {{ padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; }}
+        th {{ background: #2d5016; color: white; }}
+        tr:hover {{ background: #f9f9f9; }}
+        .gate {{ padding: 8px 16px; border-radius: 4px; margin: 4px 0; }}
+        .gate.pass {{ background: #d4edda; color: #155724; }}
+        .gate.fail {{ background: #f8d7da; color: #721c24; }}
+    </style>
+</head>
+<body>
+    <h1>Taproot Signal Assessment</h1>
+    <p>Milestone 1: Signal Proof</p>
+
+    <div class="stats">
+        <div class="stat"><div class="value">{active}</div><div class="label">Active Listings</div></div>
+        <div class="stat"><div class="value">{sources}</div><div class="label">Sources</div></div>
+        <div class="stat"><div class="value">{snapshots}</div><div class="label">Page Snapshots</div></div>
+        <div class="stat"><div class="value">{extractions}</div><div class="label">Extractions</div></div>
+        <div class="stat"><div class="value">{entities}</div><div class="label">Entities</div></div>
+        <div class="stat"><div class="value">{recent_7d}</div><div class="label">Fresh (7 days)</div></div>
+    </div>
+
+    <h2>Milestone Gates</h2>
+    <div class="{gate_vol}">Volume: {active} active listings (target: 100+)</div>
+    <div class="{gate_fresh}">Freshness: {recent_7d} listings with timing in last 7 days</div>
+    <div class="{gate_types}">Type diversity: {type_count} listing types (target: 3+)</div>
+    <div class="{gate_roles}">Role diversity: {role_count} audience roles (target: 3+)</div>
+
+    <h2>By Listing Type</h2>
+    <table><tr><th>Type</th><th>Count</th></tr>{type_rows}</table>
+
+    <h2>By Audience Role</h2>
+    <table><tr><th>Role</th><th>Count</th></tr>{role_rows}</table>
+
+    <h2>By Category</h2>
+    <table><tr><th>Category</th><th>Count</th></tr>{category_rows}</table>
+
+    <h2>Sample Listings (30 random)</h2>
+    <table>
+        <tr><th>Title</th><th>Entity</th><th>Type</th><th>Location</th><th>Timing</th><th>Source</th></tr>
+        {listing_rows}
+    </table>
+</body>
+</html>"#,
+        active = stats.active_listings,
+        sources = stats.total_sources,
+        snapshots = stats.total_snapshots,
+        extractions = stats.total_extractions,
+        entities = stats.total_entities,
+        recent_7d = stats.recent_7d,
+        gate_vol = if stats.active_listings >= 100 { "gate pass" } else { "gate fail" },
+        gate_fresh = if stats.recent_7d > 0 { "gate pass" } else { "gate fail" },
+        type_count = stats.listings_by_type.len(),
+        gate_types = if stats.listings_by_type.len() >= 3 { "gate pass" } else { "gate fail" },
+        role_count = stats.listings_by_role.len(),
+        gate_roles = if stats.listings_by_role.len() >= 3 { "gate pass" } else { "gate fail" },
+        type_rows = type_rows,
+        role_rows = role_rows,
+        category_rows = category_rows,
+        listing_rows = listing_rows,
+    );
+
+    Html(html)
+}
