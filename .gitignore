@@ -1,5 +1,35 @@
+# Build
 /target
+**/target
+
+# Environment
 .env
+.env.*
+!.env.example
+
+# Editor
 *.swp
 *.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Rust
+**/*.rs.bk
+*.pdb
+
+# Debug
+*.dSYM/
+*.su
+*.out
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
