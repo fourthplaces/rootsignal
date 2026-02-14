@@ -1,6 +1,9 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    labels:
+      dev.description: "PostgreSQL database with pgvector"
+      dev.shell: "bash"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -17,6 +20,8 @@ services:
 
   restate:
     image: docker.io/restatedev/restate:1.1
+    labels:
+      dev.description: "Restate durable workflow runtime"
     ports:
       - "8080:8080"   # Ingress
       - "9070:9070"   # Admin
@@ -28,6 +33,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    labels:
+      dev.description: "Root Signal API server"
+      dev.shell: "bash"
     ports:
       - "9080:9080"   # Restate worker
       - "9081:9081"   # GraphQL / REST API
@@ -64,6 +72,9 @@ services:
     build:
       context: .
       dockerfile: modules/admin-app/Dockerfile
+    labels:
+      dev.description: "Next.js admin frontend"
+      dev.shell: "sh"
     ports:
       - "3000:3000"
     depends_on:

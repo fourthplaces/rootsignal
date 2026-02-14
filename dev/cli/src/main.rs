@@ -223,41 +223,108 @@ fn cmd_doctor() -> Result<()> {
 
 fn interactive_menu() -> Result<()> {
     let items = vec![
-        ("up", "Start all services (postgres -> migrations -> restate)"),
-        ("down", "Stop all services"),
-        ("docker status", "Show running Docker services"),
-        ("docker logs", "Follow Docker service logs"),
-        ("docker psql", "Open psql in postgres container"),
-        ("db migrate", "Run pending migrations"),
-        ("db reset", "Drop + create + migrate"),
-        ("db status", "Show migration status"),
-        ("db psql", "Open psql via DATABASE_URL"),
-        ("status", "Show environment info"),
-        ("doctor", "Check system prerequisites"),
+        "🚀 Start environment (up)",
+        "🛑 Stop environment (down)",
+        "🐳 Docker services →",
+        "🗄️  Database →",
+        "📊 Status",
+        "🩺 Doctor",
+        "❌ Exit",
     ];
 
-    let labels: Vec<String> = items
-        .iter()
-        .map(|(cmd, desc)| format!("{:<20} {}", cmd, style(desc).dim()))
-        .collect();
+    loop {
+        println!();
+        let choice = dialoguer::FuzzySelect::new()
+            .with_prompt("What would you like to do?")
+            .items(&items)
+            .default(0)
+            .interact()
+            .context("Cancelled")?;
 
-    let selection = dialoguer::FuzzySelect::new()
-        .with_prompt("What do you want to do?")
-        .items(&labels)
+        match choice {
+            0 => cmd_up()?,
+            1 => cmd::docker::exec(cmd::docker::DockerCmd::Down {
+                services: vec![],
+                volumes: false,
+            })?,
+            2 => docker_submenu()?,
+            3 => db_submenu()?,
+            4 => cmd_status()?,
+            5 => cmd_doctor()?,
+            _ => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn docker_submenu() -> Result<()> {
+    let items = vec![
+        "Start services",
+        "Stop services",
+        "Restart services",
+        "Rebuild images",
+        "Follow logs",
+        "Status",
+        "Shell into container",
+        "PostgreSQL shell",
+        "← Back",
+    ];
+
+    let choice = dialoguer::Select::new()
+        .with_prompt("Docker")
+        .items(&items)
         .default(0)
         .interact()
         .context("Cancelled")?;
 
-    let chosen = items[selection].0;
-    let args: Vec<&str> = chosen.split_whitespace().collect();
+    match choice {
+        0 => cmd::docker::exec(cmd::docker::DockerCmd::Up {
+            services: vec![],
+        }),
+        1 => cmd::docker::exec(cmd::docker::DockerCmd::Down {
+            services: vec![],
+            volumes: false,
+        }),
+        2 => cmd::docker::exec(cmd::docker::DockerCmd::Restart {
+            services: vec![],
+        }),
+        3 => cmd::docker::exec(cmd::docker::DockerCmd::Build {
+            services: vec![],
+            no_cache: false,
+        }),
+        4 => cmd::docker::exec(cmd::docker::DockerCmd::Logs {
+            services: vec![],
+            tail: "100".to_string(),
+        }),
+        5 => cmd::docker::exec(cmd::docker::DockerCmd::Status),
+        6 => cmd::docker::exec(cmd::docker::DockerCmd::Shell { service: None }),
+        7 => cmd::docker::exec(cmd::docker::DockerCmd::Psql),
+        _ => Ok(()),
+    }
+}
 
-    // Re-parse as if these args were passed on CLI
-    let mut full_args = vec!["dev"];
-    full_args.extend(args);
-    let cli = Cli::parse_from(full_args);
-    if let Some(cmd) = cli.command {
-        run(cmd)
-    } else {
-        Ok(())
+fn db_submenu() -> Result<()> {
+    let items = vec![
+        "Run migrations",
+        "Reset database (drop + migrate)",
+        "Migration status",
+        "PostgreSQL shell",
+        "← Back",
+    ];
+
+    let choice = dialoguer::Select::new()
+        .with_prompt("Database")
+        .items(&items)
+        .default(0)
+        .interact()
+        .context("Cancelled")?;
+
+    match choice {
+        0 => cmd::db::exec(cmd::db::DbCmd::Migrate),
+        1 => cmd::db::exec(cmd::db::DbCmd::Reset),
+        2 => cmd::db::exec(cmd::db::DbCmd::Status),
+        3 => cmd::db::exec(cmd::db::DbCmd::Psql),
+        _ => Ok(()),
     }
 }
