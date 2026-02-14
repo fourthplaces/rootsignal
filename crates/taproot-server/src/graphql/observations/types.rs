@@ -13,6 +13,7 @@ pub struct GqlObservation {
     pub confidence: f32,
     pub investigation_id: Option<Uuid>,
     pub observed_at: DateTime<Utc>,
+    pub review_status: String,
 }
 
 impl From<taproot_domains::entities::Observation> for GqlObservation {
@@ -27,6 +28,7 @@ impl From<taproot_domains::entities::Observation> for GqlObservation {
             confidence: o.confidence,
             investigation_id: o.investigation_id,
             observed_at: o.observed_at,
+            review_status: o.review_status,
         }
     }
 }

@@ -80,6 +80,61 @@ impl Entity {
         Self::create(name, entity_type, description, website, pool).await
     }
 
+    pub async fn update(
+        id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        website: Option<&str>,
+        phone: Option<&str>,
+        email: Option<&str>,
+        pool: &PgPool,
+    ) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            UPDATE entities SET
+                name = COALESCE($2, name),
+                description = COALESCE($3, description),
+                website = COALESCE($4, website),
+                phone = COALESCE($5, phone),
+                email = COALESCE($6, email),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(description)
+        .bind(website)
+        .bind(phone)
+        .bind(email)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn archive(id: Uuid, pool: &PgPool) -> Result<Self> {
+        // Check for active listings
+        let count = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM listings WHERE entity_id = $1 AND status = 'active'",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+
+        if count.0 > 0 {
+            anyhow::bail!("Cannot archive entity with {} active listings", count.0);
+        }
+
+        sqlx::query_as::<_, Self>(
+            "UPDATE entities SET verified = false, updated_at = NOW() WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn list_all(pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>("SELECT * FROM entities ORDER BY name ASC")
             .fetch_all(pool)

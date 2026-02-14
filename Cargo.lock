@@ -2979,6 +2979,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "jsonwebtoken",
  "pgvector",
  "reqwest",
  "restate-sdk",
@@ -2993,6 +2994,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "twilio",
  "uuid",
 ]
 

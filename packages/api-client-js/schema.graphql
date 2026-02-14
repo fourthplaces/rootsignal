@@ -1,0 +1,477 @@
+"""
+Implement the DateTime<Utc> scalar
+
+The input/output is a string in RFC3339 format.
+"""
+scalar DateTime
+
+type GqlContact {
+	id: UUID!
+	name: String
+	title: String
+	email: String
+	phone: String
+	department: String
+	createdAt: DateTime!
+}
+
+type GqlEntity {
+	id: UUID!
+	name: String!
+	entityType: String!
+	description: String
+	website: String
+	phone: String
+	email: String
+	verified: Boolean!
+	sourceLocale: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	tags: [GqlTag!]!
+	locations: [GqlLocation!]!
+	contacts: [GqlContact!]!
+	schedules: [GqlSchedule!]!
+	notes: [GqlNote!]!
+	services: [GqlService!]!
+	listings: [GqlListing!]!
+}
+
+type GqlEntityConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [GqlEntityEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [GqlEntity!]!
+}
+
+"""
+An edge in a connection.
+"""
+type GqlEntityEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: GqlEntity!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type GqlHeatMapPoint {
+	id: UUID!
+	latitude: Float!
+	longitude: Float!
+	weight: Float!
+	entityType: String!
+	entityId: UUID!
+	generatedAt: DateTime!
+}
+
+type GqlInvestigation {
+	id: UUID!
+	subjectType: String!
+	subjectId: UUID!
+	trigger: String!
+	status: String!
+	summaryConfidence: Float
+	summary: String
+	startedAt: DateTime
+	completedAt: DateTime
+	createdAt: DateTime!
+	observations: [GqlObservation!]!
+}
+
+"""
+GraphQL listing type wrapping the raw Listing DB model.
+"""
+type GqlListing {
+	id: UUID!
+	title: String!
+	description: String
+	status: String!
+	entityId: UUID
+	serviceId: UUID
+	sourceUrl: String
+	locationText: String
+	sourceLocale: String!
+	expiresAt: DateTime
+	freshnessScore: Float!
+	relevanceScore: Int
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	entity: GqlEntity
+	service: GqlService
+	tags: [GqlTag!]!
+	locations: [GqlLocation!]!
+	schedules: [GqlSchedule!]!
+	contacts: [GqlContact!]!
+	notes: [GqlNote!]!
+	clusterSiblings: [GqlListing!]!
+	"""
+	Translated title for the requested locale (with fallback chain).
+	"""
+	translatedTitle: String!
+	"""
+	Translated description for the requested locale (with fallback chain).
+	"""
+	translatedDescription: String
+}
+
+type GqlListingConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [GqlListingEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [GqlListing!]!
+}
+
+"""
+An edge in a connection.
+"""
+type GqlListingEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: GqlListing!
+	distanceMiles: Float
+	zipCode: String
+	locationCity: String
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type GqlListingStats {
+	totalListings: Int!
+	activeListings: Int!
+	totalSources: Int!
+	totalSnapshots: Int!
+	totalExtractions: Int!
+	totalEntities: Int!
+	listingsByType: [GqlTagCount!]!
+	listingsByRole: [GqlTagCount!]!
+	listingsByCategory: [GqlTagCount!]!
+	listingsByDomain: [GqlTagCount!]!
+	listingsByUrgency: [GqlTagCount!]!
+	listingsByConfidence: [GqlTagCount!]!
+	listingsByCapacity: [GqlTagCount!]!
+	recent7D: Int!
+}
+
+type GqlLocation {
+	id: UUID!
+	name: String
+	addressLine1: String
+	city: String
+	state: String
+	postalCode: String
+	latitude: Float
+	longitude: Float
+	locationType: String
+	createdAt: DateTime!
+}
+
+type GqlNlqSearchResponse {
+	parsed: GqlParsedQuery!
+	results: GqlSearchResponse
+}
+
+type GqlNote {
+	id: UUID!
+	content: String!
+	severity: String!
+	sourceUrl: String
+	sourceType: String
+	isPublic: Boolean!
+	createdBy: String!
+	expiredAt: DateTime
+	createdAt: DateTime!
+}
+
+type GqlObservation {
+	id: UUID!
+	subjectType: String!
+	subjectId: UUID!
+	observationType: String!
+	value: JSON!
+	source: String!
+	confidence: Float!
+	investigationId: UUID
+	observedAt: DateTime!
+	reviewStatus: String!
+}
+
+type GqlParsedFilters {
+	signalDomain: String
+	audienceRole: String
+	category: String
+	listingType: String
+	urgency: String
+	capacityStatus: String
+	radiusRelevant: String
+	population: String
+}
+
+type GqlParsedQuery {
+	searchText: String
+	filters: GqlParsedFilters!
+	temporal: GqlParsedTemporal
+	intent: GqlSearchIntent!
+	reasoning: String!
+}
+
+type GqlParsedTemporal {
+	happeningOn: String
+	happeningBetween: String
+	dayOfWeek: String
+}
+
+type GqlSchedule {
+	id: UUID!
+	validFrom: DateTime
+	validTo: DateTime
+	dtstart: String
+	freq: String
+	byday: String
+	bymonthday: String
+	opensAt: NaiveTime
+	closesAt: NaiveTime
+	description: String
+	createdAt: DateTime!
+}
+
+enum GqlSearchIntent {
+	IN_SCOPE
+	OUT_OF_SCOPE
+	NEEDS_CLARIFICATION
+	KNOWLEDGE_QUESTION
+}
+
+type GqlSearchResponse {
+	results: [GqlSearchResult!]!
+	totalEstimate: Int!
+	mode: String!
+	tookMs: Int!
+}
+
+type GqlSearchResult {
+	id: UUID!
+	title: String!
+	description: String
+	status: String!
+	entityName: String
+	entityType: String
+	sourceUrl: String
+	locationText: String
+	createdAt: DateTime!
+	sourceLocale: String!
+	locale: String!
+	isFallback: Boolean!
+	semanticScore: Float
+	textScore: Float
+	combinedScore: Float!
+	distanceMiles: Float
+	entity: GqlEntity
+	tags: [GqlTag!]!
+	locations: [GqlLocation!]!
+	schedules: [GqlSchedule!]!
+}
+
+type GqlService {
+	id: UUID!
+	entityId: UUID!
+	name: String!
+	description: String
+	status: String!
+	url: String
+	email: String
+	phone: String
+	interpretationServices: String
+	applicationProcess: String
+	feesDescription: String
+	eligibilityDescription: String
+	sourceLocale: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+type GqlTag {
+	id: UUID!
+	kind: String!
+	value: String!
+	displayName: String
+}
+
+type GqlTagCount {
+	value: String!
+	count: Int!
+}
+
+type GqlTagKind {
+	id: UUID!
+	slug: String!
+	displayName: String!
+	description: String
+	allowedResourceTypes: [String!]!
+	required: Boolean!
+	isPublic: Boolean!
+	createdAt: DateTime!
+}
+
+type GqlTemporalDelta {
+	zipCode: String!
+	latitude: Float!
+	longitude: Float!
+	currentCount: Int!
+	previousCount: Int!
+	delta: Int!
+	changePct: Float!
+}
+
+type GqlZipDensity {
+	zipCode: String!
+	city: String!
+	latitude: Float!
+	longitude: Float!
+	listingCount: Int!
+	signalDomainCounts: JSON!
+}
+
+"""
+A scalar that can represent any JSON value.
+"""
+scalar JSON
+
+"""
+ISO 8601 time without timezone.
+Allows for the nanosecond precision and optional leap second representation.
+Format: %H:%M:%S%.f
+
+# Examples
+
+* `08:59:60.123`
+"""
+scalar NaiveTime
+
+"""
+Information about pagination in a connection
+"""
+type PageInfo {
+	"""
+	When paginating backwards, are there more items?
+	"""
+	hasPreviousPage: Boolean!
+	"""
+	When paginating forwards, are there more items?
+	"""
+	hasNextPage: Boolean!
+	"""
+	When paginating backwards, the cursor to continue.
+	"""
+	startCursor: String
+	"""
+	When paginating forwards, the cursor to continue.
+	"""
+	endCursor: String
+}
+
+"""
+Merged query root composing all domain query modules.
+"""
+type QueryRoot {
+	"""
+	Fetch a single listing by ID.
+	"""
+	listing(id: UUID!): GqlListing!
+	"""
+	Paginated listing connection with optional filters.
+	When `zipCode` and `radiusMiles` are provided, results are sorted by distance
+	and edge data includes `distanceMiles`, `zipCode`, and `locationCity`.
+	"""
+	listings(after: String, first: Int, signalDomain: String, audienceRole: String, category: String, listingType: String, urgency: String, confidence: String, capacityStatus: String, zipCode: String, radiusMiles: Float, since: DateTime): GqlListingConnection!
+	entity(id: UUID!): GqlEntity!
+	entities(after: String, first: Int): GqlEntityConnection!
+	"""
+	List tags, optionally filtered by kind (e.g., "listing_type", "category").
+	"""
+	tags(kind: String): [GqlTag!]!
+	"""
+	List all tag kind configurations (taxonomy metadata).
+	"""
+	tagKinds: [GqlTagKind!]!
+	observation(id: UUID!): GqlObservation!
+	investigation(id: UUID!): GqlInvestigation!
+	heatMapPoints(zipCode: String, radiusMiles: Float, entityType: String): [GqlHeatMapPoint!]!
+	"""
+	Signal density aggregated by zip code.
+	"""
+	signalDensity(signalDomain: String, category: String): [GqlZipDensity!]!
+	"""
+	Signal gaps: zip codes with lowest signal coverage.
+	"""
+	signalGaps(signalDomain: String, category: String, limit: Int): [GqlZipDensity!]!
+	"""
+	Temporal comparison: signal trends over time.
+	"""
+	signalTrends(period: String!, signalDomain: String): [GqlTemporalDelta!]!
+	listingStats: GqlListingStats!
+	"""
+	Hybrid search: combines semantic similarity (pgvector) with full-text search (tsvector).
+	When `q` is provided, embeds the query and runs RRF-ranked hybrid search.
+	When `q` is omitted, filters and sorts by relevance_score.
+	"""
+	search(q: String, signalDomain: String, audienceRole: String, category: String, listingType: String, urgency: String, confidence: String, capacityStatus: String, radiusRelevant: String, population: String, zipCode: String, radiusMiles: Float, lat: Float, lng: Float, radiusKm: Float, happeningOn: String, happeningBetween: String, dayOfWeek: String, limit: Int, offset: Int): GqlSearchResponse!
+	"""
+	Parse a natural language query into structured filters + search text.
+	Optionally auto-executes the search when `auto_search` is true.
+	"""
+	parseQuery(q: String!, autoSearch: Boolean): GqlNlqSearchResponse!
+	"""
+	Check the status of a running workflow.
+	"""
+	workflowStatus(workflowType: String!, workflowId: String!): String!
+}
+
+"""
+A UUID is a unique 128-bit number, stored as 16 octets. UUIDs are parsed as
+Strings within GraphQL. UUIDs are used to assign unique identifiers to
+entities without requiring a central allocating authority.
+
+# References
+
+* [Wikipedia: Universally Unique Identifier](http://en.wikipedia.org/wiki/Universally_unique_identifier)
+* [RFC4122: A Universally Unique Identifier (UUID) URN Namespace](http://tools.ietf.org/html/rfc4122)
+"""
+scalar UUID
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Provides a scalar specification URL for specifying the behavior of custom scalar types.
+"""
+directive @specifiedBy(url: String!) on SCALAR
+schema {
+	query: QueryRoot
+}

@@ -1,3 +1,4 @@
+pub mod mutations;
 pub mod types;
 
 use async_graphql::connection::*;

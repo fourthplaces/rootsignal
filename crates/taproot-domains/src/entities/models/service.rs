@@ -82,4 +82,37 @@ impl Service {
         }
         Self::create(entity_id, name, description, pool).await
     }
+
+    pub async fn update(
+        id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        url: Option<&str>,
+        email: Option<&str>,
+        phone: Option<&str>,
+        pool: &PgPool,
+    ) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            UPDATE services SET
+                name = COALESCE($2, name),
+                description = COALESCE($3, description),
+                url = COALESCE($4, url),
+                email = COALESCE($5, email),
+                phone = COALESCE($6, phone),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(description)
+        .bind(url)
+        .bind(email)
+        .bind(phone)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
 }

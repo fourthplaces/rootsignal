@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-use taproot_server::graphql;
 use taproot_server::routes;
 
 // Import Restate traits to bring `.serve()` into scope

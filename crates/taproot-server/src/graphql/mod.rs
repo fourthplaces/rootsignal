@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod contacts;
 pub mod context;
 pub mod entities;
@@ -14,6 +15,7 @@ pub mod search;
 pub mod sources;
 pub mod stats;
 pub mod tags;
+pub mod workflows;
 
 use std::sync::Arc;
 
@@ -33,13 +35,32 @@ pub struct QueryRoot(
     heat_map::HeatMapQuery,
     stats::StatsQuery,
     search::SearchQuery,
+    workflows::WorkflowQuery,
 );
 
-pub type AppSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
+/// Merged mutation root composing all domain mutation modules.
+#[derive(MergedObject, Default)]
+pub struct MutationRoot(
+    auth::AuthMutation,
+    listings::mutations::ListingMutation,
+    entities::mutations::EntityMutation,
+    observations::mutations::ObservationMutation,
+    workflows::WorkflowMutation,
+);
+
+pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
 pub fn build_schema(deps: Arc<ServerDeps>) -> AppSchema {
     let pool = deps.pool().clone();
-    Schema::build(QueryRoot::default(), EmptyMutation, EmptySubscription)
+
+    // Build JWT service if configured
+    let jwt_service = deps
+        .config
+        .jwt_secret
+        .as_ref()
+        .map(|secret| auth::jwt::JwtService::new(secret, "taproot".to_string()));
+
+    let mut builder = Schema::build(QueryRoot::default(), MutationRoot::default(), EmptySubscription)
         .data(pool.clone())
         .data(deps)
         // DataLoaders
@@ -70,8 +91,14 @@ pub fn build_schema(deps: Arc<ServerDeps>) -> AppSchema {
         .data(DataLoader::new(
             NotesForLoader { pool: pool.clone() },
             tokio::spawn,
-        ))
-        // Limits
+        ));
+
+    // Register JWT service if configured
+    if let Some(jwt) = jwt_service {
+        builder = builder.data(jwt);
+    }
+
+    builder
         .limit_depth(10)
         .limit_complexity(1000)
         .finish()

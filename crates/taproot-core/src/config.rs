@@ -36,6 +36,14 @@ pub struct AppConfig {
     pub cluster_batch_size: i64,
     pub hnsw_ef_search: i32,
 
+    // Auth
+    pub jwt_secret: Option<String>,
+    pub twilio_account_sid: Option<String>,
+    pub twilio_auth_token: Option<String>,
+    pub twilio_verify_service_sid: Option<String>,
+    pub admin_phone_numbers: Vec<String>,
+    pub test_identifier_enabled: bool,
+
     // CORS
     pub allowed_origins: Vec<String>,
 }
@@ -87,6 +95,20 @@ impl AppConfig {
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()
                 .unwrap_or(100),
+            jwt_secret: std::env::var("JWT_SECRET").ok(),
+            twilio_account_sid: std::env::var("TWILIO_ACCOUNT_SID").ok(),
+            twilio_auth_token: std::env::var("TWILIO_AUTH_TOKEN").ok(),
+            twilio_verify_service_sid: std::env::var("TWILIO_VERIFY_SERVICE_SID").ok(),
+            admin_phone_numbers: std::env::var("ADMIN_PHONE_NUMBERS")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.trim().to_string())
+                .collect(),
+            test_identifier_enabled: std::env::var("TEST_IDENTIFIER_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
             allowed_origins: std::env::var("ALLOWED_ORIGINS")
                 .unwrap_or_default()
                 .split(',')

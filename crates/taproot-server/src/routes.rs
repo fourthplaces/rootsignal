@@ -18,10 +18,19 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::graphql::{self, AppSchema};
+use crate::graphql::auth;
 use crate::graphql::context;
 
 pub fn build_router(deps: Arc<ServerDeps>, allowed_origins: &[String]) -> Router {
     let pool = deps.pool().clone();
+
+    // Build JWT service for cookie extraction in request handler
+    let jwt_service = deps
+        .config
+        .jwt_secret
+        .as_ref()
+        .map(|secret| auth::jwt::JwtService::new(secret, "taproot".to_string()));
+
     let schema = graphql::build_schema(deps);
 
     let cors = if allowed_origins.is_empty() {
@@ -51,13 +60,14 @@ pub fn build_router(deps: Arc<ServerDeps>, allowed_origins: &[String]) -> Router
         .route("/api/heatmap", get(api_heatmap))
         .route("/health", get(health))
         .layer(cors)
-        .with_state(AppState { pool, schema })
+        .with_state(AppState { pool, schema, jwt_service })
 }
 
 #[derive(Clone)]
 pub struct AppState {
     pool: PgPool,
     schema: AppSchema,
+    jwt_service: Option<auth::jwt::JwtService>,
 }
 
 async fn graphql_handler(
@@ -66,7 +76,14 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let locale = context::extract_locale(&headers, None);
-    let request = req.into_inner().data(locale);
+
+    // Extract auth claims from cookie if JWT is configured
+    let claims: Option<auth::jwt::Claims> = state.jwt_service.as_ref().and_then(|jwt| {
+        let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+        auth::middleware::extract_claims(jwt, cookie)
+    });
+
+    let request = req.into_inner().data(locale).data(claims);
     let span = tracing::info_span!("graphql_request");
     let _enter = span.enter();
     let response = state.schema.execute(request).await;

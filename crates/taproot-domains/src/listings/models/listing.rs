@@ -79,6 +79,76 @@ impl Listing {
         .map_err(Into::into)
     }
 
+    pub async fn create(
+        title: &str,
+        description: Option<&str>,
+        source_locale: &str,
+        entity_id: Option<Uuid>,
+        service_id: Option<Uuid>,
+        pool: &PgPool,
+    ) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            INSERT INTO listings (title, description, status, source_locale, entity_id, service_id)
+            VALUES ($1, $2, 'active', $3, $4, $5)
+            RETURNING *
+            "#,
+        )
+        .bind(title)
+        .bind(description)
+        .bind(source_locale)
+        .bind(entity_id)
+        .bind(service_id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn update(
+        id: Uuid,
+        title: Option<&str>,
+        description: Option<&str>,
+        source_locale: Option<&str>,
+        entity_id: Option<Option<Uuid>>,
+        service_id: Option<Option<Uuid>>,
+        pool: &PgPool,
+    ) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            UPDATE listings SET
+                title = COALESCE($2, title),
+                description = COALESCE($3, description),
+                source_locale = COALESCE($4, source_locale),
+                entity_id = CASE WHEN $5 THEN $6 ELSE entity_id END,
+                service_id = CASE WHEN $7 THEN $8 ELSE service_id END,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(title)
+        .bind(description)
+        .bind(source_locale)
+        .bind(entity_id.is_some())
+        .bind(entity_id.flatten())
+        .bind(service_id.is_some())
+        .bind(service_id.flatten())
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn archive(id: Uuid, pool: &PgPool) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            "UPDATE listings SET status = 'archived', updated_at = NOW() WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn count_active(pool: &PgPool) -> Result<i64> {
         let row = sqlx::query_as::<_, (i64,)>(
             "SELECT COUNT(*) FROM listings WHERE status = 'active'",

@@ -16,6 +16,7 @@ pub struct Observation {
     pub confidence: f32,
     pub investigation_id: Option<Uuid>,
     pub observed_at: DateTime<Utc>,
+    pub review_status: String,
 }
 
 impl Observation {
@@ -72,6 +73,35 @@ impl Observation {
         )
         .bind(investigation_id)
         .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn find_pending(limit: i64, pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(
+            "SELECT * FROM observations WHERE review_status = 'pending' ORDER BY observed_at DESC LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn find_by_id(id: Uuid, pool: &PgPool) -> Result<Option<Self>> {
+        sqlx::query_as::<_, Self>("SELECT * FROM observations WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_review_status(id: Uuid, status: &str, pool: &PgPool) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            "UPDATE observations SET review_status = $1 WHERE id = $2 RETURNING *",
+        )
+        .bind(status)
+        .bind(id)
+        .fetch_one(pool)
         .await
         .map_err(Into::into)
     }
