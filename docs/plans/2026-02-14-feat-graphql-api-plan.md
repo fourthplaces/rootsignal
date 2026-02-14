@@ -248,13 +248,13 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 
 **Tasks:**
 
-- [ ] Tune complexity budget — test realistic queries against the 1000-point limit, adjust per-field costs
-- [ ] Add `#[graphql(complexity = "first.unwrap_or(20) * child_complexity + 1")]` on all connection fields
-- [ ] Add tracing spans to GraphQL handler for observability (`tracing::instrument`)
-- [ ] Gate GraphiQL behind `config` flag (optional — schema is read-only and public)
-- [ ] Verify CORS works from browser origins
-- [ ] Deprecation: add `#[deprecated]` note to REST route comments, but do not remove them yet
-- [ ] Smoke test all query paths: listings (with/without geo, with/without filters, with/without locale), single listing with full relationship tree, entities, tags, stats, heat map, observations
+- [x] Tune complexity budget — test realistic queries against the 1000-point limit, adjust per-field costs
+- [x] Add `#[graphql(complexity = "first.unwrap_or(20) * child_complexity + 1")]` on all connection fields
+- [x] Add tracing spans to GraphQL handler for observability (`tracing::instrument`)
+- [x] Gate GraphiQL behind `config` flag (optional — schema is read-only and public)
+- [x] Verify CORS works from browser origins
+- [x] Deprecation: add `#[deprecated]` note to REST route comments, but do not remove them yet
+- [x] Smoke test all query paths: listings (with/without geo, with/without filters, with/without locale), single listing with full relationship tree, entities, tags, stats, heat map, observations
 
 ## Acceptance Criteria
 

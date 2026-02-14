@@ -40,7 +40,8 @@ pub fn build_router(pool: PgPool, allowed_origins: &[String]) -> Router {
     Router::new()
         .route("/", get(assessment_page))
         .route("/graphql", get(graphiql_handler).post(graphql_handler))
-        // REST API (deprecated — use GraphQL)
+        // REST API — deprecated, use GraphQL at /graphql instead.
+        // These routes will be removed in a future release.
         .route("/api/stats", get(api_stats))
         .route("/api/listings", get(api_listings))
         .route("/api/listings/:id/cluster", get(api_listing_cluster))
@@ -63,7 +64,13 @@ async fn graphql_handler(
 ) -> GraphQLResponse {
     let locale = context::extract_locale(&headers, None);
     let request = req.into_inner().data(locale);
-    state.schema.execute(request).await.into()
+    let span = tracing::info_span!("graphql_request");
+    let _enter = span.enter();
+    let response = state.schema.execute(request).await;
+    if !response.errors.is_empty() {
+        tracing::warn!(errors = ?response.errors, "GraphQL errors");
+    }
+    response.into()
 }
 
 async fn graphiql_handler() -> impl IntoResponse {
