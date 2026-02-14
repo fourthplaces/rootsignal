@@ -22,6 +22,7 @@ sqlx.workspace = true
 pgvector.workspace = true
 restate-sdk.workspace = true
 ai-client.workspace = true
+apify-client.workspace = true
 rootsignal-core.workspace = true
 url.workspace = true
 regex.workspace = true

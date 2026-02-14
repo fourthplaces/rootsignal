@@ -1,6 +1,9 @@
+pub mod facebook;
 pub mod firecrawl;
 pub mod http;
+pub mod instagram;
 pub mod tavily;
+pub mod x;
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -9,10 +12,12 @@ use rootsignal_core::{Ingestor, ValidatedIngestor, WebSearcher};
 /// Build an ingestor based on adapter name from source config.
 ///
 /// All URL-based ingestors are wrapped with `ValidatedIngestor` for SSRF protection.
+/// Apify-based ingestors hit api.apify.com only, so they skip SSRF wrapping.
 pub fn build_ingestor(
     adapter: &str,
     http_client: &reqwest::Client,
     firecrawl_api_key: Option<&str>,
+    apify_api_key: Option<&str>,
 ) -> Result<Arc<dyn Ingestor>> {
     match adapter {
         "firecrawl" => {
@@ -24,6 +29,21 @@ pub fn build_ingestor(
         "http" => {
             let ingestor = http::HttpIngestor::new(http_client.clone());
             Ok(Arc::new(ValidatedIngestor::new(ingestor)))
+        }
+        "apify_instagram" => {
+            let key = apify_api_key
+                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_instagram adapter"))?;
+            Ok(Arc::new(instagram::InstagramIngestor::new(key.to_string())))
+        }
+        "apify_facebook" => {
+            let key = apify_api_key
+                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_facebook adapter"))?;
+            Ok(Arc::new(facebook::FacebookIngestor::new(key.to_string())))
+        }
+        "apify_x" => {
+            let key = apify_api_key
+                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_x adapter"))?;
+            Ok(Arc::new(x::XIngestor::new(key.to_string())))
         }
         "tavily" => Err(anyhow::anyhow!(
             "Tavily is a search adapter, not an ingestor. Use build_web_searcher instead."

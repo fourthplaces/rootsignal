@@ -11,7 +11,7 @@ A polymorphic clustering system that groups duplicate listings and entities with
 
 ## Why This Approach
 
-The original framing was "dedup infrastructure" — detect and merge duplicates during normalization. But taproot is fundamentally a search engine over publicly available data. Search engines don't deduplicate, they rank. Duplicates from multiple sources are actually a positive signal (higher confidence, richer provenance).
+The original framing was "dedup infrastructure" — detect and merge duplicates during normalization. But rootsignal is fundamentally a search engine over publicly available data. Search engines don't deduplicate, they rank. Duplicates from multiple sources are actually a positive signal (higher confidence, richer provenance).
 
 Clustering gives us the grouping benefit without the complexity of merge/un-merge logic, human review queues, or inline dedup slowing down ingestion. It's read-side infrastructure — the write path stays dumb and fast.
 

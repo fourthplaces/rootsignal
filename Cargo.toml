@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "modules/ai-client",
+    "modules/apify-client",
     "modules/rootsignal-core",
     "modules/rootsignal-domains",
     "modules/rootsignal-server",
@@ -83,6 +84,7 @@ jsonwebtoken = "9"
 
 # Local crates
 ai-client = { path = "modules/ai-client" }
+apify-client = { path = "modules/apify-client" }
 rootsignal-core = { path = "modules/rootsignal-core" }
 rootsignal-domains = { path = "modules/rootsignal-domains" }
 twilio = { path = "modules/twilio-rs" }

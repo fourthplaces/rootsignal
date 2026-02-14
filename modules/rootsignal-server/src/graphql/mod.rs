@@ -58,7 +58,7 @@ pub fn build_schema(deps: Arc<ServerDeps>) -> AppSchema {
         .config
         .jwt_secret
         .as_ref()
-        .map(|secret| auth::jwt::JwtService::new(secret, "taproot".to_string()));
+        .map(|secret| auth::jwt::JwtService::new(secret, "rootsignal".to_string()));
 
     let mut builder = Schema::build(QueryRoot::default(), MutationRoot::default(), EmptySubscription)
         .data(pool.clone())

@@ -15,7 +15,7 @@ impl HttpIngestor {
     pub fn new(client: reqwest::Client) -> Self {
         Self {
             client,
-            user_agent: "TaprootBot/1.0".to_string(),
+            user_agent: "RootSignalBot/1.0".to_string(),
             rate_limit_ms: 200,
         }
     }

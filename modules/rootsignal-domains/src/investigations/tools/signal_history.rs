@@ -54,7 +54,7 @@ impl Tool for InternalSignalHistoryTool {
     async fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Query Taproot's internal database for signal history about an entity — how long we've tracked it, how many listings and sources reference it.".to_string(),
+            description: "Query Root Signal's internal database for signal history about an entity — how long we've tracked it, how many listings and sources reference it.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

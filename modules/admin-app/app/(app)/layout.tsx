@@ -27,7 +27,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <aside className="w-56 shrink-0 border-r border-gray-200 bg-white">
         <div className="p-4">
-          <h2 className="text-lg font-bold text-green-800">Taproot</h2>
+          <h2 className="text-lg font-bold text-green-800">Root Signal</h2>
         </div>
         <nav className="space-y-1 px-2">
           {NAV_ITEMS.map((item) => (

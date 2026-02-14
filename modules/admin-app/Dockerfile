@@ -20,8 +20,8 @@ COPY pnpm-workspace.yaml ./
 COPY modules/api-client-js modules/api-client-js
 COPY modules/admin-app modules/admin-app
 
-RUN pnpm --filter @taproot/api-client build 2>/dev/null || true
-RUN pnpm --filter @taproot/admin-app build
+RUN pnpm --filter @rootsignal/api-client build 2>/dev/null || true
+RUN pnpm --filter @rootsignal/admin-app build
 
 # Production
 FROM base AS runner

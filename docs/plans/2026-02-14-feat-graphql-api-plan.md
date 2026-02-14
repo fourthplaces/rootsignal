@@ -8,7 +8,7 @@ date: 2026-02-14
 
 ## Overview
 
-Add a GraphQL endpoint (`/graphql` + `/graphiql`) to the existing Axum server using `async-graphql`. This replaces the REST `/api/*` routes as the primary API surface for web, mobile, and third-party consumers. The schema exposes the full Taproot domain model as read-only, with cursor-based pagination, DataLoaders for N+1 prevention, and locale-aware translation fallback.
+Add a GraphQL endpoint (`/graphql` + `/graphiql`) to the existing Axum server using `async-graphql`. This replaces the REST `/api/*` routes as the primary API surface for web, mobile, and third-party consumers. The schema exposes the full Root Signal domain model as read-only, with cursor-based pagination, DataLoaders for N+1 prevention, and locale-aware translation fallback.
 
 ## Problem Statement / Motivation
 
@@ -45,7 +45,7 @@ GraphQL solves all of these: clients ask for exactly the data they need in a sin
 ### Module Structure
 
 ```
-modules/taproot-server/src/
+modules/rootsignal-server/src/
   main.rs              # Add schema construction, pass to router
   routes.rs            # Add /graphql routes alongside existing routes
   graphql/
@@ -131,27 +131,27 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 - [x] Add `async-graphql` and `async-graphql-axum` to workspace `Cargo.toml`
   - `async-graphql = { version = "7", features = ["dataloader", "chrono", "uuid"] }`
   - `async-graphql-axum = "7"`
-  - Add to `taproot-server/Cargo.toml` as `.workspace = true`
+  - Add to `rootsignal-server/Cargo.toml` as `.workspace = true`
 
-- [x] Create `modules/taproot-server/src/graphql/mod.rs`
+- [x] Create `modules/rootsignal-server/src/graphql/mod.rs`
   - Define `QueryRoot` as `#[derive(MergedObject, Default)]` composing domain query structs
   - Define `AppSchema` type alias
   - Implement `build_schema(pool: PgPool) -> AppSchema` with `.data(pool)`, `.limit_depth(10)`, `.limit_complexity(1000)`
 
-- [x] Create `modules/taproot-server/src/graphql/context.rs`
+- [x] Create `modules/rootsignal-server/src/graphql/context.rs`
   - `pub struct Locale(pub String)` newtype
   - `pub fn extract_locale(headers: &HeaderMap, explicit: Option<&str>) -> Locale` — reuse logic from `parse_accept_language`
 
-- [x] Create `modules/taproot-server/src/graphql/error.rs`
+- [x] Create `modules/rootsignal-server/src/graphql/error.rs`
   - `AppError` enum: `NotFound`, `Db(sqlx::Error)`, `InvalidInput`
   - `impl From<AppError> for async_graphql::Error` with error extensions (`code`, `status`)
 
-- [x] Create `modules/taproot-server/src/graphql/listings/types.rs`
+- [x] Create `modules/rootsignal-server/src/graphql/listings/types.rs`
   - `GqlListing` wrapping `Listing` fields (exclude `relevance_breakdown`)
   - Derive `SimpleObject` with `#[graphql(complex)]`
   - Custom `ListingEdge` with optional `distance_miles`, `zip_code`, `location_city`
 
-- [x] Create `modules/taproot-server/src/graphql/listings/mod.rs`
+- [x] Create `modules/rootsignal-server/src/graphql/listings/mod.rs`
   - `ListingQuery` with:
     - `listing(id: Uuid) -> Result<GqlListing>` — single lookup
     - `listings(first, after, locale, zipCode, radiusMiles, ...filters) -> Result<ListingConnection>` — cursor-paginated
@@ -175,7 +175,7 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 
 **Tasks:**
 
-- [x] Create `modules/taproot-server/src/graphql/loaders.rs` with DataLoader implementations:
+- [x] Create `modules/rootsignal-server/src/graphql/loaders.rs` with DataLoader implementations:
   - `EntityByIdLoader` — batch `SELECT * FROM entities WHERE id = ANY($1)`
   - `ServiceByIdLoader` — batch `SELECT * FROM services WHERE id = ANY($1)`
   - `TagsForLoader` — batch `SELECT * FROM taggables t JOIN tags ON ... WHERE (t.taggable_type, t.taggable_id) IN ...`
@@ -289,7 +289,7 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 - Existing `tower-http` already in workspace (for CORS)
 
 **Risks:**
-- **Compile time increase** — async-graphql's proc macros add to build times. Mitigated by keeping GraphQL types in the server crate only (not in taproot-domains).
+- **Compile time increase** — async-graphql's proc macros add to build times. Mitigated by keeping GraphQL types in the server crate only (not in rootsignal-domains).
 - **Polymorphic DataLoader complexity** — Composite `(String, Uuid)` keys for polymorphic associations require careful SQL (`WHERE (type, id) IN ...`). May need array unnesting for efficient batch queries on Postgres.
 - **Cursor pagination refactor** — Existing queries use `LIMIT/OFFSET`. Rewriting to keyset pagination requires modifying WHERE clauses and sort orders. The `ListingDetail` CTE query is particularly complex.
 
@@ -297,14 +297,14 @@ Add `tower-http` CORS layer to the Axum router using `config.allowed_origins` (a
 
 ### Internal References
 - Brainstorm: `docs/brainstorms/2026-02-14-graphql-api-brainstorm.md`
-- Current REST routes: `modules/taproot-server/src/routes.rs`
-- Listing models: `modules/taproot-domains/src/listings/models/listing.rs`
-- Entity models: `modules/taproot-domains/src/entities/models/entity.rs`
-- Domain module index: `modules/taproot-domains/src/lib.rs`
-- ServerDeps: `modules/taproot-core/src/deps.rs`
-- AppConfig: `modules/taproot-core/src/config.rs`
-- Translation model: `modules/taproot-domains/src/entities/models/translation.rs`
-- Heat map: `modules/taproot-domains/src/heat_map.rs`
+- Current REST routes: `modules/rootsignal-server/src/routes.rs`
+- Listing models: `modules/rootsignal-domains/src/listings/models/listing.rs`
+- Entity models: `modules/rootsignal-domains/src/entities/models/entity.rs`
+- Domain module index: `modules/rootsignal-domains/src/lib.rs`
+- ServerDeps: `modules/rootsignal-core/src/deps.rs`
+- AppConfig: `modules/rootsignal-core/src/config.rs`
+- Translation model: `modules/rootsignal-domains/src/entities/models/translation.rs`
+- Heat map: `modules/rootsignal-domains/src/heat_map.rs`
 
 ### External References
 - [async-graphql Book](https://async-graphql.github.io/async-graphql/en/)

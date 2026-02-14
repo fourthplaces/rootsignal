@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: taproot
+      POSTGRES_DB: rootsignal
     ports:
       - "5432:5432"
     volumes:
@@ -24,7 +24,7 @@ services:
     environment:
       - RESTATE_LOG_FILTER=info
 
-  taproot-server:
+  rootsignal-server:
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,12 +38,12 @@ services:
         condition: service_started
     environment:
       # Database
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/taproot
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/rootsignal
 
       # Server
       PORT: "9080"
       RESTATE_ADMIN_URL: http://restate:9070
-      RESTATE_SELF_URL: http://taproot-server:9080
+      RESTATE_SELF_URL: http://rootsignal-server:9080
       ALLOWED_ORIGINS: http://localhost:3000
 
       # API Keys
@@ -67,10 +67,10 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - taproot-server
+      - rootsignal-server
     environment:
       NEXT_PUBLIC_GRAPHQL_URL: http://localhost:9081/graphql
-      GRAPHQL_URL: http://taproot-server:9081/graphql
+      GRAPHQL_URL: http://rootsignal-server:9081/graphql
 
 volumes:
   pgdata:

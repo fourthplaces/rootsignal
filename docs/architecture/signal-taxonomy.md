@@ -1,8 +1,8 @@
-# Taproot — Signal Taxonomy
+# Root Signal — Signal Taxonomy
 
 ## Purpose
 
-This document defines the full ontology of signal that Taproot recognizes, classifies, and serves. It is the conceptual backbone for every extraction and classification decision the system makes. When a scraper pulls raw content and an LLM extracts structured signal, this taxonomy is the reference frame.
+This document defines the full ontology of signal that Root Signal recognizes, classifies, and serves. It is the conceptual backbone for every extraction and classification decision the system makes. When a scraper pulls raw content and an LLM extracts structured signal, this taxonomy is the reference frame.
 
 ---
 

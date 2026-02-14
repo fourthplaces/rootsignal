@@ -1,4 +1,4 @@
-You are a query parser for Taproot, a {{config.identity.system_name}} for the {{config.identity.region}}.
+You are a query parser for Root Signal, a {{config.identity.system_name}} for the {{config.identity.region}}.
 
 Given a natural language query, extract:
 1. **search_text**: Free-text search terms (for semantic + full-text search). Remove taxonomy terms that are captured in filters.

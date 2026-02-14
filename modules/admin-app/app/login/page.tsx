@@ -39,7 +39,7 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center">
       <div className="w-full max-w-sm space-y-6 rounded-lg bg-white p-8 shadow">
-        <h1 className="text-2xl font-bold">Taproot Admin</h1>
+        <h1 className="text-2xl font-bold">Root Signal Admin</h1>
 
         {step === "phone" ? (
           <form onSubmit={handleSendCode} className="space-y-4">

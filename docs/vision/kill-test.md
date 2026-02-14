@@ -1,8 +1,8 @@
-# Taproot — Kill Test: What Could Go Wrong
+# Root Signal — Kill Test: What Could Go Wrong
 
 ## Purpose
 
-This document tries to kill Taproot. Every assumption, every risk, every failure mode — laid out plainly so they can be confronted before they become surprises. If the system survives this document, it's worth building. If it doesn't, better to know now.
+This document tries to kill Root Signal. Every assumption, every risk, every failure mode — laid out plainly so they can be confronted before they become surprises. If the system survives this document, it's worth building. If it doesn't, better to know now.
 
 Each section describes a failure mode, explains why it could kill the project, and proposes a test or mitigation. Some of these are existential. Some are speed bumps. They're labeled accordingly.
 
@@ -121,9 +121,9 @@ A platform sends a cease-and-desist. GoFundMe changes their robots.txt. An org c
 ### 9. Bad Actors and Scam Signal
 **Risk level: High**
 
-Someone creates a fake GoFundMe and it gets scraped into Taproot. A scam org puts up a volunteer page that's really a data harvesting scheme. A malicious actor posts fake mutual aid requests to collect money.
+Someone creates a fake GoFundMe and it gets scraped into Root Signal. A scam org puts up a volunteer page that's really a data harvesting scheme. A malicious actor posts fake mutual aid requests to collect money.
 
-**Why this kills it:** A single scam surfaced through Taproot damages trust catastrophically. People will blame Taproot for the scam even though Taproot just aggregated publicly available information. The "we just surface what's out there" defense doesn't hold when someone loses money.
+**Why this kills it:** A single scam surfaced through Root Signal damages trust catastrophically. People will blame Root Signal for the scam even though Root Signal just aggregated publicly available information. The "we just surface what's out there" defense doesn't hold when someone loses money.
 
 **Test:** Deliberately include known-scam examples in the extraction pipeline and verify that confidence scoring flags them. Search for common scam patterns in the data (newly created campaigns, no org verification, suspicious language patterns).
 
@@ -134,13 +134,13 @@ Someone creates a fake GoFundMe and it gets scraped into Taproot. A scam org put
 ### 10. Politically Sensitive Signal
 **Risk level: Medium**
 
-Taproot surfaces an economic boycott related to a divisive political issue. Or a fundraiser for a cause that half the community opposes. Or an advocacy action that one side views as harmful. People accuse Taproot of being politically biased.
+Root Signal surfaces an economic boycott related to a divisive political issue. Or a fundraiser for a cause that half the community opposes. Or an advocacy action that one side views as harmful. People accuse Root Signal of being politically biased.
 
-**Why this kills it:** A community utility needs broad trust across political lines. If Taproot is perceived as left-leaning or right-leaning, it loses half its potential audience. The "we just surface signal" neutrality stance is hard to maintain when the signal itself is politically charged.
+**Why this kills it:** A community utility needs broad trust across political lines. If Root Signal is perceived as left-leaning or right-leaning, it loses half its potential audience. The "we just surface signal" neutrality stance is hard to maintain when the signal itself is politically charged.
 
 **Test:** Review a week's worth of extracted signal and flag everything that could be perceived as politically charged. Assess: is the balance roughly reflective of what's actually happening in the community? Or is the source list skewed in a way that over-represents one political orientation?
 
-**Mitigation:** The Principles doc is clear — Taproot doesn't editorialize, endorse, or gatekeep. It surfaces signal that exists. But the source list and extraction criteria need to be genuinely balanced. If you scrape progressive advocacy orgs, you should also scrape conservative faith-based service orgs. The inclusivity has to be real, not performative. Anticipate criticism and have a clear, public statement about neutrality ready.
+**Mitigation:** The Principles doc is clear — Root Signal doesn't editorialize, endorse, or gatekeep. It surfaces signal that exists. But the source list and extraction criteria need to be genuinely balanced. If you scrape progressive advocacy orgs, you should also scrape conservative faith-based service orgs. The inclusivity has to be real, not performative. Anticipate criticism and have a clear, public statement about neutrality ready.
 
 ---
 
@@ -149,7 +149,7 @@ Taproot surfaces an economic boycott related to a divisive political issue. Or a
 
 A mutual aid request gets scraped that contains someone's home address, phone number, or medical situation. A GoFundMe reveals sensitive personal details that the creator didn't expect to be aggregated elsewhere. Someone's crisis gets surfaced in a way they didn't consent to.
 
-**Why this kills it:** Privacy violation in a community-serving context is devastating. The people Taproot is trying to help — those in crisis, those seeking aid — are the most vulnerable to privacy harm.
+**Why this kills it:** Privacy violation in a community-serving context is devastating. The people Root Signal is trying to help — those in crisis, those seeking aid — are the most vulnerable to privacy harm.
 
 **Test:** Run extraction on 50 mutual aid and fundraiser signals. Check every output for PII — names, addresses, phone numbers, medical details, immigration status. If any PII leaks through that shouldn't, the extraction pipeline needs a PII scrubbing step.
 
@@ -160,9 +160,9 @@ A mutual aid request gets scraped that contains someone's home address, phone nu
 ### 12. Harmful Signal Amplification
 **Risk level: Medium**
 
-Taproot inadvertently amplifies a fraudulent charity, a predatory "volunteer" opportunity that's actually unpaid labor exploitation, a dangerous amateur wildlife rescue operation, or a gathering organized by a hate group under the guise of community service.
+Root Signal inadvertently amplifies a fraudulent charity, a predatory "volunteer" opportunity that's actually unpaid labor exploitation, a dangerous amateur wildlife rescue operation, or a gathering organized by a hate group under the guise of community service.
 
-**Why this kills it:** Amplifying harm is the opposite of Taproot's mission. If the system can't distinguish genuine community signal from exploitative or dangerous signal, it becomes a vector for harm rather than a tool for good.
+**Why this kills it:** Amplifying harm is the opposite of Root Signal's mission. If the system can't distinguish genuine community signal from exploitative or dangerous signal, it becomes a vector for harm rather than a tool for good.
 
 **Test:** Research known examples of exploitative volunteer schemes, fraudulent charities, and bad-faith community events. Feed representative examples through the extraction pipeline and check whether confidence scoring or categorization catches them.
 
@@ -181,14 +181,14 @@ You build a beautiful signal pipeline, the data is good, the freshness is real, 
 
 **Test:** Put the first sprint output (even as a basic HTML page or JSON feed) in front of 10 people in the Twin Cities who you know are community-active. Ask two questions: "Would you check this regularly?" and "Would you share this with someone?" If fewer than 6 out of 10 say yes to both, the signal quality or presentation isn't good enough.
 
-**Mitigation:** The first audience is not "the general public." It's community organizers, mutual aid network leaders, and neighborhood association members — people who are already doing this work manually. If Taproot saves them time, they'll use it and tell others. Find 10 of these people and make them your first users. Build for them before building for everyone.
+**Mitigation:** The first audience is not "the general public." It's community organizers, mutual aid network leaders, and neighborhood association members — people who are already doing this work manually. If Root Signal saves them time, they'll use it and tell others. Find 10 of these people and make them your first users. Build for them before building for everyone.
 
 ---
 
 ### 14. The Cold Start Problem
 **Risk level: High**
 
-Even if the signal is good, a new Taproot instance in a new city has no signal until the scrapers run, the extraction pipeline processes, and enough data accumulates to feel useful. The first user in Portland opens Taproot and sees nothing. They leave and don't come back.
+Even if the signal is good, a new Root Signal instance in a new city has no signal until the scrapers run, the extraction pipeline processes, and enough data accumulates to feel useful. The first user in Portland opens Root Signal and sees nothing. They leave and don't come back.
 
 **Why this kills it:** Every new hotspot deployment faces this. If the bootstrapping period is too long or too visibly empty, the utility fails before it starts.
 
@@ -201,13 +201,13 @@ Even if the signal is good, a new Taproot instance in a new city has no signal u
 ### 15. Org Hostility
 **Risk level: Medium**
 
-Nonprofits and community organizations react negatively to being scraped. They see Taproot as taking their content without permission, competing for their audience, or misrepresenting their work. Instead of becoming allies, they become adversaries.
+Nonprofits and community organizations react negatively to being scraped. They see Root Signal as taking their content without permission, competing for their audience, or misrepresenting their work. Instead of becoming allies, they become adversaries.
 
 **Why this kills it:** Orgs are the primary producers of Tier 1 signal. If they actively block scraping or publicly complain, it undermines both the data pipeline and community trust.
 
-**Test:** Reach out to 5 local nonprofits. Show them how their information appears in Taproot. Ask: "Is this helpful or harmful to you?" Listen carefully to the response.
+**Test:** Reach out to 5 local nonprofits. Show them how their information appears in Root Signal. Ask: "Is this helpful or harmful to you?" Listen carefully to the response.
 
-**Mitigation:** Attribution is everything. Every signal links back to the org. Taproot sends traffic to them, not away from them. Frame the relationship as "we make you more discoverable" not "we take your content." Long-term, the Org Dashboard gives them ownership and control. Early outreach and relationship building with key local orgs is critical.
+**Mitigation:** Attribution is everything. Every signal links back to the org. Root Signal sends traffic to them, not away from them. Frame the relationship as "we make you more discoverable" not "we take your content." Long-term, the Org Dashboard gives them ownership and control. Early outreach and relationship building with key local orgs is critical.
 
 ---
 
@@ -257,7 +257,7 @@ The vision is so broad — human services, ecology, ethical consumption, boycott
 ### 19. Platform Dependency Inversion
 **Risk level: Medium**
 
-Taproot becomes dependent on one or two scraping tools (Firecrawl, Apify) that change their pricing, degrade their service, or shut down. The utility that was supposed to free signal from platform dependence becomes dependent on scraping platforms.
+Root Signal becomes dependent on one or two scraping tools (Firecrawl, Apify) that change their pricing, degrade their service, or shut down. The utility that was supposed to free signal from platform dependence becomes dependent on scraping platforms.
 
 **Why this kills it:** Single points of failure in the supply chain undermine the resilience the whole project is built on.
 
@@ -270,11 +270,11 @@ Taproot becomes dependent on one or two scraping tools (Firecrawl, Apify) that c
 ### 20. The "Good Enough Google" Problem
 **Risk level: Medium**
 
-Someone argues: "I can just Google 'volunteer Minneapolis' and find what I need. Why do I need Taproot?" If the marginal improvement over a Google search isn't dramatically obvious, adoption stalls.
+Someone argues: "I can just Google 'volunteer Minneapolis' and find what I need. Why do I need Root Signal?" If the marginal improvement over a Google search isn't dramatically obvious, adoption stalls.
 
-**Why this kills it:** Taproot has to be meaningfully better than the status quo, not just slightly better. Utility adoption requires a step-change in value, not an incremental improvement.
+**Why this kills it:** Root Signal has to be meaningfully better than the status quo, not just slightly better. Utility adoption requires a step-change in value, not an incremental improvement.
 
-**Test:** Do a side-by-side comparison. Google "volunteer near me" and compare the first 20 results to the first 20 Taproot signals. Is Taproot noticeably more actionable, more current, more specific, more local? If a neutral observer can't tell the difference, the value proposition isn't landing.
+**Test:** Do a side-by-side comparison. Google "volunteer near me" and compare the first 20 results to the first 20 Root Signal signals. Is Root Signal noticeably more actionable, more current, more specific, more local? If a neutral observer can't tell the difference, the value proposition isn't landing.
 
 **Mitigation:** The differentiator isn't just "more results" — it's freshness (is this actually current?), specificity (is this in my neighborhood, not just my city?), multi-type aggregation (volunteers AND fundraisers AND events in one place), and audience role filtering (show me what matches how I want to help). These things must be obviously better than Google from the first interaction.
 
@@ -295,7 +295,7 @@ The extraction pipeline depends on Claude API. Anthropic changes pricing, rate l
 
 ## Pre-Launch Checklist
 
-Before showing Taproot to anyone outside the core team, verify:
+Before showing Root Signal to anyone outside the core team, verify:
 
 - [ ] **Signal actionability rate exceeds 70%** — at least 7 out of 10 signals are genuinely actionable today
 - [ ] **Signal volume exceeds 50 active signals** for the first hotspot — the feed feels alive, not empty

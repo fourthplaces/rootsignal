@@ -30,6 +30,7 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uui
                 adapter,
                 &deps.http_client,
                 deps.config.firecrawl_api_key.as_deref(),
+                deps.config.apify_api_key.as_deref(),
             )?;
 
             let url = source.url.as_deref().unwrap_or_default();
@@ -48,6 +49,11 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uui
                         .and_then(|v| v.as_u64())
                         .unwrap_or(50) as usize,
                 );
+
+            // Pass handle from source config for social adapters
+            if let Some(handle) = source.config.get("handle").and_then(|v| v.as_str()) {
+                config = config.with_option("handle", handle);
+            }
 
             // Apply include/exclude patterns from source config
             if let Some(includes) = source.config.get("include_patterns").and_then(|v| v.as_array()) {

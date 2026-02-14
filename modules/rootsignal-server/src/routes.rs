@@ -30,7 +30,7 @@ pub fn build_router(deps: Arc<ServerDeps>) -> Router {
         .config
         .jwt_secret
         .as_ref()
-        .map(|secret| auth::jwt::JwtService::new(secret, "taproot".to_string()));
+        .map(|secret| auth::jwt::JwtService::new(secret, "rootsignal".to_string()));
 
     let supported_locales = deps.file_config.identity.locales.clone();
     let schema = graphql::build_schema(deps);
@@ -324,7 +324,7 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
         r#"<!DOCTYPE html>
 <html>
 <head>
-    <title>Taproot - Signal Assessment</title>
+    <title>Root Signal - Signal Assessment</title>
     <style>
         body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }}
         h1 {{ color: #2d5016; }}
@@ -343,7 +343,7 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
     </style>
 </head>
 <body>
-    <h1>Taproot Signal Assessment</h1>
+    <h1>Root Signal Assessment</h1>
     <p>Milestone 1: Signal Proof</p>
 
     <div class="stats">

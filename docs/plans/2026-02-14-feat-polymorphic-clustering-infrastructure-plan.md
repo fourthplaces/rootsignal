@@ -14,7 +14,7 @@ This is **read-side infrastructure** — the write path stays dumb and fast.
 
 ## Problem Statement / Motivation
 
-Taproot scrapes the same real-world events and services from multiple sources (Facebook, Instagram, city websites, community boards). A single community dinner might appear 3-5 times from different platforms. Without grouping, search results are 70%+ noise from duplication.
+Root Signal scrapes the same real-world events and services from multiple sources (Facebook, Instagram, city websites, community boards). A single community dinner might appear 3-5 times from different platforms. Without grouping, search results are 70%+ noise from duplication.
 
 The current fingerprint dedup (SHA-256 of normalized title + org + time + location) only catches exact matches. Semantically identical listings with different wording slip through.
 
@@ -90,7 +90,7 @@ CREATE INDEX idx_listings_embedding ON listings
 **New activity: `generate_embeddings.rs`**
 
 ```
-modules/taproot-domains/src/extraction/activities/generate_embeddings.rs
+modules/rootsignal-domains/src/extraction/activities/generate_embeddings.rs
 ```
 
 - Query: `SELECT id, title, description FROM listings WHERE embedding IS NULL ORDER BY created_at ASC LIMIT $1`
@@ -106,9 +106,9 @@ modules/taproot-domains/src/extraction/activities/generate_embeddings.rs
 
 **Files changed:**
 - `migrations/017_clusters.sql` (new)
-- `modules/taproot-domains/src/extraction/activities/generate_embeddings.rs` (new)
-- `modules/taproot-domains/src/extraction/activities/mod.rs` (add pub mod)
-- `modules/taproot-domains/src/extraction/restate/mod.rs` (add embedding step to workflow)
+- `modules/rootsignal-domains/src/extraction/activities/generate_embeddings.rs` (new)
+- `modules/rootsignal-domains/src/extraction/activities/mod.rs` (add pub mod)
+- `modules/rootsignal-domains/src/extraction/restate/mod.rs` (add embedding step to workflow)
 
 ### Phase 2: Clustering Tables and Models
 
@@ -152,7 +152,7 @@ CREATE INDEX idx_cluster_items_cluster ON cluster_items(cluster_id);
 **Domain module:**
 
 ```
-modules/taproot-domains/src/clustering/
+modules/rootsignal-domains/src/clustering/
   mod.rs
   models/
     mod.rs
@@ -180,8 +180,8 @@ modules/taproot-domains/src/clustering/
 
 **Files changed:**
 - `migrations/017_clusters.sql` (continued)
-- `modules/taproot-domains/src/clustering/` (new module, 6 files)
-- `modules/taproot-domains/src/lib.rs` (add `pub mod clustering;`)
+- `modules/rootsignal-domains/src/clustering/` (new module, 6 files)
+- `modules/rootsignal-domains/src/lib.rs` (add `pub mod clustering;`)
 
 ### Phase 3: Clustering Algorithm
 
@@ -294,9 +294,9 @@ Implement as a standalone, testable function.
 - `petgraph` — connected components / union-find for cluster merging
 
 **Files changed:**
-- `modules/taproot-domains/src/clustering/activities/cluster_listings.rs` (new)
-- `modules/taproot-core/src/config.rs` (add clustering config fields)
-- `modules/taproot-domains/Cargo.toml` (add geo, strsim, petgraph deps)
+- `modules/rootsignal-domains/src/clustering/activities/cluster_listings.rs` (new)
+- `modules/rootsignal-core/src/config.rs` (add clustering config fields)
+- `modules/rootsignal-domains/Cargo.toml` (add geo, strsim, petgraph deps)
 
 ### Phase 4: Restate Workflow
 
@@ -323,8 +323,8 @@ pub trait ClusteringJob {
 **Triggering:** Chain from `ExtractWorkflow` completion, or call on-demand via Restate API.
 
 **Files changed:**
-- `modules/taproot-domains/src/clustering/restate/mod.rs` (new)
-- `modules/taproot-server/src/main.rs` (register workflow with Restate endpoint)
+- `modules/rootsignal-domains/src/clustering/restate/mod.rs` (new)
+- `modules/rootsignal-server/src/main.rs` (register workflow with Restate endpoint)
 
 ### Phase 5: Cluster-Aware Search API
 
@@ -372,8 +372,8 @@ GET /api/listings/:id/cluster
 ```
 
 **Files changed:**
-- `modules/taproot-domains/src/listings/models/listing.rs` (modify find_active query)
-- `modules/taproot-server/src/routes.rs` (add cluster provenance endpoint)
+- `modules/rootsignal-domains/src/listings/models/listing.rs` (modify find_active query)
+- `modules/rootsignal-server/src/routes.rs` (add cluster provenance endpoint)
 
 ## ERD
 
@@ -472,11 +472,11 @@ erDiagram
 ### Internal
 - Brainstorm: `docs/brainstorms/2026-02-14-clustering-infrastructure-brainstorm.md`
 - Polymorphic pattern: `migrations/011_tags.sql` (taggables)
-- Current dedup: `modules/taproot-domains/src/extraction/activities/normalize.rs:35-61`
-- Embedding service: `modules/taproot-core/src/deps.rs:10-14`
-- Restate workflow pattern: `modules/taproot-domains/src/extraction/restate/mod.rs`
-- Virtual object pattern: `modules/taproot-domains/src/scraping/restate/mod.rs:108`
-- Listing model: `modules/taproot-domains/src/listings/models/listing.rs`
+- Current dedup: `modules/rootsignal-domains/src/extraction/activities/normalize.rs:35-61`
+- Embedding service: `modules/rootsignal-core/src/deps.rs:10-14`
+- Restate workflow pattern: `modules/rootsignal-domains/src/extraction/restate/mod.rs`
+- Virtual object pattern: `modules/rootsignal-domains/src/scraping/restate/mod.rs:108`
+- Listing model: `modules/rootsignal-domains/src/listings/models/listing.rs`
 - Signal architecture: `docs/architecture/signal-service-architecture.md`
 
 ### External Research

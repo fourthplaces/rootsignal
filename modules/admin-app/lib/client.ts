@@ -1,4 +1,4 @@
-import { createClient } from "@taproot/api-client";
+import { createClient } from "@rootsignal/api-client";
 
 const GRAPHQL_URL = process.env.GRAPHQL_URL || "http://localhost:9081/graphql";
 

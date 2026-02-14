@@ -8,7 +8,7 @@ date: 2026-02-14
 
 ## Overview
 
-Transform the Taproot server from a hardcoded, env-var-configured binary into a generic engine driven by a TOML config file and externalized Markdown prompt templates. The server is invoked with `./server --config ./config/rootsignal.toml`. AI preambles live in `.md` files referenced from the TOML. All template variables use `{{double.brace}}` syntax with three resolution phases: config-time, runtime-dynamic, and runtime-DB.
+Transform the Root Signal server from a hardcoded, env-var-configured binary into a generic engine driven by a TOML config file and externalized Markdown prompt templates. The server is invoked with `./server --config ./config/rootsignal.toml`. AI preambles live in `.md` files referenced from the TOML. All template variables use `{{double.brace}}` syntax with three resolution phases: config-time, runtime-dynamic, and runtime-DB.
 
 ## Problem Statement / Motivation
 
@@ -106,7 +106,7 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 ```
 
-**New file: `modules/taproot-core/src/file_config.rs`**
+**New file: `modules/rootsignal-core/src/file_config.rs`**
 
 ```rust
 /// TOML-backed configuration loaded from disk.
@@ -175,15 +175,15 @@ pub fn load_config(path: &Path) -> Result<FileConfig> {
 
 **Files touched:**
 - `Cargo.toml` (workspace deps) — add `toml`, `clap`
-- `modules/taproot-core/Cargo.toml` — add `toml`, `clap` deps
-- `modules/taproot-core/src/file_config.rs` — new file
-- `modules/taproot-core/src/lib.rs` — re-export `file_config`
+- `modules/rootsignal-core/Cargo.toml` — add `toml`, `clap` deps
+- `modules/rootsignal-core/src/file_config.rs` — new file
+- `modules/rootsignal-core/src/lib.rs` — re-export `file_config`
 
 ### Phase 2: Template Engine
 
 A minimal template engine that resolves `{{...}}` variables against a context map.
 
-**New file: `modules/taproot-core/src/template.rs`**
+**New file: `modules/rootsignal-core/src/template.rs`**
 
 The engine:
 1. At load time: reads each `.md` file, resolves `{{config.*}}` variables by walking the TOML tree, caches the partially-resolved string.
@@ -209,14 +209,14 @@ Resolution of `{{config.*}}` walks the TOML `Value` tree by splitting on `.`:
 Literal `{{` is escaped as `\{{`.
 
 **Files touched:**
-- `modules/taproot-core/src/template.rs` — new file
-- `modules/taproot-core/src/lib.rs` — re-export
+- `modules/rootsignal-core/src/template.rs` — new file
+- `modules/rootsignal-core/src/lib.rs` — re-export
 
 ### Phase 3: Prompt Registry
 
 A struct that holds loaded + config-resolved prompt templates, ready for runtime variable injection.
 
-**New file: `modules/taproot-core/src/prompt_registry.rs`**
+**New file: `modules/rootsignal-core/src/prompt_registry.rs`**
 
 ```rust
 /// Holds pre-resolved prompt templates (config vars resolved, runtime vars intact).
@@ -259,14 +259,14 @@ impl PromptRegistry {
 ```
 
 **Files touched:**
-- `modules/taproot-core/src/prompt_registry.rs` — new file
-- `modules/taproot-core/src/lib.rs` — re-export
+- `modules/rootsignal-core/src/prompt_registry.rs` — new file
+- `modules/rootsignal-core/src/lib.rs` — re-export
 
 ### Phase 4: Wire into ServerDeps + AppConfig
 
 Update `ServerDeps` and `AppConfig` to use the new config system.
 
-**`modules/taproot-core/src/deps.rs`** — add `prompts: Arc<PromptRegistry>` and `file_config: Arc<FileConfig>` to `ServerDeps`:
+**`modules/rootsignal-core/src/deps.rs`** — add `prompts: Arc<PromptRegistry>` and `file_config: Arc<FileConfig>` to `ServerDeps`:
 
 ```rust
 pub struct ServerDeps {
@@ -283,22 +283,22 @@ pub struct ServerDeps {
 }
 ```
 
-**`modules/taproot-core/src/config.rs`** — slim down `AppConfig` to secrets-only. Remove fields that moved to `FileConfig` (`region_name`, `region_description`, `system_description`, `supported_locales`, clustering params, `port`, `allowed_origins`). Keep all API keys, DB URL, auth tokens, Restate URLs.
+**`modules/rootsignal-core/src/config.rs`** — slim down `AppConfig` to secrets-only. Remove fields that moved to `FileConfig` (`region_name`, `region_description`, `system_description`, `supported_locales`, clustering params, `port`, `allowed_origins`). Keep all API keys, DB URL, auth tokens, Restate URLs.
 
 **Files touched:**
-- `modules/taproot-core/src/deps.rs` — add `file_config` + `prompts` fields
-- `modules/taproot-core/src/config.rs` — remove fields that moved to TOML
+- `modules/rootsignal-core/src/deps.rs` — add `file_config` + `prompts` fields
+- `modules/rootsignal-core/src/config.rs` — remove fields that moved to TOML
 - Every site that reads migrated fields from `deps.config` → read from `deps.file_config`
 
 ### Phase 5: CLI + Server Startup
 
 Add `--config` flag to the server binary.
 
-**`modules/taproot-server/src/main.rs`:**
+**`modules/rootsignal-server/src/main.rs`:**
 
 ```rust
 #[derive(Parser)]
-#[command(name = "taproot-server")]
+#[command(name = "rootsignal-server")]
 struct Cli {
     /// Path to config TOML file
     #[arg(long, default_value = "./config/rootsignal.toml")]
@@ -315,35 +315,35 @@ Startup flow changes:
 6. Build `ServerDeps` with all three config sources
 7. Start servers using `file_config.server.port`
 
-**`modules/taproot-server/Cargo.toml`** — add `clap` dependency.
+**`modules/rootsignal-server/Cargo.toml`** — add `clap` dependency.
 
 **Files touched:**
-- `modules/taproot-server/src/main.rs` — add clap, rewrite startup
-- `modules/taproot-server/Cargo.toml` — add `clap`
+- `modules/rootsignal-server/src/main.rs` — add clap, rewrite startup
+- `modules/rootsignal-server/Cargo.toml` — add `clap`
 
 ### Phase 6: Update Prompt Call Sites
 
 Replace inline `format!()` prompts with `PromptRegistry` lookups.
 
-**`modules/taproot-domains/src/extraction/activities/extract.rs`:**
+**`modules/rootsignal-domains/src/extraction/activities/extract.rs`:**
 - Remove `system_preamble()` function (lines 24-68)
 - `build_system_prompt()` becomes: `deps.prompts.extraction_prompt(&taxonomy)`
 - Model name: `deps.file_config.models.extraction` instead of hardcoded `"gpt-4o"`
 
-**`modules/taproot-domains/src/search/nlq.rs`:**
+**`modules/rootsignal-domains/src/search/nlq.rs`:**
 - Remove `nlq_system_preamble()` function (lines 8-39)
 - System prompt becomes: `deps.prompts.nlq_prompt(&taxonomy, &today)`
 - Model name: `deps.file_config.models.nlq` instead of hardcoded `"gpt-4o-mini"`
 
-**`modules/taproot-domains/src/investigations/mod.rs`:**
+**`modules/rootsignal-domains/src/investigations/mod.rs`:**
 - Remove inline preamble string (line 66)
 - Use: `deps.prompts.investigation_prompt()`
 - Model name: `deps.file_config.models.investigation`
 
 **Files touched:**
-- `modules/taproot-domains/src/extraction/activities/extract.rs`
-- `modules/taproot-domains/src/search/nlq.rs`
-- `modules/taproot-domains/src/investigations/mod.rs`
+- `modules/rootsignal-domains/src/extraction/activities/extract.rs`
+- `modules/rootsignal-domains/src/search/nlq.rs`
+- `modules/rootsignal-domains/src/investigations/mod.rs`
 - Any other file reading `config.region_name`, `config.cluster_*`, etc.
 
 ### Phase 7: Ship Default Config
@@ -390,13 +390,13 @@ Create the default `config/` directory with the Twin Cities config as the shippe
 ## References & Research
 
 ### Internal References
-- Current config: `modules/taproot-core/src/config.rs`
-- ServerDeps: `modules/taproot-core/src/deps.rs`
-- Extraction prompt: `modules/taproot-domains/src/extraction/activities/extract.rs:24-68`
-- NLQ prompt: `modules/taproot-domains/src/search/nlq.rs:8-39`
-- Investigation prompt: `modules/taproot-domains/src/investigations/mod.rs:66`
-- Tag instructions builder: `modules/taproot-domains/src/entities/models/tag_kind.rs:53`
-- Server entry: `modules/taproot-server/src/main.rs`
+- Current config: `modules/rootsignal-core/src/config.rs`
+- ServerDeps: `modules/rootsignal-core/src/deps.rs`
+- Extraction prompt: `modules/rootsignal-domains/src/extraction/activities/extract.rs:24-68`
+- NLQ prompt: `modules/rootsignal-domains/src/search/nlq.rs:8-39`
+- Investigation prompt: `modules/rootsignal-domains/src/investigations/mod.rs:66`
+- Tag instructions builder: `modules/rootsignal-domains/src/entities/models/tag_kind.rs:53`
+- Server entry: `modules/rootsignal-server/src/main.rs`
 - Dev CLI (clap example): `dev/cli/src/main.rs`
 
 ### Brainstorm

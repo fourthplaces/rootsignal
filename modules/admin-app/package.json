@@ -1,5 +1,5 @@
 {
-  "name": "@taproot/admin-app",
+  "name": "@rootsignal/admin-app",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@taproot/api-client": "workspace:*",
+    "@rootsignal/api-client": "workspace:*",
     "next": "^16.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

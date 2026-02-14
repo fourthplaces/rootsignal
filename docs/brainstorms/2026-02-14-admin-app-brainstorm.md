@@ -7,11 +7,11 @@ topic: admin-app
 
 ## What We're Building
 
-Two new JS/TS packages in the existing taproot monorepo:
+Two new JS/TS packages in the existing rootsignal monorepo:
 
-1. **api-client-js** — A typed GraphQL client for the taproot server. Uses codegen to introspect the async-graphql schema and generate TypeScript types + query helpers. Thin fetch-based runtime (no Apollo/urql) since it's primarily called from Next.js server components.
+1. **api-client-js** — A typed GraphQL client for the rootsignal server. Uses codegen to introspect the async-graphql schema and generate TypeScript types + query helpers. Thin fetch-based runtime (no Apollo/urql) since it's primarily called from Next.js server components.
 
-2. **admin-app** — A Next.js app for administering the taproot platform. Covers three areas:
+2. **admin-app** — A Next.js app for administering the rootsignal platform. Covers three areas:
    - **CRUD** — create, edit, delete listings, entities, services, and related domain objects
    - **Review & moderation** — approve/reject scraped data, manage investigations and observations
    - **Monitor & operate** — view stats/heatmaps, manage scraping pipelines, trigger Restate workflows
@@ -21,7 +21,7 @@ Two new JS/TS packages in the existing taproot monorepo:
 Monorepo — new `modules/` directory at the repo root alongside `modules/`:
 
 ```
-taproot/
+rootsignal/
 ├── modules/           # Rust workspace (existing)
 ├── modules/
 │   ├── api-client-js/  # GraphQL codegen + typed client
@@ -39,12 +39,12 @@ Twilio Verify OTP flow, same pattern as mntogether:
 - Phone number input → Twilio sends SMS code → user verifies → JWT issued
 - JWT stored in HTTP-only cookie (24h expiry)
 - `is_admin` flag based on config list of admin phone numbers
-- Requires adding auth domain to taproot-server (Restate service + Twilio integration)
+- Requires adding auth domain to rootsignal-server (Restate service + Twilio integration)
 - The existing `twilio-rs` crate from mntogether can be reused or vendored
 
 ## API Client Approach
 
-- **graphql-codegen** introspects the running taproot server schema
+- **graphql-codegen** introspects the running rootsignal server schema
 - Generates TypeScript types for all 18+ GraphQL types (listings, entities, tags, etc.)
 - Generates typed query/mutation functions
 - Lightweight fetch-based runtime — no heavy client library
@@ -60,9 +60,9 @@ Twilio Verify OTP flow, same pattern as mntogether:
 
 ## Open Questions
 
-- Does taproot-server need GraphQL mutations added, or just queries? (Currently read-only schema)
+- Does rootsignal-server need GraphQL mutations added, or just queries? (Currently read-only schema)
 - Should the admin app include the Restate workflow triggers directly, or go through GraphQL mutations?
-- Reuse twilio-rs from mntogether as a git dependency, or copy it into taproot?
+- Reuse twilio-rs from mntogether as a git dependency, or copy it into rootsignal?
 
 ## Next Steps
 

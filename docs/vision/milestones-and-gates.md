@@ -1,4 +1,4 @@
-# Taproot — Milestones & Go/No-Go Gates
+# Root Signal — Milestones & Go/No-Go Gates
 
 ## How This Document Works
 
@@ -42,12 +42,12 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 - Signal expiration logic (events expire after date, fundraisers expire when funded, configurable defaults)
 - Tier 2 enrichment for a handful of sources (Instagram/Facebook for 5-10 key orgs) — freshness flags and capacity status only
 - Confidence scoring that combines source credibility, freshness, cross-source verification, and completeness
-- Side-by-side comparison tool — take 10 common queries ("volunteer Minneapolis," "donate Twin Cities," "community events this weekend") and compare Taproot results vs Google results
+- Side-by-side comparison tool — take 10 common queries ("volunteer Minneapolis," "donate Twin Cities," "community events this weekend") and compare Root Signal results vs Google results
 
 ### What to Assess
 - **Dedup effectiveness:** What percentage of duplicates are caught? Manually verify on 50 signals.
 - **Freshness after enrichment:** Did Tier 2 signals flag any stale Tier 1 listings? Did any capacity flags fire correctly?
-- **Side-by-side verdict:** For those 10 queries, is Taproot noticeably better? Be brutally honest. If it's a toss-up, the value proposition isn't landing yet.
+- **Side-by-side verdict:** For those 10 queries, is Root Signal noticeably better? Be brutally honest. If it's a toss-up, the value proposition isn't landing yet.
 - **Confidence scoring accuracy:** Do high-confidence signals actually feel more trustworthy than low-confidence ones?
 - **Tier 2 boundary:** Confirm that zero Tier 2 content appears in any output. Structural check, not just spot check.
 
@@ -69,7 +69,7 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 
 ### What to Do
 - Identify 10 community-active people in the Twin Cities — mutual aid organizers, nonprofit staff, neighborhood association members, community volunteers, faith community leaders. People who are already doing this work manually.
-- Put Taproot in front of each of them. Don't explain too much. Give them the URL, say "this is trying to help people find ways to get involved in their community," and watch what happens.
+- Put Root Signal in front of each of them. Don't explain too much. Give them the URL, say "this is trying to help people find ways to get involved in their community," and watch what happens.
 - Ask three questions:
   1. "Did you find anything here you didn't already know about?"
   2. "Would you check this again next week?"
@@ -108,14 +108,14 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 - **API usability:** Can the second consumer be built quickly using only the API? If building the second consumer requires hacking around API limitations, the abstraction isn't right.
 - **Signal reusability:** Does the same signal feel valuable in a different format? A volunteer opportunity that works on the Explorer should also work in a digest email. If it doesn't, the structured data isn't rich enough.
 - **Consumer reception:** Put the second consumer in front of 5 people (can overlap with Milestone 3 cohort). Does this format resonate with anyone more than Explorer? Different people prefer different surfaces — does the multi-consumer model hold?
-- **Infrastructure feel:** Does Taproot now feel like a utility that things plug into, or does it still feel like one app?
+- **Infrastructure feel:** Does Root Signal now feel like a utility that things plug into, or does it still feel like one app?
 
 ### Gate
 **Go:** Second consumer built easily from the API, signal translates across formats, at least some users prefer the new surface. The infrastructure thesis holds.
 
 **Adjust:** API works but is awkward for the second consumer. Refine the data model and API surface before adding more consumers.
 
-**Kill this path:** The signal that works on Explorer doesn't translate to other formats. The structured data isn't rich or flexible enough to be infrastructure. Reconsider whether Taproot is a product (one interface) rather than a utility (many interfaces).
+**Kill this path:** The signal that works on Explorer doesn't translate to other formats. The structured data isn't rich or flexible enough to be infrastructure. Reconsider whether Root Signal is a product (one interface) rather than a utility (many interfaces).
 
 ---
 
@@ -131,7 +131,7 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 
 ### What to Assess
 - **Ecological signal quality:** Does habitat restoration signal sit naturally alongside food shelf volunteer calls? Or does it feel forced — like two different products jammed together?
-- **Civic signal sensitivity:** Surface some boycott or advocacy signal. Show it to 5 people from Milestone 3. Does it feel appropriate? Does anyone object to Taproot carrying this? Does it undermine trust?
+- **Civic signal sensitivity:** Surface some boycott or advocacy signal. Show it to 5 people from Milestone 3. Does it feel appropriate? Does anyone object to Root Signal carrying this? Does it undermine trust?
 - **Direct intake quality:** How does Tier 3 signal compare to scraped signal? Is it higher quality as hypothesized? Or is it noisy and unmoderated?
 - **Second hotspot viability:** How long does bootstrapping take? Is the signal quality comparable to the Twin Cities, or does it depend on local knowledge to configure well?
 - **System stability:** As source count and signal volume increase, does the pipeline stay reliable? Or are you drowning in broken scrapers?
@@ -141,7 +141,7 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 
 **Adjust:** Some signal domains feel forced or problematic. Scope back to what's working. Maybe ecological fits but civic doesn't (or vice versa). Let reality tell you what belongs.
 
-**Kill this path:** Expanding scope degrades the core experience. More signal types create more noise, not more value. Taproot may be strongest as a focused tool (e.g., volunteer + events only) rather than an everything-signal utility. That's fine — reshape accordingly.
+**Kill this path:** Expanding scope degrades the core experience. More signal types create more noise, not more value. Root Signal may be strongest as a focused tool (e.g., volunteer + events only) rather than an everything-signal utility. That's fine — reshape accordingly.
 
 ---
 
@@ -152,17 +152,17 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 - Org Dashboard — let organizations claim, verify, and manage their presence. Post directly. See discovery metrics.
 - Community feedback loop — reporting bad signal, confirming good signal, suggesting sources
 - A sustainability model — whether that's grant applications, city/institutional partnerships, a managed hosting tier, or something else
-- Open-source packaging — can someone else deploy a Taproot hotspot from the repo with reasonable effort?
+- Open-source packaging — can someone else deploy a Root Signal hotspot from the repo with reasonable effort?
 
 ### What to Assess
 - **Org adoption:** Do organizations actually claim their profiles and post directly? How many of your Milestone 3 org contacts engage? If orgs don't participate, the system remains purely extractive (scraping) and misses the highest-quality signal source.
 - **Community feedback quality:** Do reports of bad signal actually improve the feed? Does the feedback loop work mechanistically?
 - **Sustainability path:** Is there a credible path to covering costs without compromising principles (no data selling, no engagement optimization, no paywalls on basic access)? Have you applied for or received any grants? Has any city or institution expressed willingness to pay?
 - **Self-hosting viability:** Can a technically capable community member deploy their own hotspot from the repo within a day? If not, what's blocking them?
-- **Organic growth:** Are new users finding Taproot without you personally putting it in front of them? Any inbound interest?
+- **Organic growth:** Are new users finding Root Signal without you personally putting it in front of them? Any inbound interest?
 
 ### Gate
-**Go:** Orgs are participating, feedback loops are improving signal quality, there's a credible sustainability path, and there are signs of organic interest. Taproot is becoming a living system, not a solo project.
+**Go:** Orgs are participating, feedback loops are improving signal quality, there's a credible sustainability path, and there are signs of organic interest. Root Signal is becoming a living system, not a solo project.
 
 **Adjust:** Some pieces are working but sustainability is unclear. Focus on the revenue/grant path before scaling further. A system that works but can't sustain itself eventually dies.
 

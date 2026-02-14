@@ -1,4 +1,4 @@
-# Taproot — Tavily Discovery Queries
+# Root Signal — Tavily Discovery Queries
 
 ## Purpose
 

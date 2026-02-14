@@ -1,0 +1,13 @@
+[package]
+name = "apify-client"
+version.workspace = true
+edition.workspace = true
+description = "Pure Apify REST API client"
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tracing.workspace = true

@@ -1,8 +1,8 @@
-# Taproot
+# Root Signal
 
-A community signal utility. Taproot discovers, concentrates, and serves actionable local signal — volunteer needs, fundraisers, mutual aid, events, ecological stewardship, civic action — through a GraphQL API that any application can build on.
+A community signal utility. Root Signal discovers, concentrates, and serves actionable local signal — volunteer needs, fundraisers, mutual aid, events, ecological stewardship, civic action — through a GraphQL API that any application can build on.
 
-The internet made information abundant but orientation scarce. There is no reliable place to answer: **where is life asking for help right now, and how do I show up?** Taproot is that place.
+The internet made information abundant but orientation scarce. There is no reliable place to answer: **where is life asking for help right now, and how do I show up?** Root Signal is that place.
 
 ## How It Works
 
@@ -13,7 +13,7 @@ Sources ──→ Engine (crawl, extract, geo-locate, dedup, store) ──→ Gr
             (prompts, taxonomy, sources, hotspots)
 ```
 
-Taproot crawls public sources (org websites, Eventbrite, GoFundMe, VolunteerMatch, government sites, environmental orgs, news outlets), extracts structured signal via AI, geo-localizes it, deduplicates it, and serves it through a typed API. The engine is domain-agnostic — what makes it serve community signal is configuration.
+Root Signal crawls public sources (org websites, Eventbrite, GoFundMe, VolunteerMatch, government sites, environmental orgs, news outlets), extracts structured signal via AI, geo-localizes it, deduplicates it, and serves it through a typed API. The engine is domain-agnostic — what makes it serve community signal is configuration.
 
 Signal is organized across four domains: **human services**, **ecological stewardship**, **civic & economic action**, and **knowledge & awareness**. Each signal is tagged with audience roles (volunteer, donor, attendee, advocate, citizen scientist, land steward, etc.) so people can filter by how they want to help.
 
@@ -23,9 +23,9 @@ Rust + TypeScript monorepo under `modules/`:
 
 | Module | Purpose |
 |--------|---------|
-| `taproot-server` | Axum HTTP server, GraphQL API (async-graphql), auth, routes |
-| `taproot-core` | Shared types, database queries, core logic |
-| `taproot-domains` | Domain models and business rules |
+| `rootsignal-server` | Axum HTTP server, GraphQL API (async-graphql), auth, routes |
+| `rootsignal-core` | Shared types, database queries, core logic |
+| `rootsignal-domains` | Domain models and business rules |
 | `ai-client` | LLM extraction client (Claude API) |
 | `twilio-rs` | Twilio integration for SMS/voice intake |
 | `api-client-js` | TypeScript GraphQL client with codegen |
@@ -62,7 +62,7 @@ docker compose up -d
 # (migrations are in ./migrations/, applied in order)
 
 # Start the server
-cargo run --bin taproot-server
+cargo run --bin rootsignal-server
 ```
 
 ### Dev CLI

@@ -1,8 +1,8 @@
-# Taproot — Architecture
+# Root Signal — Architecture
 
 ## The Engine
 
-Underneath Taproot is a general-purpose signal engine. It crawls sources, extracts structured data via AI, geo-localizes it, deduplicates it, and serves it through an API. The engine itself is domain-agnostic — it doesn't know or care whether it's extracting volunteer opportunities, real estate listings, or academic papers. What makes it do a specific thing is configuration:
+Underneath Root Signal is a general-purpose signal engine. It crawls sources, extracts structured data via AI, geo-localizes it, deduplicates it, and serves it through an API. The engine itself is domain-agnostic — it doesn't know or care whether it's extracting volunteer opportunities, real estate listings, or academic papers. What makes it do a specific thing is configuration:
 
 - **Sources** — what to crawl (a registry of URLs, APIs, and intake channels)
 - **Extraction prompts** — what to look for in raw content (the AI instructions that turn HTML into structured records)
@@ -11,9 +11,9 @@ Underneath Taproot is a general-purpose signal engine. It crawls sources, extrac
 
 All of these are data, not code. The engine is the same regardless of intent. The configuration is what makes it serve a specific purpose.
 
-## What Taproot Is
+## What Root Signal Is
 
-Taproot is one configuration of this engine — pointed at community and ecological signal. It answers one question at any geographic scale: **where is life asking for help, and how can people show up?**
+Root Signal is one configuration of this engine — pointed at community and ecological signal. It answers one question at any geographic scale: **where is life asking for help, and how can people show up?**
 
 This includes human community signal (volunteer needs, fundraisers, mutual aid, events), ecological signal (habitat restoration, pollution monitoring, wildlife rescue, land stewardship, climate action), and accountability signal (corporate behavior, environmental violations, institutional transparency). The pipeline is signal-agnostic — the same mechanics apply whether the need is a food shelf in Minneapolis or a coral reef restoration project in the Pacific.
 
@@ -26,7 +26,7 @@ Sources ──→ Engine (crawl, extract, geo-locate, dedup, store) ──→ AP
               (prompts, taxonomy, sources, hotspots)
 ```
 
-Taproot is the configuration. The engine is reusable. What gets built on top of the API is documented in the ecosystem doc.
+Root Signal is the configuration. The engine is reusable. What gets built on top of the API is documented in the ecosystem doc.
 
 ---
 
@@ -229,12 +229,12 @@ Source → Scraper/Connector → Raw Content Store (PostgreSQL jsonb)
 ### Step 2: AI Extraction (Claude)
 Raw content → structured signal. The crawler and extraction pipeline are intent-agnostic — the same mechanics apply whether the content is a volunteer listing, a fundraiser, an EPA violation record, or a church's public financial disclosures. The extraction prompt directs what to look for; the pipeline doesn't care what kind of signal it's extracting.
 
-This means extraction has two dimensions for any entity Taproot encounters:
+This means extraction has two dimensions for any entity Root Signal encounters:
 
 - **Opportunity signal** — "What does this organization need? What can people do here?" (volunteer shifts, donation needs, events, stewardship projects)
 - **Accountability signal** — "What should people know about this entity before engaging?" (environmental violations, labor practices, financial irregularities, discrimination policies, lawsuits, lobbying activity)
 
-Both are first-class signal. A church that runs a food shelf and also has a discrimination policy produces two signals. A corporation with a Superfund site and a community giving program produces two signals. Taproot surfaces both and lets people decide. The same extraction pipeline handles both — the only difference is the prompt's intent.
+Both are first-class signal. A church that runs a food shelf and also has a discrimination policy produces two signals. A corporation with a Superfund site and a community giving program produces two signals. Root Signal surfaces both and lets people decide. The same extraction pipeline handles both — the only difference is the prompt's intent.
 
 Two-pass system:
 
@@ -380,7 +380,7 @@ hotspots
 
 ## API Surface (The Service Interface)
 
-Taproot exposes a read API for consumers and a write API for producers.
+Root Signal exposes a read API for consumers and a write API for producers.
 
 ### Read API (for consumers — lenses, apps, dashboards)
 ```
@@ -568,7 +568,7 @@ Everything else layers on after this proves out.
 
 ```
                     ┌─────────────────────┐
-                    │       Taproot        │
+                    │       Root Signal        │
                     │    (signal utility)  │
                     │  "What does this     │
                     │   community need?"   │
@@ -586,6 +586,6 @@ Everything else layers on after this proves out.
      └───────────────┘ └──────────────┘ └──────────────┘
 ```
 
-Taproot is the gravity well. Everything orbits around it.
+Root Signal is the gravity well. Everything orbits around it.
 
 The signal it serves spans all of life — people helping people, people stewarding land, people restoring ecosystems, people showing up for the living world. The pipeline doesn't distinguish. It finds where help is needed, and it makes that findable.

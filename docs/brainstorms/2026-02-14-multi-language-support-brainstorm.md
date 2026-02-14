@@ -7,7 +7,7 @@ topic: multi-language-support
 
 ## What We're Building
 
-A decoupled translation and cross-language search layer for Taproot. Content scraped in any supported language is preserved in its original form, translated into all supported locales, and made discoverable via cross-language semantic search. English serves as the canonical embedding language — all vector search operates in a shared English vector space regardless of source language.
+A decoupled translation and cross-language search layer for Root Signal. Content scraped in any supported language is preserved in its original form, translated into all supported locales, and made discoverable via cross-language semantic search. English serves as the canonical embedding language — all vector search operates in a shared English vector space regardless of source language.
 
 Supported locales: English (`en`), Spanish (`es`), Somali (`so`), Haitian Creole (`ht`).
 

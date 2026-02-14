@@ -7,17 +7,17 @@ topic: ai-content-entity-verification
 
 ## What We're Building
 
-A unified observations system that replaces `signal_enrichments` and introduces agentic entity investigation. The system answers "what do we know about this thing, and how did we learn it?" for any subject in Taproot — signals, organizations, sources, or submitters.
+A unified observations system that replaces `signal_enrichments` and introduces agentic entity investigation. The system answers "what do we know about this thing, and how did we learn it?" for any subject in Root Signal — signals, organizations, sources, or submitters.
 
 ## Why This Matters
 
-AI-generated content is making it cheaper to produce fake signals at scale — fabricated GoFundMes, fake org websites, bogus event listings. Taproot's architecture has natural defenses (action URLs link back to source, multi-source verification, confidence scoring), but there's no investigation layer for the entities producing signal. The current `organizations` table has a binary `verified` boolean with no definition of what verified means.
+AI-generated content is making it cheaper to produce fake signals at scale — fabricated GoFundMes, fake org websites, bogus event listings. Root Signal's architecture has natural defenses (action URLs link back to source, multi-source verification, confidence scoring), but there's no investigation layer for the entities producing signal. The current `organizations` table has a binary `verified` boolean with no definition of what verified means.
 
 ## Key Decisions
 
-### 1. Taproot's natural position is strong but incomplete
+### 1. Root Signal's natural position is strong but incomplete
 
-As a signal concentrator (not a content platform), Taproot is less vulnerable to AI content than social platforms. Upstream platforms bear the primary fraud surface. But source entities still need verification — a fake nonprofit website gets scraped just like a real one.
+As a signal concentrator (not a content platform), Root Signal is less vulnerable to AI content than social platforms. Upstream platforms bear the primary fraud surface. But source entities still need verification — a fake nonprofit website gets scraped just like a real one.
 
 ### 2. Entity confidence is computed from multiple corroborating signals, not a binary flag
 
@@ -84,7 +84,7 @@ investigations
 - Cross-platform presence search
 - Physical address geocode verification
 - Web content quality analysis (stock photos, thin content, template detection)
-- Taproot signal history query (internal — how long have we seen this entity?)
+- Root Signal signal history query (internal — how long have we seen this entity?)
 
 ### Tier boundary preserved
 

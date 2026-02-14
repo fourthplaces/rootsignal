@@ -125,7 +125,7 @@ pub fn exec(cmd: DockerCmd) -> Result<()> {
         DockerCmd::Psql => {
             let mut c = compose(&root);
             c.args([
-                "exec", "postgres", "psql", "-U", "postgres", "-d", "taproot",
+                "exec", "postgres", "psql", "-U", "postgres", "-d", "rootsignal",
             ]);
             run(&mut c)
         }

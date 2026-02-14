@@ -5,9 +5,9 @@ use clap::{Parser, Subcommand};
 use console::style;
 use std::process::Command;
 
-/// Taproot developer CLI
+/// Root Signal developer CLI
 #[derive(Parser)]
-#[command(name = "dev", about = "Taproot developer tools")]
+#[command(name = "dev", about = "Root Signal developer tools")]
 struct Cli {
     /// Suppress interactive prompts
     #[arg(long, global = true)]

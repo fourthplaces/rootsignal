@@ -63,11 +63,11 @@ The mntogether project has a battle-tested multi-pass curator pipeline that solv
 
 ---
 
-## Proposed Approaches for Taproot
+## Proposed Approaches for Root Signal
 
 ### Approach A: Multi-Pass Analysis Pipeline (Recommended)
 
-Adapt mntogether's proven pattern to Taproot's extraction context. The core idea: **analysis → summary → safety check against analysis**.
+Adapt mntogether's proven pattern to Root Signal's extraction context. The core idea: **analysis → summary → safety check against analysis**.
 
 #### Pipeline Stages
 
@@ -298,7 +298,7 @@ This lets you get immediate quality improvements while building toward the full 
 ## Open Questions
 
 - Should we add a writer pass (like mntogether) to polish listing descriptions?
-- Do we need a proposal/staging layer, or is direct-to-listing okay for Taproot?
+- Do we need a proposal/staging layer, or is direct-to-listing okay for Root Signal?
 - How should we handle the existing `ExtractedListing` schema — evolve it or create new types?
 - Should the analysis stage detect page type (events page vs. services page vs. blog) to select different extraction strategies?
 

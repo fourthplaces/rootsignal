@@ -124,9 +124,10 @@ async fn main() -> Result<()> {
             "firecrawl",
             &http_client,
             config.firecrawl_api_key.as_deref(),
+            config.apify_api_key.as_deref(),
         )?
     } else {
-        rootsignal_domains::scraping::adapters::build_ingestor("http", &http_client, None)?
+        rootsignal_domains::scraping::adapters::build_ingestor("http", &http_client, None, None)?
     };
 
     // Web searcher

@@ -3,11 +3,11 @@ date: 2026-02-14
 topic: graphql-api
 ---
 
-# GraphQL API for Taproot
+# GraphQL API for Root Signal
 
 ## What We're Building
 
-A GraphQL endpoint (`/graphql` + `/graphiql` playground) on the existing Axum server, exposing the full Taproot domain model. This replaces the current REST `/api/*` routes and serves web, mobile, and third-party consumers. The assessment HTML page and health check remain as-is.
+A GraphQL endpoint (`/graphql` + `/graphiql` playground) on the existing Axum server, exposing the full Root Signal domain model. This replaces the current REST `/api/*` routes and serves web, mobile, and third-party consumers. The assessment HTML page and health check remain as-is.
 
 ## Why This Approach
 

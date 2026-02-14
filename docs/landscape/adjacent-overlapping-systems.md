@@ -1,10 +1,10 @@
-# Taproot — Adjacent & Overlapping Systems
+# Root Signal — Adjacent & Overlapping Systems
 
 ## Purpose
 
-This document maps the landscape of existing systems, platforms, and projects that occupy territory near Taproot. Understanding what exists — what works, what doesn't, where the gaps are — is essential for making good architectural decisions and for positioning Taproot clearly in the world.
+This document maps the landscape of existing systems, platforms, and projects that occupy territory near Root Signal. Understanding what exists — what works, what doesn't, where the gaps are — is essential for making good architectural decisions and for positioning Root Signal clearly in the world.
 
-For each system, we assess: what it does, who it serves, what signal it carries, where it falls short, and how Taproot relates to it.
+For each system, we assess: what it does, who it serves, what signal it carries, where it falls short, and how Root Signal relates to it.
 
 ---
 
@@ -17,7 +17,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Only captures organizations that actively post there. Heavily skewed toward larger, established nonprofits. Small grassroots groups, mutual aid networks, and informal community efforts are absent. Listings go stale — orgs post once and forget. No urgency signaling. No ecological stewardship signal. No connection to the broader landscape of need (fundraisers, events, boycotts, etc.).
 
-**Taproot's relationship:** VolunteerMatch is a Tier 1 source. Taproot scrapes its public listings and integrates them alongside signal from dozens of other sources. VolunteerMatch serves one audience role (volunteer) from one type of source (orgs that self-list). Taproot serves all roles from all sources.
+**Root Signal's relationship:** VolunteerMatch is a Tier 1 source. Root Signal scrapes its public listings and integrates them alongside signal from dozens of other sources. VolunteerMatch serves one audience role (volunteer) from one type of source (orgs that self-list). Root Signal serves all roles from all sources.
 
 ### Idealist.org
 **What it does:** Lists volunteer opportunities, nonprofit jobs, internships, and organizations. Internationally focused.
@@ -26,7 +26,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Same limitations as VolunteerMatch — only orgs that self-post. Stale listings. No real-time signal. No mutual aid, no grassroots, no ecological stewardship. The job board focus dilutes the volunteer signal.
 
-**Taproot's relationship:** Tier 1 source. Complementary to VolunteerMatch for broader coverage, especially internationally.
+**Root Signal's relationship:** Tier 1 source. Complementary to VolunteerMatch for broader coverage, especially internationally.
 
 ### Catchafire
 **What it does:** Matches skilled professionals with nonprofits for pro bono projects. Focuses on marketing, IT, HR, and strategy.
@@ -35,16 +35,16 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Very narrow focus — skilled professionals only. No general volunteering, no ecological, no civic action. Requires account creation and profile building. Closed ecosystem.
 
-**Taproot's relationship:** Tier 1 source for the `skilled_professional` audience role specifically. Taproot makes these opportunities discoverable alongside everything else.
+**Root Signal's relationship:** Tier 1 source for the `skilled_professional` audience role specifically. Root Signal makes these opportunities discoverable alongside everything else.
 
-### Taproot Foundation
+### Root Signal Foundation
 **What it does:** Connects nonprofits with skilled volunteers for pro bono service. Focus on marketing, strategy, HR, IT.
 
 **Signal it carries:** Pro bono project needs from nonprofits.
 
 **Where it falls short:** Narrow scope (skills-based only). Closed platform. Name overlap — worth noting for brand awareness and clarity.
 
-**Taproot's relationship:** Potential Tier 1 source. The name overlap is coincidental but worth addressing in communications. The Taproot Foundation serves one slice of one audience role; Taproot (the signal service) serves the entire spectrum.
+**Root Signal's relationship:** Potential Tier 1 source. The name overlap is coincidental but worth addressing in communications. The Root Signal Foundation serves one slice of one audience role; Root Signal (the signal service) serves the entire spectrum.
 
 ---
 
@@ -57,7 +57,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** GoFundMe is a fundraising tool, not a discovery tool. Finding relevant campaigns requires knowing to look. The platform optimizes for viral campaigns, not for systematic coverage of community need. Small campaigns for local needs get buried. No connection to other forms of action (volunteering, advocacy, stewardship).
 
-**Taproot's relationship:** GoFundMe is one of the most important Tier 1 sources. It carries high-quality, geo-localized, naturally-expiring signal about community needs. Taproot makes GoFundMe campaigns discoverable within the broader landscape of action.
+**Root Signal's relationship:** GoFundMe is one of the most important Tier 1 sources. It carries high-quality, geo-localized, naturally-expiring signal about community needs. Root Signal makes GoFundMe campaigns discoverable within the broader landscape of action.
 
 ### GiveSendGo
 **What it does:** Faith-based crowdfunding platform. Alternative to GoFundMe with fewer content restrictions.
@@ -66,7 +66,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Smaller platform, less structured data. Has become associated with politically controversial campaigns, which adds noise.
 
-**Taproot's relationship:** Tier 1 source. Signal is filtered through the same quality and relevance pipeline as everything else.
+**Root Signal's relationship:** Tier 1 source. Signal is filtered through the same quality and relevance pipeline as everything else.
 
 ### Open Collective
 **What it does:** Transparent fundraising for communities and open-source projects. Organizations manage finances openly.
@@ -75,7 +75,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Niche audience. More popular with tech and open-source communities than with general community organizations.
 
-**Taproot's relationship:** Tier 1 source, particularly valuable for the transparency of financial data.
+**Root Signal's relationship:** Tier 1 source, particularly valuable for the transparency of financial data.
 
 ---
 
@@ -88,7 +88,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Optimized for commercial events. Community events exist but are mixed in with concerts, conferences, and workshops. No distinction between "come to our marketing webinar" and "come help clean up the river." No connection to broader community need.
 
-**Taproot's relationship:** Tier 1 source via API. Taproot filters for community-relevant events and categorizes them by audience role and signal domain.
+**Root Signal's relationship:** Tier 1 source via API. Root Signal filters for community-relevant events and categorizes them by audience role and signal domain.
 
 ### Meetup
 **What it does:** Group-based recurring event platform. People form interest-based groups and schedule regular meetups.
@@ -97,7 +97,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Interest-based, not values-based. Meetup groups are organized around hobbies, careers, and social activities — not around community need. The signal is about "come hang out" not "come help." Limited API access.
 
-**Taproot's relationship:** Selective Tier 1 source. Some Meetup groups (volunteer groups, environmental groups, civic groups) carry relevant signal. Most don't. Taproot needs to filter carefully.
+**Root Signal's relationship:** Selective Tier 1 source. Some Meetup groups (volunteer groups, environmental groups, civic groups) carry relevant signal. Most don't. Root Signal needs to filter carefully.
 
 ### Facebook Events
 **What it does:** Event creation and discovery within the Facebook ecosystem.
@@ -106,7 +106,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Walled garden. Events are trapped inside Facebook's ecosystem. Fragmented across groups, pages, and personal profiles. Difficult to scrape at scale. Many events are private or semi-private.
 
-**Taproot's relationship:** Public Facebook Events are Tier 1 (scrape with care). Events inside closed groups are Tier 2 (enrichment only). Facebook carries signal that exists nowhere else — particularly from small, informal community groups — making it important despite the access challenges.
+**Root Signal's relationship:** Public Facebook Events are Tier 1 (scrape with care). Events inside closed groups are Tier 2 (enrichment only). Facebook carries signal that exists nowhere else — particularly from small, informal community groups — making it important despite the access challenges.
 
 ---
 
@@ -119,7 +119,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Chronically outdated. Information is entered manually by regional staff and rarely verified. Organizations change their hours, capacity, and offerings faster than 211 can track. No real-time signal. No volunteer opportunities. No events. No ecological signal. No grassroots or mutual aid coverage. The interface is often dated and difficult to use.
 
-**Taproot's relationship:** Tier 1 source for established service listings, but Taproot's Tier 2 enrichment (checking org social media for activity and updates) directly addresses 211's staleness problem. Where 211 is a static directory, Taproot is a living signal system.
+**Root Signal's relationship:** Tier 1 source for established service listings, but Root Signal's Tier 2 enrichment (checking org social media for activity and updates) directly addresses 211's staleness problem. Where 211 is a static directory, Root Signal is a living signal system.
 
 ### Nextdoor
 **What it does:** Neighborhood-based social network. Residents post to their local community — help requests, recommendations, lost pets, complaints, events.
@@ -128,7 +128,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Massive noise-to-signal ratio. Dominated by complaints, lost pet posts, and heated neighborhood arguments. Community help signal exists but is buried. Walled garden — requires account creation and address verification. Algorithmically sorted feed buries time-sensitive signal. Corporate-owned with ad-driven revenue model.
 
-**Taproot's relationship:** Very limited scraping potential (mostly behind login). Some public-facing pages may be Tier 1. If accessible, the community help and event signal would be valuable, but the noise filtering required is substantial.
+**Root Signal's relationship:** Very limited scraping potential (mostly behind login). Some public-facing pages may be Tier 1. If accessible, the community help and event signal would be valuable, but the noise filtering required is substantial.
 
 ### Patch.com
 **What it does:** Hyperlocal news and events coverage for suburban and small-town communities across the US.
@@ -137,7 +137,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Quality varies dramatically by region. Some Patch outlets are active and well-maintained; others are ghost towns. Limited to areas where Patch has coverage. Ad-heavy experience.
 
-**Taproot's relationship:** Tier 1 source for events and community news where active. Useful for suburban and small-town signal that doesn't appear on bigger platforms.
+**Root Signal's relationship:** Tier 1 source for events and community news where active. Useful for suburban and small-town signal that doesn't appear on bigger platforms.
 
 ---
 
@@ -150,7 +150,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Observation-only. No action signal — it tells you what's there but not what to do about it. Not designed for discovering volunteer opportunities or stewardship events.
 
-**Taproot's relationship:** Tier 1 source via API. iNaturalist data can enrich ecological hotspots with biodiversity context. An invasive species observation near a restoration site connects the "what's happening" (iNaturalist) with the "what can I do" (Taproot).
+**Root Signal's relationship:** Tier 1 source via API. iNaturalist data can enrich ecological hotspots with biodiversity context. An invasive species observation near a restoration site connects the "what's happening" (iNaturalist) with the "what can I do" (Root Signal).
 
 ### Zooniverse
 **What it does:** The world's largest platform for people-powered research. Users contribute to real scientific research by classifying images, transcribing data, and more.
@@ -159,7 +159,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Not geo-localized for the most part. Many projects are remote-participation only. No connection to local community action.
 
-**Taproot's relationship:** Tier 1 source for the `citizen_scientist` audience role. Zooniverse projects that have local geographic relevance get surfaced alongside field-based opportunities.
+**Root Signal's relationship:** Tier 1 source for the `citizen_scientist` audience role. Zooniverse projects that have local geographic relevance get surfaced alongside field-based opportunities.
 
 ### Surfrider Foundation / Ocean Conservancy / River Keeper Networks
 **What they do:** Environmental organizations focused on coastline, ocean, and waterway protection. Run volunteer programs, cleanups, monitoring, and advocacy.
@@ -168,7 +168,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Each operates its own website and event system. Signal is fragmented across dozens of chapter sites. No unified discovery experience.
 
-**Taproot's relationship:** Tier 1 sources — each chapter site scraped individually. Taproot unifies their signal into a single searchable landscape alongside all other ecological stewardship opportunities.
+**Root Signal's relationship:** Tier 1 sources — each chapter site scraped individually. Root Signal unifies their signal into a single searchable landscape alongside all other ecological stewardship opportunities.
 
 ### EPA Environmental Justice Screening (EJScreen) / State Environmental Agencies
 **What they do:** Government environmental data, monitoring, and program administration.
@@ -177,7 +177,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Dense, technical, and difficult for non-specialists to parse. Action opportunities are buried in bureaucratic processes. Volunteer programs exist but are poorly publicized.
 
-**Taproot's relationship:** Tier 1 data source for ecological hotspot identification and enrichment. EPA data helps identify where environmental signal should be concentrated. Volunteer programs and public comment periods are actionable signal that gets extracted and served.
+**Root Signal's relationship:** Tier 1 data source for ecological hotspot identification and enrichment. EPA data helps identify where environmental signal should be concentrated. Volunteer programs and public comment periods are actionable signal that gets extracted and served.
 
 ---
 
@@ -190,7 +190,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Fashion-only. No coverage of food, household products, electronics, or other consumer categories. Standalone app with no connection to broader community action.
 
-**Taproot's relationship:** Conceptual peer for the Steward lens. Demonstrates that ethical consumption signal has demand. Taproot's broader approach would cover all consumer categories and connect personal behavior change to community and ecological action.
+**Root Signal's relationship:** Conceptual peer for the Steward lens. Demonstrates that ethical consumption signal has demand. Root Signal's broader approach would cover all consumer categories and connect personal behavior change to community and ecological action.
 
 ### B Corp Directory
 **What it does:** Certifies companies meeting high standards of social and environmental performance. Public directory of certified B Corps.
@@ -199,7 +199,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Only covers certified companies (self-selected). Many ethical businesses aren't B Corp certified. Doesn't cover boycotts, active campaigns, or corporate accountability investigations.
 
-**Taproot's relationship:** Tier 1 source for positive ethical consumption signal. "Buy from these" alongside "stop buying from those."
+**Root Signal's relationship:** Tier 1 source for positive ethical consumption signal. "Buy from these" alongside "stop buying from those."
 
 ### Buycott / Ethical Consumer
 **What they do:** Apps and publications that track boycotts and ethical consumption campaigns.
@@ -208,7 +208,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Niche audiences. Buycott has had maintenance issues. Ethical Consumer is UK-focused and paywalled. Neither connects personal consumption to community action.
 
-**Taproot's relationship:** Conceptual overlap for the `advocate` and `conscious_consumer` roles. Taproot would aggregate this signal alongside everything else rather than requiring a separate app.
+**Root Signal's relationship:** Conceptual overlap for the `advocate` and `conscious_consumer` roles. Root Signal would aggregate this signal alongside everything else rather than requiring a separate app.
 
 ---
 
@@ -221,7 +221,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Tech-focused. The brigade model has weakened in recent years. Projects are often developer-oriented rather than community-oriented.
 
-**Taproot's relationship:** Philosophical alignment. Taproot could be a Code for America brigade project or partner. Civic tech volunteers are a natural audience for Signal Match.
+**Root Signal's relationship:** Philosophical alignment. Root Signal could be a Code for America brigade project or partner. Civic tech volunteers are a natural audience for Signal Match.
 
 ### 311 Systems / Municipal Platforms
 **What they do:** Allow residents to report issues (potholes, graffiti, broken streetlights) and request city services.
@@ -230,7 +230,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Complaint-oriented, not contribution-oriented. "What's wrong" not "how can I help." No volunteer matching, no ecological signal, no mutual aid, no fundraising.
 
-**Taproot's relationship:** Taproot is the positive counterpart to 311. Where 311 handles "report a problem," Taproot handles "find a way to contribute." A city could run both, feeding them into a unified view of community need and community capacity.
+**Root Signal's relationship:** Root Signal is the positive counterpart to 311. Where 311 handles "report a problem," Root Signal handles "find a way to contribute." A city could run both, feeding them into a unified view of community need and community capacity.
 
 ### Open311 / GovTech Platforms
 **What they do:** Standardized API for municipal service requests. Various government technology platforms for digital services.
@@ -239,7 +239,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Adoption varies wildly by city. Most are service-delivery focused, not community-engagement focused.
 
-**Taproot's relationship:** Potential integration point. Cities using Open311 could feed signal into Taproot, and Taproot could feed signal back into municipal dashboards.
+**Root Signal's relationship:** Potential integration point. Cities using Open311 could feed signal into Root Signal, and Root Signal could feed signal back into municipal dashboards.
 
 ---
 
@@ -252,7 +252,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Directory-level only. Doesn't track what individual networks currently need. Static listings. Many listed networks have become dormant since the 2020 surge.
 
-**Taproot's relationship:** Tier 1 source for discovering mutual aid networks. Taproot's Tier 2 enrichment (checking network social media activity) can flag which networks are actually active.
+**Root Signal's relationship:** Tier 1 source for discovering mutual aid networks. Root Signal's Tier 2 enrichment (checking network social media activity) can flag which networks are actually active.
 
 ### Buy Nothing Groups
 **What they do:** Hyperlocal gift economy groups where neighbors give and receive items for free.
@@ -261,7 +261,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Primarily on Facebook (walled garden). Each group operates independently. No aggregation across groups. No searchability from outside.
 
-**Taproot's relationship:** Tier 2 enrichment source (Facebook Groups). Demonstrates the kind of hyperlocal, neighbor-to-neighbor signal that the Commons would eventually serve natively.
+**Root Signal's relationship:** Tier 2 enrichment source (Facebook Groups). Demonstrates the kind of hyperlocal, neighbor-to-neighbor signal that the Commons would eventually serve natively.
 
 ### Community Fridges / Little Free Pantries / Mutual Aid Infrastructure
 **What they do:** Physical infrastructure for community sharing — public fridges, pantries, libraries, tool libraries.
@@ -270,7 +270,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Information is scattered across individual Instagram accounts, Google Maps pins, and word of mouth. No unified tracking of what's stocked, what's needed, or when.
 
-**Taproot's relationship:** High-value Tier 1 and Tier 2 signal. Taproot could become the first unified map of community sharing infrastructure with real-time status via social media enrichment.
+**Root Signal's relationship:** High-value Tier 1 and Tier 2 signal. Root Signal could become the first unified map of community sharing infrastructure with real-time status via social media enrichment.
 
 ---
 
@@ -283,26 +283,26 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Evaluation-focused, not action-focused. Tells you if an org is well-run, not what they need right now. No real-time signal. No volunteer matching. No event discovery.
 
-**Taproot's relationship:** Potential enrichment source. Charity Navigator data could boost confidence scores for organizations in the Taproot system. "This org is well-rated AND they need volunteers this Saturday."
+**Root Signal's relationship:** Potential enrichment source. Charity Navigator data could boost confidence scores for organizations in the Root Signal system. "This org is well-rated AND they need volunteers this Saturday."
 
 ---
 
 ## The White Space — What Doesn't Exist
 
-Taproot occupies territory that no existing system covers:
+Root Signal occupies territory that no existing system covers:
 
 **No system aggregates across signal types.** VolunteerMatch has volunteers. GoFundMe has fundraisers. Eventbrite has events. iNaturalist has observations. No system brings all of these together into a unified signal landscape.
 
-**No system aggregates across platforms.** Signal is trapped in the platform where it was created. Taproot reads from all of them.
+**No system aggregates across platforms.** Signal is trapped in the platform where it was created. Root Signal reads from all of them.
 
-**No system serves all audience roles.** Existing tools serve one role (volunteer, donor, attendee). Taproot serves the full spectrum from volunteer to conscious consumer to citizen scientist.
+**No system serves all audience roles.** Existing tools serve one role (volunteer, donor, attendee). Root Signal serves the full spectrum from volunteer to conscious consumer to citizen scientist.
 
-**No system spans human and ecological signal.** Volunteer platforms don't include environmental stewardship. Environmental platforms don't include mutual aid. Taproot treats both as first-class.
+**No system spans human and ecological signal.** Volunteer platforms don't include environmental stewardship. Environmental platforms don't include mutual aid. Root Signal treats both as first-class.
 
-**No system provides real-time signal freshness.** Most directories go stale. Taproot's Tier 2 enrichment and continuous re-scraping keeps signal alive.
+**No system provides real-time signal freshness.** Most directories go stale. Root Signal's Tier 2 enrichment and continuous re-scraping keeps signal alive.
 
-**No system is designed as open infrastructure.** Every existing platform is a closed product. Taproot is an API — a utility that any application can build on.
+**No system is designed as open infrastructure.** Every existing platform is a closed product. Root Signal is an API — a utility that any application can build on.
 
-**No system connects personal behavior to community action.** Ethical consumption apps are disconnected from volunteer platforms which are disconnected from civic engagement tools. Taproot is the substrate that connects them all.
+**No system connects personal behavior to community action.** Ethical consumption apps are disconnected from volunteer platforms which are disconnected from civic engagement tools. Root Signal is the substrate that connects them all.
 
-This is the gap. This is where Taproot lives.
+This is the gap. This is where Root Signal lives.

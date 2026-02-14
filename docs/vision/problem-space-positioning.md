@@ -1,4 +1,4 @@
-# Taproot — Problem Space & Positioning
+# Root Signal — Problem Space & Positioning
 
 ## The Core Problem
 
@@ -8,7 +8,7 @@ The internet has made information abundant but orientation scarce. There is no r
 
 ---
 
-## Problems Taproot Addresses
+## Problems Root Signal Addresses
 
 ### 1. Fragmentation of Community Signal
 
@@ -68,9 +68,9 @@ The platforms where community signal currently lives — Facebook, Instagram, Ti
 
 ---
 
-## Where Taproot Fits
+## Where Root Signal Fits
 
-Taproot is not a social network. It's not a nonprofit directory. It's not a search engine in the traditional sense. It's a **signal utility** — infrastructure that sits beneath any number of applications and surfaces.
+Root Signal is not a social network. It's not a nonprofit directory. It's not a search engine in the traditional sense. It's a **signal utility** — infrastructure that sits beneath any number of applications and surfaces.
 
 It occupies a space that doesn't currently exist: the layer between the fragmented platforms where signal originates and the people and communities who want to act on it.
 
@@ -92,7 +92,7 @@ It occupies a space that doesn't currently exist: the layer between the fragment
             │                                               │
             │          ┌─────────────────────┐              │
             │          │                     │              │
-            └─────────►│      Taproot        │◄─────────────┘
+            └─────────►│      Root Signal        │◄─────────────┘
                        │                     │
                        │  Discovers signal   │
                        │  Concentrates it    │
@@ -104,11 +104,11 @@ It occupies a space that doesn't currently exist: the layer between the fragment
                        └─────────────────────┘
 ```
 
-### What Taproot Is Not
+### What Root Signal Is Not
 
-Taproot is not competing with these platforms. It doesn't replace GoFundMe or Eventbrite or VolunteerMatch. It reads from them. It concentrates what they fragment. It links back to them for action. It makes their content more discoverable, not less valuable.
+Root Signal is not competing with these platforms. It doesn't replace GoFundMe or Eventbrite or VolunteerMatch. It reads from them. It concentrates what they fragment. It links back to them for action. It makes their content more discoverable, not less valuable.
 
-### What Taproot Becomes
+### What Root Signal Becomes
 
 In the near term: a signal pipeline proving that concentrated local signal is valuable and actionable.
 
@@ -120,7 +120,7 @@ In the long term: a community-owned, open-source utility — deployable by any c
 
 ## The Audience
 
-Taproot serves people through roles, not demographics. The same person might occupy multiple roles at different times:
+Root Signal serves people through roles, not demographics. The same person might occupy multiple roles at different times:
 
 **Volunteer** — "I have time. Where is it needed?"
 
@@ -148,4 +148,4 @@ Taproot serves people through roles, not demographics. The same person might occ
 
 A world where the distance between caring and acting is zero. Where no one who wants to help has to spend an hour searching for how. Where every community — human and ecological — has signal that is heard, concentrated, and acted on. Where the infrastructure for showing up is as reliable and available as running water.
 
-Taproot is the root system beneath all of that.
+Root Signal is the root system beneath all of that.
