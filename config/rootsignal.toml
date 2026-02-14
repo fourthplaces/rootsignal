@@ -1,0 +1,28 @@
+[identity]
+region = "Twin Cities (Minneapolis-St. Paul, Minnesota)"
+description = "community signals in the Twin Cities metro area"
+system_name = "community signal database"
+locales = ["en", "es", "so", "ht"]
+
+[models]
+extraction = "gpt-4o"
+nlq = "gpt-4o-mini"
+investigation = "gpt-4o"
+
+[prompts]
+extraction = "./prompts/extraction.md"
+investigation = "./prompts/investigation.md"
+nlq = "./prompts/nlq.md"
+
+[clustering]
+similarity_threshold = 0.92
+match_score_threshold = 0.75
+merge_coherence_threshold = 0.85
+geo_radius_meters = 500.0
+time_window_hours = 24
+batch_size = 100
+hnsw_ef_search = 100
+
+[server]
+port = 9080
+allowed_origins = []

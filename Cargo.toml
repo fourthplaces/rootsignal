@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/ai-client",
-    "crates/taproot-core",
-    "crates/taproot-domains",
-    "crates/taproot-server",
-    "crates/twilio-rs",
+    "modules/ai-client",
+    "modules/taproot-core",
+    "modules/taproot-domains",
+    "modules/taproot-server",
+    "modules/twilio-rs",
 ]
 resolver = "2"
 
@@ -69,11 +69,15 @@ petgraph = "0.7"
 # Environment
 dotenvy = "0.15"
 
+# Config
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+
 # JWT
 jsonwebtoken = "9"
 
 # Local crates
-ai-client = { path = "crates/ai-client" }
-taproot-core = { path = "crates/taproot-core" }
-taproot-domains = { path = "crates/taproot-domains" }
-twilio = { path = "crates/twilio-rs" }
+ai-client = { path = "modules/ai-client" }
+taproot-core = { path = "modules/taproot-core" }
+taproot-domains = { path = "modules/taproot-domains" }
+twilio = { path = "modules/twilio-rs" }
