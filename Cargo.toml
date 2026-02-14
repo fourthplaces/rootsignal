@@ -23,6 +23,10 @@ axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
+# GraphQL
+async-graphql = { version = "7", features = ["dataloader", "chrono", "uuid"] }
+async-graphql-axum = "7"
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
 pgvector = { version = "0.4", features = ["sqlx"] }

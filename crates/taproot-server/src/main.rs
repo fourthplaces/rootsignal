@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
+mod graphql;
 mod routes;
 
 // Import Restate traits to bring `.serve()` into scope
@@ -150,7 +151,7 @@ async fn main() -> Result<()> {
 
     // ─── Axum App (assessment routes) ────────────────────────────────────────
 
-    let axum_app = routes::build_router(pool.clone());
+    let axum_app = routes::build_router(pool.clone(), &config.allowed_origins);
 
     // ─── Start servers ───────────────────────────────────────────────────────
 

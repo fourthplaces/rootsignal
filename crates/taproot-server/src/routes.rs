@@ -1,7 +1,9 @@
+use async_graphql::http::GraphiQLSource;
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::Html,
+    response::{Html, IntoResponse},
     routing::get,
     Json, Router,
 };
@@ -10,25 +12,70 @@ use sqlx::PgPool;
 use serde::Serialize;
 use taproot_domains::heat_map::HeatMapPoint;
 use taproot_domains::listings::{ListingDetail, ListingFilters, ListingStats, ListingWithDistance};
+use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-pub fn build_router(pool: PgPool) -> Router {
+use crate::graphql::{self, AppSchema};
+use crate::graphql::context;
+
+pub fn build_router(pool: PgPool, allowed_origins: &[String]) -> Router {
+    let schema = graphql::build_schema(pool.clone());
+
+    let cors = if allowed_origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<_> = allowed_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
+
     Router::new()
         .route("/", get(assessment_page))
+        .route("/graphql", get(graphiql_handler).post(graphql_handler))
+        // REST API (deprecated — use GraphQL)
         .route("/api/stats", get(api_stats))
         .route("/api/listings", get(api_listings))
         .route("/api/listings/:id/cluster", get(api_listing_cluster))
         .route("/api/heatmap", get(api_heatmap))
         .route("/health", get(health))
-        .with_state(pool)
+        .layer(cors)
+        .with_state(AppState { pool, schema })
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pool: PgPool,
+    schema: AppSchema,
+}
+
+async fn graphql_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: GraphQLRequest,
+) -> GraphQLResponse {
+    let locale = context::extract_locale(&headers, None);
+    let request = req.into_inner().data(locale);
+    state.schema.execute(request).await.into()
+}
+
+async fn graphiql_handler() -> impl IntoResponse {
+    Html(GraphiQLSource::build().endpoint("/graphql").finish())
 }
 
 async fn health() -> &'static str {
     "ok"
 }
 
-async fn api_stats(State(pool): State<PgPool>) -> Json<ListingStats> {
-    let stats = ListingStats::compute(&pool).await.unwrap_or_else(|_| ListingStats {
+async fn api_stats(State(state): State<AppState>) -> Json<ListingStats> {
+    let stats = ListingStats::compute(&state.pool).await.unwrap_or_else(|_| ListingStats {
         total_listings: 0,
         active_listings: 0,
         total_sources: 0,
@@ -79,7 +126,7 @@ enum ListingsResponse {
 }
 
 async fn api_listings(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<ListingsQuery>,
 ) -> Json<ListingsResponse> {
@@ -95,13 +142,13 @@ async fn api_listings(
         let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
         let filters = ListingFilters::default();
         let listings = ListingWithDistance::find_near_zip(
-            zip, radius, &filters, limit, offset, &locale, &pool,
+            zip, radius, &filters, limit, offset, &locale, &state.pool,
         )
         .await
         .unwrap_or_default();
         Json(ListingsResponse::WithDistance(listings))
     } else {
-        let listings = ListingDetail::find_active_localized(limit, offset, &locale, &pool)
+        let listings = ListingDetail::find_active_localized(limit, offset, &locale, &state.pool)
             .await
             .unwrap_or_default();
         Json(ListingsResponse::Standard(listings))
@@ -109,10 +156,10 @@ async fn api_listings(
 }
 
 async fn api_listing_cluster(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Json<Vec<ListingDetail>> {
-    let siblings = ListingDetail::cluster_siblings(id, &pool)
+    let siblings = ListingDetail::cluster_siblings(id, &state.pool)
         .await
         .unwrap_or_default();
     Json(siblings)
@@ -126,28 +173,28 @@ struct HeatmapQuery {
 }
 
 async fn api_heatmap(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Query(params): Query<HeatmapQuery>,
 ) -> Json<Vec<HeatMapPoint>> {
     let points = if let Some(zip) = &params.zip_code {
         let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
-        HeatMapPoint::find_near_zip(zip, radius, &pool)
+        HeatMapPoint::find_near_zip(zip, radius, &state.pool)
             .await
             .unwrap_or_default()
     } else if let Some(entity_type) = &params.entity_type {
-        HeatMapPoint::find_latest_by_type(entity_type, &pool)
+        HeatMapPoint::find_latest_by_type(entity_type, &state.pool)
             .await
             .unwrap_or_default()
     } else {
-        HeatMapPoint::find_latest(&pool)
+        HeatMapPoint::find_latest(&state.pool)
             .await
             .unwrap_or_default()
     };
     Json(points)
 }
 
-async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
-    let stats = ListingStats::compute(&pool).await.unwrap_or_else(|_| ListingStats {
+async fn assessment_page(State(state): State<AppState>) -> Html<String> {
+    let stats = ListingStats::compute(&state.pool).await.unwrap_or_else(|_| ListingStats {
         total_listings: 0,
         active_listings: 0,
         total_sources: 0,
@@ -164,7 +211,7 @@ async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
         recent_7d: 0,
     });
 
-    let listings = ListingDetail::find_active(30, 0, &pool)
+    let listings = ListingDetail::find_active(30, 0, &state.pool)
         .await
         .unwrap_or_default();
 
