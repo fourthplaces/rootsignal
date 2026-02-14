@@ -114,6 +114,16 @@ pub struct ExtractedListing {
     pub urgency: Option<String>,
     pub capacity_note: Option<String>,
 
+    // Taxonomy dimensions (tag-based)
+    pub signal_domain: Option<String>,
+    pub capacity_status: Option<String>,
+    pub confidence_hint: Option<String>,
+    pub radius_relevant: Option<String>,
+    pub populations: Option<Vec<String>>,
+
+    // Temporal
+    pub expires_at: Option<String>,
+
     /// Detected language of the source content (ISO 639-1: en, es, so, ht)
     pub source_locale: Option<String>,
 }

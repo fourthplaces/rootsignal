@@ -11,4 +11,5 @@ pub mod schedule;
 pub mod service;
 pub mod source;
 pub mod tag;
+pub mod tag_kind;
 pub mod translation;

@@ -1,4 +1,5 @@
 pub mod models;
+pub mod restate;
 
 pub use models::contact::Contact;
 pub use models::embedding::{Embedding, SimilarRecord};
@@ -13,4 +14,6 @@ pub use models::schedule::Schedule;
 pub use models::service::Service;
 pub use models::source::{SocialSource, Source, WebsiteSource};
 pub use models::tag::{Tag, Taggable};
+pub use models::tag_kind::{build_tag_instructions, TagKindConfig};
 pub use models::translation::Translation;
+pub use restate::tags::{TagsService, TagsServiceImpl};

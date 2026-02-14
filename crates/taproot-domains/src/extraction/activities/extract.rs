@@ -3,6 +3,8 @@ use sha2::{Digest, Sha256};
 use taproot_core::{ExtractedListings, ServerDeps};
 use uuid::Uuid;
 
+use crate::entities::build_tag_instructions;
+
 /// Page snapshot row (just the fields we need).
 #[derive(Debug, sqlx::FromRow)]
 struct PageSnapshot {
@@ -18,25 +20,32 @@ struct ExtractionRow {
     id: Uuid,
 }
 
-const SYSTEM_PROMPT: &str = r#"You are a community signal extractor for the Twin Cities (Minneapolis-St. Paul, Minnesota).
+/// Static preamble for the extraction prompt — defines output shape, rules, and field definitions.
+const SYSTEM_PREAMBLE: &str = r#"You are a community signal extractor for the Twin Cities (Minneapolis-St. Paul, Minnesota).
 Extract ALL actionable community listings from the provided web page content.
 
 For each listing, identify:
 - title: Clear, descriptive title
 - description: What this is about
-- listing_type: One of: volunteer_opportunity, mutual_aid, community_event, public_meeting, resource_available, service_available, job_opportunity, community_alert, advocacy_action, fundraiser, training
-- categories: Relevant categories (food_security, housing, healthcare, mental_health, education, employment, legal_aid, immigrant_services, youth_services, senior_services, disability_services, environmental, civic_engagement, arts_culture, community_safety, financial_assistance, childcare)
-- audience_roles: Who this is for (volunteer, donor, recipient, advocate, participant, attendee, job_seeker, organizer, community_member)
+- listing_type: (see taxonomy below)
+- categories: Relevant categories (see taxonomy below)
+- audience_roles: Who this is for (see taxonomy below)
 - organization_name: The organization offering this
 - organization_type: nonprofit, community, faith, coalition, government, business
 - location info: address, city, state if mentioned
 - timing: start/end times if mentioned (ISO 8601 format)
 - contact info if available
 - source_url: The URL where someone can take action
-- urgency: If time-sensitive, describe why
-- capacity_note: If there are capacity constraints mentioned
+- signal_domain: (see taxonomy below)
+- urgency: (see taxonomy below)
+- capacity_status: (see taxonomy below)
+- confidence_hint: Your confidence in this extraction (see taxonomy below)
+- radius_relevant: How far this signal carries geographically (see taxonomy below)
+- populations: Target populations this serves (see taxonomy below, can be multiple)
+- expires_at: When this listing expires (ISO 8601 format, if applicable)
 
 Only extract items that are genuinely actionable — someone in the Twin Cities could act on this information.
+Each listing should have one clear call-to-action. Never fabricate information not present in the source.
 If no actionable listings exist in the content, return an empty listings array.
 
 Additionally, detect the primary language of the content and return it as `source_locale`:
@@ -45,7 +54,19 @@ Additionally, detect the primary language of the content and return it as `sourc
 - "so" for Somali
 - "ht" for Haitian Creole
 If the content is in a language not listed above, use the closest match or "en" as default.
-If the content is mixed-language, use the majority language."#;
+If the content is mixed-language, use the majority language.
+
+## Available Taxonomy
+
+Use ONLY the values listed below for each field:"#;
+
+/// Build the full system prompt by combining static preamble with dynamic taxonomy from the database.
+async fn build_system_prompt(deps: &ServerDeps) -> Result<String> {
+    let pool = deps.pool();
+    let tag_instructions = build_tag_instructions("listing", pool).await?;
+
+    Ok(format!("{}\n\n{}", SYSTEM_PREAMBLE, tag_instructions))
+}
 
 /// Extract structured listings from a page_snapshot using AI.
 pub async fn extract_from_snapshot(
@@ -90,6 +111,9 @@ pub async fn extract_from_snapshot(
         content
     };
 
+    // Build dynamic prompt from database taxonomy
+    let system_prompt = build_system_prompt(deps).await?;
+
     let user_prompt = format!(
         "Extract community listings from this page (URL: {}):\n\n{}",
         snapshot.url, content
@@ -98,7 +122,7 @@ pub async fn extract_from_snapshot(
     // Use AI structured extraction
     let extracted: ExtractedListings = deps
         .ai
-        .extract("gpt-4o", SYSTEM_PROMPT, &user_prompt)
+        .extract("gpt-4o", &system_prompt, &user_prompt)
         .await?;
 
     let mut extraction_ids = Vec::new();

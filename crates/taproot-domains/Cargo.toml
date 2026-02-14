@@ -1,0 +1,28 @@
+[package]
+name = "taproot-domains"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+sqlx.workspace = true
+pgvector.workspace = true
+restate-sdk.workspace = true
+ai-client.workspace = true
+taproot-core.workspace = true
+bytes.workspace = true
+strsim.workspace = true
+petgraph.workspace = true

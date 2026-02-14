@@ -1,0 +1,14 @@
+/Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/deps/serde-f15f5d55ffb567b3.d: /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/build/serde-3b1538848242a301/out/private.rs
+
+/Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/deps/libserde-f15f5d55ffb567b3.rlib: /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/build/serde-3b1538848242a301/out/private.rs
+
+/Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/deps/libserde-f15f5d55ffb567b3.rmeta: /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/build/serde-3b1538848242a301/out/private.rs
+
+/Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/craig/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/build/serde-3b1538848242a301/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/craig/Developer/fourthplaces/taproot/dev/cli/target/release/build/serde-3b1538848242a301/out

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use sqlx::PgPool;
 use taproot_core::{ExtractedListing, ServerDeps};
 use uuid::Uuid;
 
@@ -97,7 +96,7 @@ pub async fn normalize_extraction(
         _ => None,
     };
 
-    // ── Create listing ──────────────────────────────────────────────────────
+    // ── Compute expires_at ──────────────────────────────────────────────────
 
     let source_locale = listing_data.source_locale.as_deref().unwrap_or("en");
 
@@ -113,10 +112,19 @@ pub async fn normalize_extraction(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
+    let expires_at = listing_data
+        .expires_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .or(timing_end);
+
+    // ── Create listing ──────────────────────────────────────────────────────
+
     let listing = sqlx::query_as::<_, (Uuid,)>(
         r#"
-        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, timing_start, timing_end, source_locale)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, timing_start, timing_end, source_locale, expires_at, freshness_score)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1.0)
         RETURNING id
         "#,
     )
@@ -129,6 +137,7 @@ pub async fn normalize_extraction(
     .bind(timing_start)
     .bind(timing_end)
     .bind(source_locale)
+    .bind(expires_at)
     .fetch_one(pool)
     .await?;
 
@@ -150,7 +159,7 @@ pub async fn normalize_extraction(
     .execute(pool)
     .await?;
 
-    // ── Tags ────────────────────────────────────────────────────────────────
+    // ── Tags — all taxonomy dimensions via Taggable::tag() ──────────────────
 
     Taggable::tag("listing", listing_id, "listing_type", &listing_data.listing_type, pool).await?;
 
@@ -162,19 +171,40 @@ pub async fn normalize_extraction(
         Taggable::tag("listing", listing_id, "audience_role", role, pool).await?;
     }
 
+    if let Some(domain) = &listing_data.signal_domain {
+        Taggable::tag("listing", listing_id, "signal_domain", domain, pool).await?;
+    }
+
+    if let Some(urgency) = &listing_data.urgency {
+        Taggable::tag("listing", listing_id, "urgency", urgency, pool).await?;
+    }
+
+    if let Some(confidence) = &listing_data.confidence_hint {
+        Taggable::tag("listing", listing_id, "confidence", confidence, pool).await?;
+    }
+
+    if let Some(capacity) = &listing_data.capacity_status {
+        Taggable::tag("listing", listing_id, "capacity_status", capacity, pool).await?;
+    }
+
+    if let Some(radius) = &listing_data.radius_relevant {
+        Taggable::tag("listing", listing_id, "radius_relevant", radius, pool).await?;
+    }
+
+    if let Some(populations) = &listing_data.populations {
+        for pop in populations {
+            Taggable::tag("listing", listing_id, "population", pop, pool).await?;
+        }
+    }
+
     // ── Location ────────────────────────────────────────────────────────────
 
     if listing_data.address.is_some() || listing_data.city.is_some() {
-        let location = Location::create(
-            entity_id,
-            None,
-            listing_data.address.as_deref(),
+        let location = Location::find_or_create_from_extraction(
             listing_data.city.as_deref(),
             listing_data.state.as_deref(),
             listing_data.postal_code.as_deref(),
-            None, // TODO: geocode
-            None,
-            Some("physical"),
+            listing_data.address.as_deref(),
             pool,
         )
         .await?;
@@ -196,26 +226,13 @@ pub async fn normalize_extraction(
         .await?;
     }
 
-    // ── Urgency / capacity notes ────────────────────────────────────────────
+    // ── Capacity notes (keep as notes for freeform text) ────────────────────
 
-    if let Some(urgency) = &listing_data.urgency {
+    if let Some(capacity_note) = &listing_data.capacity_note {
         Notable::attach_note(
             "listing",
             listing_id,
-            urgency,
-            "urgent",
-            Some("ai_extraction"),
-            "ai",
-            pool,
-        )
-        .await?;
-    }
-
-    if let Some(capacity) = &listing_data.capacity_note {
-        Notable::attach_note(
-            "listing",
-            listing_id,
-            capacity,
+            capacity_note,
             "warning",
             Some("ai_extraction"),
             "ai",

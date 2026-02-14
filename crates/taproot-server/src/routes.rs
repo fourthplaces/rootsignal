@@ -70,24 +70,42 @@ fn parse_accept_language(headers: &HeaderMap) -> Option<String> {
     }
 }
 
+/// Response enum to support both regular listings and distance-enriched listings.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ListingsResponse {
+    Standard(Vec<ListingDetail>),
+    WithDistance(Vec<ListingWithDistance>),
+}
+
 async fn api_listings(
     State(pool): State<PgPool>,
     headers: HeaderMap,
     Query(params): Query<ListingsQuery>,
-) -> Json<Vec<ListingDetail>> {
+) -> Json<ListingsResponse> {
     let limit = params.limit.unwrap_or(50);
     let offset = params.offset.unwrap_or(0);
 
-    // Query param takes precedence, then Accept-Language, then default to English
     let locale = params
         .locale
         .or_else(|| parse_accept_language(&headers))
         .unwrap_or_else(|| "en".to_string());
 
-    let listings = ListingDetail::find_active_localized(limit, offset, &locale, &pool)
+    if let Some(zip) = &params.zip_code {
+        let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
+        let filters = ListingFilters::default();
+        let listings = ListingWithDistance::find_near_zip(
+            zip, radius, &filters, limit, offset, &locale, &pool,
+        )
         .await
         .unwrap_or_default();
-    Json(listings)
+        Json(ListingsResponse::WithDistance(listings))
+    } else {
+        let listings = ListingDetail::find_active_localized(limit, offset, &locale, &pool)
+            .await
+            .unwrap_or_default();
+        Json(ListingsResponse::Standard(listings))
+    }
 }
 
 async fn api_listing_cluster(
@@ -98,6 +116,34 @@ async fn api_listing_cluster(
         .await
         .unwrap_or_default();
     Json(siblings)
+}
+
+#[derive(Deserialize)]
+struct HeatmapQuery {
+    zip_code: Option<String>,
+    radius_miles: Option<f64>,
+    entity_type: Option<String>,
+}
+
+async fn api_heatmap(
+    State(pool): State<PgPool>,
+    Query(params): Query<HeatmapQuery>,
+) -> Json<Vec<HeatMapPoint>> {
+    let points = if let Some(zip) = &params.zip_code {
+        let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
+        HeatMapPoint::find_near_zip(zip, radius, &pool)
+            .await
+            .unwrap_or_default()
+    } else if let Some(entity_type) = &params.entity_type {
+        HeatMapPoint::find_latest_by_type(entity_type, &pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        HeatMapPoint::find_latest(&pool)
+            .await
+            .unwrap_or_default()
+    };
+    Json(points)
 }
 
 async fn assessment_page(State(pool): State<PgPool>) -> Html<String> {
