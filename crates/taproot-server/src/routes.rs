@@ -10,6 +10,8 @@ use axum::{
 use serde::Deserialize;
 use sqlx::PgPool;
 use serde::Serialize;
+use std::sync::Arc;
+use taproot_core::ServerDeps;
 use taproot_domains::heat_map::HeatMapPoint;
 use taproot_domains::listings::{ListingDetail, ListingFilters, ListingStats, ListingWithDistance};
 use tower_http::cors::{Any, CorsLayer};
@@ -18,8 +20,9 @@ use uuid::Uuid;
 use crate::graphql::{self, AppSchema};
 use crate::graphql::context;
 
-pub fn build_router(pool: PgPool, allowed_origins: &[String]) -> Router {
-    let schema = graphql::build_schema(pool.clone());
+pub fn build_router(deps: Arc<ServerDeps>, allowed_origins: &[String]) -> Router {
+    let pool = deps.pool().clone();
+    let schema = graphql::build_schema(deps);
 
     let cors = if allowed_origins.is_empty() {
         CorsLayer::new()

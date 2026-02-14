@@ -8,4 +8,5 @@ pub mod heat_map;
 pub mod investigations;
 pub mod listings;
 pub mod scraping;
+pub mod search;
 pub mod translation;

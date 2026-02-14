@@ -10,12 +10,16 @@ pub mod locations;
 pub mod notes;
 pub mod observations;
 pub mod schedules;
+pub mod search;
 pub mod sources;
 pub mod stats;
 pub mod tags;
 
+use std::sync::Arc;
+
 use async_graphql::dataloader::DataLoader;
 use async_graphql::*;
+use taproot_core::ServerDeps;
 
 use loaders::*;
 
@@ -28,13 +32,16 @@ pub struct QueryRoot(
     observations::ObservationQuery,
     heat_map::HeatMapQuery,
     stats::StatsQuery,
+    search::SearchQuery,
 );
 
 pub type AppSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
-pub fn build_schema(pool: sqlx::PgPool) -> AppSchema {
+pub fn build_schema(deps: Arc<ServerDeps>) -> AppSchema {
+    let pool = deps.pool().clone();
     Schema::build(QueryRoot::default(), EmptyMutation, EmptySubscription)
         .data(pool.clone())
+        .data(deps)
         // DataLoaders
         .data(DataLoader::new(
             EntityByIdLoader { pool: pool.clone() },

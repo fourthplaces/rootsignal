@@ -2979,6 +2979,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "pgvector",
  "reqwest",
  "restate-sdk",
  "serde",

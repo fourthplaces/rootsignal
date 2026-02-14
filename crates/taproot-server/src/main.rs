@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
 
     // ─── Axum App (assessment routes) ────────────────────────────────────────
 
-    let axum_app = routes::build_router(pool.clone(), &config.allowed_origins);
+    let axum_app = routes::build_router(server_deps.clone(), &config.allowed_origins);
 
     // ─── Start servers ───────────────────────────────────────────────────────
 
