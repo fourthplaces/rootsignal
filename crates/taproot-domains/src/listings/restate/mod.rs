@@ -168,6 +168,8 @@ impl ListingsService for ListingsServiceImpl {
             radius_km: req.radius_km,
             hotspot_id,
             since,
+            zip_code: None,
+            radius_miles: None,
             limit: req.limit,
             offset: req.offset,
         };

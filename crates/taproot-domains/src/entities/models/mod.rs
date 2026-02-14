@@ -13,3 +13,4 @@ pub mod source;
 pub mod tag;
 pub mod tag_kind;
 pub mod translation;
+pub mod zip_code;

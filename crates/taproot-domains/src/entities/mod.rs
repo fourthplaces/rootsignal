@@ -16,4 +16,5 @@ pub use models::source::{SocialSource, Source, WebsiteSource};
 pub use models::tag::{Tag, Taggable};
 pub use models::tag_kind::{build_tag_instructions, TagKindConfig};
 pub use models::translation::Translation;
+pub use models::zip_code::ZipCode;
 pub use restate::tags::{TagsService, TagsServiceImpl};
