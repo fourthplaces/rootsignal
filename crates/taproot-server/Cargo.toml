@@ -7,6 +7,10 @@ edition.workspace = true
 name = "taproot-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "export-schema"
+path = "src/bin/export_schema.rs"
+
 [dependencies]
 tokio.workspace = true
 async-trait.workspace = true

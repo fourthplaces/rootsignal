@@ -33,3 +33,9 @@ Thumbs.db
 *.profdata
 lcov.info
 tarpaulin-report.html
+
+# Node / JS
+node_modules/
+.next/
+packages/*/gql/
+.pnpm-store/

@@ -4,6 +4,7 @@ members = [
     "crates/taproot-core",
     "crates/taproot-domains",
     "crates/taproot-server",
+    "crates/twilio-rs",
 ]
 resolver = "2"
 
@@ -68,7 +69,11 @@ petgraph = "0.7"
 # Environment
 dotenvy = "0.15"
 
+# JWT
+jsonwebtoken = "9"
+
 # Local crates
 ai-client = { path = "crates/ai-client" }
 taproot-core = { path = "crates/taproot-core" }
 taproot-domains = { path = "crates/taproot-domains" }
+twilio = { path = "crates/twilio-rs" }
