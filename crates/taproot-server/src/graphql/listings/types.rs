@@ -175,3 +175,14 @@ pub struct GqlListingEdgeData {
     pub zip_code: Option<String>,
     pub location_city: Option<String>,
 }
+
+impl GqlListingEdgeData {
+    /// Create empty edge data (non-geo queries).
+    pub fn empty() -> Self {
+        Self {
+            distance_miles: None,
+            zip_code: None,
+            location_city: None,
+        }
+    }
+}
