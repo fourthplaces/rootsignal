@@ -70,7 +70,7 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerD
     .execute(pool)
     .await?;
 
-    // Embed the page content for qualification pre-screening
+    // Embed the page content for semantic search
     if !page.content.is_empty() {
         {
             // Truncate to ~8K chars for embedding model token limit

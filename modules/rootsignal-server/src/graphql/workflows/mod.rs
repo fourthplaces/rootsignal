@@ -170,7 +170,7 @@ pub struct ActiveWorkflow {
     pub workflow_type: String,
     pub source_id: String,
     pub status: String,
-    /// Application-level stage (e.g. "scraping", "extracting", "qualifying")
+    /// Application-level stage (e.g. "scraping", "extracting", "discovering")
     pub stage: Option<String>,
     pub created_at: Option<String>,
 }

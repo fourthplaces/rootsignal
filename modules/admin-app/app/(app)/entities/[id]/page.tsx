@@ -21,7 +21,7 @@ interface Entity {
   services: { id: string; name: string; status: string }[];
   listings: { id: string; title: string; status: string }[];
   signals: { id: string; signalType: string; content: string; about: string | null; createdAt: string }[];
-  sources: { id: string; name: string; sourceType: string; url: string | null; isActive: boolean; qualificationStatus: string }[];
+  sources: { id: string; name: string; sourceType: string; url: string | null; isActive: boolean; signalCount: number }[];
 }
 
 export default function EntityDetailPage() {
@@ -51,7 +51,7 @@ export default function EntityDetailPage() {
               locations { id name addressLocality addressRegion }
               services { id name status }
               listings { id title status }
-              sources { id name sourceType url isActive qualificationStatus }
+              sources { id name sourceType url isActive signalCount }
             }
           }`,
           variables: { id: params.id },
@@ -120,7 +120,7 @@ export default function EntityDetailPage() {
             locations { id name addressLocality addressRegion }
             services { id name status }
             listings { id title status }
-            sources { id name sourceType url isActive qualificationStatus }
+            sources { id name sourceType url isActive signalCount }
           }
         }`,
         variables: { id: params.id },
@@ -327,12 +327,10 @@ export default function EntityDetailPage() {
                       <span className={`rounded-full px-2 py-0.5 text-xs ${s.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
                         {s.isActive ? "active" : "inactive"}
                       </span>
-                      {s.qualificationStatus !== "pending" && (
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${
-                          s.qualificationStatus === "approved" ? "bg-green-100 text-green-700" :
-                          s.qualificationStatus === "review" ? "bg-yellow-100 text-yellow-700" :
-                          s.qualificationStatus === "declined" ? "bg-red-100 text-red-700" : "bg-gray-100"
-                        }`}>{s.qualificationStatus}</span>
+                      {s.signalCount > 0 && (
+                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                          {s.signalCount} signal{s.signalCount === 1 ? "" : "s"}
+                        </span>
                       )}
                     </div>
                   </li>

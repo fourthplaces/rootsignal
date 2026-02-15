@@ -179,13 +179,6 @@ export function SourceMoreMenu({ sourceId }: { sourceId: string }) {
       </button>
       {open && (
         <div className="absolute right-0 z-10 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg">
-          <MutationItem
-            label="Qualify"
-            loadingLabel="Qualifying..."
-            mutation={`mutation($id: UUID!) { triggerQualification(sourceId: $id) { status } }`}
-            variables={{ id: sourceId }}
-            onDone={handleDone}
-          />
           <DeleteSourceItem sourceId={sourceId} />
         </div>
       )}
