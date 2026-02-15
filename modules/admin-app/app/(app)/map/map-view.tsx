@@ -2,11 +2,8 @@
 
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import Sidebar from "./sidebar";
-
-mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
 interface HeatMapPoint {
   id: string;
@@ -50,6 +47,11 @@ interface ParsedQuery {
 }
 
 type LayerMode = "density" | "gaps" | "entities";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MapboxGL = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MapInstance = any;
 
 async function gqlFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/graphql", {
@@ -100,7 +102,7 @@ function searchToGeoJSON(results: SearchResult[]): GeoJSON.FeatureCollection {
   };
 }
 
-function fitBounds(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollection) {
+function fitBounds(mapboxgl: MapboxGL, map: MapInstance, geojson: GeoJSON.FeatureCollection) {
   if (geojson.features.length === 0) return;
   const bounds = new mapboxgl.LngLatBounds();
   for (const f of geojson.features) {
@@ -121,7 +123,8 @@ const ENTITY_COLORS: Record<string, string> = {
 
 export default function MapView() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const mapRef = useRef<MapInstance>(null);
+  const mbRef = useRef<MapboxGL>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
   const [layer, setLayer] = useState<LayerMode>(
@@ -183,7 +186,7 @@ export default function MapView() {
   }, []);
 
   const loadDensityLayer = useCallback(
-    async (map: mapboxgl.Map) => {
+    async (map: MapInstance) => {
       setLoading(true);
       setError("");
       try {
@@ -280,7 +283,7 @@ export default function MapView() {
           },
         });
 
-        fitBounds(map, geojson);
+        fitBounds(mbRef.current, map, geojson);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load heat map data");
       } finally {
@@ -291,7 +294,7 @@ export default function MapView() {
   );
 
   const loadGapsLayer = useCallback(
-    async (map: mapboxgl.Map) => {
+    async (map: MapInstance) => {
       setLoading(true);
       setError("");
       try {
@@ -352,7 +355,7 @@ export default function MapView() {
           paint: { "text-color": "#6b7280" },
         });
 
-        fitBounds(map, geojson);
+        fitBounds(mbRef.current, map, geojson);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load gaps data");
       } finally {
@@ -363,7 +366,7 @@ export default function MapView() {
   );
 
   const loadEntitiesLayer = useCallback(
-    async (map: mapboxgl.Map) => {
+    async (map: MapInstance) => {
       setLoading(true);
       setError("");
       try {
@@ -438,7 +441,7 @@ export default function MapView() {
           },
         });
 
-        fitBounds(map, geojson);
+        fitBounds(mbRef.current, map, geojson);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load entity data");
       } finally {
@@ -472,7 +475,8 @@ export default function MapView() {
       e.preventDefault();
       if (!searchQuery.trim()) return;
       const map = mapRef.current;
-      if (!map) return;
+      const mapboxgl = mbRef.current;
+      if (!map || !mapboxgl) return;
 
       if (abortRef.current) abortRef.current.abort();
       abortRef.current = new AbortController();
@@ -546,7 +550,7 @@ export default function MapView() {
                     "circle-stroke-color": "#fff",
                   },
                 });
-                fitBounds(map, geojson);
+                fitBounds(mapboxgl, map, geojson);
                 setMessage(`${results.results.length} results found`);
               } else {
                 setMessage("No results with location data found.");
@@ -567,79 +571,102 @@ export default function MapView() {
     [searchQuery, filters, layer, syncUrl],
   );
 
-  // Initialize map
+  // Initialize map (dynamic import of mapbox-gl)
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const savedViewport = localStorage.getItem("map-viewport");
-    const viewport = savedViewport ? JSON.parse(savedViewport) : null;
+    let cancelled = false;
 
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: "mapbox://styles/mapbox/light-v11",
-      center: viewport?.center || [-93.265, 44.978], // Minneapolis default
-      zoom: viewport?.zoom || 6,
-    });
+    (async () => {
+      const mapboxgl = (await import("mapbox-gl")).default;
 
-    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+      if (cancelled || !containerRef.current) return;
 
-    map.on("load", () => {
-      mapRef.current = map;
-      loadLayer("density");
-    });
+      mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
+      mbRef.current = mapboxgl;
 
-    // Click cluster to zoom in
-    map.on("click", "clusters", (e) => {
-      const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
-      if (!features.length) return;
-      const clusterId = features[0].properties?.cluster_id;
-      const source = map.getSource("heat-source") as mapboxgl.GeoJSONSource;
-      source.getClusterExpansionZoom(clusterId, (err, zoom) => {
-        if (err) return;
-        map.easeTo({
-          center: (features[0].geometry as GeoJSON.Point).coordinates as [number, number],
-          zoom: zoom!,
+      const savedViewport = localStorage.getItem("map-viewport");
+      const viewport = savedViewport ? JSON.parse(savedViewport) : null;
+
+      const map = new mapboxgl.Map({
+        container: containerRef.current,
+        style: "mapbox://styles/mapbox/light-v11",
+        center: viewport?.center || [-93.265, 44.978], // Minneapolis default
+        zoom: viewport?.zoom || 6,
+      });
+
+      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
+      map.on("load", () => {
+        if (cancelled) {
+          map.remove();
+          return;
+        }
+        mapRef.current = map;
+        loadLayer("density");
+      });
+
+      // Click cluster to zoom in
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on("click", "clusters", (e: any) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
+        if (!features.length) return;
+        const clusterId = features[0].properties?.cluster_id;
+        const source = map.getSource("heat-source");
+        if (!source) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (source as any).getClusterExpansionZoom(clusterId, (err: Error | null, zoom: number) => {
+          if (err) return;
+          map.easeTo({
+            center: (features[0].geometry as GeoJSON.Point).coordinates as [number, number],
+            zoom,
+          });
         });
       });
-    });
 
-    // Click individual point to show sidebar
-    map.on("click", "unclustered-point", (e) => {
-      const props = e.features?.[0]?.properties;
-      if (props?.entityType && props?.entityId) {
-        setSelectedPin({ entityType: props.entityType, entityId: props.entityId });
-      }
-    });
-
-    // Click search pin to show sidebar
-    map.on("click", "search-pins", (e) => {
-      const props = e.features?.[0]?.properties;
-      if (props?.id) {
-        setSelectedPin({ entityType: props.entityType || "listing", entityId: props.id });
-      }
-    });
-
-    // Cursor changes
-    for (const layerId of ["clusters", "unclustered-point", "search-pins"]) {
-      map.on("mouseenter", layerId, () => {
-        map.getCanvas().style.cursor = "pointer";
+      // Click individual point to show sidebar
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on("click", "unclustered-point", (e: any) => {
+        const props = e.features?.[0]?.properties;
+        if (props?.entityType && props?.entityId) {
+          setSelectedPin({ entityType: props.entityType, entityId: props.entityId });
+        }
       });
-      map.on("mouseleave", layerId, () => {
-        map.getCanvas().style.cursor = "";
-      });
-    }
 
-    // Save viewport on move
-    map.on("moveend", () => {
-      localStorage.setItem(
-        "map-viewport",
-        JSON.stringify({ center: map.getCenter().toArray(), zoom: map.getZoom() }),
-      );
-    });
+      // Click search pin to show sidebar
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on("click", "search-pins", (e: any) => {
+        const props = e.features?.[0]?.properties;
+        if (props?.id) {
+          setSelectedPin({ entityType: props.entityType || "listing", entityId: props.id });
+        }
+      });
+
+      // Cursor changes
+      for (const layerId of ["clusters", "unclustered-point", "search-pins"]) {
+        map.on("mouseenter", layerId, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+        });
+      }
+
+      // Save viewport on move
+      map.on("moveend", () => {
+        localStorage.setItem(
+          "map-viewport",
+          JSON.stringify({ center: map.getCenter().toArray(), zoom: map.getZoom() }),
+        );
+      });
+    })();
 
     return () => {
-      map.remove();
-      mapRef.current = null;
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -43,8 +43,8 @@ pub async fn qualify_source(source_id: Uuid, deps: &ServerDeps) -> Result<Source
     let mut sample_config = source.config.clone();
     sample_config["limit"] = serde_json::json!(5);
 
-    // Build a temporary source with small limit for sample scrape
-    let pages = super::scrape_source::scrape_source(source_id, deps).await?;
+    // Run a sample scrape to populate snapshots for evaluation
+    let _ = super::scrape_source::scrape_source(source_id, deps).await?;
 
     // Load the sample snapshots' content via domain_snapshots join
     let snapshot_rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>)>(
@@ -78,7 +78,7 @@ pub async fn qualify_source(source_id: Uuid, deps: &ServerDeps) -> Result<Source
         "Source: {} (type: {})\n\nSample pages ({} fetched, showing up to 5):\n\n",
         source.name,
         source.source_type,
-        pages.len(),
+        snapshot_rows.len(),
     );
 
     for (i, (_, url, markdown, html)) in snapshot_rows.iter().enumerate() {

@@ -9,6 +9,7 @@ pub struct StatsQuery;
 #[Object]
 impl StatsQuery {
     async fn listing_stats(&self, ctx: &Context<'_>) -> Result<GqlListingStats> {
+        tracing::info!("graphql.listing_stats");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let stats = rootsignal_domains::listings::ListingStats::compute(pool)
             .await

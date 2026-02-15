@@ -17,8 +17,9 @@ struct CrawlRequest {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxDepth", skip_serializing_if = "Option::is_none")]
     max_depth: Option<u32>,
+    #[serde(rename = "scrapeOptions")]
     scrape_options: ScrapeOptions,
     #[serde(rename = "includePaths", skip_serializing_if = "Vec::is_empty")]
     include_paths: Vec<String>,
@@ -201,22 +202,38 @@ impl Ingestor for FirecrawlIngestor {
             exclude_paths: config.exclude_patterns.clone(),
         };
 
-        let resp: CrawlResponse = self
+        let crawl_url = format!("{}/crawl", self.base_url);
+        tracing::info!(url = %config.url, limit = config.limit, max_depth = config.max_depth, "Firecrawl: starting crawl");
+
+        let response = self
             .client
-            .post(format!("{}/crawl", self.base_url))
+            .post(&crawl_url)
             .bearer_auth(&self.api_key)
             .json(&request)
             .send()
             .await
-            .map_err(|e| CrawlError::Http(Box::new(e)))?
-            .json()
-            .await
-            .map_err(|e| CrawlError::Http(Box::new(e)))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "Firecrawl: HTTP request failed");
+                CrawlError::Http(Box::new(e))
+            })?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::info!(status = %status, body = %&body[..body.len().min(500)], "Firecrawl: crawl response");
+
+        let resp: CrawlResponse = serde_json::from_str(&body).map_err(|e| {
+            tracing::error!(error = %e, body = %&body[..body.len().min(500)], "Firecrawl: failed to parse response");
+            CrawlError::Http(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Firecrawl response parse error: {}", e),
+            )))
+        })?;
 
         if !resp.success {
+            tracing::error!(url = %config.url, body = %&body[..body.len().min(500)], "Firecrawl: crawl request rejected");
             return Err(CrawlError::Http(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                "Firecrawl crawl request failed",
+                format!("Firecrawl crawl rejected ({}): {}", status, &body[..body.len().min(200)]),
             ))));
         }
 

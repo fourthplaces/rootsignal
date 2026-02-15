@@ -14,6 +14,7 @@ pub struct AuthMutation;
 impl AuthMutation {
     /// Send a verification code via SMS to the given phone number.
     async fn send_verification_code(&self, ctx: &Context<'_>, phone: String) -> Result<bool> {
+        tracing::info!("graphql.send_verification_code");
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
         // Validate phone format
@@ -67,6 +68,12 @@ impl AuthMutation {
         if deps.config.test_identifier_enabled && phone == "+1234567890" && code == "123456" {
             let jwt_service = ctx.data::<JwtService>()?;
             let is_admin = deps.config.admin_phone_numbers.contains(&phone);
+            tracing::info!(
+                phone = %phone,
+                is_admin = is_admin,
+                admin_phones = ?deps.config.admin_phone_numbers,
+                "Test identifier login"
+            );
             let token = jwt_service
                 .create_token(phone, is_admin)
                 .map_err(|e| Error::new(format!("Failed to create token: {e}")))?;

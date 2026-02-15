@@ -29,3 +29,4 @@ regex.workspace = true
 bytes.workspace = true
 strsim.workspace = true
 petgraph.workspace = true
+spider.workspace = true

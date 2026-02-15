@@ -50,6 +50,7 @@ impl ClusteringJob for ClusteringJobImpl {
         ctx: ObjectContext<'_>,
         _req: ClusterRequest,
     ) -> Result<ClusterResult, HandlerError> {
+        tracing::info!("ClusteringJob.start");
         ctx.set("status", "generating_embeddings".to_string());
 
         // Step 1: Generate embeddings for un-embedded listings

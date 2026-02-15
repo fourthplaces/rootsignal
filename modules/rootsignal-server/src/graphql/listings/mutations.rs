@@ -33,6 +33,7 @@ impl ListingMutation {
         ctx: &Context<'_>,
         input: CreateListingInput,
     ) -> Result<GqlListing> {
+        tracing::info!(title = %input.title, "graphql.create_listing");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -47,6 +48,7 @@ impl ListingMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %listing.id, "graphql.create_listing.ok");
         Ok(GqlListing::from(listing))
     }
 
@@ -56,6 +58,7 @@ impl ListingMutation {
         id: Uuid,
         input: UpdateListingInput,
     ) -> Result<GqlListing> {
+        tracing::info!(id = %id, "graphql.update_listing");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -71,10 +74,12 @@ impl ListingMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %id, "graphql.update_listing.ok");
         Ok(GqlListing::from(listing))
     }
 
     async fn archive_listing(&self, ctx: &Context<'_>, id: Uuid) -> Result<GqlListing> {
+        tracing::info!(id = %id, "graphql.archive_listing");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -82,6 +87,7 @@ impl ListingMutation {
             .await
             .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %id, "graphql.archive_listing.ok");
         Ok(GqlListing::from(listing))
     }
 }

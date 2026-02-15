@@ -67,7 +67,7 @@ export default function NewSourceModal() {
       });
       const data = await res.json();
       if (data.errors) throw new Error(data.errors[0].message);
-      router.push("/sources");
+      router.back();
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create source");

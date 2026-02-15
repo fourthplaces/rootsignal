@@ -21,6 +21,11 @@ impl ObservationMutation {
         id: Uuid,
         decision: ReviewDecision,
     ) -> Result<GqlObservation> {
+        let decision_str = match decision {
+            ReviewDecision::Approve => "approve",
+            ReviewDecision::Reject => "reject",
+        };
+        tracing::info!(id = %id, decision = decision_str, "graphql.review_observation");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -47,6 +52,7 @@ impl ObservationMutation {
                 .await
                 .map_err(|e| Error::new(format!("Failed to update observation: {e}")))?;
 
+        tracing::info!(id = %id, status = %status, "graphql.review_observation.ok");
         Ok(GqlObservation::from(updated))
     }
 }

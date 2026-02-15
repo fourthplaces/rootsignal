@@ -1,9 +1,13 @@
 use async_graphql::*;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::types::GqlSource;
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
+use crate::graphql::entities::types::GqlEntity;
+use crate::graphql::workflows::trigger_restate_workflow;
+use rootsignal_core::ServerDeps;
 
 #[derive(InputObject)]
 pub struct CreateSourceInput {
@@ -26,6 +30,7 @@ impl SourceMutation {
         ctx: &Context<'_>,
         input: CreateSourceInput,
     ) -> Result<GqlSource> {
+        tracing::info!(name = %input.name, source_type = %input.source_type, "graphql.create_source");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -46,6 +51,60 @@ impl SourceMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %source.id, "graphql.create_source.ok");
+
+        // Auto-trigger qualification for new sources
+        let deps = ctx.data::<Arc<ServerDeps>>()?.clone();
+        let source_id = source.id;
+        tokio::spawn(async move {
+            if let Err(e) = trigger_restate_workflow(
+                &deps,
+                "QualifyWorkflow",
+                &source_id.to_string(),
+                serde_json::json!({}),
+            ).await {
+                tracing::warn!(source_id = %source_id, error = e.message, "Auto-qualification trigger failed");
+            }
+        });
+
         Ok(GqlSource::from(source))
+    }
+
+    async fn delete_sources(
+        &self,
+        ctx: &Context<'_>,
+        ids: Vec<Uuid>,
+    ) -> Result<i32> {
+        tracing::info!(count = ids.len(), "graphql.delete_sources");
+        require_admin(ctx)?;
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+
+        let deleted = rootsignal_domains::scraping::Source::delete_many(&ids, pool)
+            .await
+            .map_err(|e| error::internal(e))?;
+
+        tracing::info!(deleted = deleted, "graphql.delete_sources.ok");
+        Ok(deleted as i32)
+    }
+
+    /// Use AI to detect the entity behind a source from its scraped pages,
+    /// then find-or-create the entity and link it to the source.
+    async fn detect_source_entity(
+        &self,
+        ctx: &Context<'_>,
+        source_id: Uuid,
+    ) -> Result<GqlEntity> {
+        tracing::info!(source_id = %source_id, "graphql.detect_source_entity");
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?;
+
+        let entity = rootsignal_domains::scraping::activities::detect_source_entity(
+            source_id,
+            deps,
+        )
+        .await
+        .map_err(|e| error::internal(e))?;
+
+        Ok(GqlEntity::from(entity))
     }
 }

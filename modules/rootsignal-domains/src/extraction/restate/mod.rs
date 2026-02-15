@@ -50,6 +50,7 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: ExtractRequest,
     ) -> Result<ExtractResult, HandlerError> {
+        tracing::info!(snapshots = req.snapshot_ids.len(), source_id = ?req.source_id, "ExtractWorkflow.start");
         ctx.set("status", "extracting".to_string());
 
         let source_id = req.source_id.as_ref().and_then(|s| s.parse::<Uuid>().ok());
@@ -143,6 +144,7 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
 
         ctx.set("status", "completed".to_string());
 
+        tracing::info!(listings = all_listing_ids.len(), extractions = extraction_count, "ExtractWorkflow.completed");
         Ok(ExtractResult {
             listing_ids: all_listing_ids,
             extraction_count,

@@ -10,6 +10,7 @@ pub struct TagQuery;
 impl TagQuery {
     /// List tags, optionally filtered by kind (e.g., "listing_type", "category").
     async fn tags(&self, ctx: &Context<'_>, kind: Option<String>) -> Result<Vec<GqlTag>> {
+        tracing::info!(kind = ?kind, "graphql.tags");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let tags = if let Some(kind) = kind {
             rootsignal_domains::taxonomy::Tag::find_by_kind(&kind, pool)
@@ -28,6 +29,7 @@ impl TagQuery {
 
     /// List all tag kind configurations (taxonomy metadata).
     async fn tag_kinds(&self, ctx: &Context<'_>) -> Result<Vec<GqlTagKind>> {
+        tracing::info!("graphql.tag_kinds");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let kinds = rootsignal_domains::taxonomy::TagKindConfig::find_all(pool)
             .await

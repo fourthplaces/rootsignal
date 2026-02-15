@@ -3,6 +3,7 @@ pub mod firecrawl;
 pub mod gofundme;
 pub mod http;
 pub mod instagram;
+pub mod spider;
 pub mod tavily;
 pub mod tiktok;
 pub mod x;
@@ -20,8 +21,13 @@ pub fn build_ingestor(
     http_client: &reqwest::Client,
     firecrawl_api_key: Option<&str>,
     apify_api_key: Option<&str>,
+    chrome_url: Option<&str>,
 ) -> Result<Arc<dyn Ingestor>> {
     match adapter {
+        "spider" => {
+            let ingestor = spider::SpiderIngestor::new(chrome_url.map(|s| s.to_string()));
+            Ok(Arc::new(ValidatedIngestor::new(ingestor)))
+        }
         "firecrawl" => {
             let key = firecrawl_api_key.ok_or_else(|| {
                 anyhow::anyhow!("FIRECRAWL_API_KEY required for firecrawl adapter")

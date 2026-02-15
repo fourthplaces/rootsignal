@@ -140,6 +140,7 @@ impl ListingsService for ListingsServiceImpl {
         _ctx: Context<'_>,
         req: ListListingsRequest,
     ) -> Result<ListingListResult, HandlerError> {
+        tracing::info!(limit = ?req.limit, offset = ?req.offset, "Listings.list");
         let pool = self.deps.pool();
 
         let hotspot_id = req.hotspot_id.as_ref().and_then(|s| s.parse().ok());
@@ -189,6 +190,7 @@ impl ListingsService for ListingsServiceImpl {
         _ctx: Context<'_>,
         _req: EmptyRequest,
     ) -> Result<ListingFiltersResult, HandlerError> {
+        tracing::info!("Listings.filters");
         let pool = self.deps.pool();
 
         let kinds = TagKindConfig::find_for_resource_type("listing", pool)
@@ -217,6 +219,7 @@ impl ListingsService for ListingsServiceImpl {
         _ctx: Context<'_>,
         _req: EmptyRequest,
     ) -> Result<ListingStatsResult, HandlerError> {
+        tracing::info!("Listings.stats");
         let pool = self.deps.pool();
         let stats = ListingStats::compute(pool)
             .await
@@ -229,6 +232,7 @@ impl ListingsService for ListingsServiceImpl {
         _ctx: Context<'_>,
         req: ScoreBatchRequest,
     ) -> Result<ScoreBatchResult, HandlerError> {
+        tracing::info!(batch_size = req.listing_ids.len(), "Listings.score_batch");
         let pool = self.deps.pool();
         let mut scored = 0u32;
 
@@ -265,6 +269,7 @@ impl ListingsService for ListingsServiceImpl {
         _ctx: Context<'_>,
         _req: EmptyRequest,
     ) -> Result<ExpireResult, HandlerError> {
+        tracing::info!("Listings.expire_stale");
         let pool = self.deps.pool();
 
         let result = sqlx::query(
@@ -274,8 +279,8 @@ impl ListingsService for ListingsServiceImpl {
         .await
         .map_err(|e| TerminalError::new(format!("Expire: {}", e)))?;
 
-        Ok(ExpireResult {
-            expired: result.rows_affected() as u32,
-        })
+        let expired = result.rows_affected() as u32;
+        tracing::info!(expired, "Listings.expire_stale.completed");
+        Ok(ExpireResult { expired })
     }
 }
