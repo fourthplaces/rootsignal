@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use rootsignal_core::ServerDeps;
 
-use crate::entities::TagKindConfig;
+use crate::taxonomy::TagKindConfig;
 use crate::listings::models::listing::{Listing, ListingFilters, ListingStats, TagCount};
 
 // ─── Request / Response types ────────────────────────────────────────────────

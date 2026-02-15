@@ -10,8 +10,8 @@ pub struct GqlTag {
     pub display_name: Option<String>,
 }
 
-impl From<rootsignal_domains::entities::Tag> for GqlTag {
-    fn from(t: rootsignal_domains::entities::Tag) -> Self {
+impl From<rootsignal_domains::taxonomy::Tag> for GqlTag {
+    fn from(t: rootsignal_domains::taxonomy::Tag) -> Self {
         Self {
             id: t.id,
             kind: t.kind,
@@ -33,8 +33,8 @@ pub struct GqlTagKind {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::TagKindConfig> for GqlTagKind {
-    fn from(t: rootsignal_domains::entities::TagKindConfig) -> Self {
+impl From<rootsignal_domains::taxonomy::TagKindConfig> for GqlTagKind {
+    fn from(t: rootsignal_domains::taxonomy::TagKindConfig) -> Self {
         Self {
             id: t.id,
             slug: t.slug,

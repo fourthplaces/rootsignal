@@ -4,6 +4,93 @@ use std::sync::Arc;
 use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
+// ─── Qualify types ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualifyRequest {}
+impl_restate_serde!(QualifyRequest);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualifyResult {
+    pub score: i32,
+    pub verdict: String,
+    pub reasoning: String,
+}
+impl_restate_serde!(QualifyResult);
+
+// ─── QualifyWorkflow ────────────────────────────────────────────────────────
+
+#[restate_sdk::workflow]
+#[name = "QualifyWorkflow"]
+pub trait QualifyWorkflow {
+    async fn run(req: QualifyRequest) -> Result<QualifyResult, HandlerError>;
+
+    #[shared]
+    async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
+}
+
+pub struct QualifyWorkflowImpl {
+    deps: Arc<ServerDeps>,
+}
+
+impl QualifyWorkflowImpl {
+    pub fn with_deps(deps: Arc<ServerDeps>) -> Self {
+        Self { deps }
+    }
+}
+
+impl QualifyWorkflow for QualifyWorkflowImpl {
+    async fn run(
+        &self,
+        ctx: WorkflowContext<'_>,
+        _req: QualifyRequest,
+    ) -> Result<QualifyResult, HandlerError> {
+        // The workflow key IS the source_id
+        let source_id: Uuid = ctx.key().parse().map_err(|e: uuid::Error| {
+            TerminalError::new(format!("Invalid source UUID in workflow key: {}", e))
+        })?;
+
+        ctx.set("status", "qualifying".to_string());
+
+        let deps = self.deps.clone();
+        let result_json: String = ctx
+            .run(|| async move {
+                let result =
+                    crate::scraping::activities::qualify_source(source_id, &deps)
+                        .await
+                        .map_err(|e| {
+                            TerminalError::new(format!("Qualification failed: {}", e))
+                        })?;
+                serde_json::to_string(&result)
+                    .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
+            })
+            .await?;
+
+        let qualification: crate::scraping::activities::qualify_source::SourceQualification =
+            serde_json::from_str(&result_json)
+                .map_err(|e| TerminalError::new(format!("Deserialize: {}", e)))?;
+
+        ctx.set("status", "completed".to_string());
+
+        Ok(QualifyResult {
+            score: qualification.score,
+            verdict: qualification.verdict,
+            reasoning: qualification.reasoning,
+        })
+    }
+
+    async fn get_status(
+        &self,
+        ctx: SharedWorkflowContext<'_>,
+        _req: EmptyRequest,
+    ) -> Result<String, HandlerError> {
+        Ok(ctx
+            .get::<String>("status")
+            .await?
+            .unwrap_or_else(|| "unknown".to_string()))
+    }
+}
+
 // ─── Request / Response types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +268,7 @@ impl SchedulerService for SchedulerServiceImpl {
 
         let sources_json: String = ctx
             .run(|| async move {
-                let sources = crate::entities::Source::find_due_for_scrape(deps.pool())
+                let sources = crate::scraping::Source::find_due_for_scrape(deps.pool())
                     .await
                     .map_err(|e| TerminalError::new(format!("Failed to find sources: {}", e)))?;
                 let ids: Vec<String> = sources.iter().map(|s| s.id.to_string()).collect();

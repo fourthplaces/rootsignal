@@ -5,7 +5,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # Install dependencies
 FROM base AS deps
 WORKDIR /app
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY modules/admin-app/package.json modules/admin-app/
 COPY modules/api-client-js/package.json modules/api-client-js/
 RUN pnpm install --frozen-lockfile
@@ -16,12 +16,12 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/modules/admin-app/node_modules ./modules/admin-app/node_modules
 COPY --from=deps /app/modules/api-client-js/node_modules ./modules/api-client-js/node_modules
-COPY pnpm-workspace.yaml ./
+COPY package.json pnpm-workspace.yaml ./
 COPY modules/api-client-js modules/api-client-js
 COPY modules/admin-app modules/admin-app
 
 RUN pnpm --filter @rootsignal/api-client build 2>/dev/null || true
-RUN pnpm --filter @rootsignal/admin-app build
+RUN pnpm --filter @rootsignal/admin-app exec next build --webpack
 
 # Production
 FROM base AS runner
@@ -32,7 +32,7 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/modules/admin-app/public ./public
+COPY --from=builder /app/modules/admin-app/public ./modules/admin-app/public
 COPY --from=builder --chown=nextjs:nodejs /app/modules/admin-app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/modules/admin-app/.next/static ./modules/admin-app/.next/static
 

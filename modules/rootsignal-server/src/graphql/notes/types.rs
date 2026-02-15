@@ -15,8 +15,8 @@ pub struct GqlNote {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Note> for GqlNote {
-    fn from(n: rootsignal_domains::entities::Note) -> Self {
+impl From<rootsignal_domains::shared::Note> for GqlNote {
+    fn from(n: rootsignal_domains::shared::Note) -> Self {
         Self {
             id: n.id,
             content: n.content,

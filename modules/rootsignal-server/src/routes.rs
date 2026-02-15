@@ -1,21 +1,17 @@
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     http::HeaderMap,
     response::{Html, IntoResponse},
     routing::get,
     Json, Router,
 };
-use serde::Deserialize;
 use sqlx::PgPool;
-use serde::Serialize;
 use std::sync::Arc;
 use rootsignal_core::ServerDeps;
-use rootsignal_domains::heat_map::HeatMapPoint;
-use rootsignal_domains::listings::{ListingDetail, ListingFilters, ListingStats, ListingWithDistance};
+use rootsignal_domains::listings::{ListingDetail, ListingStats};
 use tower_http::cors::{Any, CorsLayer};
-use uuid::Uuid;
 
 use crate::graphql::{self, AppSchema};
 use crate::graphql::auth;
@@ -54,12 +50,6 @@ pub fn build_router(deps: Arc<ServerDeps>) -> Router {
     Router::new()
         .route("/", get(assessment_page))
         .route("/graphql", get(graphiql_handler).post(graphql_handler))
-        // REST API — deprecated, use GraphQL at /graphql instead.
-        // These routes will be removed in a future release.
-        .route("/api/stats", get(api_stats))
-        .route("/api/listings", get(api_listings))
-        .route("/api/listings/:id/cluster", get(api_listing_cluster))
-        .route("/api/heatmap", get(api_heatmap))
         .route("/health", get(health))
         .layer(cors)
         .with_state(AppState { pool, schema, jwt_service, supported_locales })
@@ -102,125 +92,6 @@ async fn graphiql_handler() -> impl IntoResponse {
 
 async fn health() -> &'static str {
     "ok"
-}
-
-async fn api_stats(State(state): State<AppState>) -> Json<ListingStats> {
-    let stats = ListingStats::compute(&state.pool).await.unwrap_or_else(|_| ListingStats {
-        total_listings: 0,
-        active_listings: 0,
-        total_sources: 0,
-        total_snapshots: 0,
-        total_extractions: 0,
-        total_entities: 0,
-        listings_by_type: vec![],
-        listings_by_role: vec![],
-        listings_by_category: vec![],
-        listings_by_domain: vec![],
-        listings_by_urgency: vec![],
-        listings_by_confidence: vec![],
-        listings_by_capacity: vec![],
-        recent_7d: 0,
-    });
-    Json(stats)
-}
-
-#[derive(Deserialize)]
-struct ListingsQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
-    locale: Option<String>,
-    zip_code: Option<String>,
-    radius_miles: Option<f64>,
-}
-
-/// Parse Accept-Language header to extract the primary locale.
-fn parse_accept_language(headers: &HeaderMap) -> Option<String> {
-    let header = headers.get("accept-language")?.to_str().ok()?;
-    // Take the first language tag (highest priority)
-    let primary = header.split(',').next()?.trim();
-    // Strip quality factor if present (e.g., "es;q=0.9" → "es")
-    let lang = primary.split(';').next()?.trim();
-    // Only accept our supported locales
-    match lang {
-        "en" | "es" | "so" | "ht" => Some(lang.to_string()),
-        _ => None,
-    }
-}
-
-/// Response enum to support both regular listings and distance-enriched listings.
-#[derive(Serialize)]
-#[serde(untagged)]
-enum ListingsResponse {
-    Standard(Vec<ListingDetail>),
-    WithDistance(Vec<ListingWithDistance>),
-}
-
-async fn api_listings(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(params): Query<ListingsQuery>,
-) -> Json<ListingsResponse> {
-    let limit = params.limit.unwrap_or(50);
-    let offset = params.offset.unwrap_or(0);
-
-    let locale = params
-        .locale
-        .or_else(|| parse_accept_language(&headers))
-        .unwrap_or_else(|| "en".to_string());
-
-    if let Some(zip) = &params.zip_code {
-        let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
-        let filters = ListingFilters::default();
-        let listings = ListingWithDistance::find_near_zip(
-            zip, radius, &filters, limit, offset, &locale, &state.pool,
-        )
-        .await
-        .unwrap_or_default();
-        Json(ListingsResponse::WithDistance(listings))
-    } else {
-        let listings = ListingDetail::find_active_localized(limit, offset, &locale, &state.pool)
-            .await
-            .unwrap_or_default();
-        Json(ListingsResponse::Standard(listings))
-    }
-}
-
-async fn api_listing_cluster(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Json<Vec<ListingDetail>> {
-    let siblings = ListingDetail::cluster_siblings(id, &state.pool)
-        .await
-        .unwrap_or_default();
-    Json(siblings)
-}
-
-#[derive(Deserialize)]
-struct HeatmapQuery {
-    zip_code: Option<String>,
-    radius_miles: Option<f64>,
-    entity_type: Option<String>,
-}
-
-async fn api_heatmap(
-    State(state): State<AppState>,
-    Query(params): Query<HeatmapQuery>,
-) -> Json<Vec<HeatMapPoint>> {
-    let points = if let Some(zip) = &params.zip_code {
-        let radius = params.radius_miles.unwrap_or(25.0).min(100.0);
-        HeatMapPoint::find_near_zip(zip, radius, &state.pool)
-            .await
-            .unwrap_or_default()
-    } else if let Some(entity_type) = &params.entity_type {
-        HeatMapPoint::find_latest_by_type(entity_type, &state.pool)
-            .await
-            .unwrap_or_default()
-    } else {
-        HeatMapPoint::find_latest(&state.pool)
-            .await
-            .unwrap_or_default()
-    };
-    Json(points)
 }
 
 async fn assessment_page(State(state): State<AppState>) -> Html<String> {

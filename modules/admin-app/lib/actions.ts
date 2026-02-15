@@ -22,7 +22,7 @@ export async function verifyCode(phone: string, code: string) {
   const cookieStore = await cookies();
   cookieStore.set("auth_token", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.SECURE_COOKIES === "true",
     sameSite: "lax",
     maxAge: 60 * 60 * 24, // 24 hours
     path: "/",

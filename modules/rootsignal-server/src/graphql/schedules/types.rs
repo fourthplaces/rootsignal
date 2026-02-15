@@ -17,8 +17,8 @@ pub struct GqlSchedule {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Schedule> for GqlSchedule {
-    fn from(s: rootsignal_domains::entities::Schedule) -> Self {
+impl From<rootsignal_domains::shared::Schedule> for GqlSchedule {
+    fn from(s: rootsignal_domains::shared::Schedule) -> Self {
         Self {
             id: s.id,
             valid_from: s.valid_from,

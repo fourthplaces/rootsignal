@@ -14,7 +14,7 @@ CREATE TABLE notes (
 );
 
 CREATE INDEX idx_notes_severity ON notes(severity);
-CREATE INDEX idx_notes_active ON notes(expired_at) WHERE expired_at IS NULL OR expired_at > NOW();
+CREATE INDEX idx_notes_active ON notes(expired_at) WHERE expired_at IS NULL;
 
 -- Polymorphic join for notes
 CREATE TABLE noteables (

@@ -9,14 +9,14 @@ use rootsignal_server::routes;
 
 // Import Restate traits to bring `.serve()` into scope
 use rootsignal_domains::scraping::restate::{
-    SchedulerService, ScrapeWorkflow, SourceObject,
+    QualifyWorkflow, SchedulerService, ScrapeWorkflow, SourceObject,
 };
 use rootsignal_domains::extraction::restate::ExtractWorkflow;
 use rootsignal_domains::investigations::restate::InvestigateWorkflow;
 use rootsignal_domains::translation::restate::TranslateWorkflow;
 use rootsignal_domains::clustering::ClusteringJob;
 use rootsignal_domains::listings::restate::ListingsService;
-use rootsignal_domains::entities::restate::tags::TagsService;
+use rootsignal_domains::taxonomy::restate::tags::TagsService;
 
 #[derive(Parser)]
 #[command(name = "rootsignal-server", about = "Root Signal community signal server")]
@@ -184,6 +184,10 @@ async fn main() -> Result<()> {
                 .serve(),
         )
         .bind(
+            rootsignal_domains::scraping::QualifyWorkflowImpl::with_deps(worker_deps.clone())
+                .serve(),
+        )
+        .bind(
             rootsignal_domains::extraction::ExtractWorkflowImpl::with_deps(worker_deps.clone())
                 .serve(),
         )
@@ -202,7 +206,7 @@ async fn main() -> Result<()> {
                 .serve(),
         )
         .bind(
-            rootsignal_domains::entities::TagsServiceImpl::with_deps(worker_deps.clone())
+            rootsignal_domains::taxonomy::TagsServiceImpl::with_deps(worker_deps.clone())
                 .serve(),
         )
         .bind(

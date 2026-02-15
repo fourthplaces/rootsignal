@@ -10,13 +10,15 @@ pub struct Source {
     pub entity_id: Option<Uuid>,
     pub name: String,
     pub source_type: String,
-    pub adapter: String,
     pub url: Option<String>,
     pub handle: Option<String>,
     pub cadence_hours: i32,
     pub last_scraped_at: Option<DateTime<Utc>>,
     pub is_active: bool,
     pub config: serde_json::Value,
+    pub qualification_status: String,
+    pub qualification_summary: Option<String>,
+    pub qualification_score: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -24,24 +26,26 @@ impl Source {
     pub async fn create(
         name: &str,
         source_type: &str,
-        adapter: &str,
         url: Option<&str>,
+        handle: Option<&str>,
         entity_id: Option<Uuid>,
+        cadence_hours: Option<i32>,
         config: serde_json::Value,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO sources (name, source_type, adapter, url, entity_id, config)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO sources (name, source_type, url, handle, entity_id, cadence_hours, config)
+            VALUES ($1, $2, $3, $4, $5, COALESCE($6, 24), $7)
             RETURNING *
             "#,
         )
         .bind(name)
         .bind(source_type)
-        .bind(adapter)
         .bind(url)
+        .bind(handle)
         .bind(entity_id)
+        .bind(cadence_hours)
         .bind(config)
         .fetch_one(pool)
         .await
@@ -52,6 +56,13 @@ impl Source {
         sqlx::query_as::<_, Self>("SELECT * FROM sources WHERE id = $1")
             .bind(id)
             .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn find_all(pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>("SELECT * FROM sources ORDER BY created_at DESC")
+            .fetch_all(pool)
             .await
             .map_err(Into::into)
     }

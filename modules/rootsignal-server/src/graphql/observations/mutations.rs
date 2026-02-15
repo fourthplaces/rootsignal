@@ -25,7 +25,7 @@ impl ObservationMutation {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
         // Verify observation exists and is pending
-        let obs = rootsignal_domains::entities::Observation::find_by_id(id, pool)
+        let obs = rootsignal_domains::investigations::Observation::find_by_id(id, pool)
             .await
             .map_err(|e| Error::new(format!("Failed to find observation: {e}")))?
             .ok_or_else(|| Error::new("Observation not found"))?;
@@ -42,7 +42,7 @@ impl ObservationMutation {
             ReviewDecision::Reject => "rejected",
         };
 
-        let updated = rootsignal_domains::entities::Observation::set_review_status(id, status, pool)
+        let updated = rootsignal_domains::investigations::Observation::set_review_status(id, status, pool)
             .await
             .map_err(|e| Error::new(format!("Failed to update observation: {e}")))?;
 

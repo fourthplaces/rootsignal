@@ -1,141 +1,211 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-const WORKFLOW_ACTIONS = [
-  {
-    id: "scrape",
-    label: "Trigger Scrape",
-    description: "Scrape a single source by ID",
-    mutation: `mutation TriggerScrape($sourceId: UUID!) { triggerScrape(sourceId: $sourceId) { success message } }`,
-    fields: [{ name: "sourceId", label: "Source ID", type: "text", placeholder: "UUID of source" }],
-  },
-  {
-    id: "scrape_cycle",
-    label: "Trigger Scrape Cycle",
-    description: "Run a full scrape cycle for all due sources",
-    mutation: `mutation { triggerScrapeCycle { success message } }`,
-    fields: [],
-  },
-  {
-    id: "extraction",
-    label: "Trigger Extraction",
-    description: "Extract data from a snapshot",
-    mutation: `mutation TriggerExtraction($snapshotId: UUID!) { triggerExtraction(snapshotId: $snapshotId) { success message } }`,
-    fields: [{ name: "snapshotId", label: "Snapshot ID", type: "text", placeholder: "UUID of snapshot" }],
-  },
-  {
-    id: "translation",
-    label: "Trigger Translation",
-    description: "Translate a listing to a target locale",
-    mutation: `mutation TriggerTranslation($listingId: UUID!, $targetLocale: String!) { triggerTranslation(listingId: $listingId, targetLocale: $targetLocale) { success message } }`,
-    fields: [
-      { name: "listingId", label: "Listing ID", type: "text", placeholder: "UUID of listing" },
-      { name: "targetLocale", label: "Target Locale", type: "text", placeholder: "e.g. es, fr" },
-    ],
-  },
-];
+interface Source {
+  id: string;
+  name: string;
+  sourceType: string;
+  isActive: boolean;
+}
+
+interface TriggerResult {
+  workflowId: string;
+  status: string;
+}
+
+function StatusBadge({ result }: { result: TriggerResult | null }) {
+  if (!result) return null;
+  const ok = result.status === "triggered";
+  return (
+    <span
+      className={`ml-3 inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${
+        ok ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+      }`}
+    >
+      {result.status} — {result.workflowId}
+    </span>
+  );
+}
+
+async function gqlMutate(query: string, variables?: Record<string, unknown>) {
+  const res = await fetch("/api/graphql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  const data = await res.json();
+  if (data.errors) throw new Error(data.errors[0].message);
+  return data.data;
+}
 
 export default function WorkflowsPage() {
-  const [results, setResults] = useState<Record<string, { success: boolean; message: string } | null>>({});
-  const [loading, setLoading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState("");
+  const [snapshotId, setSnapshotId] = useState("");
 
-  async function handleTrigger(actionId: string, mutation: string, variables: Record<string, string>) {
-    setLoading(actionId);
-    setError(null);
-    setResults((prev) => ({ ...prev, [actionId]: null }));
+  const [cycleResult, setCycleResult] = useState<TriggerResult | null>(null);
+  const [scrapeResult, setScrapeResult] = useState<TriggerResult | null>(null);
+  const [extractResult, setExtractResult] = useState<TriggerResult | null>(null);
 
-    try {
-      const res = await fetch("/api/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: mutation, variables }),
+  const [cycleLoading, setCycleLoading] = useState(false);
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [extractLoading, setExtractLoading] = useState(false);
+
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `query { sources { id name sourceType isActive } }`,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.data?.sources) {
+          setSources(data.data.sources);
+          if (data.data.sources.length > 0) {
+            setSelectedSourceId(data.data.sources[0].id);
+          }
+        }
       });
-      const data = await res.json();
-      if (data.errors) throw new Error(data.errors[0].message);
+  }, []);
 
-      const result = Object.values(data.data)[0] as { success: boolean; message: string };
-      setResults((prev) => ({ ...prev, [actionId]: result }));
+  async function triggerCycle() {
+    setCycleLoading(true);
+    setCycleResult(null);
+    setError("");
+    try {
+      const data = await gqlMutate(
+        `mutation { triggerScrapeCycle { workflowId status } }`,
+      );
+      setCycleResult(data.triggerScrapeCycle);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Trigger failed");
+      setError(err instanceof Error ? err.message : "Failed");
     } finally {
-      setLoading(null);
+      setCycleLoading(false);
+    }
+  }
+
+  async function triggerScrape() {
+    if (!selectedSourceId) return;
+    setScrapeLoading(true);
+    setScrapeResult(null);
+    setError("");
+    try {
+      const data = await gqlMutate(
+        `mutation TriggerScrape($sourceId: UUID!) {
+          triggerScrape(sourceId: $sourceId) { workflowId status }
+        }`,
+        { sourceId: selectedSourceId },
+      );
+      setScrapeResult(data.triggerScrape);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setScrapeLoading(false);
+    }
+  }
+
+  async function triggerExtraction() {
+    if (!snapshotId.trim()) return;
+    setExtractLoading(true);
+    setExtractResult(null);
+    setError("");
+    try {
+      const data = await gqlMutate(
+        `mutation TriggerExtraction($snapshotId: UUID!) {
+          triggerExtraction(snapshotId: $snapshotId) { workflowId status }
+        }`,
+        { snapshotId: snapshotId.trim() },
+      );
+      setExtractResult(data.triggerExtraction);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setExtractLoading(false);
     }
   }
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">Workflows</h1>
-
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-      <div className="space-y-4">
-        {WORKFLOW_ACTIONS.map((action) => (
-          <WorkflowCard
-            key={action.id}
-            action={action}
-            result={results[action.id] ?? null}
-            loading={loading === action.id}
-            onTrigger={(vars) => handleTrigger(action.id, action.mutation, vars)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WorkflowCard({
-  action,
-  result,
-  loading,
-  onTrigger,
-}: {
-  action: (typeof WORKFLOW_ACTIONS)[number];
-  result: { success: boolean; message: string } | null;
-  loading: boolean;
-  onTrigger: (variables: Record<string, string>) => void;
-}) {
-  const [values, setValues] = useState<Record<string, string>>({});
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    onTrigger(values);
-  }
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="font-medium">{action.label}</h3>
-      <p className="mb-3 text-sm text-gray-500">{action.description}</p>
-
-      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
-        {action.fields.map((f) => (
-          <div key={f.name}>
-            <label className="block text-xs font-medium text-gray-600">{f.label}</label>
-            <input
-              type={f.type}
-              placeholder={f.placeholder}
-              value={values[f.name] ?? ""}
-              onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
-              required
-              className="mt-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-            />
+      <div className="space-y-6">
+        {/* Scrape Cycle */}
+        <section className="rounded-lg border border-gray-200 bg-white p-6">
+          <h2 className="mb-2 text-lg font-semibold">Scrape Cycle</h2>
+          <p className="mb-4 text-sm text-gray-500">
+            Trigger a full scrape cycle for all sources that are due.
+          </p>
+          <div className="flex items-center">
+            <button
+              onClick={triggerCycle}
+              disabled={cycleLoading}
+              className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800 disabled:opacity-50"
+            >
+              {cycleLoading ? "Running..." : "Run Scrape Cycle"}
+            </button>
+            <StatusBadge result={cycleResult} />
           </div>
-        ))}
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "Running..." : "Run"}
-        </button>
-      </form>
+        </section>
 
-      {result && (
-        <p className={`mt-2 text-sm ${result.success ? "text-green-600" : "text-red-600"}`}>
-          {result.message}
-        </p>
-      )}
+        {/* Scrape Source */}
+        <section className="rounded-lg border border-gray-200 bg-white p-6">
+          <h2 className="mb-2 text-lg font-semibold">Scrape Source</h2>
+          <p className="mb-4 text-sm text-gray-500">
+            Trigger a scrape for a specific source.
+          </p>
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedSourceId}
+              onChange={(e) => setSelectedSourceId(e.target.value)}
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+            >
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.sourceType}){!s.isActive ? " [inactive]" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={triggerScrape}
+              disabled={scrapeLoading || !selectedSourceId}
+              className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800 disabled:opacity-50"
+            >
+              {scrapeLoading ? "Running..." : "Scrape"}
+            </button>
+            <StatusBadge result={scrapeResult} />
+          </div>
+        </section>
+
+        {/* Extract Snapshot */}
+        <section className="rounded-lg border border-gray-200 bg-white p-6">
+          <h2 className="mb-2 text-lg font-semibold">Extract Snapshot</h2>
+          <p className="mb-4 text-sm text-gray-500">
+            Trigger extraction for a specific snapshot.
+          </p>
+          <div className="flex items-center gap-3">
+            <input
+              value={snapshotId}
+              onChange={(e) => setSnapshotId(e.target.value)}
+              placeholder="Snapshot UUID"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+            <button
+              onClick={triggerExtraction}
+              disabled={extractLoading || !snapshotId.trim()}
+              className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800 disabled:opacity-50"
+            >
+              {extractLoading ? "Running..." : "Extract"}
+            </button>
+            <StatusBadge result={extractResult} />
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

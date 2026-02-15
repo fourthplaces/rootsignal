@@ -2,12 +2,6 @@
 -- Groups semantically similar listings/entities without modifying source data.
 -- "Cluster and link, don't merge" — source data is never deleted or modified.
 
--- pgvector HNSW index for fast nearest-neighbor search on listing embeddings
--- ef_construction=128 for better recall (important for dedup where missed duplicates > slow queries)
-CREATE INDEX idx_listings_embedding ON listings
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 128);
-
 -- Cluster grouping
 CREATE TABLE clusters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

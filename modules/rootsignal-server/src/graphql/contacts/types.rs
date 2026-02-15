@@ -13,8 +13,8 @@ pub struct GqlContact {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Contact> for GqlContact {
-    fn from(c: rootsignal_domains::entities::Contact) -> Self {
+impl From<rootsignal_domains::shared::Contact> for GqlContact {
+    fn from(c: rootsignal_domains::shared::Contact) -> Self {
         Self {
             id: c.id,
             name: c.name,

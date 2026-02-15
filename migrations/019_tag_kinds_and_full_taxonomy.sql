@@ -159,9 +159,8 @@ INSERT INTO tags (kind, value, display_name) VALUES
     ('signal_domain', 'knowledge_awareness', 'Knowledge & Awareness')
 ON CONFLICT (kind, value) DO NOTHING;
 
--- Rename cultural_ecological → ecological_stewardship (if exists)
-UPDATE tags SET value = 'ecological_stewardship', display_name = 'Ecological Stewardship'
-WHERE kind = 'signal_domain' AND value = 'cultural_ecological';
+-- Remove old cultural_ecological (replaced by ecological_stewardship above)
+DELETE FROM tags WHERE kind = 'signal_domain' AND value = 'cultural_ecological';
 
 -- ── Urgency tags ────────────────────────────────────────────────────────────
 

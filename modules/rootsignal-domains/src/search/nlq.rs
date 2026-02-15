@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rootsignal_core::ServerDeps;
 
-use crate::entities::build_tag_instructions;
+use crate::taxonomy::build_tag_instructions;
 use super::types::ParsedQuery;
 
 /// Parse a natural language query into structured filters + search text using AI.

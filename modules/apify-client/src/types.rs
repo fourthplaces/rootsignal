@@ -111,6 +111,79 @@ impl Tweet {
     }
 }
 
+/// Input for the clockworks/tiktok-scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct TikTokScraperInput {
+    pub profiles: Vec<String>,
+    #[serde(rename = "resultsPerPage")]
+    pub results_per_page: u32,
+}
+
+/// A single TikTok post from the Apify dataset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TikTokPost {
+    pub id: Option<String>,
+    pub text: Option<String>,
+    #[serde(rename = "webVideoUrl")]
+    pub web_video_url: Option<String>,
+    #[serde(rename = "createTimeISO")]
+    pub create_time_iso: Option<String>,
+    #[serde(rename = "authorMeta")]
+    pub author_meta: Option<TikTokAuthor>,
+    #[serde(rename = "diggCount")]
+    pub digg_count: Option<i64>,
+    #[serde(rename = "shareCount")]
+    pub share_count: Option<i64>,
+    #[serde(rename = "playCount")]
+    pub play_count: Option<i64>,
+    #[serde(rename = "commentCount")]
+    pub comment_count: Option<i64>,
+    pub hashtags: Option<Vec<TikTokHashtag>>,
+}
+
+/// Author metadata from a TikTok post.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TikTokAuthor {
+    pub name: Option<String>,
+    #[serde(rename = "nickName")]
+    pub nick_name: Option<String>,
+}
+
+/// A hashtag reference in a TikTok post.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TikTokHashtag {
+    pub name: Option<String>,
+}
+
+/// Input for the jupri/gofundme scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct GoFundMeScraperInput {
+    #[serde(rename = "searchTerms")]
+    pub search_terms: Vec<String>,
+    #[serde(rename = "maxItems")]
+    pub max_items: u32,
+}
+
+/// A single GoFundMe campaign from the Apify dataset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GoFundMeCampaign {
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "currentAmount")]
+    pub current_amount: Option<f64>,
+    #[serde(rename = "goalAmount")]
+    pub goal_amount: Option<f64>,
+    #[serde(rename = "donationsCount")]
+    pub donations_count: Option<i64>,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
+    pub category: Option<String>,
+    pub location: Option<String>,
+    #[serde(rename = "organizerName")]
+    pub organizer_name: Option<String>,
+}
+
 /// Apify actor run metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunData {

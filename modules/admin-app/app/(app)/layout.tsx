@@ -7,15 +7,19 @@ const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
   { href: "/listings", label: "Listings" },
   { href: "/entities", label: "Entities" },
+  { href: "/sources", label: "Sources" },
+  { href: "/service-areas", label: "Service Areas" },
+  { href: "/tags", label: "Tags" },
   { href: "/observations", label: "Observations" },
-  { href: "/workflows", label: "Workflows" },
   { href: "/stats", label: "Stats" },
 ];
 
 export default async function AppLayout({
   children,
+  modal,
 }: {
   children: React.ReactNode;
+  modal: React.ReactNode;
 }) {
   const cookieStore = await cookies();
   const token = cookieStore.get("auth_token")?.value;
@@ -52,6 +56,7 @@ export default async function AppLayout({
         </div>
       </aside>
       <main className="flex-1 p-6">{children}</main>
+      {modal}
     </div>
   );
 }

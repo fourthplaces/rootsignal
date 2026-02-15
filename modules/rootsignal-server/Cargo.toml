@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "export-schema"
 path = "src/bin/export_schema.rs"
 
+[[bin]]
+name = "run-migrations"
+path = "src/bin/run_migrations.rs"
+
 [dependencies]
 tokio.workspace = true
 async-trait.workspace = true

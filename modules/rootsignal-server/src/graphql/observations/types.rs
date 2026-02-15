@@ -16,8 +16,8 @@ pub struct GqlObservation {
     pub review_status: String,
 }
 
-impl From<rootsignal_domains::entities::Observation> for GqlObservation {
-    fn from(o: rootsignal_domains::entities::Observation) -> Self {
+impl From<rootsignal_domains::investigations::Observation> for GqlObservation {
+    fn from(o: rootsignal_domains::investigations::Observation) -> Self {
         Self {
             id: o.id,
             subject_type: o.subject_type,
@@ -48,8 +48,8 @@ pub struct GqlInvestigation {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Investigation> for GqlInvestigation {
-    fn from(i: rootsignal_domains::entities::Investigation) -> Self {
+impl From<rootsignal_domains::investigations::Investigation> for GqlInvestigation {
+    fn from(i: rootsignal_domains::investigations::Investigation) -> Self {
         Self {
             id: i.id,
             subject_type: i.subject_type,
@@ -70,7 +70,7 @@ impl GqlInvestigation {
     async fn observations(&self, ctx: &Context<'_>) -> Result<Vec<GqlObservation>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let observations =
-            rootsignal_domains::entities::Observation::find_by_investigation(self.id, pool)
+            rootsignal_domains::investigations::Observation::find_by_investigation(self.id, pool)
                 .await
                 .unwrap_or_default();
         Ok(observations.into_iter().map(GqlObservation::from).collect())

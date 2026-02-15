@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
-use crate::entities::Translation;
+use crate::translation::Translation;
 
 /// Supported locales (default; prefer config.supported_locales when available).
 pub const ALL_LOCALES: &[&str] = &["en", "es", "so", "ht"];

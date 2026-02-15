@@ -16,8 +16,8 @@ pub struct GqlLocation {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Location> for GqlLocation {
-    fn from(l: rootsignal_domains::entities::Location) -> Self {
+impl From<rootsignal_domains::geo::Location> for GqlLocation {
+    fn from(l: rootsignal_domains::geo::Location) -> Self {
         Self {
             id: l.id,
             name: l.name,

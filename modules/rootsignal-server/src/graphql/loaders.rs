@@ -51,7 +51,7 @@ impl Loader<Uuid> for ServiceByIdLoader {
     type Error = Arc<sqlx::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
-        let rows = sqlx::query_as::<_, rootsignal_domains::entities::Service>(
+        let rows = sqlx::query_as::<_, rootsignal_domains::shared::Service>(
             "SELECT * FROM services WHERE id = ANY($1)",
         )
         .bind(keys)
@@ -75,7 +75,7 @@ pub struct TagsForLoader {
 #[derive(sqlx::FromRow)]
 struct TagWithOwner {
     #[sqlx(flatten)]
-    tag: rootsignal_domains::entities::Tag,
+    tag: rootsignal_domains::taxonomy::Tag,
     taggable_type: String,
     taggable_id: Uuid,
 }
@@ -123,7 +123,7 @@ pub struct LocationsForLoader {
 #[derive(sqlx::FromRow)]
 struct LocationWithOwner {
     #[sqlx(flatten)]
-    location: rootsignal_domains::entities::Location,
+    location: rootsignal_domains::geo::Location,
     locatable_type: String,
     locatable_id: Uuid,
 }
@@ -179,7 +179,7 @@ impl Loader<PolymorphicKey> for SchedulesForLoader {
         let types: Vec<&str> = keys.iter().map(|k| k.0.as_str()).collect();
         let ids: Vec<Uuid> = keys.iter().map(|k| k.1).collect();
 
-        let rows = sqlx::query_as::<_, rootsignal_domains::entities::Schedule>(
+        let rows = sqlx::query_as::<_, rootsignal_domains::shared::Schedule>(
             "SELECT * FROM schedules WHERE scheduleable_type = ANY($1) AND scheduleable_id = ANY($2)",
         )
         .bind(&types)
@@ -216,7 +216,7 @@ impl Loader<PolymorphicKey> for ContactsForLoader {
         let types: Vec<&str> = keys.iter().map(|k| k.0.as_str()).collect();
         let ids: Vec<Uuid> = keys.iter().map(|k| k.1).collect();
 
-        let rows = sqlx::query_as::<_, rootsignal_domains::entities::Contact>(
+        let rows = sqlx::query_as::<_, rootsignal_domains::shared::Contact>(
             "SELECT * FROM contacts WHERE contactable_type = ANY($1) AND contactable_id = ANY($2)",
         )
         .bind(&types)
@@ -303,7 +303,7 @@ pub struct NotesForLoader {
 #[derive(sqlx::FromRow)]
 struct NoteWithOwner {
     #[sqlx(flatten)]
-    note: rootsignal_domains::entities::Note,
+    note: rootsignal_domains::shared::Note,
     noteable_type: String,
     noteable_id: Uuid,
 }

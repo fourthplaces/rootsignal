@@ -1,6 +1,11 @@
+pub mod investigation;
+pub mod observation;
+pub mod proposal;
 pub mod restate;
 pub mod tools;
 
+pub use investigation::Investigation;
+pub use observation::Observation;
 pub use restate::InvestigateWorkflowImpl;
 
 use anyhow::Result;
@@ -11,7 +16,7 @@ use uuid::Uuid;
 
 use ai_client::traits::{Agent, PromptBuilder};
 
-use crate::entities::{Entity, Investigation, Observation};
+use crate::entities::Entity;
 use tools::{InternalSignalHistoryTool, TavilyEntitySearchTool, WhoisLookupTool};
 
 pub async fn run_investigation(

@@ -2,7 +2,10 @@ use anyhow::Result;
 use rootsignal_core::{ExtractedListing, ServerDeps};
 use uuid::Uuid;
 
-use crate::entities::{Contact, Entity, Location, Locationable, Notable, Organization, Schedule, Service, Taggable};
+use crate::entities::{Entity, Organization};
+use crate::geo::{Location, Locationable};
+use crate::shared::{Contact, Notable, Schedule, Service};
+use crate::taxonomy::Taggable;
 
 /// Extraction row with the data we need for normalization.
 #[derive(Debug, sqlx::FromRow)]

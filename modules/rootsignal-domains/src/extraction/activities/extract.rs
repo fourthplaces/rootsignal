@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use rootsignal_core::{ExtractedListings, ServerDeps};
 use uuid::Uuid;
 
-use crate::entities::build_tag_instructions;
+use crate::taxonomy::build_tag_instructions;
 
 /// Page snapshot row (just the fields we need).
 #[derive(Debug, sqlx::FromRow)]

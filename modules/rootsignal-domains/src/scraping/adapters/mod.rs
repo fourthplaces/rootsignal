@@ -1,8 +1,10 @@
 pub mod facebook;
 pub mod firecrawl;
+pub mod gofundme;
 pub mod http;
 pub mod instagram;
 pub mod tavily;
+pub mod tiktok;
 pub mod x;
 
 use anyhow::Result;
@@ -44,6 +46,16 @@ pub fn build_ingestor(
             let key = apify_api_key
                 .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_x adapter"))?;
             Ok(Arc::new(x::XIngestor::new(key.to_string())))
+        }
+        "apify_tiktok" => {
+            let key = apify_api_key
+                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_tiktok adapter"))?;
+            Ok(Arc::new(tiktok::TikTokIngestor::new(key.to_string())))
+        }
+        "apify_gofundme" => {
+            let key = apify_api_key
+                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_gofundme adapter"))?;
+            Ok(Arc::new(gofundme::GoFundMeIngestor::new(key.to_string())))
         }
         "tavily" => Err(anyhow::anyhow!(
             "Tavily is a search adapter, not an ingestor. Use build_web_searcher instead."

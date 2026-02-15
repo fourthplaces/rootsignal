@@ -3,8 +3,9 @@ pub mod types;
 
 pub use error::{ApifyError, Result};
 pub use types::{
-    FacebookPost, FacebookScraperInput, InstagramPost, InstagramScraperInput, RunData, StartUrl,
-    Tweet, TweetAuthor, TweetScraperInput,
+    FacebookPost, FacebookScraperInput, GoFundMeCampaign, GoFundMeScraperInput, InstagramPost,
+    InstagramScraperInput, RunData, StartUrl, TikTokPost, TikTokScraperInput, Tweet, TweetAuthor,
+    TweetScraperInput,
 };
 
 use serde::de::DeserializeOwned;
@@ -20,6 +21,12 @@ const FACEBOOK_POSTS_SCRAPER: &str = "KoJrdxJCTtpon81KY";
 
 /// Actor ID for apidojo/tweet-scraper.
 const TWEET_SCRAPER: &str = "61RPP7dywgiy0JPD0";
+
+/// Actor ID for clockworks/tiktok-scraper.
+const TIKTOK_SCRAPER: &str = "GdWCkxBtKWOsKjdch";
+
+/// Actor ID for jupri/gofundme.
+const GOFUNDME_SCRAPER: &str = "RDZ33qDF65SRiTnxx";
 
 pub struct ApifyClient {
     client: reqwest::Client,
@@ -196,6 +203,102 @@ impl ApifyClient {
         tracing::info!(count = posts.len(), "Fetched Facebook posts");
 
         Ok(posts)
+    }
+
+    /// Scrape TikTok profile posts end-to-end: start run, poll, fetch results.
+    pub async fn scrape_tiktok_posts(&self, username: &str, limit: u32) -> Result<Vec<TikTokPost>> {
+        tracing::info!(username, limit, "Starting TikTok scrape");
+
+        let input = TikTokScraperInput {
+            profiles: vec![username.to_string()],
+            results_per_page: limit,
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, TIKTOK_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Apify run started, polling for completion");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        tracing::info!(
+            run_id = %completed.id,
+            dataset_id = %completed.default_dataset_id,
+            "Run completed, fetching results"
+        );
+
+        let posts: Vec<TikTokPost> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = posts.len(), "Fetched TikTok posts");
+
+        Ok(posts)
+    }
+
+    /// Scrape GoFundMe campaigns end-to-end: start run, poll, fetch results.
+    pub async fn scrape_gofundme(
+        &self,
+        search_term: &str,
+        limit: u32,
+    ) -> Result<Vec<GoFundMeCampaign>> {
+        tracing::info!(search_term, limit, "Starting GoFundMe scrape");
+
+        let input = GoFundMeScraperInput {
+            search_terms: vec![search_term.to_string()],
+            max_items: limit,
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, GOFUNDME_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Apify run started, polling for completion");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        tracing::info!(
+            run_id = %completed.id,
+            dataset_id = %completed.default_dataset_id,
+            "Run completed, fetching results"
+        );
+
+        let campaigns: Vec<GoFundMeCampaign> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = campaigns.len(), "Fetched GoFundMe campaigns");
+
+        Ok(campaigns)
     }
 
     /// Scrape X/Twitter posts end-to-end: start run, poll, fetch results.

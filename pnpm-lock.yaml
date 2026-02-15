@@ -13,7 +13,7 @@ importers:
 
   modules/admin-app:
     dependencies:
-      '@taproot/api-client':
+      '@rootsignal/api-client':
         specifier: workspace:*
         version: link:../api-client-js
       next:

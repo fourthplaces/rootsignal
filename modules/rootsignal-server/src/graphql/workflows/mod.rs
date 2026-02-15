@@ -88,6 +88,30 @@ impl WorkflowMutation {
         })
     }
 
+    /// Trigger source qualification — sample scrape + AI evaluation.
+    async fn trigger_qualification(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<WorkflowTriggerResult> {
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?;
+
+        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+            .ok_or_else(|| Error::new("Restate not configured"))?;
+        let ingress_url = restate_admin_url.replace(":9070", ":8080");
+
+        let url = format!("{}/QualifyWorkflow/{}/run/send", ingress_url, source_id);
+        let response = deps.http_client.post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| Error::new(format!("Failed to trigger qualification: {e}")))?;
+
+        let status = if response.status().is_success() { "triggered" } else { "failed" };
+
+        Ok(WorkflowTriggerResult {
+            workflow_id: source_id.to_string(),
+            status: status.to_string(),
+        })
+    }
+
     /// Trigger translation for a specific record.
     async fn trigger_translation(
         &self,

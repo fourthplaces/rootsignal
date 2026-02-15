@@ -81,7 +81,7 @@ impl GqlEntity {
 
     async fn services(&self, ctx: &Context<'_>) -> Result<Vec<GqlService>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let services = rootsignal_domains::entities::Service::find_by_entity_id(self.id, pool)
+        let services = rootsignal_domains::shared::Service::find_by_entity_id(self.id, pool)
             .await
             .unwrap_or_default();
         Ok(services.into_iter().map(GqlService::from).collect())
@@ -119,8 +119,8 @@ pub struct GqlService {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Service> for GqlService {
-    fn from(s: rootsignal_domains::entities::Service) -> Self {
+impl From<rootsignal_domains::shared::Service> for GqlService {
+    fn from(s: rootsignal_domains::shared::Service) -> Self {
         Self {
             id: s.id,
             entity_id: s.entity_id,

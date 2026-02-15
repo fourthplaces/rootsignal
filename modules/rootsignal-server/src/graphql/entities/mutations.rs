@@ -107,7 +107,7 @@ impl EntityMutation {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let service = rootsignal_domains::entities::Service::create(
+        let service = rootsignal_domains::shared::Service::create(
             input.entity_id,
             &input.name,
             input.description.as_deref(),
@@ -128,7 +128,7 @@ impl EntityMutation {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let service = rootsignal_domains::entities::Service::update(
+        let service = rootsignal_domains::shared::Service::update(
             id,
             input.name.as_deref(),
             input.description.as_deref(),

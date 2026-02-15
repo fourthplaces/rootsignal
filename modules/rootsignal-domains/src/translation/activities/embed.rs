@@ -4,7 +4,8 @@ use sha2::{Digest, Sha256};
 use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
-use crate::entities::{Embedding, Translation};
+use crate::search::Embedding;
+use crate::translation::Translation;
 
 /// Compose the text to embed for a given record type.
 /// Always uses English text — from translations if source is non-English, from source fields if English.

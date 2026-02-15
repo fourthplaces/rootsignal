@@ -2,17 +2,18 @@ use anyhow::Result;
 use rootsignal_core::{DiscoverConfig, ServerDeps};
 use uuid::Uuid;
 
-use crate::entities::Source;
+use crate::config::ServiceArea;
+use crate::scraping::Source;
 use crate::scraping::adapters;
 
 /// Scrape a source, store page_snapshots, return snapshot IDs for extraction.
 pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uuid>> {
     let source = Source::find_by_id(source_id, deps.pool()).await?;
-    tracing::info!(source_id = %source_id, name = %source.name, adapter = %source.adapter, "Scraping source");
+    tracing::info!(source_id = %source_id, name = %source.name, source_type = %source.source_type, "Scraping source");
 
-    let pages = match source.adapter.as_str() {
-        "tavily" => {
-            // Tavily is a search adapter — use config.search_query or source name
+    let pages = match source.source_type.as_str() {
+        "web_search" => {
+            // Web search source — use config.search_query or source name
             let query = source
                 .config
                 .get("search_query")
@@ -23,11 +24,32 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uui
                 .get("max_results")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(10) as u32;
-            deps.web_searcher.search(query, max_results).await?
+
+            if query.contains("{location}") {
+                let areas = ServiceArea::find_active(deps.pool()).await?;
+                let mut all_pages = Vec::new();
+                for area in &areas {
+                    let expanded = query.replace("{location}", &area.location_label());
+                    tracing::info!(source_id = %source_id, query = %expanded, "Expanded location query");
+                    let mut pages = deps.web_searcher.search(&expanded, max_results).await?;
+                    all_pages.append(&mut pages);
+                }
+                all_pages
+            } else {
+                deps.web_searcher.search(query, max_results).await?
+            }
         }
-        adapter => {
+        source_type => {
+            let adapter_name = match source_type {
+                "instagram" => "apify_instagram",
+                "facebook" => "apify_facebook",
+                "x" => "apify_x",
+                "tiktok" => "apify_tiktok",
+                "gofundme" => "apify_gofundme",
+                _ => "firecrawl",
+            };
             let ingestor = adapters::build_ingestor(
-                adapter,
+                adapter_name,
                 &deps.http_client,
                 deps.config.firecrawl_api_key.as_deref(),
                 deps.config.apify_api_key.as_deref(),

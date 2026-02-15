@@ -15,8 +15,8 @@ pub struct GqlHotspot {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<rootsignal_domains::entities::Hotspot> for GqlHotspot {
-    fn from(h: rootsignal_domains::entities::Hotspot) -> Self {
+impl From<rootsignal_domains::geo::Hotspot> for GqlHotspot {
+    fn from(h: rootsignal_domains::geo::Hotspot) -> Self {
         Self {
             id: h.id,
             name: h.name,

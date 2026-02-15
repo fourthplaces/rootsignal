@@ -40,7 +40,15 @@ export default async function EntitiesPage({
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">Entities</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Entities</h1>
+        <Link
+          href="/entities/new"
+          className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800"
+        >
+          New Entity
+        </Link>
+      </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full divide-y divide-gray-200">
