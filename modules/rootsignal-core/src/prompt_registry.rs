@@ -11,12 +11,18 @@ pub struct PromptRegistry {
     extraction: String,
     investigation: String,
     nlq: String,
+    qualification: String,
+    detect_entity: String,
+    signal_extraction: String,
 }
 
 /// Allowed runtime variables per prompt type.
 const EXTRACTION_RUNTIME_VARS: &[&str] = &["taxonomy"];
 const INVESTIGATION_RUNTIME_VARS: &[&str] = &[];
 const NLQ_RUNTIME_VARS: &[&str] = &["taxonomy", "today"];
+const QUALIFICATION_RUNTIME_VARS: &[&str] = &[];
+const DETECT_ENTITY_RUNTIME_VARS: &[&str] = &[];
+const SIGNAL_EXTRACTION_RUNTIME_VARS: &[&str] = &[];
 
 impl PromptRegistry {
     /// Load all prompt files, resolve config vars, validate runtime vars.
@@ -45,10 +51,37 @@ impl PromptRegistry {
             "nlq",
         )?;
 
+        let qualification = load_and_resolve(
+            &config.prompts.qualification,
+            config_dir,
+            toml_value,
+            QUALIFICATION_RUNTIME_VARS,
+            "qualification",
+        )?;
+
+        let detect_entity = load_and_resolve(
+            &config.prompts.detect_entity,
+            config_dir,
+            toml_value,
+            DETECT_ENTITY_RUNTIME_VARS,
+            "detect_entity",
+        )?;
+
+        let signal_extraction = load_and_resolve(
+            &config.prompts.signal_extraction,
+            config_dir,
+            toml_value,
+            SIGNAL_EXTRACTION_RUNTIME_VARS,
+            "signal_extraction",
+        )?;
+
         Ok(Self {
             extraction,
             investigation,
             nlq,
+            qualification,
+            detect_entity,
+            signal_extraction,
         })
     }
 
@@ -68,6 +101,21 @@ impl PromptRegistry {
     /// Get investigation prompt (no runtime vars currently).
     pub fn investigation_prompt(&self) -> &str {
         &self.investigation
+    }
+
+    /// Get qualification prompt (no runtime vars).
+    pub fn qualification_prompt(&self) -> &str {
+        &self.qualification
+    }
+
+    /// Get detect-entity prompt (no runtime vars).
+    pub fn detect_entity_prompt(&self) -> &str {
+        &self.detect_entity
+    }
+
+    /// Get signal extraction prompt (no runtime vars).
+    pub fn signal_extraction_prompt(&self) -> &str {
+        &self.signal_extraction
     }
 }
 

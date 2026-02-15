@@ -13,6 +13,7 @@ pub mod observations;
 pub mod schedules;
 pub mod search;
 pub mod service_areas;
+pub mod signals;
 pub mod sources;
 pub mod stats;
 pub mod tags;
@@ -39,6 +40,7 @@ pub struct QueryRoot(
     workflows::WorkflowQuery,
     sources::SourceQuery,
     service_areas::ServiceAreaQuery,
+    signals::SignalQuery,
 );
 
 /// Merged mutation root composing all domain mutation modules.
@@ -51,6 +53,7 @@ pub struct MutationRoot(
     workflows::WorkflowMutation,
     sources::mutations::SourceMutation,
     service_areas::mutations::ServiceAreaMutation,
+    signals::mutations::SignalMutation,
 );
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;

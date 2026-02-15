@@ -13,6 +13,9 @@ investigation = "gpt-4o"
 extraction = "./prompts/extraction.md"
 investigation = "./prompts/investigation.md"
 nlq = "./prompts/nlq.md"
+qualification = "./prompts/qualification.md"
+detect_entity = "./prompts/detect_entity.md"
+signal_extraction = "./prompts/signal_extraction.md"
 
 [clustering]
 similarity_threshold = 0.92

@@ -13,5 +13,6 @@ pub mod query_helpers;
 pub mod scraping;
 pub mod search;
 pub mod shared;
+pub mod signals;
 pub mod taxonomy;
 pub mod translation;

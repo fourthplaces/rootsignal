@@ -1,3 +1,4 @@
+pub mod epa_echo;
 pub mod facebook;
 pub mod firecrawl;
 pub mod gofundme;
@@ -6,6 +7,7 @@ pub mod instagram;
 pub mod spider;
 pub mod tavily;
 pub mod tiktok;
+pub mod usaspending;
 pub mod x;
 
 use anyhow::Result;

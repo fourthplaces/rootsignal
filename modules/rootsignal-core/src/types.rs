@@ -150,6 +150,53 @@ pub struct ExtractedListings {
     pub listings: Vec<ExtractedListing>,
 }
 
+/// What the AI extracts from content — a semantic signal.
+///
+/// schema.org alignment:
+///   signal_type "ask"         → schema:Demand
+///   signal_type "give"        → schema:Offer
+///   signal_type "event"       → schema:Event
+///   signal_type "informative" → schema:Report
+///   about                     → schema:about (subject matter)
+///   location_text             → schema:location (geocoded into locationables)
+///   start_date / end_date     → schema:startDate / endDate (stored in schedules)
+///   source_locale             → schema:inLanguage (BCP 47)
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExtractedSignal {
+    /// Signal type: ask, give, event, informative
+    pub signal_type: String,
+    /// Natural language description of the signal
+    pub content: String,
+    /// schema.org: about — what's being asked/given/discussed
+    pub about: Option<String>,
+    /// Entity name (organization, company, agency)
+    pub entity_name: Option<String>,
+    /// Entity type (organization, government_entity, business_entity)
+    pub entity_type: Option<String>,
+    /// Location mention (raw text — extraction activity geocodes into locationables)
+    pub location_text: Option<String>,
+    /// Address components (extraction activity creates Location record)
+    pub address: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
+    /// Temporal (ISO 8601 — extraction activity creates Schedule record)
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub is_recurring: Option<bool>,
+    pub recurrence_description: Option<String>,
+    /// Source URL
+    pub source_url: Option<String>,
+    /// Detected language (BCP 47)
+    pub source_locale: Option<String>,
+}
+
+/// Wrapper for batch signal extraction response.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExtractedSignals {
+    pub signals: Vec<ExtractedSignal>,
+}
+
 /// Polymorphic resource type discriminator used across the system
 /// (taggables, locationables, noteables, embeddings, translations, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -158,6 +205,7 @@ pub enum ResourceType {
     Listing,
     Entity,
     Service,
+    Signal,
 }
 
 impl ResourceType {
@@ -166,6 +214,7 @@ impl ResourceType {
             Self::Listing => "listing",
             Self::Entity => "entity",
             Self::Service => "service",
+            Self::Signal => "signal",
         }
     }
 }
@@ -183,6 +232,7 @@ impl std::str::FromStr for ResourceType {
             "listing" => Ok(Self::Listing),
             "entity" => Ok(Self::Entity),
             "service" => Ok(Self::Service),
+            "signal" => Ok(Self::Signal),
             _ => Err(anyhow::anyhow!("Unknown resource type: {}", s)),
         }
     }

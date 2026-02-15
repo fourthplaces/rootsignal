@@ -20,6 +20,7 @@ interface Entity {
   locations: { id: string; name: string | null; addressLocality: string | null; addressRegion: string | null }[];
   services: { id: string; name: string; status: string }[];
   listings: { id: string; title: string; status: string }[];
+  signals: { id: string; signalType: string; content: string; about: string | null; createdAt: string }[];
   sources: { id: string; name: string; sourceType: string; url: string | null; isActive: boolean; qualificationStatus: string }[];
 }
 
@@ -32,35 +33,50 @@ export default function EntityDetailPage() {
   const [description, setDescription] = useState("");
   const [website, setWebsite] = useState("");
   const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `query Entity($id: UUID!) {
-          entity(id: $id) {
-            id name entityType description website telephone email verified
-            inLanguage createdAt updatedAt
-            tags { id kind value }
-            locations { id name addressLocality addressRegion }
-            services { id name status }
-            listings { id title status }
-            sources { id name sourceType url isActive qualificationStatus }
-          }
-        }`,
-        variables: { id: params.id },
-      }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const e = data.data.entity;
-        setEntity(e);
-        setName(e.name);
-        setDescription(e.description ?? "");
-        setWebsite(e.website ?? "");
-      });
+    // Fetch entity and signals in parallel
+    Promise.all([
+      fetch("/api/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `query Entity($id: UUID!) {
+            entity(id: $id) {
+              id name entityType description website telephone email verified
+              inLanguage createdAt updatedAt
+              tags { id kind value }
+              locations { id name addressLocality addressRegion }
+              services { id name status }
+              listings { id title status }
+              sources { id name sourceType url isActive qualificationStatus }
+            }
+          }`,
+          variables: { id: params.id },
+        }),
+      }).then((r) => r.json()),
+      fetch("/api/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `query EntitySignals($entityId: ID!) {
+            signals(entityId: $entityId, limit: 50) {
+              nodes { id signalType content about createdAt }
+            }
+          }`,
+          variables: { entityId: params.id },
+        }),
+      }).then((r) => r.json()),
+    ]).then(([entityData, signalsData]) => {
+      const e = entityData.data.entity;
+      const signals = signalsData.data?.signals?.nodes ?? [];
+      setEntity({ ...e, signals });
+      setName(e.name);
+      setDescription(e.description ?? "");
+      setWebsite(e.website ?? "");
+    });
   }, [params.id]);
 
   async function handleSave() {
@@ -88,6 +104,59 @@ export default function EntityDetailPage() {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reloadEntity() {
+    const res = await fetch("/api/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `query Entity($id: UUID!) {
+          entity(id: $id) {
+            id name entityType description website telephone email verified
+            inLanguage createdAt updatedAt
+            tags { id kind value }
+            locations { id name addressLocality addressRegion }
+            services { id name status }
+            listings { id title status }
+            sources { id name sourceType url isActive qualificationStatus }
+          }
+        }`,
+        variables: { id: params.id },
+      }),
+    });
+    const data = await res.json();
+    if (data.data?.entity) {
+      const e = data.data.entity;
+      setEntity(e);
+      setName(e.name);
+      setDescription(e.description ?? "");
+      setWebsite(e.website ?? "");
+    }
+  }
+
+  async function handleDiscoverSocial() {
+    setDiscovering(true);
+    setError("");
+    try {
+      const res = await fetch("/api/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `mutation DiscoverSocial($entityId: UUID!) {
+            discoverSocialLinks(entityId: $entityId) { id name sourceType url handle isActive }
+          }`,
+          variables: { entityId: params.id },
+        }),
+      });
+      const data = await res.json();
+      if (data.errors) throw new Error(data.errors[0].message);
+      await reloadEntity();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Discovery failed");
+    } finally {
+      setDiscovering(false);
     }
   }
 
@@ -208,9 +277,42 @@ export default function EntityDetailPage() {
             </div>
           )}
 
-          {entity.sources.length > 0 && (
+          {entity.signals.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-medium text-gray-500">Sources</h3>
+              <h3 className="mb-2 text-sm font-medium text-gray-500">Signals ({entity.signals.length})</h3>
+              <ul className="space-y-1">
+                {entity.signals.map((s) => (
+                  <li key={s.id} className="rounded border border-gray-200 bg-white px-3 py-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                        s.signalType === "ask" ? "bg-orange-100 text-orange-800" :
+                        s.signalType === "give" ? "bg-green-100 text-green-800" :
+                        s.signalType === "event" ? "bg-blue-100 text-blue-800" :
+                        "bg-gray-100 text-gray-800"
+                      }`}>{s.signalType}</span>
+                      <Link href={`/signals/${s.id}`} className="text-green-700 hover:underline">
+                        {s.content.length > 100 ? s.content.slice(0, 100) + "..." : s.content}
+                      </Link>
+                    </div>
+                    {s.about && <span className="ml-14 text-xs text-gray-400">{s.about}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-500">Sources</h3>
+              <button
+                onClick={handleDiscoverSocial}
+                disabled={discovering}
+                className="rounded border border-green-300 px-3 py-1 text-xs text-green-700 hover:bg-green-50 disabled:opacity-50"
+              >
+                {discovering ? "Discovering..." : "Discover Social"}
+              </button>
+            </div>
+            {entity.sources.length > 0 && (
               <ul className="space-y-1">
                 {entity.sources.map((s) => (
                   <li key={s.id} className="flex items-center justify-between rounded border border-gray-200 bg-white px-3 py-2 text-sm">
@@ -227,17 +329,17 @@ export default function EntityDetailPage() {
                       </span>
                       {s.qualificationStatus !== "pending" && (
                         <span className={`rounded-full px-2 py-0.5 text-xs ${
-                          s.qualificationStatus === "green" ? "bg-green-100 text-green-700" :
-                          s.qualificationStatus === "yellow" ? "bg-yellow-100 text-yellow-700" :
-                          s.qualificationStatus === "red" ? "bg-red-100 text-red-700" : "bg-gray-100"
+                          s.qualificationStatus === "approved" ? "bg-green-100 text-green-700" :
+                          s.qualificationStatus === "review" ? "bg-yellow-100 text-yellow-700" :
+                          s.qualificationStatus === "declined" ? "bg-red-100 text-red-700" : "bg-gray-100"
                         }`}>{s.qualificationStatus}</span>
                       )}
                     </div>
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            )}
+          </div>
 
           <p className="text-xs text-gray-400">
             Created {new Date(entity.createdAt).toLocaleString()} | Updated {new Date(entity.updatedAt).toLocaleString()}
