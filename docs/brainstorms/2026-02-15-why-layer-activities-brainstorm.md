@@ -130,20 +130,68 @@ Church says "rent relief available" (no stated reason)
   → The church never said it's because of ICE. This is an assumption.
 ```
 
-The invalid case might *actually* be about ICE. But the system can't claim that without explicit evidence. The church that just says "rent relief available" stays as a `give` signal with no Activity link — because nobody stated why.
+The invalid case might *actually* be about ICE. But a single signal can't claim that without explicit evidence. The church that just says "rent relief available" stays as a `give` signal with no Activity link — because nobody stated why.
+
+However, **cluster detection** (see below) can catch what individual signals miss. If 10 churches in the same neighborhood are all posting rent/food/grocery signals in the same week, the cluster is the anomaly — even if no single signal mentions ICE. The investigation triggers at the cluster level and searches for the explicit evidence that explains the pattern.
 
 This constraint keeps the system honest. Activities are **aggregations of explicit, cited statements** — not inferences the system makes. The LLM's job is to find where causation is already stated and aggregate those statements, not to speculate.
 
+### Two Investigation Triggers
+
+#### Trigger 1: Content Hints at Deeper (Single Signal)
+
+The existing mechanism — the LLM detects crisis language, causal framing, or unusual context during extraction. Works for signals that explicitly carry weight beyond the surface broadcast.
+
+#### Trigger 2: Cluster Detection (Batch Pattern Scan)
+
+A periodic batch job scans for **geographic + temporal + type anomalies** — unusual concentrations of signals that individually look normal but collectively indicate something is happening:
+
+- "12 new `ask` and `give` signals in Cedar-Riverside this week, vs. a baseline of 2/week"
+- "4 different orgs in the same neighborhood all posting about legal aid within 3 days"
+- "Sudden spike in `event` signals related to 'rights' or 'know your rights' in one area"
+
+No single signal triggered investigation. The cluster did. The investigation then searches for *why* this area is lighting up — and finds the news articles, social media posts, government records that explain it. The evidence is still explicit, but the trigger is the pattern.
+
+This solves the biggest gap in single-signal detection: normal-looking signals that only become meaningful in aggregate.
+
+### Agentic Investigation
+
+The investigation isn't a fixed pipeline — it's an **agent loop**. The LLM gets the triggering signal (or cluster), existing context from the DB, and a set of tools:
+
+- `follow_link(url)` — crawl and snapshot a page
+- `search(query)` — Tavily search, snapshot results
+- `query_signals(area, time, type)` — check existing signals in the DB
+- `query_social(entity, area, time)` — check already-captured social media
+- `query_entities(name)` — check institutional records (USAspending, EPA, etc.)
+- `recommend_source(url, reason)` — suggest a new source to monitor
+
+The LLM decides what to do next based on what it's found so far:
+
+```
+"I found a news article mentioning Acme Corporation polluting the river."
+  → query_entities("Acme Corporation")
+  → Found EPA ECHO violation already in the system.
+  → query_signals(area=riverside, time=last_30d, type=event)
+  → Found 3 river cleanup events nearby.
+  → follow_link(cleanup_org_website)
+  → Their site says "water quality deteriorating due to upstream industrial discharge."
+  → Enough evidence. Synthesize Activity.
+```
+
+The agent follows the evidence wherever it leads — within bounded tool calls (max ~10 tool calls per investigation) and bounded depth (max 3 link hops). This is more powerful than a fixed sequence because the LLM adapts its investigation based on what it discovers.
+
 ### Adversarial Validation
 
-Before an Activity is created, a second LLM pass pressure-tests it:
+Before an Activity is created, a second LLM pass pressure-tests it through a **structured validation checklist**:
 
-- Does the evidence actually support this conclusion?
-- Is every signal-to-Activity link grounded in explicit statements?
-- Are there simpler explanations the investigator ignored?
-- Would this hold up if someone challenged it?
+1. **Quote check**: For every signal-to-Activity link, copy the exact quote from the evidence that states the connection. If you can't find an explicit quote, the link fails.
+2. **Counter-hypothesis**: Propose at least one alternative explanation for the signal pattern. If a simpler explanation exists, note it.
+3. **Evidence sufficiency**: Are there at least 3 independent sources? At least 2 different evidence types (e.g., org statement + news, not just 3 org statements)?
+4. **Scope check**: Is the Activity conclusion proportional to the evidence? "ICE conducting operations" is proportional. "Federal government targeting immigrants" is broader than the evidence supports.
 
-The investigator LLM is incentivized to find a story. The validator LLM is incentivized to break it. If the validator rejects the Activity, it doesn't get created. This is one extra LLM call — cheap insurance against confabulation.
+The investigator LLM is incentivized to find a story. The validator LLM is incentivized to break it. The structured checklist prevents rubber-stamping — the validator must do specific work, not just assess vibes.
+
+If the validator rejects: no Activity created. If the validator identifies a valid counter-hypothesis: both hypotheses can be noted, with the evidence for each. The user sees the strongest explanation and the alternative.
 
 ### Output: A Damn Good Answer
 
@@ -237,33 +285,88 @@ This layer sits on top of the signal pipeline:
 ```
 Source → Scrape → page_snapshot → Signal Extraction → signals table
                                         │
-                                        ├─ LLM detects "hints at something deeper"
+                              ┌─────────┴──────────┐
+                              │                    │
+                     Single-signal trigger    Cluster trigger
+                     (content hints deeper)  (batch pattern scan)
+                              │                    │
+                              └─────────┬──────────┘
                                         │
                                         ▼
-                                  Why Investigation
+                                  Why Investigation (Agent Loop)
                                         │
                                         ├─ Check DB for existing Activity match (embeddings)
                                         ├─ If match: link signal → existing Activity, done
-                                        ├─ If no match: investigate
-                                        │   ├─ Follow link trail from snapshot (max 3 hops)
-                                        │   ├─ Query social media already in DB
-                                        │   ├─ Search for corroboration (Tavily)
+                                        ├─ If no match: agentic investigation
+                                        │   ├─ LLM chooses tools based on findings:
+                                        │   │   follow_link(), search(), query_signals(),
+                                        │   │   query_social(), query_entities()
+                                        │   ├─ Max ~10 tool calls, max 3 link hops
                                         │   ├─ Snapshot all evidence pages
                                         │   └─ Require explicit causal statements
-                                        ├─ Adversarial validation (second LLM pass)
+                                        ├─ Adversarial validation (structured checklist)
                                         ├─ If validated: create Activity + link evidence
+                                        ├─ recommend_source() for new sources found
                                         │
                                         ▼
                                   activities table
                                         │
                                         ├─ signal_activities (many-to-many)
                                         ├─ activity_evidence (cited snapshots + URLs)
-                                        └─ activity_relationships (activity → activity)
+                                        └─ activity_relationships (activity → activity, max 2 levels)
 ```
 
 Every page the LLM follows gets snapshotted — the evidence chain is fully auditable.
 
 Activities don't replace signals. They're a layer above — explaining why signals exist. The consumer app can show both: "Here's what's happening (signals). Here's why (activities)."
+
+## Activity Lifecycle
+
+Activities describe conditions that change. They need a temporal dimension.
+
+### Status
+
+- **emerging** — newly created, evidence is fresh but thin (minimum threshold met). The system is still gathering signals.
+- **active** — multiple signals linked, evidence is strong, new signals still arriving. This is happening now.
+- **declining** — signal velocity is dropping. No new signals linked in 14+ days. Evidence is aging.
+- **resolved** — no new signals in 30+ days AND newest evidence is 30+ days old. The condition appears to have passed.
+
+### Signal Velocity
+
+Track how fast new signals link to an Activity. A high-velocity Activity (5 new signals this week) is actively unfolding. A zero-velocity Activity for 30 days is likely resolved. This is mechanical — no LLM judgment needed.
+
+### Re-Investigation
+
+When an Activity is `active` and new signals keep linking to it, periodically re-investigate (e.g., weekly) to:
+- Update the evidence with newer sources
+- Check if the situation has changed (escalated, de-escalated, shifted)
+- Refresh the Activity's conclusion if the evidence warrants it
+- Find new sources that have emerged since the original investigation
+
+### Expiry
+
+Activities don't delete — they transition to `resolved`. Historical Activities are still valuable: "ICE conducted enforcement operations in Cedar-Riverside, Feb-April 2026." The evidence remains. The status just reflects that it's no longer actively producing signals.
+
+## Activity Graph Depth
+
+Activities can link to other Activities when the evidence explicitly supports it:
+
+```
+Activity: ICE enforcement in Twin Cities
+  → linked to: Federal immigration policy executive order (Jan 2026)
+    (evidence: news article explicitly connecting local operations to federal policy)
+
+Activity: Industrial discharge from Acme Corp
+  → linked to: EPA enforcement budget cuts
+    (evidence: news article explicitly connecting reduced oversight to violations)
+```
+
+**Rules for Activity → Activity links:**
+- Same explicit-evidence constraint. A news article must say "local ICE operations follow the January executive order." The system can't infer the policy connection.
+- **Max 2 levels deep.** Activity → parent Activity → grandparent Activity. Beyond that, you're in geopolitics, which is real but not actionable at the community level.
+- Each level requires its own adversarial validation.
+
+This gives the graph meaningful depth without becoming a conspiracy board. Two levels is enough to connect local conditions to regional/national causes when the evidence explicitly supports it.
 
 ## Pressure Testing
 
@@ -328,11 +431,11 @@ This is the mycorrhizal metaphor fully realized. The network doesn't just transm
 
 ## Open Questions
 
-- **Staleness**: Activities describe conditions. Conditions change. How do we detect when an Activity is no longer active? Re-investigation on a cadence? Signal volume decay?
-- **Minimum evidence threshold**: Should there be a minimum number of independent sources (e.g., 3+) before an Activity is created? Or is one strong explicit statement enough?
-- **Consumer UX**: How do Activities appear in the consumer app? A separate view? Contextual — shown alongside related signals? A "what's happening here" map layer?
-- **Activity-to-Activity links**: ICE operations → federal immigration policy. Factory pollution → deregulation. How deep does the graph go? Is there a practical limit?
-- **Deduplication**: Embedding similarity on conclusion text should catch most duplicates at the "check DB first" step. Edge case: two Activities that are related but not identical — merge or keep separate?
+- **Minimum evidence threshold**: The adversarial validator requires 3+ independent sources and 2+ evidence types. Is this the right bar? Too high and you miss emerging Activities. Too low and you get noise.
+- **Consumer UX**: How do Activities appear in the consumer app? Options: a "what's happening here" map layer, contextual cards alongside related signals, a dedicated Activity feed, or entity pages showing linked Activities. Probably all of the above — but what's the MVP?
+- **Cluster detection tuning**: What constitutes an anomalous cluster? "12 asks in Cedar-Riverside vs. baseline of 2/week" — how do we establish baselines per area? Rolling average? Per-neighborhood thresholds?
+- **Deduplication edge cases**: Embedding similarity catches most duplicates at the DB-check step. But what about related-but-distinct Activities? "ICE enforcement in Cedar-Riverside" vs. "ICE enforcement in Twin Cities" — merge or keep separate? Probably geographic scoping, but needs design.
+- **Investigation queue priority**: When multiple signals/clusters are flagged for investigation simultaneously, how do we prioritize? Signal velocity (fast-moving clusters first)? Geographic density? Recency?
 
 ## Next Steps
 
