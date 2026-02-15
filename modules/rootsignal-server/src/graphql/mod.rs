@@ -3,6 +3,7 @@ pub mod contacts;
 pub mod context;
 pub mod entities;
 pub mod error;
+pub mod findings;
 pub mod heat_map;
 pub mod hotspots;
 pub mod listings;
@@ -41,6 +42,7 @@ pub struct QueryRoot(
     sources::SourceQuery,
     service_areas::ServiceAreaQuery,
     signals::SignalQuery,
+    findings::FindingQuery,
 );
 
 /// Merged mutation root composing all domain mutation modules.
@@ -54,6 +56,7 @@ pub struct MutationRoot(
     sources::mutations::SourceMutation,
     service_areas::mutations::ServiceAreaMutation,
     signals::mutations::SignalMutation,
+    findings::mutations::FindingMutation,
 );
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
