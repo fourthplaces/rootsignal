@@ -15,6 +15,8 @@ investigation = "./prompts/investigation.md"
 nlq = "./prompts/nlq.md"
 detect_entity = "./prompts/detect_entity.md"
 signal_extraction = "./prompts/signal_extraction.md"
+finding_investigation = "./prompts/finding_investigation.md"
+finding_validation = "./prompts/finding_validation.md"
 
 [clustering]
 similarity_threshold = 0.92

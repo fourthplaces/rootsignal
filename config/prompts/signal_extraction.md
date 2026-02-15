@@ -43,3 +43,28 @@ NOT a signal. "We need volunteers for Sunday service" IS an ask.
 Do NOT classify urgency or tone. The system stores facts (about, when, where, who).
 The user decides what's urgent to them. Emotional language ("URGENT!",
 "desperate") should not influence signal ranking or classification.
+
+## Investigation Flagging
+
+Some signals hint at a deeper phenomenon. Set `needs_investigation: true` and
+provide a brief `investigation_reason` when a signal exhibits ANY of:
+
+- **Crisis language**: "afraid to leave home", "can't go outside", "emergency
+  shelter", "deportation", "eviction wave", language suggesting systemic threat
+- **Causal framing**: "because of", "in response to", "due to", "after the
+  raids", "since the executive order" — the signal explicitly references an
+  external cause
+- **Unusual entity behavior**: an organization offering services outside its
+  normal mission (a church providing legal aid, a mosque offering rent relief)
+- **Cluster indicators**: language suggesting this is part of a broader pattern
+  ("many families", "across the neighborhood", "community-wide")
+
+Examples:
+- "Rent relief available for families afraid to leave their homes" →
+  needs_investigation: true, investigation_reason: "Crisis language ('afraid to leave homes') suggests external threat driving demand"
+- "Free legal clinic March 5" →
+  needs_investigation: false (routine service offering)
+- "Emergency food distribution in response to the factory closure" →
+  needs_investigation: true, investigation_reason: "Causal framing references factory closure as driving cause"
+
+Keep investigation_reason to ONE sentence. Most signals will NOT need investigation.

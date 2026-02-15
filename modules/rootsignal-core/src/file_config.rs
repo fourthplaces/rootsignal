@@ -36,6 +36,8 @@ pub struct PromptsConfig {
     pub nlq: PathBuf,
     pub detect_entity: PathBuf,
     pub signal_extraction: PathBuf,
+    pub finding_investigation: PathBuf,
+    pub finding_validation: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]

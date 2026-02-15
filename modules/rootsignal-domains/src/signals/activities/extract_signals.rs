@@ -150,6 +150,17 @@ pub async fn extract_signals_from_snapshot(
         )
         .await?;
 
+        // Flag for investigation if the LLM detected deeper phenomenon
+        if signal.needs_investigation == Some(true) {
+            sqlx::query(
+                "UPDATE signals SET needs_investigation = true, investigation_reason = $1 WHERE id = $2",
+            )
+            .bind(signal.investigation_reason.as_deref())
+            .bind(signal_row.id)
+            .execute(pool)
+            .await?;
+        }
+
         // Normalize into polymorphic tables:
 
         // 1. Location → locationables (locatable_type = 'signal')

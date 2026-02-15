@@ -189,6 +189,10 @@ pub struct ExtractedSignal {
     pub source_url: Option<String>,
     /// Detected language (BCP 47)
     pub source_locale: Option<String>,
+    /// Whether this signal hints at a deeper phenomenon worth investigating
+    pub needs_investigation: Option<bool>,
+    /// Brief reason why investigation is warranted
+    pub investigation_reason: Option<String>,
 }
 
 /// Wrapper for batch signal extraction response.
@@ -206,6 +210,7 @@ pub enum ResourceType {
     Entity,
     Service,
     Signal,
+    Finding,
 }
 
 impl ResourceType {
@@ -215,6 +220,7 @@ impl ResourceType {
             Self::Entity => "entity",
             Self::Service => "service",
             Self::Signal => "signal",
+            Self::Finding => "finding",
         }
     }
 }
@@ -233,6 +239,7 @@ impl std::str::FromStr for ResourceType {
             "entity" => Ok(Self::Entity),
             "service" => Ok(Self::Service),
             "signal" => Ok(Self::Signal),
+            "finding" => Ok(Self::Finding),
             _ => Err(anyhow::anyhow!("Unknown resource type: {}", s)),
         }
     }

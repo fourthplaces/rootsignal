@@ -13,6 +13,8 @@ pub struct PromptRegistry {
     nlq: String,
     detect_entity: String,
     signal_extraction: String,
+    finding_investigation: String,
+    finding_validation: String,
 }
 
 /// Allowed runtime variables per prompt type.
@@ -21,6 +23,8 @@ const INVESTIGATION_RUNTIME_VARS: &[&str] = &[];
 const NLQ_RUNTIME_VARS: &[&str] = &["taxonomy", "today"];
 const DETECT_ENTITY_RUNTIME_VARS: &[&str] = &[];
 const SIGNAL_EXTRACTION_RUNTIME_VARS: &[&str] = &[];
+const FINDING_INVESTIGATION_RUNTIME_VARS: &[&str] = &[];
+const FINDING_VALIDATION_RUNTIME_VARS: &[&str] = &[];
 
 impl PromptRegistry {
     /// Load all prompt files, resolve config vars, validate runtime vars.
@@ -65,12 +69,30 @@ impl PromptRegistry {
             "signal_extraction",
         )?;
 
+        let finding_investigation = load_and_resolve(
+            &config.prompts.finding_investigation,
+            config_dir,
+            toml_value,
+            FINDING_INVESTIGATION_RUNTIME_VARS,
+            "finding_investigation",
+        )?;
+
+        let finding_validation = load_and_resolve(
+            &config.prompts.finding_validation,
+            config_dir,
+            toml_value,
+            FINDING_VALIDATION_RUNTIME_VARS,
+            "finding_validation",
+        )?;
+
         Ok(Self {
             extraction,
             investigation,
             nlq,
             detect_entity,
             signal_extraction,
+            finding_investigation,
+            finding_validation,
         })
     }
 
@@ -100,6 +122,16 @@ impl PromptRegistry {
     /// Get signal extraction prompt (no runtime vars).
     pub fn signal_extraction_prompt(&self) -> &str {
         &self.signal_extraction
+    }
+
+    /// Get finding investigation prompt (no runtime vars).
+    pub fn finding_investigation_prompt(&self) -> &str {
+        &self.finding_investigation
+    }
+
+    /// Get finding validation prompt (no runtime vars).
+    pub fn finding_validation_prompt(&self) -> &str {
+        &self.finding_validation
     }
 }
 

@@ -4,6 +4,7 @@ pub mod clustering;
 pub mod config;
 pub mod entities;
 pub mod extraction;
+pub mod findings;
 pub mod geo;
 pub mod heat_map;
 pub mod investigations;
