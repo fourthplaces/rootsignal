@@ -56,6 +56,7 @@ impl TranslateWorkflow for TranslateWorkflowImpl {
             .parse()
             .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
+        tracing::info!(record_type = %req.translatable_type, record_id = %record_id, source_locale = %req.source_locale, "TranslateWorkflow.start");
         let record_type = req.translatable_type.clone();
         let source_locale = req.source_locale.clone();
         let mut translation_count: u32 = 0;
@@ -149,6 +150,7 @@ impl TranslateWorkflow for TranslateWorkflowImpl {
 
         ctx.set("status", "completed".to_string());
 
+        tracing::info!(record_id = %record_id, translations = translation_count, embedding = embedding_generated, "TranslateWorkflow.completed");
         Ok(TranslateResult {
             translation_count,
             embedding_generated,

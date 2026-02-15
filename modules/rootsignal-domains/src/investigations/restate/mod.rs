@@ -50,6 +50,7 @@ impl InvestigateWorkflow for InvestigateWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: InvestigateRequest,
     ) -> Result<InvestigateResult, HandlerError> {
+        tracing::info!(subject_type = %req.subject_type, subject_id = %req.subject_id, trigger = %req.trigger, "InvestigateWorkflow.start");
         ctx.set("status", "investigating".to_string());
 
         let subject_id: Uuid = req.subject_id.parse().map_err(|e: uuid::Error| {
@@ -88,6 +89,7 @@ impl InvestigateWorkflow for InvestigateWorkflowImpl {
 
         ctx.set("status", result.status.clone());
 
+        tracing::info!(investigation_id = %result.investigation_id, status = %result.status, "InvestigateWorkflow.completed");
         Ok(result)
     }
 

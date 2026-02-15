@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub apify_api_key: Option<String>,
     pub eventbrite_api_key: Option<String>,
 
+    // Browser (Chrome CDP for JS rendering)
+    pub chrome_url: Option<String>,
+
     // Geocoding
     pub geocoding_api_key: Option<String>,
 
@@ -39,11 +42,12 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok();
 
-        Ok(Self {
+        let config = Self {
             database_url: std::env::var("DATABASE_URL")?,
             openai_api_key: std::env::var("OPENAI_API_KEY")?,
             anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
             tavily_api_key: std::env::var("TAVILY_API_KEY")?,
+            chrome_url: std::env::var("CHROME_URL").ok(),
             firecrawl_api_key: std::env::var("FIRECRAWL_API_KEY").ok(),
             apify_api_key: std::env::var("APIFY_API_KEY").ok(),
             eventbrite_api_key: std::env::var("EVENTBRITE_API_KEY").ok(),
@@ -65,6 +69,31 @@ impl AppConfig {
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
                 .unwrap_or(false),
-        })
+        };
+
+        config.log_keys();
+        Ok(config)
+    }
+
+    fn log_keys(&self) {
+        fn preview(val: &str) -> String {
+            let n = val.len().min(5);
+            format!("{}...({} chars)", &val[..n], val.len())
+        }
+        fn preview_opt(val: &Option<String>) -> String {
+            match val {
+                Some(v) if !v.is_empty() => preview(v),
+                _ => "<not set>".to_string(),
+            }
+        }
+
+        tracing::info!("Config loaded:");
+        tracing::info!("  OPENAI_API_KEY: {}", preview(&self.openai_api_key));
+        tracing::info!("  ANTHROPIC_API_KEY: {}", preview_opt(&self.anthropic_api_key));
+        tracing::info!("  TAVILY_API_KEY: {}", preview(&self.tavily_api_key));
+        tracing::info!("  CHROME_URL: {}", preview_opt(&self.chrome_url));
+        tracing::info!("  FIRECRAWL_API_KEY: {}", preview_opt(&self.firecrawl_api_key));
+        tracing::info!("  APIFY_API_KEY: {}", preview_opt(&self.apify_api_key));
+        tracing::info!("  RESTATE_ADMIN_URL: {}", preview_opt(&self.restate_admin_url));
     }
 }

@@ -10,6 +10,7 @@ pub struct ServiceAreaQuery;
 #[Object]
 impl ServiceAreaQuery {
     async fn service_areas(&self, ctx: &Context<'_>) -> Result<Vec<GqlServiceArea>> {
+        tracing::info!("graphql.service_areas");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let areas = rootsignal_domains::config::ServiceArea::find_all(pool)
             .await

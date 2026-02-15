@@ -17,6 +17,7 @@ pub struct ListingQuery;
 impl ListingQuery {
     /// Fetch a single listing by ID.
     async fn listing(&self, ctx: &Context<'_>, id: Uuid) -> Result<GqlListing> {
+        tracing::info!(id = %id, "graphql.listing");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let listing = rootsignal_domains::listings::Listing::find_by_id(id, pool)
             .await
@@ -47,6 +48,7 @@ impl ListingQuery {
         // Temporal
         since: Option<DateTime<Utc>>,
     ) -> Result<Connection<String, GqlListing, EmptyFields, GqlListingEdgeData>> {
+        tracing::info!(first = ?first, zip_code = ?zip_code, "graphql.listings");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let _locale = ctx.data_unchecked::<Locale>();
 

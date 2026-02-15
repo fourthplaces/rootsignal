@@ -1,8 +1,8 @@
 import { headers } from "next/headers";
 import { authedClient } from "@/lib/client";
 import Link from "next/link";
-import { ScrapeButton } from "./scrape-button";
-import { QualifyButton } from "./qualify-button";
+import { DetectEntityButton } from "./detect-entity-button";
+import { RunButton, SourceMoreMenu } from "./run-button";
 
 interface Source {
   id: string;
@@ -62,8 +62,8 @@ export default async function SourceDetailPage({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <QualifyButton sourceId={source.id} />
-          <ScrapeButton sourceId={source.id} />
+          <RunButton sourceId={source.id} />
+          <SourceMoreMenu sourceId={source.id} />
         </div>
       </div>
 
@@ -144,7 +144,10 @@ export default async function SourceDetailPage({
                   {source.entityId}
                 </Link>
               ) : (
-                "—"
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-400">—</span>
+                  <DetectEntityButton sourceId={source.id} />
+                </div>
               )}
             </dd>
           </div>

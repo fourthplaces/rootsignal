@@ -48,6 +48,7 @@ impl EntityMutation {
         ctx: &Context<'_>,
         input: CreateEntityInput,
     ) -> Result<GqlEntity> {
+        tracing::info!(name = %input.name, entity_type = %input.entity_type, "graphql.create_entity");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -61,6 +62,7 @@ impl EntityMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %entity.id, "graphql.create_entity.ok");
         Ok(GqlEntity::from(entity))
     }
 
@@ -70,6 +72,7 @@ impl EntityMutation {
         id: Uuid,
         input: UpdateEntityInput,
     ) -> Result<GqlEntity> {
+        tracing::info!(id = %id, "graphql.update_entity");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -85,10 +88,12 @@ impl EntityMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %id, "graphql.update_entity.ok");
         Ok(GqlEntity::from(entity))
     }
 
     async fn archive_entity(&self, ctx: &Context<'_>, id: Uuid) -> Result<GqlEntity> {
+        tracing::info!(id = %id, "graphql.archive_entity");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -96,6 +101,7 @@ impl EntityMutation {
             .await
             .map_err(|e| Error::new(format!("{e}")))?;
 
+        tracing::info!(id = %id, "graphql.archive_entity.ok");
         Ok(GqlEntity::from(entity))
     }
 
@@ -104,6 +110,7 @@ impl EntityMutation {
         ctx: &Context<'_>,
         input: CreateServiceInput,
     ) -> Result<GqlService> {
+        tracing::info!(entity_id = %input.entity_id, name = %input.name, "graphql.create_service");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -116,6 +123,7 @@ impl EntityMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %service.id, "graphql.create_service.ok");
         Ok(GqlService::from(service))
     }
 
@@ -125,6 +133,7 @@ impl EntityMutation {
         id: Uuid,
         input: UpdateServiceInput,
     ) -> Result<GqlService> {
+        tracing::info!(id = %id, "graphql.update_service");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -140,6 +149,7 @@ impl EntityMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %id, "graphql.update_service.ok");
         Ok(GqlService::from(service))
     }
 }

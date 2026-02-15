@@ -16,6 +16,7 @@ impl HeatMapQuery {
         radius_miles: Option<f64>,
         entity_type: Option<String>,
     ) -> Result<Vec<GqlHeatMapPoint>> {
+        tracing::info!(zip_code = ?zip_code, entity_type = ?entity_type, "graphql.heat_map_points");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
         let points = if let Some(zip) = zip_code {
@@ -43,6 +44,7 @@ impl HeatMapQuery {
         signal_domain: Option<String>,
         category: Option<String>,
     ) -> Result<Vec<GqlZipDensity>> {
+        tracing::info!(signal_domain = ?signal_domain, category = ?category, "graphql.signal_density");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
         let results = rootsignal_domains::heat_map::HeatMapPoint::signal_density_by_zip(
@@ -64,6 +66,7 @@ impl HeatMapQuery {
         category: Option<String>,
         limit: Option<i32>,
     ) -> Result<Vec<GqlZipDensity>> {
+        tracing::info!(signal_domain = ?signal_domain, limit = ?limit, "graphql.signal_gaps");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let limit = limit.unwrap_or(10).min(100) as i64;
 
@@ -86,6 +89,7 @@ impl HeatMapQuery {
         period: String,
         signal_domain: Option<String>,
     ) -> Result<Vec<GqlTemporalDelta>> {
+        tracing::info!(period = %period, signal_domain = ?signal_domain, "graphql.signal_trends");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let now = Utc::now();
 

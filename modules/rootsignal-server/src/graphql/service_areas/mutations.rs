@@ -21,6 +21,7 @@ impl ServiceAreaMutation {
         ctx: &Context<'_>,
         input: CreateServiceAreaInput,
     ) -> Result<GqlServiceArea> {
+        tracing::info!(locality = %input.address_locality, region = %input.address_region, "graphql.create_service_area");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -32,10 +33,12 @@ impl ServiceAreaMutation {
         .await
         .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %sa.id, "graphql.create_service_area.ok");
         Ok(GqlServiceArea::from(sa))
     }
 
     async fn delete_service_area(&self, ctx: &Context<'_>, id: Uuid) -> Result<bool> {
+        tracing::info!(id = %id, "graphql.delete_service_area");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
@@ -43,6 +46,7 @@ impl ServiceAreaMutation {
             .await
             .map_err(|e| error::internal(e))?;
 
+        tracing::info!(id = %id, "graphql.delete_service_area.ok");
         Ok(true)
     }
 }

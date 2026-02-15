@@ -19,7 +19,7 @@ services:
       retries: 5
 
   restate:
-    image: docker.io/restatedev/restate:1.1
+    image: docker.io/restatedev/restate:latest
     labels:
       dev.description: "Restate durable workflow runtime"
     ports:
@@ -28,6 +28,15 @@ services:
       - "9071:9071"   # Metrics
     environment:
       - RESTATE_LOG_FILTER=info
+
+  chrome:
+    image: chromedp/headless-shell:latest
+    ports:
+      - "9222:9222"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   rootsignal-server:
     build:
@@ -43,6 +52,8 @@ services:
       postgres:
         condition: service_healthy
       restate:
+        condition: service_started
+      chrome:
         condition: service_started
     volumes:
       - ./Cargo.toml:/app/Cargo.toml
@@ -71,7 +82,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
-      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      CHROME_URL: ws://chrome:9222
+      APIFY_API_KEY: ${APIFY_API_KEY:-}
 
       # Auth
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}

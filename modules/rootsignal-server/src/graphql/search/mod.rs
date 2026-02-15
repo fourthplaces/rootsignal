@@ -48,6 +48,7 @@ impl SearchQuery {
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<GqlSearchResponse> {
+        tracing::info!(q = ?q, zip_code = ?zip_code, "graphql.search");
         let deps = ctx.data_unchecked::<Arc<ServerDeps>>();
         let locale = ctx.data_unchecked::<Locale>();
         let pool = deps.pool();
@@ -125,6 +126,7 @@ impl SearchQuery {
         q: String,
         auto_search: Option<bool>,
     ) -> Result<GqlNlqSearchResponse> {
+        tracing::info!(q = %q, auto_search = ?auto_search, "graphql.parse_query");
         let deps = ctx.data_unchecked::<Arc<ServerDeps>>();
         let locale = ctx.data_unchecked::<Locale>();
         let pool = deps.pool();

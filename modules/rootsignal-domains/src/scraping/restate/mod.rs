@@ -4,10 +4,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::extraction::restate::{ExtractRequest, ExtractWorkflowClient};
+
 // ─── Qualify types ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QualifyRequest {}
+pub struct QualifyRequest {
+    pub source_id: String,
+}
 impl_restate_serde!(QualifyRequest);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,13 +47,14 @@ impl QualifyWorkflow for QualifyWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        _req: QualifyRequest,
+        req: QualifyRequest,
     ) -> Result<QualifyResult, HandlerError> {
-        // The workflow key IS the source_id
-        let source_id: Uuid = ctx.key().parse().map_err(|e: uuid::Error| {
-            TerminalError::new(format!("Invalid source UUID in workflow key: {}", e))
-        })?;
+        let source_id: Uuid = req
+            .source_id
+            .parse()
+            .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
+        tracing::info!(source_id = %source_id, "QualifyWorkflow.start");
         ctx.set("status", "qualifying".to_string());
 
         let deps = self.deps.clone();
@@ -69,6 +74,7 @@ impl QualifyWorkflow for QualifyWorkflowImpl {
 
         ctx.set("status", "completed".to_string());
 
+        tracing::info!(source_id = %source_id, score = qualification.score, verdict = %qualification.verdict, "QualifyWorkflow.completed");
         Ok(QualifyResult {
             score: qualification.score,
             verdict: qualification.verdict,
@@ -120,6 +126,12 @@ pub struct EmptyRequest {}
 impl_restate_serde!(EmptyRequest);
 
 // ─── ScrapeWorkflow ──────────────────────────────────────────────────────────
+//
+// Two distinct paths depending on source type:
+//
+//   web_search:  search → discover sources → qualify each (no snapshots, no extraction)
+//   everything else:  fetch pages → store snapshots → extract → normalize → translate
+//
 
 #[restate_sdk::workflow]
 #[name = "ScrapeWorkflow"]
@@ -151,29 +163,116 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
             .parse()
             .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
+        tracing::info!(source_id = %source_id, "ScrapeWorkflow.start");
         ctx.set("status", "scraping".to_string());
 
+        // Step 1: Scrape the source (fetch pages or run web search)
         let deps = self.deps.clone();
-        let snapshot_ids_json: String = ctx
+        let scrape_json: String = ctx
             .run(|| async move {
-                let ids = crate::scraping::activities::scrape_source(source_id, &deps)
+                let output = crate::scraping::activities::scrape_source(source_id, &deps)
                     .await
                     .map_err(|e| TerminalError::new(format!("Scrape failed: {}", e)))?;
-                serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
+
+                // Serialize the parts we need downstream
+                let payload = serde_json::json!({
+                    "snapshot_ids": output.snapshot_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    "source_type": output.source_type,
+                    "discovered_pages": output.discovered_pages.iter().map(|p| {
+                        serde_json::json!({ "url": p.url, "title": p.title })
+                    }).collect::<Vec<_>>(),
+                });
+                serde_json::to_string(&payload)
                     .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
             })
             .await?;
 
-        let snapshot_ids: Vec<String> = serde_json::from_str(&snapshot_ids_json)
+        let scrape: serde_json::Value = serde_json::from_str(&scrape_json)
             .map_err(|e| TerminalError::new(format!("Deserialize failed: {}", e)))?;
 
-        ctx.set("status", "completed".to_string());
+        let source_type = scrape["source_type"].as_str().unwrap_or("").to_string();
+        let snapshot_ids: Vec<String> = scrape["snapshot_ids"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
-        Ok(ScrapeResult {
-            source_id: req.source_id,
-            snapshot_ids,
-            status: "completed".to_string(),
-        })
+        if source_type == "web_search" {
+            // ── Web search path: discover sources → qualify each ──
+            ctx.set("status", "discovering".to_string());
+
+            let discovered_json = scrape["discovered_pages"].to_string();
+            let deps = self.deps.clone();
+            let new_ids_json: String = ctx
+                .run(|| async move {
+                    let pages: Vec<crate::scraping::activities::scrape_source::DiscoveredPage> =
+                        serde_json::from_str(&discovered_json).map_err(|e| {
+                            TerminalError::new(format!("Deserialize discovered: {}", e))
+                        })?;
+                    let result = crate::scraping::activities::discover_sources(
+                        &pages,
+                        source_id,
+                        deps.pool(),
+                    )
+                    .await
+                    .map_err(|e| TerminalError::new(format!("Discovery failed: {}", e)))?;
+                    serde_json::to_string(
+                        &result
+                            .created
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
+                })
+                .await?;
+
+            let new_ids: Vec<String> = serde_json::from_str(&new_ids_json)
+                .map_err(|e| TerminalError::new(format!("Deserialize failed: {}", e)))?;
+
+            // Fire QualifyWorkflow for each new source (non-blocking)
+            for id in &new_ids {
+                let qualify_key = format!("{}-{}", id, chrono::Utc::now().timestamp());
+                let _ = ctx
+                    .workflow_client::<QualifyWorkflowClient>(&qualify_key)
+                    .run(QualifyRequest {
+                        source_id: id.clone(),
+                    })
+                    .send();
+            }
+
+            tracing::info!(source_id = %source_id, new_sources = new_ids.len(), "ScrapeWorkflow.completed (web_search)");
+            ctx.set("status", "completed".to_string());
+
+            Ok(ScrapeResult {
+                source_id: req.source_id,
+                snapshot_ids: vec![],
+                status: "completed".to_string(),
+            })
+        } else {
+            // ── Content source path: snapshots → extract ──
+            if !snapshot_ids.is_empty() {
+                ctx.set("status", "extracting".to_string());
+
+                let extract_key = format!("scrape-{}", ctx.key());
+                let _ = ctx
+                    .workflow_client::<ExtractWorkflowClient>(&extract_key)
+                    .run(ExtractRequest {
+                        snapshot_ids: snapshot_ids.clone(),
+                        source_id: Some(req.source_id.clone()),
+                    })
+                    .call()
+                    .await?;
+            }
+
+            tracing::info!(source_id = %source_id, snapshots = snapshot_ids.len(), "ScrapeWorkflow.completed");
+            ctx.set("status", "completed".to_string());
+
+            Ok(ScrapeResult {
+                source_id: req.source_id,
+                snapshot_ids,
+                status: "completed".to_string(),
+            })
+        }
     }
 
     async fn get_status(
@@ -217,20 +316,29 @@ impl SourceObject for SourceObjectImpl {
             .parse()
             .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
+        tracing::info!(source_id = %source_id, "SourceObject.scrape.start");
+
         let deps = self.deps.clone();
         let snapshot_ids_json: String = ctx
             .run(|| async move {
-                let ids = crate::scraping::activities::scrape_source(source_id, &deps)
+                let output = crate::scraping::activities::scrape_source(source_id, &deps)
                     .await
                     .map_err(|e| TerminalError::new(format!("Scrape failed: {}", e)))?;
-                serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
-                    .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
+                serde_json::to_string(
+                    &output
+                        .snapshot_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
             })
             .await?;
 
         let snapshot_ids: Vec<String> = serde_json::from_str(&snapshot_ids_json)
             .map_err(|e| TerminalError::new(format!("Deserialize failed: {}", e)))?;
 
+        tracing::info!(source_id = %source_id, snapshots = snapshot_ids.len(), "SourceObject.scrape.completed");
         Ok(ScrapeResult {
             source_id: req.source_id,
             snapshot_ids,
@@ -295,6 +403,7 @@ impl SchedulerService for SchedulerServiceImpl {
             total_snapshots += result.snapshot_ids.len() as u32;
         }
 
+        tracing::info!(sources_scraped = sources_count, total_snapshots, "SchedulerService.start_cycle.completed");
         Ok(CycleResult {
             sources_scraped: sources_count,
             total_snapshots,

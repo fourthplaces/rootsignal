@@ -13,6 +13,7 @@ pub struct EntityQuery;
 #[Object]
 impl EntityQuery {
     async fn entity(&self, ctx: &Context<'_>, id: Uuid) -> Result<GqlEntity> {
+        tracing::info!(id = %id, "graphql.entity");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let entity = rootsignal_domains::entities::Entity::find_by_id(id, pool)
             .await
@@ -27,6 +28,7 @@ impl EntityQuery {
         after: Option<String>,
         first: Option<i32>,
     ) -> Result<Connection<String, GqlEntity>> {
+        tracing::info!(first = ?first, "graphql.entities");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
         query(

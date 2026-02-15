@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
+
 use rootsignal_server::routes;
 
 // Import Restate traits to bring `.serve()` into scope
@@ -54,7 +55,6 @@ async fn main() -> Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
-        .json()
         .init();
 
     tracing::info!("Starting rootsignal-server");
@@ -121,17 +121,15 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|key| Arc::new(ai_client::Claude::new(key, "claude-sonnet-4-5-20250929")));
 
-    // Ingestor (default to Firecrawl if available, else HTTP)
-    let ingestor: Arc<dyn rootsignal_core::Ingestor> = if config.firecrawl_api_key.is_some() {
+    // Ingestor (default to spider for local crawling)
+    let ingestor: Arc<dyn rootsignal_core::Ingestor> =
         rootsignal_domains::scraping::adapters::build_ingestor(
-            "firecrawl",
+            "spider",
             &http_client,
             config.firecrawl_api_key.as_deref(),
             config.apify_api_key.as_deref(),
-        )?
-    } else {
-        rootsignal_domains::scraping::adapters::build_ingestor("http", &http_client, None, None)?
-    };
+            config.chrome_url.as_deref(),
+        )?;
 
     // Web searcher
     let web_searcher = rootsignal_domains::scraping::adapters::build_web_searcher(
@@ -227,35 +225,57 @@ async fn main() -> Result<()> {
 
     tracing::info!(restate = %restate_addr, axum = %axum_addr, "Starting servers");
 
-    // Auto-register with Restate admin
+    // Auto-register with Restate admin (spawned with delay so the HTTP server is ready)
     if let Some(admin_url) = &server_deps.config.restate_admin_url {
+        let admin_url = admin_url.clone();
         let self_url = server_deps
             .config
             .restate_self_url
             .clone()
             .unwrap_or_else(|| format!("http://localhost:{}", port));
+        let auth_token = server_deps.config.restate_auth_token.clone();
 
-        let client = reqwest::Client::new();
-        let mut request =
-            client
-                .post(format!("{}/deployments", admin_url))
-                .json(&serde_json::json!({
-                    "uri": self_url,
-                    "force": true,
-                }));
+        tokio::spawn(async move {
+            // Wait for the Restate HTTP server to be ready
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        if let Some(token) = &server_deps.config.restate_auth_token {
-            request = request.bearer_auth(token);
-        }
+            tracing::info!(
+                admin_url = %admin_url,
+                self_url = %self_url,
+                "Auto-registering with Restate"
+            );
 
-        match request.send().await {
-            Ok(resp) => {
-                tracing::info!(status = %resp.status(), "Registered with Restate admin");
+            let client = reqwest::Client::new();
+            let mut request =
+                client
+                    .post(format!("{}/deployments", admin_url))
+                    .json(&serde_json::json!({
+                        "uri": self_url,
+                        "force": true,
+                    }));
+
+            if let Some(token) = &auth_token {
+                request = request.bearer_auth(token);
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to register with Restate admin");
+
+            match request.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!("Restate registration successful");
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        status = %status,
+                        body = %body,
+                        "Restate registration failed"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to connect to Restate admin");
+                }
             }
-        }
+        });
     }
 
     // Run both servers concurrently

@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use url::Url;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -23,6 +24,16 @@ pub struct Source {
 }
 
 impl Source {
+    /// Returns a sensible default cadence (in hours) for a given source type.
+    pub fn default_cadence_hours(source_type: &str) -> i32 {
+        match source_type {
+            "website" => 168,        // 1 week
+            "search_query" => 24,    // 1 day
+            "social" => 12,          // twice a day
+            _ => 24,                 // fallback: 1 day
+        }
+    }
+
     pub async fn create(
         name: &str,
         source_type: &str,
@@ -33,10 +44,12 @@ impl Source {
         config: serde_json::Value,
         pool: &PgPool,
     ) -> Result<Self> {
+        let effective_cadence = cadence_hours.unwrap_or_else(|| Self::default_cadence_hours(source_type));
+
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO sources (name, source_type, url, handle, entity_id, cadence_hours, config)
-            VALUES ($1, $2, $3, $4, $5, COALESCE($6, 24), $7)
+            INSERT INTO sources (name, source_type, url, handle, entity_id, cadence_hours, config, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
             RETURNING *
             "#,
         )
@@ -45,7 +58,7 @@ impl Source {
         .bind(url)
         .bind(handle)
         .bind(entity_id)
-        .bind(cadence_hours)
+        .bind(effective_cadence)
         .bind(config)
         .fetch_one(pool)
         .await
@@ -91,12 +104,79 @@ impl Source {
         .map_err(Into::into)
     }
 
+    pub async fn find_pending_qualification(pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(
+            "SELECT * FROM sources WHERE qualification_status = 'pending' ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Find an existing website source by domain, or create a new one.
+    /// Returns `(source, was_created)`.
+    pub async fn find_or_create_website(
+        name: &str,
+        url: &str,
+        discovered_from: Option<Uuid>,
+        pool: &PgPool,
+    ) -> Result<(Self, bool)> {
+        let parsed = Url::parse(url)?;
+        let domain = parsed
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("URL has no host: {}", url))?
+            .to_string();
+
+        // Check if a website_source with this domain already exists
+        let existing = sqlx::query_as::<_, (Uuid,)>(
+            "SELECT source_id FROM website_sources WHERE domain = $1",
+        )
+        .bind(&domain)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((source_id,)) = existing {
+            let source = Self::find_by_id(source_id, pool).await?;
+            return Ok((source, false));
+        }
+
+        // Create new source
+        let mut config = serde_json::json!({});
+        if let Some(parent_id) = discovered_from {
+            config["discovered_from"] = serde_json::json!(parent_id.to_string());
+        }
+
+        let source = Self::create(name, "website", Some(url), None, None, None, config, pool).await?;
+
+        // Create website_source record
+        WebsiteSource::create(source.id, &domain, 2, pool).await?;
+
+        Ok((source, true))
+    }
+
+    pub async fn set_entity_id(id: Uuid, entity_id: Uuid, pool: &PgPool) -> Result<()> {
+        sqlx::query("UPDATE sources SET entity_id = $2 WHERE id = $1")
+            .bind(id)
+            .bind(entity_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_last_scraped(id: Uuid, pool: &PgPool) -> Result<()> {
         sqlx::query("UPDATE sources SET last_scraped_at = NOW() WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn delete_many(ids: &[Uuid], pool: &PgPool) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sources WHERE id = ANY($1)")
+            .bind(ids)
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }
 

@@ -99,6 +99,7 @@ impl TagsService for TagsServiceImpl {
         _ctx: Context<'_>,
         _req: EmptyRequest,
     ) -> Result<TagKindListResult, HandlerError> {
+        tracing::info!("Tags.list_kinds");
         let pool = self.deps.pool();
 
         let kinds = TagKindConfig::find_all(pool)
@@ -130,6 +131,7 @@ impl TagsService for TagsServiceImpl {
         _ctx: Context<'_>,
         req: ListTagsRequest,
     ) -> Result<TagListResult, HandlerError> {
+        tracing::info!(kind = %req.kind, "Tags.list_tags");
         let pool = self.deps.pool();
 
         let tags = Tag::find_by_kind(&req.kind, pool)
@@ -146,6 +148,7 @@ impl TagsService for TagsServiceImpl {
         _ctx: Context<'_>,
         req: CreateTagRequest,
     ) -> Result<TagResult, HandlerError> {
+        tracing::info!(kind = %req.kind, value = %req.value, "Tags.create_tag");
         let pool = self.deps.pool();
 
         let tag = Tag::find_or_create(&req.kind, &req.value, pool)
