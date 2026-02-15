@@ -120,7 +120,6 @@ async fn scrape_content_source(source: &Source, deps: &ServerDeps) -> Result<Vec
         &deps.http_client,
         deps.config.firecrawl_api_key.as_deref(),
         deps.config.apify_api_key.as_deref(),
-        deps.config.chrome_url.as_deref(),
     )?;
 
     let url = source.url.as_deref().unwrap_or_default();

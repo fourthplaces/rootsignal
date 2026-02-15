@@ -128,7 +128,6 @@ async fn main() -> Result<()> {
             &http_client,
             config.firecrawl_api_key.as_deref(),
             config.apify_api_key.as_deref(),
-            config.chrome_url.as_deref(),
         )?;
 
     // Web searcher

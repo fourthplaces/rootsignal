@@ -3,24 +3,12 @@ use rootsignal_core::error::CrawlResult;
 use rootsignal_core::{DiscoverConfig, Ingestor, RawPage};
 use spider::website::Website;
 
-/// Spider adapter — local Rust-native crawler with optional Chrome CDP for JS rendering.
-pub struct SpiderIngestor {
-    chrome_url: Option<String>,
-}
+/// Spider adapter — local Rust-native HTTP crawler. No API key, no per-page cost.
+pub struct SpiderIngestor;
 
 impl SpiderIngestor {
-    pub fn new(chrome_url: Option<String>) -> Self {
-        Self { chrome_url }
-    }
-
-    fn configure_website(&self, url: &str) -> Website {
-        let mut website = Website::new(url);
-
-        if let Some(ref chrome_url) = self.chrome_url {
-            website.with_chrome_connection(Some(chrome_url.clone()));
-        }
-
-        website
+    pub fn new() -> Self {
+        Self
     }
 
     /// Extract `<title>` from HTML content.
@@ -42,7 +30,7 @@ impl SpiderIngestor {
 #[async_trait]
 impl Ingestor for SpiderIngestor {
     async fn discover(&self, config: &DiscoverConfig) -> CrawlResult<Vec<RawPage>> {
-        let mut website = self.configure_website(&config.url);
+        let mut website = Website::new(&config.url);
 
         website.with_depth(config.max_depth);
         website.with_limit(config.limit as u32);
@@ -61,7 +49,6 @@ impl Ingestor for SpiderIngestor {
             url = %config.url,
             depth = config.max_depth,
             limit = config.limit,
-            chrome = self.chrome_url.is_some(),
             "Spider: starting crawl"
         );
 
@@ -120,7 +107,7 @@ impl Ingestor for SpiderIngestor {
         let mut pages = Vec::new();
 
         for url in urls {
-            let mut website = self.configure_website(url);
+            let mut website = Website::new(url);
             website.with_limit(1);
             website.with_depth(0);
 
