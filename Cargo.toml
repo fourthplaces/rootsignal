@@ -70,6 +70,9 @@ petgraph = "0.7"
 # Web crawling
 spider = { version = "2.45", default-features = false, features = ["basic", "chrome", "chrome_stealth"] }
 
+# HTML parsing
+scraper = "0.20"
+
 # URL / network validation
 url = "2.5"
 ipnet = "2.9"

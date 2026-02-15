@@ -1,5 +1,6 @@
 pub mod activities;
 pub mod adapters;
+pub mod link_extractor;
 pub mod restate;
 pub mod source;
 pub mod url_alias;

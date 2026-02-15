@@ -2,8 +2,10 @@ use anyhow::Result;
 use pgvector::Vector;
 use rootsignal_core::{RawPage, ServerDeps};
 use sha2::{Digest, Sha256};
+use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::scraping::link_extractor::{extract_links_with_context, ExtractedLink};
 use crate::scraping::url_alias::{normalize_url, UrlAlias};
 use crate::search::Embedding;
 
@@ -70,6 +72,28 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerD
     .execute(pool)
     .await?;
 
+    // Extract and store outbound links if HTML is available
+    if let Some(html) = &page.html {
+        let links = extract_links_with_context(html, &page.url);
+        if !links.is_empty() {
+            if let Err(e) = bulk_insert_links(snapshot_id, &links, pool).await {
+                tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to store page links");
+            } else {
+                tracing::debug!(snapshot_id = %snapshot_id, count = links.len(), "Stored page snapshot links");
+            }
+
+            // Resolve target_snapshot_id for links pointing to already-scraped pages
+            if let Err(e) = resolve_target_snapshots_for_source(snapshot_id, pool).await {
+                tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to resolve target snapshots (forward)");
+            }
+        }
+    }
+
+    // Resolve any existing dangling links that point to this newly-stored snapshot's URL
+    if let Err(e) = resolve_dangling_links(snapshot_id, &canonical_url, pool).await {
+        tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to resolve dangling links (backward)");
+    }
+
     // Embed the page content for semantic search
     if !page.content.is_empty() {
         {
@@ -100,4 +124,75 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerD
     }
 
     Ok(snapshot_id)
+}
+
+/// Bulk insert extracted links into page_snapshot_links.
+/// ON CONFLICT: update only if the new link is from a "body" section and the existing one is not.
+async fn bulk_insert_links(
+    snapshot_id: Uuid,
+    links: &[ExtractedLink],
+    pool: &PgPool,
+) -> Result<()> {
+    for link in links {
+        sqlx::query(
+            r#"
+            INSERT INTO page_snapshot_links (source_snapshot_id, target_url, anchor_text, surrounding_text, section)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (source_snapshot_id, target_url) DO UPDATE
+            SET anchor_text = CASE WHEN EXCLUDED.section = 'body' AND page_snapshot_links.section != 'body'
+                    THEN EXCLUDED.anchor_text ELSE page_snapshot_links.anchor_text END,
+                surrounding_text = CASE WHEN EXCLUDED.section = 'body' AND page_snapshot_links.section != 'body'
+                    THEN EXCLUDED.surrounding_text ELSE page_snapshot_links.surrounding_text END,
+                section = CASE WHEN EXCLUDED.section = 'body' AND page_snapshot_links.section != 'body'
+                    THEN EXCLUDED.section ELSE page_snapshot_links.section END
+            "#,
+        )
+        .bind(snapshot_id)
+        .bind(&link.target_url)
+        .bind(&link.anchor_text)
+        .bind(&link.surrounding_text)
+        .bind(&link.section)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Resolve target_snapshot_id for links from this snapshot that point to already-scraped pages.
+async fn resolve_target_snapshots_for_source(snapshot_id: Uuid, pool: &PgPool) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE page_snapshot_links psl
+        SET target_snapshot_id = ps.id
+        FROM page_snapshots ps
+        WHERE ps.canonical_url = psl.target_url
+          AND psl.source_snapshot_id = $1
+          AND psl.target_snapshot_id IS NULL
+        "#,
+    )
+    .bind(snapshot_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Resolve dangling links from other snapshots that point to this newly-stored URL.
+async fn resolve_dangling_links(
+    snapshot_id: Uuid,
+    canonical_url: &str,
+    pool: &PgPool,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE page_snapshot_links
+        SET target_snapshot_id = $1
+        WHERE target_url = $2
+          AND target_snapshot_id IS NULL
+        "#,
+    )
+    .bind(snapshot_id)
+    .bind(canonical_url)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
