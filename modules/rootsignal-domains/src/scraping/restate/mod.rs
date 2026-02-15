@@ -89,7 +89,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
                 // Serialize the parts we need downstream
                 let payload = serde_json::json!({
                     "snapshot_ids": output.snapshot_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                    "source_type": output.source_type,
+                    "is_search": output.is_search,
                     "discovered_pages": output.discovered_pages.iter().map(|p| {
                         serde_json::json!({ "url": p.url, "title": p.title })
                     }).collect::<Vec<_>>(),
@@ -102,14 +102,14 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let scrape: serde_json::Value = serde_json::from_str(&scrape_json)
             .map_err(|e| TerminalError::new(format!("Deserialize failed: {}", e)))?;
 
-        let source_type = scrape["source_type"].as_str().unwrap_or("").to_string();
+        let is_search = scrape["is_search"].as_bool().unwrap_or(false);
         let snapshot_ids: Vec<String> = scrape["snapshot_ids"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        if source_type == "web_search" {
-            // ── Web search path: discover sources → qualify each ──
+        if is_search {
+            // ── Web search path: discover sources ──
             ctx.set("status", "discovering".to_string());
 
             let discovered_json = scrape["discovered_pages"].to_string();

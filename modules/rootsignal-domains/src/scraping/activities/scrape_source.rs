@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::config::ServiceArea;
 use crate::scraping::adapters;
-use crate::scraping::Source;
+use crate::scraping::{adapter_for_url, Source};
 
 /// Result of scraping a source.
 ///
@@ -13,7 +13,7 @@ use crate::scraping::Source;
 /// For web_search sources: `discovered_pages` has the raw search results (no snapshots stored).
 pub struct ScrapeOutput {
     pub snapshot_ids: Vec<Uuid>,
-    pub source_type: String,
+    pub is_search: bool,
     pub discovered_pages: Vec<DiscoveredPage>,
 }
 
@@ -28,9 +28,10 @@ pub struct DiscoveredPage {
 /// For web_search, returns discovered URLs without storing anything.
 pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<ScrapeOutput> {
     let source = Source::find_by_id(source_id, deps.pool()).await?;
-    tracing::info!(source_id = %source_id, name = %source.name, source_type = %source.source_type, "Scraping source");
+    tracing::info!(source_id = %source_id, name = %source.name, source_type = %source.source_type(), "Scraping source");
 
-    if source.source_type == "web_search" {
+    // Web search sources have no URL
+    if source.url.is_none() {
         return scrape_web_search(&source, source_id, deps).await;
     }
 
@@ -51,7 +52,7 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<ScrapeO
 
     Ok(ScrapeOutput {
         snapshot_ids,
-        source_type: source.source_type,
+        is_search: false,
         discovered_pages: vec![],
     })
 }
@@ -100,21 +101,14 @@ async fn scrape_web_search(
 
     Ok(ScrapeOutput {
         snapshot_ids: vec![],
-        source_type: source.source_type.clone(),
+        is_search: true,
         discovered_pages,
     })
 }
 
 /// Content sources (website, social, etc.): fetch pages via the appropriate adapter.
 async fn scrape_content_source(source: &Source, deps: &ServerDeps) -> Result<Vec<RawPage>> {
-    let adapter_name = match source.source_type.as_str() {
-        "instagram" => "apify_instagram",
-        "facebook" => "apify_facebook",
-        "x" => "apify_x",
-        "tiktok" => "apify_tiktok",
-        "gofundme" => "apify_gofundme",
-        _ => "spider",
-    };
+    let adapter_name = adapter_for_url(source.url.as_deref());
     let ingestor = adapters::build_ingestor(
         adapter_name,
         &deps.http_client,

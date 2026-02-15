@@ -53,7 +53,7 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
     let mut user_prompt = format!(
         "Source: {} (type: {})\nURL: {}\nHandle: {}\n\nScraped pages:\n\n",
         source.name,
-        source.source_type,
+        source.source_type(),
         source.url.as_deref().unwrap_or("—"),
         source.handle.as_deref().unwrap_or("—"),
     );

@@ -1,57 +1,22 @@
 use async_graphql::*;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::types::GqlSource;
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
 use crate::graphql::entities::types::GqlEntity;
-
-#[derive(InputObject)]
-pub struct CreateSourceInput {
-    pub name: String,
-    pub source_type: String,
-    pub url: Option<String>,
-    pub handle: Option<String>,
-    pub entity_id: Option<Uuid>,
-    pub config: Option<serde_json::Value>,
-}
+use crate::graphql::workflows::trigger_restate_workflow;
+use rootsignal_core::ServerDeps;
 
 #[derive(Default)]
 pub struct SourceMutation;
 
 #[Object]
 impl SourceMutation {
-    async fn create_source(
-        &self,
-        ctx: &Context<'_>,
-        input: CreateSourceInput,
-    ) -> Result<GqlSource> {
-        tracing::info!(name = %input.name, source_type = %input.source_type, "graphql.create_source");
-        require_admin(ctx)?;
-        let pool = ctx.data_unchecked::<sqlx::PgPool>();
-
-        let config = input
-            .config
-            .unwrap_or(serde_json::Value::Object(Default::default()));
-
-        let source = rootsignal_domains::scraping::Source::create(
-            &input.name,
-            &input.source_type,
-            input.url.as_deref(),
-            input.handle.as_deref(),
-            input.entity_id,
-            config,
-            pool,
-        )
-        .await
-        .map_err(|e| error::internal(e))?;
-
-        tracing::info!(id = %source.id, "graphql.create_source.ok");
-        Ok(GqlSource::from(source))
-    }
-
-    /// Simplified source creation: just provide a URL or search query.
-    /// The backend auto-detects source type, name, and handle.
+    /// Create a source from a URL or search query.
+    /// The backend auto-detects source type, name, and handle from the input.
+    /// Returns the existing source if the normalized URL already exists.
     async fn add_source(
         &self,
         ctx: &Context<'_>,
@@ -65,7 +30,7 @@ impl SourceMutation {
             .await
             .map_err(|e| error::internal(e))?;
 
-        tracing::info!(id = %source.id, source_type = %source.source_type, name = %source.name, "graphql.add_source.ok");
+        tracing::info!(id = %source.id, name = %source.name, "graphql.add_source.ok");
         Ok(GqlSource::from(source))
     }
 

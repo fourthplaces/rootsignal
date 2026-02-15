@@ -8,7 +8,6 @@ pub struct GqlSource {
     pub id: Uuid,
     pub entity_id: Option<Uuid>,
     pub name: String,
-    pub source_type: String,
     pub url: Option<String>,
     pub handle: Option<String>,
     pub next_run_at: Option<DateTime<Utc>>,
@@ -22,6 +21,11 @@ pub struct GqlSource {
 
 #[ComplexObject]
 impl GqlSource {
+    /// Derived source type based on the URL domain.
+    async fn source_type(&self) -> String {
+        rootsignal_domains::scraping::source_type_from_url(self.url.as_deref()).to_string()
+    }
+
     /// Number of signals extracted from this source's snapshots.
     async fn signal_count(&self, ctx: &Context<'_>) -> Result<i32> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
@@ -77,7 +81,6 @@ impl From<rootsignal_domains::scraping::Source> for GqlSource {
             id: s.id,
             entity_id: s.entity_id,
             name: s.name,
-            source_type: s.source_type,
             url: s.url,
             handle: s.handle,
             next_run_at,

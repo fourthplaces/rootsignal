@@ -10,7 +10,6 @@ pub struct Source {
     pub id: Uuid,
     pub entity_id: Option<Uuid>,
     pub name: String,
-    pub source_type: String,
     pub url: Option<String>,
     pub handle: Option<String>,
     pub consecutive_misses: i32,
@@ -21,24 +20,271 @@ pub struct Source {
     pub created_at: DateTime<Utc>,
 }
 
-/// Map platform-specific source types to a scheduling category.
-fn source_category(source_type: &str) -> &'static str {
-    match source_type {
+// =============================================================================
+// URL normalization and classification
+// =============================================================================
+
+/// Known tracking query parameters to strip from URLs.
+const TRACKING_PARAMS: &[&str] = &[
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "ref",
+    "mc_cid",
+    "mc_eid",
+    "_ga",
+    "_gl",
+];
+
+/// Social platform domains that get profile-style normalization.
+const SOCIAL_DOMAINS: &[&str] = &["instagram.com", "facebook.com", "x.com", "tiktok.com"];
+
+/// Canonicalize domain aliases to a single form.
+fn canonical_domain(domain: &str) -> &str {
+    match domain {
+        "fb.com" | "m.facebook.com" => "facebook.com",
+        "twitter.com" | "mobile.twitter.com" | "mobile.x.com" => "x.com",
+        _ => domain,
+    }
+}
+
+/// Extract the canonical domain from a URL string.
+/// Returns the domain with www. stripped and aliases resolved.
+fn extract_domain(url: &str) -> String {
+    let parsed = match Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return String::new(),
+    };
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    let domain = host.strip_prefix("www.").unwrap_or(&host);
+    canonical_domain(domain).to_string()
+}
+
+/// Result of classifying and normalizing a raw user input.
+pub struct ClassifiedSource {
+    pub normalized_url: Option<String>,
+    pub name: String,
+    pub handle: Option<String>,
+    pub config: serde_json::Value,
+}
+
+/// Classify and normalize a raw user input (URL or search query).
+///
+/// - Non-URL inputs become web searches (normalized_url = None).
+/// - Social profile URLs are normalized to `https://{domain}/{handle}`.
+/// - GoFundMe URLs preserve the `/f/{slug}` path.
+/// - API URLs (usaspending, epa_echo) keep their query params.
+/// - Generic websites strip tracking params and normalize.
+/// - All URLs: lowercase domain, strip www., canonicalize aliases, force https://.
+pub fn normalize_and_classify(input: &str) -> ClassifiedSource {
+    let input = input.trim();
+
+    // Not a URL → web_search
+    if !input.starts_with("http://") && !input.starts_with("https://") {
+        return ClassifiedSource {
+            normalized_url: None,
+            name: input.to_string(),
+            handle: None,
+            config: serde_json::json!({ "search_query": input, "max_results": 10 }),
+        };
+    }
+
+    let parsed = match Url::parse(input) {
+        Ok(u) => u,
+        Err(_) => {
+            return ClassifiedSource {
+                normalized_url: Some(input.to_string()),
+                name: input.to_string(),
+                handle: None,
+                config: serde_json::json!({}),
+            };
+        }
+    };
+
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    let domain = host.strip_prefix("www.").unwrap_or(&host);
+    let domain = canonical_domain(domain);
+
+    // Extract the first meaningful path segment (strip leading slashes and @)
+    let path_segment = parsed
+        .path()
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('@')
+        .to_string();
+
+    // Social profiles: normalize to https://{domain}/{handle}
+    if SOCIAL_DOMAINS.contains(&domain) {
+        let handle = if path_segment.is_empty() {
+            domain.to_string()
+        } else {
+            path_segment
+        };
+        let normalized = format!("https://{}/{}", domain, handle);
+        return ClassifiedSource {
+            normalized_url: Some(normalized),
+            name: handle.clone(),
+            handle: Some(handle),
+            config: serde_json::json!({}),
+        };
+    }
+
+    // GoFundMe: preserve /f/{slug} path, strip query params
+    if domain == "gofundme.com" {
+        let name = if path_segment.is_empty() || path_segment == "f" {
+            parsed
+                .path()
+                .trim_start_matches('/')
+                .split('/')
+                .nth(1)
+                .unwrap_or("gofundme")
+                .replace('-', " ")
+        } else {
+            path_segment.replace('-', " ")
+        };
+        let path = parsed.path().trim_end_matches('/');
+        let normalized = format!("https://gofundme.com{}", path);
+        return ClassifiedSource {
+            normalized_url: Some(normalized),
+            name,
+            handle: None,
+            config: serde_json::json!({}),
+        };
+    }
+
+    // API sources: keep query params (they're meaningful), normalize scheme/host
+    if domain == "api.usaspending.gov" {
+        let normalized = rebuild_normalized_url(&parsed, domain, false);
+        return ClassifiedSource {
+            normalized_url: Some(normalized),
+            name: format!("USAspending: {}", parsed.query().unwrap_or("all")),
+            handle: None,
+            config: serde_json::json!({ "api_url": input }),
+        };
+    }
+    if domain == "echodata.epa.gov" {
+        let normalized = rebuild_normalized_url(&parsed, domain, false);
+        return ClassifiedSource {
+            normalized_url: Some(normalized),
+            name: format!("EPA ECHO: {}", parsed.query().unwrap_or("all")),
+            handle: None,
+            config: serde_json::json!({ "api_url": input }),
+        };
+    }
+
+    // Generic website: strip tracking params, normalize
+    let normalized = rebuild_normalized_url(&parsed, domain, true);
+    ClassifiedSource {
+        normalized_url: Some(normalized),
+        name: domain.to_string(),
+        handle: None,
+        config: serde_json::json!({}),
+    }
+}
+
+/// Rebuild a normalized URL from parsed components.
+/// If `strip_tracking` is true, known tracking query params are removed.
+fn rebuild_normalized_url(parsed: &Url, domain: &str, strip_tracking: bool) -> String {
+    let path = parsed.path().trim_end_matches('/');
+
+    let query = if strip_tracking {
+        let pairs: Vec<(String, String)> = parsed
+            .query_pairs()
+            .filter(|(k, _)| !TRACKING_PARAMS.contains(&k.as_ref()))
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        if pairs.is_empty() {
+            None
+        } else {
+            let mut sorted = pairs;
+            sorted.sort();
+            Some(
+                sorted
+                    .iter()
+                    .map(|(k, v)| {
+                        if v.is_empty() {
+                            k.clone()
+                        } else {
+                            format!("{}={}", k, v)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            )
+        }
+    } else {
+        parsed.query().map(String::from)
+    };
+
+    match query {
+        Some(q) if !q.is_empty() => format!("https://{}{}?{}", domain, path, q),
+        _ => format!("https://{}{}", domain, path),
+    }
+}
+
+// =============================================================================
+// Derived source properties (from URL)
+// =============================================================================
+
+/// Derive the source type from a URL.
+/// This replaces the stored `source_type` column.
+pub fn source_type_from_url(url: Option<&str>) -> &'static str {
+    let url = match url {
+        Some(u) => u,
+        None => return "web_search",
+    };
+    let domain = extract_domain(url);
+    match domain.as_str() {
+        "instagram.com" => "instagram",
+        "facebook.com" => "facebook",
+        "x.com" => "x",
+        "tiktok.com" => "tiktok",
+        "gofundme.com" => "gofundme",
+        "api.usaspending.gov" => "usaspending",
+        "echodata.epa.gov" => "epa_echo",
+        _ => "website",
+    }
+}
+
+/// Derive the source category from a URL for cadence computation.
+pub fn source_category_from_url(url: Option<&str>) -> &'static str {
+    match source_type_from_url(url) {
         "instagram" | "facebook" | "x" | "tiktok" | "gofundme" => "social",
-        "web_search" | "search_query" => "search",
+        "web_search" => "search",
         "usaspending" | "epa_echo" => "institutional",
         _ => "website",
     }
 }
+
+/// Derive the adapter name from a URL for scraping.
+pub fn adapter_for_url(url: Option<&str>) -> &'static str {
+    match source_type_from_url(url) {
+        "instagram" => "apify_instagram",
+        "facebook" => "apify_facebook",
+        "x" => "apify_x",
+        "tiktok" => "apify_tiktok",
+        "gofundme" => "apify_gofundme",
+        _ => "spider",
+    }
+}
+
+// =============================================================================
+// Cadence computation
+// =============================================================================
 
 /// Compute the effective cadence in hours for a source.
 ///
 /// - Base cadence: social=12h, search=24h, institutional=168h, website=168h
 /// - Exponential backoff: `base * 2^misses`, capped at ceiling
 /// - Ceilings: social=72h (3d), search=72h (3d), institutional=720h (30d), website=360h (15d)
-/// - Qualification gate removed — adaptive cadence handles source quality mechanically.
-pub fn compute_cadence(source_type: &str, consecutive_misses: i32) -> i32 {
-    let category = source_category(source_type);
+pub fn compute_cadence(url: Option<&str>, consecutive_misses: i32) -> i32 {
+    let category = source_category_from_url(url);
 
     let (base, ceiling): (i32, i32) = match category {
         "social" => (12, 72),
@@ -52,206 +298,52 @@ pub fn compute_cadence(source_type: &str, consecutive_misses: i32) -> i32 {
     backoff.min(ceiling)
 }
 
-/// Result of parsing a raw user input (URL or search query) into source fields.
-struct ParsedInput {
-    name: String,
-    source_type: String,
-    url: Option<String>,
-    handle: Option<String>,
-    config: serde_json::Value,
-}
-
-/// Parse a raw input string into source fields.
-///
-/// - Inputs starting with `http://` or `https://` are treated as URLs.
-///   The domain is matched against known platforms (Instagram, Facebook, X/Twitter,
-///   TikTok, GoFundMe) and social handles are extracted from the path.
-///   Anything else becomes a `website` source.
-/// - All other inputs are treated as search queries (`web_search`).
-fn parse_source_input(input: &str) -> ParsedInput {
-    let input = input.trim();
-
-    // Not a URL → web_search
-    if !input.starts_with("http://") && !input.starts_with("https://") {
-        return ParsedInput {
-            name: input.to_string(),
-            source_type: "web_search".to_string(),
-            url: None,
-            handle: None,
-            config: serde_json::json!({ "search_query": input, "max_results": 10 }),
-        };
-    }
-
-    let parsed = match Url::parse(input) {
-        Ok(u) => u,
-        Err(_) => {
-            return ParsedInput {
-                name: input.to_string(),
-                source_type: "website".to_string(),
-                url: Some(input.to_string()),
-                handle: None,
-                config: serde_json::json!({}),
-            };
-        }
-    };
-
-    let host = parsed.host_str().unwrap_or("").to_lowercase();
-    // Strip leading "www." for matching
-    let domain = host.strip_prefix("www.").unwrap_or(&host);
-
-    // Extract the first meaningful path segment (strip leading slashes and @)
-    let path_segment = parsed
-        .path()
-        .trim_start_matches('/')
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .trim_start_matches('@')
-        .to_string();
-
-    match domain {
-        "instagram.com" => {
-            let handle = if path_segment.is_empty() { domain.to_string() } else { path_segment.clone() };
-            ParsedInput {
-                name: handle.clone(),
-                source_type: "instagram".to_string(),
-                url: Some(input.to_string()),
-                handle: Some(handle),
-                config: serde_json::json!({}),
-            }
-        }
-        "facebook.com" | "fb.com" => {
-            let handle = if path_segment.is_empty() { domain.to_string() } else { path_segment.clone() };
-            ParsedInput {
-                name: handle.clone(),
-                source_type: "facebook".to_string(),
-                url: Some(input.to_string()),
-                handle: Some(handle),
-                config: serde_json::json!({}),
-            }
-        }
-        "x.com" | "twitter.com" => {
-            let handle = if path_segment.is_empty() { domain.to_string() } else { path_segment.clone() };
-            ParsedInput {
-                name: handle.clone(),
-                source_type: "x".to_string(),
-                url: Some(input.to_string()),
-                handle: Some(handle),
-                config: serde_json::json!({}),
-            }
-        }
-        "tiktok.com" => {
-            let handle = if path_segment.is_empty() { domain.to_string() } else { path_segment.clone() };
-            ParsedInput {
-                name: handle.clone(),
-                source_type: "tiktok".to_string(),
-                url: Some(input.to_string()),
-                handle: Some(handle),
-                config: serde_json::json!({}),
-            }
-        }
-        "gofundme.com" => {
-            let name = if path_segment.is_empty() || path_segment == "f" {
-                // Try to get the campaign slug from the path: /f/campaign-slug
-                parsed.path().trim_start_matches('/').split('/').nth(1)
-                    .unwrap_or("gofundme")
-                    .replace('-', " ")
-            } else {
-                path_segment.replace('-', " ")
-            };
-            ParsedInput {
-                name,
-                source_type: "gofundme".to_string(),
-                url: Some(input.to_string()),
-                handle: None,
-                config: serde_json::json!({}),
-            }
-        }
-        "api.usaspending.gov" => {
-            ParsedInput {
-                name: format!("USAspending: {}", parsed.query().unwrap_or("all")),
-                source_type: "usaspending".to_string(),
-                url: Some(input.to_string()),
-                handle: None,
-                config: serde_json::json!({
-                    "api_url": input,
-                }),
-            }
-        }
-        "echodata.epa.gov" => {
-            ParsedInput {
-                name: format!("EPA ECHO: {}", parsed.query().unwrap_or("all")),
-                source_type: "epa_echo".to_string(),
-                url: Some(input.to_string()),
-                handle: None,
-                config: serde_json::json!({
-                    "api_url": input,
-                }),
-            }
-        }
-        _ => {
-            // Generic website — use domain as name
-            ParsedInput {
-                name: domain.to_string(),
-                source_type: "website".to_string(),
-                url: Some(input.to_string()),
-                handle: None,
-                config: serde_json::json!({}),
-            }
-        }
-    }
-}
+// =============================================================================
+// Source model
+// =============================================================================
 
 impl Source {
+    /// Derive the source type from the URL.
+    pub fn source_type(&self) -> &'static str {
+        source_type_from_url(self.url.as_deref())
+    }
+
     /// Convenience method to get the effective cadence for this source.
     pub fn effective_cadence_hours(&self) -> i32 {
-        compute_cadence(&self.source_type, self.consecutive_misses)
+        compute_cadence(self.url.as_deref(), self.consecutive_misses)
     }
 
     /// Create a source from a raw user input (URL or search query).
     ///
-    /// Automatically detects source type, extracts name/handle, and creates
-    /// appropriate child records (website_sources, social_sources).
+    /// Normalizes the URL, auto-detects type from domain, and deduplicates
+    /// by returning an existing source if the normalized URL already exists.
     pub async fn create_from_input(input: &str, pool: &PgPool) -> Result<Self> {
-        let parsed = parse_source_input(input);
+        let classified = normalize_and_classify(input);
 
-        let source = Self::create(
-            &parsed.name,
-            &parsed.source_type,
-            parsed.url.as_deref(),
-            parsed.handle.as_deref(),
-            None,
-            parsed.config,
-            pool,
-        )
-        .await?;
-
-        // Create child records for typed sources
-        match parsed.source_type.as_str() {
-            "website" => {
-                if let Some(url) = &parsed.url {
-                    if let Ok(u) = Url::parse(url) {
-                        if let Some(host) = u.host_str() {
-                            let domain = host.strip_prefix("www.").unwrap_or(host);
-                            let _ = WebsiteSource::create(source.id, domain, 2, pool).await;
-                        }
-                    }
-                }
+        // Dedup: if the normalized URL already exists, return the existing source
+        if let Some(ref url) = classified.normalized_url {
+            let existing = sqlx::query_as::<_, Self>("SELECT * FROM sources WHERE url = $1")
+                .bind(url)
+                .fetch_optional(pool)
+                .await?;
+            if let Some(source) = existing {
+                return Ok(source);
             }
-            "instagram" | "facebook" | "x" | "tiktok" => {
-                if let Some(handle) = &parsed.handle {
-                    let _ = SocialSource::create(source.id, &parsed.source_type, handle, pool).await;
-                }
-            }
-            _ => {}
         }
 
-        Ok(source)
+        Self::create(
+            &classified.name,
+            classified.normalized_url.as_deref(),
+            classified.handle.as_deref(),
+            None,
+            classified.config,
+            pool,
+        )
+        .await
     }
 
     pub async fn create(
         name: &str,
-        source_type: &str,
         url: Option<&str>,
         handle: Option<&str>,
         entity_id: Option<Uuid>,
@@ -260,13 +352,12 @@ impl Source {
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO sources (name, source_type, url, handle, entity_id, config, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            INSERT INTO sources (name, url, handle, entity_id, config, is_active)
+            VALUES ($1, $2, $3, $4, $5, TRUE)
             RETURNING *
             "#,
         )
         .bind(name)
-        .bind(source_type)
         .bind(url)
         .bind(handle)
         .bind(entity_id)
@@ -316,7 +407,7 @@ impl Source {
             .collect())
     }
 
-    /// Find an existing website source by domain, or create a new one.
+    /// Find an existing source by normalized URL, or create a new one.
     /// Returns `(source, was_created)`.
     pub async fn find_or_create_website(
         name: &str,
@@ -324,22 +415,19 @@ impl Source {
         discovered_from: Option<Uuid>,
         pool: &PgPool,
     ) -> Result<(Self, bool)> {
-        let parsed = Url::parse(url)?;
-        let domain = parsed
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("URL has no host: {}", url))?
-            .to_string();
+        let classified = normalize_and_classify(url);
+        let normalized = classified
+            .normalized_url
+            .as_deref()
+            .unwrap_or(url);
 
-        // Check if a website_source with this domain already exists
-        let existing = sqlx::query_as::<_, (Uuid,)>(
-            "SELECT source_id FROM website_sources WHERE domain = $1",
-        )
-        .bind(&domain)
-        .fetch_optional(pool)
-        .await?;
+        // Check if a source with this normalized URL already exists
+        let existing = sqlx::query_as::<_, Self>("SELECT * FROM sources WHERE url = $1")
+            .bind(normalized)
+            .fetch_optional(pool)
+            .await?;
 
-        if let Some((source_id,)) = existing {
-            let source = Self::find_by_id(source_id, pool).await?;
+        if let Some(source) = existing {
             return Ok((source, false));
         }
 
@@ -349,52 +437,52 @@ impl Source {
             config["discovered_from"] = serde_json::json!(parent_id.to_string());
         }
 
-        let source = Self::create(name, "website", Some(url), None, None, config, pool).await?;
-
-        // Create website_source record
-        WebsiteSource::create(source.id, &domain, 2, pool).await?;
+        let source = Self::create(
+            name,
+            Some(normalized),
+            None,
+            None,
+            config,
+            pool,
+        )
+        .await?;
 
         Ok((source, true))
     }
 
-    /// Find an existing social source by (platform, handle), or create a new one.
+    /// Find an existing social source by normalized URL, or create a new one.
     /// Returns `(source, was_created)`.
     pub async fn find_or_create_social(
         platform: &str,
         handle: &str,
-        url: Option<&str>,
+        _url: Option<&str>,
         entity_id: Uuid,
         pool: &PgPool,
     ) -> Result<(Self, bool)> {
-        // Check if a social_source with this platform+handle already exists
-        let existing = sqlx::query_as::<_, (Uuid,)>(
-            "SELECT source_id FROM social_sources WHERE platform = $1 AND handle = $2",
-        )
-        .bind(platform)
-        .bind(handle)
-        .fetch_optional(pool)
-        .await?;
+        // Build canonical URL for this social profile
+        let canonical_url = format!("https://{}.com/{}", platform, handle);
 
-        if let Some((source_id,)) = existing {
-            let source = Self::find_by_id(source_id, pool).await?;
+        // Check if a source with this URL already exists
+        let existing = sqlx::query_as::<_, Self>("SELECT * FROM sources WHERE url = $1")
+            .bind(&canonical_url)
+            .fetch_optional(pool)
+            .await?;
+
+        if let Some(source) = existing {
             return Ok((source, false));
         }
 
-        // Create new source (inactive by default)
+        // Create new source
         let name = format!("{}@{}", handle, platform);
         let source = Self::create(
             &name,
-            platform,
-            url,
+            Some(&canonical_url),
             Some(handle),
             Some(entity_id),
             serde_json::json!({}),
             pool,
         )
         .await?;
-
-        // Create social_source record
-        SocialSource::create(source.id, platform, handle, pool).await?;
 
         Ok((source, true))
     }
@@ -457,215 +545,292 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct WebsiteSource {
-    pub id: Uuid,
-    pub source_id: Uuid,
-    pub domain: String,
-    pub max_crawl_depth: i32,
-    pub is_trusted: bool,
-}
-
-impl WebsiteSource {
-    pub async fn create(
-        source_id: Uuid,
-        domain: &str,
-        max_crawl_depth: i32,
-        pool: &PgPool,
-    ) -> Result<Self> {
-        sqlx::query_as::<_, Self>(
-            r#"
-            INSERT INTO website_sources (source_id, domain, max_crawl_depth)
-            VALUES ($1, $2, $3)
-            RETURNING *
-            "#,
-        )
-        .bind(source_id)
-        .bind(domain)
-        .bind(max_crawl_depth)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
-    }
-
-    pub async fn find_by_source_id(source_id: Uuid, pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as::<_, Self>("SELECT * FROM website_sources WHERE source_id = $1")
-            .bind(source_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(Into::into)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct SocialSource {
-    pub id: Uuid,
-    pub source_id: Uuid,
-    pub platform: String,
-    pub handle: String,
-}
-
-impl SocialSource {
-    pub async fn create(
-        source_id: Uuid,
-        platform: &str,
-        handle: &str,
-        pool: &PgPool,
-    ) -> Result<Self> {
-        sqlx::query_as::<_, Self>(
-            r#"
-            INSERT INTO social_sources (source_id, platform, handle)
-            VALUES ($1, $2, $3)
-            RETURNING *
-            "#,
-        )
-        .bind(source_id)
-        .bind(platform)
-        .bind(handle)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
-    }
-}
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // ── normalize_and_classify ───────────────────────────────────────────
+
+    #[test]
+    fn test_classify_website() {
+        let c = normalize_and_classify("https://example.com/some/page");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/some/page"));
+        assert_eq!(c.name, "example.com");
+        assert!(c.handle.is_none());
+    }
+
+    #[test]
+    fn test_classify_website_strips_www() {
+        let c = normalize_and_classify("https://www.example.com");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com"));
+        assert_eq!(c.name, "example.com");
+    }
+
+    #[test]
+    fn test_classify_website_strips_tracking_params() {
+        let c = normalize_and_classify("https://example.com/page?utm_source=foo&real=bar");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://example.com/page?real=bar")
+        );
+    }
+
+    #[test]
+    fn test_classify_website_strips_trailing_slash() {
+        let c = normalize_and_classify("https://example.com/page/");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/page"));
+    }
+
+    #[test]
+    fn test_classify_website_forces_https() {
+        let c = normalize_and_classify("http://example.com/page");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/page"));
+    }
+
+    #[test]
+    fn test_classify_website_lowercase_domain() {
+        let c = normalize_and_classify("https://EXAMPLE.COM/Page");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/Page"));
+        assert_eq!(c.name, "example.com");
+    }
+
+    #[test]
+    fn test_classify_instagram_profile() {
+        let c = normalize_and_classify("https://www.instagram.com/somecoffeeshop");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://instagram.com/somecoffeeshop")
+        );
+        assert_eq!(c.name, "somecoffeeshop");
+        assert_eq!(c.handle.as_deref(), Some("somecoffeeshop"));
+    }
+
+    #[test]
+    fn test_classify_instagram_strips_trailing_slash() {
+        let c = normalize_and_classify("https://www.instagram.com/bri.anahata/");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://instagram.com/bri.anahata")
+        );
+    }
+
+    #[test]
+    fn test_classify_instagram_strips_query_params() {
+        let c = normalize_and_classify("https://www.instagram.com/bri.anahata?blah=1");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://instagram.com/bri.anahata")
+        );
+    }
+
+    #[test]
+    fn test_classify_facebook() {
+        let c = normalize_and_classify("https://facebook.com/somepage");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://facebook.com/somepage")
+        );
+        assert_eq!(c.name, "somepage");
+    }
+
+    #[test]
+    fn test_classify_facebook_alias() {
+        let c = normalize_and_classify("https://fb.com/somepage");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://facebook.com/somepage")
+        );
+    }
+
+    #[test]
+    fn test_classify_x() {
+        let c = normalize_and_classify("https://x.com/someuser");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://x.com/someuser")
+        );
+        assert_eq!(c.name, "someuser");
+        assert_eq!(c.handle.as_deref(), Some("someuser"));
+    }
+
+    #[test]
+    fn test_classify_twitter_alias() {
+        let c = normalize_and_classify("https://twitter.com/someuser");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://x.com/someuser")
+        );
+    }
+
+    #[test]
+    fn test_classify_tiktok() {
+        let c = normalize_and_classify("https://tiktok.com/@someuser");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://tiktok.com/someuser")
+        );
+        assert_eq!(c.name, "someuser");
+        assert_eq!(c.handle.as_deref(), Some("someuser"));
+    }
+
+    #[test]
+    fn test_classify_gofundme() {
+        let c = normalize_and_classify("https://www.gofundme.com/f/help-rebuild-community-center");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://gofundme.com/f/help-rebuild-community-center")
+        );
+        assert_eq!(c.name, "help rebuild community center");
+    }
+
+    #[test]
+    fn test_classify_usaspending() {
+        let c = normalize_and_classify(
+            "https://api.usaspending.gov/api/v2/search/spending_by_award/?recipient=GEO+Group",
+        );
+        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://api.usaspending.gov"));
+        assert!(c.name.starts_with("USAspending:"));
+    }
+
+    #[test]
+    fn test_classify_epa_echo() {
+        let c = normalize_and_classify(
+            "https://echodata.epa.gov/echo/dfr_rest_services.get_facility_info?p_name=Acme",
+        );
+        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://echodata.epa.gov"));
+        assert!(c.name.starts_with("EPA ECHO:"));
+    }
+
+    #[test]
+    fn test_classify_search_query() {
+        let c = normalize_and_classify("third places community spaces Minneapolis");
+        assert!(c.normalized_url.is_none());
+        assert_eq!(c.name, "third places community spaces Minneapolis");
+        assert_eq!(
+            c.config["search_query"],
+            "third places community spaces Minneapolis"
+        );
+        assert_eq!(c.config["max_results"], 10);
+    }
+
+    #[test]
+    fn test_classify_whitespace_trimmed() {
+        let c = normalize_and_classify("  https://example.com  ");
+        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com"));
+    }
+
+    // ── source_type_from_url ────────────────────────────────────────────
+
+    #[test]
+    fn test_source_type_from_url() {
+        assert_eq!(source_type_from_url(None), "web_search");
+        assert_eq!(source_type_from_url(Some("https://instagram.com/user")), "instagram");
+        assert_eq!(source_type_from_url(Some("https://facebook.com/page")), "facebook");
+        assert_eq!(source_type_from_url(Some("https://x.com/user")), "x");
+        assert_eq!(source_type_from_url(Some("https://tiktok.com/user")), "tiktok");
+        assert_eq!(source_type_from_url(Some("https://gofundme.com/f/slug")), "gofundme");
+        assert_eq!(
+            source_type_from_url(Some("https://api.usaspending.gov/api/v2")),
+            "usaspending"
+        );
+        assert_eq!(
+            source_type_from_url(Some("https://echodata.epa.gov/echo")),
+            "epa_echo"
+        );
+        assert_eq!(source_type_from_url(Some("https://example.com")), "website");
+    }
+
+    // ── adapter_for_url ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_adapter_for_url() {
+        assert_eq!(adapter_for_url(Some("https://instagram.com/user")), "apify_instagram");
+        assert_eq!(adapter_for_url(Some("https://facebook.com/page")), "apify_facebook");
+        assert_eq!(adapter_for_url(Some("https://x.com/user")), "apify_x");
+        assert_eq!(adapter_for_url(Some("https://tiktok.com/user")), "apify_tiktok");
+        assert_eq!(adapter_for_url(Some("https://gofundme.com/f/s")), "apify_gofundme");
+        assert_eq!(adapter_for_url(Some("https://example.com")), "spider");
+    }
+
+    // ── compute_cadence ─────────────────────────────────────────────────
+
     #[test]
     fn test_compute_cadence_base_cases() {
-        assert_eq!(compute_cadence("website", 0), 168);
-        assert_eq!(compute_cadence("web_search", 0), 24);
-        assert_eq!(compute_cadence("search_query", 0), 24);
-        assert_eq!(compute_cadence("instagram", 0), 12);
-        assert_eq!(compute_cadence("facebook", 0), 12);
-        assert_eq!(compute_cadence("x", 0), 12);
-        assert_eq!(compute_cadence("tiktok", 0), 12);
-        assert_eq!(compute_cadence("gofundme", 0), 12);
-        assert_eq!(compute_cadence("usaspending", 0), 168);
-        assert_eq!(compute_cadence("epa_echo", 0), 168);
+        assert_eq!(compute_cadence(Some("https://example.com"), 0), 168);
+        assert_eq!(compute_cadence(None, 0), 24); // web_search
+        assert_eq!(compute_cadence(Some("https://instagram.com/u"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://facebook.com/p"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://x.com/u"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://tiktok.com/u"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://gofundme.com/f/s"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 0), 168);
+        assert_eq!(compute_cadence(Some("https://echodata.epa.gov/echo"), 0), 168);
     }
 
     #[test]
     fn test_compute_cadence_backoff() {
         // social: base=12, ceiling=72
-        assert_eq!(compute_cadence("instagram", 1), 24);
-        assert_eq!(compute_cadence("instagram", 2), 48);
-        assert_eq!(compute_cadence("instagram", 3), 72); // hits ceiling
+        assert_eq!(compute_cadence(Some("https://instagram.com/u"), 1), 24);
+        assert_eq!(compute_cadence(Some("https://instagram.com/u"), 2), 48);
+        assert_eq!(compute_cadence(Some("https://instagram.com/u"), 3), 72);
 
         // search: base=24, ceiling=72
-        assert_eq!(compute_cadence("web_search", 1), 48);
-        assert_eq!(compute_cadence("web_search", 2), 72); // hits ceiling
+        assert_eq!(compute_cadence(None, 1), 48);
+        assert_eq!(compute_cadence(None, 2), 72);
 
         // website: base=168, ceiling=360
-        assert_eq!(compute_cadence("website", 1), 336);
-        assert_eq!(compute_cadence("website", 2), 360); // hits ceiling
+        assert_eq!(compute_cadence(Some("https://example.com"), 1), 336);
+        assert_eq!(compute_cadence(Some("https://example.com"), 2), 360);
 
         // institutional: base=168, ceiling=720
-        assert_eq!(compute_cadence("usaspending", 1), 336);
-        assert_eq!(compute_cadence("usaspending", 2), 672);
-        assert_eq!(compute_cadence("usaspending", 3), 720); // hits ceiling
+        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 1), 336);
+        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 2), 672);
+        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 3), 720);
     }
 
     #[test]
     fn test_compute_cadence_ceilings() {
-        assert_eq!(compute_cadence("instagram", 10), 72);
-        assert_eq!(compute_cadence("web_search", 10), 72);
-        assert_eq!(compute_cadence("website", 10), 360);
-        assert_eq!(compute_cadence("usaspending", 10), 720);
+        assert_eq!(compute_cadence(Some("https://instagram.com/u"), 10), 72);
+        assert_eq!(compute_cadence(None, 10), 72);
+        assert_eq!(compute_cadence(Some("https://example.com"), 10), 360);
+        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 10), 720);
+    }
+
+    // ── URL normalization dedup scenarios ────────────────────────────────
+
+    #[test]
+    fn test_normalization_dedup_instagram_variants() {
+        let a = normalize_and_classify("https://www.instagram.com/bri.anahata/");
+        let b = normalize_and_classify("https://instagram.com/bri.anahata");
+        let c = normalize_and_classify("https://www.instagram.com/bri.anahata?igsh=abc");
+        assert_eq!(a.normalized_url, b.normalized_url);
+        assert_eq!(b.normalized_url, c.normalized_url);
     }
 
     #[test]
-    fn test_parse_source_input_website() {
-        let p = parse_source_input("https://example.com/some/page");
-        assert_eq!(p.source_type, "website");
-        assert_eq!(p.name, "example.com");
-        assert_eq!(p.url.as_deref(), Some("https://example.com/some/page"));
-        assert!(p.handle.is_none());
+    fn test_normalization_dedup_facebook_aliases() {
+        let a = normalize_and_classify("https://fb.com/somepage");
+        let b = normalize_and_classify("https://facebook.com/somepage");
+        let c = normalize_and_classify("https://www.facebook.com/somepage/");
+        assert_eq!(a.normalized_url, b.normalized_url);
+        assert_eq!(b.normalized_url, c.normalized_url);
     }
 
     #[test]
-    fn test_parse_source_input_website_www() {
-        let p = parse_source_input("https://www.example.com");
-        assert_eq!(p.source_type, "website");
-        assert_eq!(p.name, "example.com");
+    fn test_normalization_dedup_twitter_aliases() {
+        let a = normalize_and_classify("https://twitter.com/someuser");
+        let b = normalize_and_classify("https://x.com/someuser");
+        assert_eq!(a.normalized_url, b.normalized_url);
     }
 
     #[test]
-    fn test_parse_source_input_instagram() {
-        let p = parse_source_input("https://www.instagram.com/somecoffeeshop");
-        assert_eq!(p.source_type, "instagram");
-        assert_eq!(p.name, "somecoffeeshop");
-        assert_eq!(p.handle.as_deref(), Some("somecoffeeshop"));
-    }
-
-    #[test]
-    fn test_parse_source_input_x() {
-        let p = parse_source_input("https://x.com/someuser");
-        assert_eq!(p.source_type, "x");
-        assert_eq!(p.name, "someuser");
-        assert_eq!(p.handle.as_deref(), Some("someuser"));
-    }
-
-    #[test]
-    fn test_parse_source_input_twitter() {
-        let p = parse_source_input("https://twitter.com/someuser");
-        assert_eq!(p.source_type, "x");
-        assert_eq!(p.name, "someuser");
-    }
-
-    #[test]
-    fn test_parse_source_input_facebook() {
-        let p = parse_source_input("https://facebook.com/somepage");
-        assert_eq!(p.source_type, "facebook");
-        assert_eq!(p.name, "somepage");
-    }
-
-    #[test]
-    fn test_parse_source_input_tiktok() {
-        let p = parse_source_input("https://tiktok.com/@someuser");
-        assert_eq!(p.source_type, "tiktok");
-        assert_eq!(p.name, "someuser");
-        assert_eq!(p.handle.as_deref(), Some("someuser"));
-    }
-
-    #[test]
-    fn test_parse_source_input_gofundme() {
-        let p = parse_source_input("https://www.gofundme.com/f/help-rebuild-community-center");
-        assert_eq!(p.source_type, "gofundme");
-        assert_eq!(p.name, "help rebuild community center");
-    }
-
-    #[test]
-    fn test_parse_source_input_search_query() {
-        let p = parse_source_input("third places community spaces Minneapolis");
-        assert_eq!(p.source_type, "web_search");
-        assert_eq!(p.name, "third places community spaces Minneapolis");
-        assert!(p.url.is_none());
-        assert_eq!(p.config["search_query"], "third places community spaces Minneapolis");
-        assert_eq!(p.config["max_results"], 10);
-    }
-
-    #[test]
-    fn test_parse_source_input_whitespace_trimmed() {
-        let p = parse_source_input("  https://example.com  ");
-        assert_eq!(p.source_type, "website");
-        assert_eq!(p.name, "example.com");
-    }
-
-    #[test]
-    fn test_parse_source_input_usaspending() {
-        let p = parse_source_input("https://api.usaspending.gov/api/v2/search/spending_by_award/?recipient=GEO+Group");
-        assert_eq!(p.source_type, "usaspending");
-        assert!(p.name.starts_with("USAspending:"));
-        assert!(p.url.is_some());
-    }
-
-    #[test]
-    fn test_parse_source_input_epa_echo() {
-        let p = parse_source_input("https://echodata.epa.gov/echo/dfr_rest_services.get_facility_info?p_name=Acme");
-        assert_eq!(p.source_type, "epa_echo");
-        assert!(p.name.starts_with("EPA ECHO:"));
-        assert!(p.url.is_some());
+    fn test_normalization_dedup_website_tracking_params() {
+        let a = normalize_and_classify("https://example.com/page?utm_source=google&real=yes");
+        let b = normalize_and_classify("https://example.com/page?real=yes");
+        assert_eq!(a.normalized_url, b.normalized_url);
     }
 }
