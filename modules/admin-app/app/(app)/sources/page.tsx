@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { authedClient } from "@/lib/client";
 import Link from "next/link";
-import { MoreMenu } from "./qualify-pending-button";
+
 import { SourcesTable } from "./sources-table";
 
 interface Source {
@@ -53,15 +53,12 @@ export default async function SourcesPage({
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Sources</h1>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/sources/new"
-            className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800"
-          >
-            New Source
-          </Link>
-          <MoreMenu />
-        </div>
+        <Link
+          href="/sources/new"
+          className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800"
+        >
+          New Source
+        </Link>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">

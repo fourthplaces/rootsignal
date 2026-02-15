@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import "mapbox-gl/dist/mapbox-gl.css";
+import Map, { Source, Layer, useMap } from "react-map-gl/mapbox";
+import type { MapRef } from "react-map-gl/mapbox";
 import Sidebar from "./sidebar";
 
 interface HeatMapPoint {
@@ -47,11 +48,6 @@ interface ParsedQuery {
 }
 
 type LayerMode = "density" | "gaps" | "entities";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MapboxGL = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MapInstance = any;
 
 async function gqlFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/graphql", {
@@ -102,16 +98,6 @@ function searchToGeoJSON(results: SearchResult[]): GeoJSON.FeatureCollection {
   };
 }
 
-function fitBounds(mapboxgl: MapboxGL, map: MapInstance, geojson: GeoJSON.FeatureCollection) {
-  if (geojson.features.length === 0) return;
-  const bounds = new mapboxgl.LngLatBounds();
-  for (const f of geojson.features) {
-    const coords = (f.geometry as GeoJSON.Point).coordinates;
-    bounds.extend([coords[0], coords[1]]);
-  }
-  map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-}
-
 const ENTITY_COLORS: Record<string, string> = {
   nonprofit: "#3b82f6",
   government: "#22c55e",
@@ -121,10 +107,10 @@ const ENTITY_COLORS: Record<string, string> = {
   entity: "#3b82f6",
 };
 
+const EMPTY_GEOJSON: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
 export default function MapView() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapInstance>(null);
-  const mbRef = useRef<MapboxGL>(null);
+  const mapRef = useRef<MapRef>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
   const [layer, setLayer] = useState<LayerMode>(
@@ -145,9 +131,13 @@ export default function MapView() {
     entityType: string;
     entityId: string;
   } | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
-  // Sync state to URL
+  // Data for each layer
+  const [heatData, setHeatData] = useState<GeoJSON.FeatureCollection>(EMPTY_GEOJSON);
+  const [gapsData, setGapsData] = useState<GeoJSON.FeatureCollection>(EMPTY_GEOJSON);
+  const [searchData, setSearchData] = useState<GeoJSON.FeatureCollection>(EMPTY_GEOJSON);
+  const [maxGapCount, setMaxGapCount] = useState(1);
+
   const syncUrl = useCallback(
     (q: string, f: typeof filters, l: LayerMode) => {
       const params = new URLSearchParams();
@@ -164,322 +154,103 @@ export default function MapView() {
     [router],
   );
 
-  const clearMapLayers = useCallback(() => {
+  const fitToData = useCallback((geojson: GeoJSON.FeatureCollection) => {
     const map = mapRef.current;
-    if (!map) return;
-    const layerIds = [
-      "heatmap-layer",
-      "heatmap-points",
-      "clusters",
-      "cluster-count",
-      "unclustered-point",
-      "gaps-circles",
-      "gaps-labels",
-      "search-pins",
-    ];
-    for (const id of layerIds) {
-      if (map.getLayer(id)) map.removeLayer(id);
+    if (!map || geojson.features.length === 0) return;
+    const coords = geojson.features.map(
+      (f) => (f.geometry as GeoJSON.Point).coordinates,
+    );
+    if (coords.length === 1) {
+      map.flyTo({ center: coords[0] as [number, number], zoom: 12 });
+      return;
     }
-    for (const id of ["heat-source", "gaps-source", "search-source"]) {
-      if (map.getSource(id)) map.removeSource(id);
-    }
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    map.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: 60, maxZoom: 14 },
+    );
   }, []);
 
-  const loadDensityLayer = useCallback(
-    async (map: MapInstance) => {
-      setLoading(true);
-      setError("");
-      try {
-        const vars: Record<string, unknown> = {};
-        if (filters.zipCode) vars.zipCode = filters.zipCode;
-        if (filters.radiusMiles) vars.radiusMiles = parseFloat(filters.radiusMiles);
-        if (filters.entityType) vars.entityType = filters.entityType;
+  const loadDensity = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const vars: Record<string, unknown> = {};
+      if (filters.zipCode) vars.zipCode = filters.zipCode;
+      if (filters.radiusMiles) vars.radiusMiles = parseFloat(filters.radiusMiles);
+      if (filters.entityType) vars.entityType = filters.entityType;
 
-        const data = await gqlFetch<{ heatMapPoints: HeatMapPoint[] }>(
-          `query($zipCode: String, $radiusMiles: Float, $entityType: String) {
-            heatMapPoints(zipCode: $zipCode, radiusMiles: $radiusMiles, entityType: $entityType) {
-              id latitude longitude weight entityType entityId
-            }
-          }`,
-          vars,
-        );
+      const data = await gqlFetch<{ heatMapPoints: HeatMapPoint[] }>(
+        `query($zipCode: String, $radiusMiles: Float, $entityType: String) {
+          heatMapPoints(zipCode: $zipCode, radiusMiles: $radiusMiles, entityType: $entityType) {
+            id latitude longitude weight entityType entityId
+          }
+        }`,
+        vars,
+      );
+      const geojson = toGeoJSON(data.heatMapPoints);
+      setHeatData(geojson);
+      fitToData(geojson);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load heat map data");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, fitToData]);
 
-        clearMapLayers();
-        const geojson = toGeoJSON(data.heatMapPoints);
+  const loadGaps = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const vars: Record<string, unknown> = { limit: 50 };
+      if (filters.signalDomain) vars.signalDomain = filters.signalDomain;
+      if (filters.category) vars.category = filters.category;
 
-        map.addSource("heat-source", {
-          type: "geojson",
-          data: geojson,
-          cluster: true,
-          clusterMaxZoom: 14,
-          clusterRadius: 50,
-        });
-
-        // Heatmap layer visible at low zoom
-        map.addLayer({
-          id: "heatmap-layer",
-          type: "heatmap",
-          source: "heat-source",
-          maxzoom: 9,
-          paint: {
-            "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 10, 1],
-            "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 9, 3],
-            "heatmap-color": [
-              "interpolate",
-              ["linear"],
-              ["heatmap-density"],
-              0, "rgba(33,102,172,0)",
-              0.2, "rgb(103,169,207)",
-              0.4, "rgb(209,229,240)",
-              0.6, "rgb(253,219,199)",
-              0.8, "rgb(239,138,98)",
-              1, "rgb(178,24,43)",
-            ],
-            "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20],
-            "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 9, 0],
-          },
-        });
-
-        // Cluster circles
-        map.addLayer({
-          id: "clusters",
-          type: "circle",
-          source: "heat-source",
-          filter: ["has", "point_count"],
-          paint: {
-            "circle-color": [
-              "step",
-              ["get", "point_count"],
-              "#51bbd6", 100,
-              "#f1f075", 750,
-              "#f28cb1",
-            ],
-            "circle-radius": ["step", ["get", "point_count"], 20, 100, 30, 750, 40],
-          },
-        });
-
-        map.addLayer({
-          id: "cluster-count",
-          type: "symbol",
-          source: "heat-source",
-          filter: ["has", "point_count"],
-          layout: {
-            "text-field": ["get", "point_count_abbreviated"],
-            "text-size": 12,
-          },
-        });
-
-        // Individual points at high zoom
-        map.addLayer({
-          id: "unclustered-point",
-          type: "circle",
-          source: "heat-source",
-          filter: ["!", ["has", "point_count"]],
-          paint: {
-            "circle-color": "#11b4da",
-            "circle-radius": 6,
-            "circle-stroke-width": 1,
-            "circle-stroke-color": "#fff",
-          },
-        });
-
-        fitBounds(mbRef.current, map, geojson);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load heat map data");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filters, clearMapLayers],
-  );
-
-  const loadGapsLayer = useCallback(
-    async (map: MapInstance) => {
-      setLoading(true);
-      setError("");
-      try {
-        const vars: Record<string, unknown> = { limit: 50 };
-        if (filters.signalDomain) vars.signalDomain = filters.signalDomain;
-        if (filters.category) vars.category = filters.category;
-
-        const data = await gqlFetch<{ signalGaps: ZipDensity[] }>(
-          `query($signalDomain: String, $category: String, $limit: Int) {
-            signalGaps(signalDomain: $signalDomain, category: $category, limit: $limit) {
-              zipCode city latitude longitude listingCount signalDomainCounts
-            }
-          }`,
-          vars,
-        );
-
-        clearMapLayers();
-        const geojson = zipToGeoJSON(data.signalGaps);
-
-        map.addSource("gaps-source", { type: "geojson", data: geojson });
-
-        // Bigger circle = bigger gap (fewer listings)
-        const maxCount = Math.max(...data.signalGaps.map((z) => z.listingCount), 1);
-        map.addLayer({
-          id: "gaps-circles",
-          type: "circle",
-          source: "gaps-source",
-          paint: {
-            "circle-color": [
-              "interpolate",
-              ["linear"],
-              ["get", "listingCount"],
-              0, "#dc2626",
-              maxCount, "#fca5a5",
-            ],
-            "circle-radius": [
-              "interpolate",
-              ["linear"],
-              ["get", "listingCount"],
-              0, 20,
-              maxCount, 6,
-            ],
-            "circle-opacity": 0.7,
-            "circle-stroke-width": 1,
-            "circle-stroke-color": "#fff",
-          },
-        });
-
-        map.addLayer({
-          id: "gaps-labels",
-          type: "symbol",
-          source: "gaps-source",
-          layout: {
-            "text-field": ["concat", ["get", "city"], "\n", ["to-string", ["get", "listingCount"]]],
-            "text-size": 10,
-            "text-offset": [0, 2.5],
-          },
-          paint: { "text-color": "#6b7280" },
-        });
-
-        fitBounds(mbRef.current, map, geojson);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load gaps data");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filters, clearMapLayers],
-  );
-
-  const loadEntitiesLayer = useCallback(
-    async (map: MapInstance) => {
-      setLoading(true);
-      setError("");
-      try {
-        const vars: Record<string, unknown> = {};
-        if (filters.zipCode) vars.zipCode = filters.zipCode;
-        if (filters.radiusMiles) vars.radiusMiles = parseFloat(filters.radiusMiles);
-        if (filters.entityType) vars.entityType = filters.entityType;
-
-        const data = await gqlFetch<{ heatMapPoints: HeatMapPoint[] }>(
-          `query($zipCode: String, $radiusMiles: Float, $entityType: String) {
-            heatMapPoints(zipCode: $zipCode, radiusMiles: $radiusMiles, entityType: $entityType) {
-              id latitude longitude weight entityType entityId
-            }
-          }`,
-          vars,
-        );
-
-        clearMapLayers();
-        const geojson = toGeoJSON(data.heatMapPoints);
-
-        map.addSource("heat-source", {
-          type: "geojson",
-          data: geojson,
-          cluster: true,
-          clusterMaxZoom: 14,
-          clusterRadius: 50,
-        });
-
-        map.addLayer({
-          id: "clusters",
-          type: "circle",
-          source: "heat-source",
-          filter: ["has", "point_count"],
-          paint: {
-            "circle-color": "#94a3b8",
-            "circle-radius": ["step", ["get", "point_count"], 18, 50, 25, 200, 35],
-            "circle-opacity": 0.8,
-          },
-        });
-
-        map.addLayer({
-          id: "cluster-count",
-          type: "symbol",
-          source: "heat-source",
-          filter: ["has", "point_count"],
-          layout: {
-            "text-field": ["get", "point_count_abbreviated"],
-            "text-size": 12,
-          },
-          paint: { "text-color": "#fff" },
-        });
-
-        map.addLayer({
-          id: "unclustered-point",
-          type: "circle",
-          source: "heat-source",
-          filter: ["!", ["has", "point_count"]],
-          paint: {
-            "circle-color": [
-              "match",
-              ["get", "entityType"],
-              "nonprofit", ENTITY_COLORS.nonprofit,
-              "government", ENTITY_COLORS.government,
-              "business", ENTITY_COLORS.business,
-              "faith_organization", ENTITY_COLORS.faith_organization,
-              "listing", ENTITY_COLORS.listing,
-              "#6b7280",
-            ],
-            "circle-radius": 7,
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#fff",
-          },
-        });
-
-        fitBounds(mbRef.current, map, geojson);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load entity data");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filters, clearMapLayers],
-  );
+      const data = await gqlFetch<{ signalGaps: ZipDensity[] }>(
+        `query($signalDomain: String, $category: String, $limit: Int) {
+          signalGaps(signalDomain: $signalDomain, category: $category, limit: $limit) {
+            zipCode city latitude longitude listingCount signalDomainCounts
+          }
+        }`,
+        vars,
+      );
+      const geojson = zipToGeoJSON(data.signalGaps);
+      setGapsData(geojson);
+      setMaxGapCount(Math.max(...data.signalGaps.map((z) => z.listingCount), 1));
+      fitToData(geojson);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load gaps data");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, fitToData]);
 
   const loadLayer = useCallback(
     (mode: LayerMode) => {
-      const map = mapRef.current;
-      if (!map) return;
+      // Clear previous data
+      setHeatData(EMPTY_GEOJSON);
+      setGapsData(EMPTY_GEOJSON);
       switch (mode) {
         case "density":
-          loadDensityLayer(map);
+        case "entities":
+          loadDensity();
           break;
         case "gaps":
-          loadGapsLayer(map);
-          break;
-        case "entities":
-          loadEntitiesLayer(map);
+          loadGaps();
           break;
       }
     },
-    [loadDensityLayer, loadGapsLayer, loadEntitiesLayer],
+    [loadDensity, loadGaps],
   );
 
   const handleSearch = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (!searchQuery.trim()) return;
-      const map = mapRef.current;
-      const mapboxgl = mbRef.current;
-      if (!map || !mapboxgl) return;
-
-      if (abortRef.current) abortRef.current.abort();
-      abortRef.current = new AbortController();
 
       setLoading(true);
       setError("");
@@ -512,7 +283,9 @@ export default function MapView() {
 
         switch (parsed.intent) {
           case "OUT_OF_SCOPE":
-            setMessage("This query is outside our scope. Try searching for volunteer needs, events, or organizations.");
+            setMessage(
+              "This query is outside our scope. Try searching for volunteer needs, events, or organizations.",
+            );
             break;
           case "NEEDS_CLARIFICATION":
             setMessage(parsed.reasoning);
@@ -521,7 +294,6 @@ export default function MapView() {
             setMessage(parsed.reasoning);
             break;
           case "IN_SCOPE": {
-            // Auto-populate filters from parsed query
             if (parsed.filters.signalDomain) {
               setFilters((f) => ({ ...f, signalDomain: parsed.filters.signalDomain! }));
             }
@@ -529,28 +301,11 @@ export default function MapView() {
               setFilters((f) => ({ ...f, category: parsed.filters.category! }));
             }
 
-            // Plot search results as pins overlay
             if (results?.results) {
               const geojson = searchToGeoJSON(results.results);
-
-              // Remove previous search pins
-              if (map.getLayer("search-pins")) map.removeLayer("search-pins");
-              if (map.getSource("search-source")) map.removeSource("search-source");
-
+              setSearchData(geojson);
               if (geojson.features.length > 0) {
-                map.addSource("search-source", { type: "geojson", data: geojson });
-                map.addLayer({
-                  id: "search-pins",
-                  type: "circle",
-                  source: "search-source",
-                  paint: {
-                    "circle-color": "#7c3aed",
-                    "circle-radius": 8,
-                    "circle-stroke-width": 2,
-                    "circle-stroke-color": "#fff",
-                  },
-                });
-                fitBounds(mapboxgl, map, geojson);
+                fitToData(geojson);
                 setMessage(`${results.results.length} results found`);
               } else {
                 setMessage("No results with location data found.");
@@ -561,125 +316,57 @@ export default function MapView() {
         }
         syncUrl(searchQuery, filters, layer);
       } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setError(err instanceof Error ? err.message : "Search failed");
-        }
+        setError(err instanceof Error ? err.message : "Search failed");
       } finally {
         setLoading(false);
       }
     },
-    [searchQuery, filters, layer, syncUrl],
+    [searchQuery, filters, layer, syncUrl, fitToData],
   );
 
-  // Initialize map (dynamic import of mapbox-gl)
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-
-    let cancelled = false;
-
-    (async () => {
-      const mapboxgl = (await import("mapbox-gl")).default;
-
-      if (cancelled || !containerRef.current) return;
-
-      mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
-      mbRef.current = mapboxgl;
-
-      const savedViewport = localStorage.getItem("map-viewport");
-      const viewport = savedViewport ? JSON.parse(savedViewport) : null;
-
-      const map = new mapboxgl.Map({
-        container: containerRef.current,
-        style: "mapbox://styles/mapbox/light-v11",
-        center: viewport?.center || [-93.265, 44.978], // Minneapolis default
-        zoom: viewport?.zoom || 6,
-      });
-
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
-
-      map.on("load", () => {
-        if (cancelled) {
-          map.remove();
-          return;
-        }
-        mapRef.current = map;
-        loadLayer("density");
-      });
-
-      // Click cluster to zoom in
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      map.on("click", "clusters", (e: any) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
-        if (!features.length) return;
-        const clusterId = features[0].properties?.cluster_id;
-        const source = map.getSource("heat-source");
-        if (!source) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (source as any).getClusterExpansionZoom(clusterId, (err: Error | null, zoom: number) => {
-          if (err) return;
-          map.easeTo({
-            center: (features[0].geometry as GeoJSON.Point).coordinates as [number, number],
-            zoom,
-          });
-        });
-      });
-
-      // Click individual point to show sidebar
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      map.on("click", "unclustered-point", (e: any) => {
-        const props = e.features?.[0]?.properties;
-        if (props?.entityType && props?.entityId) {
-          setSelectedPin({ entityType: props.entityType, entityId: props.entityId });
-        }
-      });
-
-      // Click search pin to show sidebar
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      map.on("click", "search-pins", (e: any) => {
-        const props = e.features?.[0]?.properties;
-        if (props?.id) {
-          setSelectedPin({ entityType: props.entityType || "listing", entityId: props.id });
-        }
-      });
-
-      // Cursor changes
-      for (const layerId of ["clusters", "unclustered-point", "search-pins"]) {
-        map.on("mouseenter", layerId, () => {
-          map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", layerId, () => {
-          map.getCanvas().style.cursor = "";
-        });
-      }
-
-      // Save viewport on move
-      map.on("moveend", () => {
-        localStorage.setItem(
-          "map-viewport",
-          JSON.stringify({ center: map.getCenter().toArray(), zoom: map.getZoom() }),
-        );
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Reload layer when layer mode or filters change (after initial load)
-  useEffect(() => {
-    if (!mapRef.current) return;
+  const handleMapLoad = useCallback(() => {
     loadLayer(layer);
-  }, [layer, loadLayer]);
+  }, [loadLayer, layer]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleMapClick = useCallback((e: any) => {
+    const features = e.features;
+    if (!features?.length) return;
+    const f = features[0];
+
+    // Cluster click — zoom in
+    if (f.properties?.cluster_id) {
+      const map = mapRef.current;
+      if (!map) return;
+      const source = map.getSource("heat-source");
+      if (!source) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (source as any).getClusterExpansionZoom(f.properties.cluster_id, (err: Error | null, zoom: number) => {
+        if (err || !map) return;
+        map.flyTo({ center: f.geometry.coordinates, zoom });
+      });
+      return;
+    }
+
+    // Individual point — open sidebar
+    if (f.properties?.entityId) {
+      setSelectedPin({
+        entityType: f.properties.entityType || "listing",
+        entityId: f.properties.entityId,
+      });
+    } else if (f.properties?.id) {
+      setSelectedPin({
+        entityType: f.properties.entityType || "listing",
+        entityId: f.properties.id,
+      });
+    }
+  }, []);
 
   const handleLayerChange = (mode: LayerMode) => {
     setLayer(mode);
     setMessage("");
+    setSearchData(EMPTY_GEOJSON);
+    loadLayer(mode);
     syncUrl(searchQuery, filters, mode);
   };
 
@@ -689,17 +376,28 @@ export default function MapView() {
     syncUrl(searchQuery, next, layer);
   };
 
+  // Debounced filter reload
+  const filterTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const handleFilterBlur = () => {
+    if (filterTimeoutRef.current) clearTimeout(filterTimeoutRef.current);
+    filterTimeoutRef.current = setTimeout(() => loadLayer(layer), 300);
+  };
+
   const isFilterDisabled = (key: string) => {
     if (layer === "gaps") return ["entityType", "zipCode", "radiusMiles"].includes(key);
-    if (layer === "density" || layer === "entities") return ["signalDomain", "category"].includes(key);
+    if (layer === "density" || layer === "entities")
+      return ["signalDomain", "category"].includes(key);
     return false;
   };
+
+  const savedViewport = typeof window !== "undefined"
+    ? JSON.parse(localStorage.getItem("map-viewport") || "null")
+    : null;
 
   return (
     <div className="relative flex h-full flex-col">
       {/* Controls bar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-white px-4 py-2">
-        {/* Search */}
         <form onSubmit={handleSearch} className="flex gap-1">
           <input
             type="text"
@@ -719,11 +417,11 @@ export default function MapView() {
 
         <div className="mx-1 h-6 w-px bg-gray-200" />
 
-        {/* Filters */}
         <input
           type="text"
           value={filters.signalDomain}
           onChange={(e) => handleFilterChange("signalDomain", e.target.value)}
+          onBlur={handleFilterBlur}
           placeholder="Domain"
           disabled={isFilterDisabled("signalDomain")}
           className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
@@ -732,6 +430,7 @@ export default function MapView() {
           type="text"
           value={filters.category}
           onChange={(e) => handleFilterChange("category", e.target.value)}
+          onBlur={handleFilterBlur}
           placeholder="Category"
           disabled={isFilterDisabled("category")}
           className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
@@ -740,6 +439,7 @@ export default function MapView() {
           type="text"
           value={filters.entityType}
           onChange={(e) => handleFilterChange("entityType", e.target.value)}
+          onBlur={handleFilterBlur}
           placeholder="Entity type"
           disabled={isFilterDisabled("entityType")}
           className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
@@ -748,6 +448,7 @@ export default function MapView() {
           type="text"
           value={filters.zipCode}
           onChange={(e) => handleFilterChange("zipCode", e.target.value)}
+          onBlur={handleFilterBlur}
           placeholder="Zip code"
           disabled={isFilterDisabled("zipCode")}
           className="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
@@ -756,6 +457,7 @@ export default function MapView() {
           type="text"
           value={filters.radiusMiles}
           onChange={(e) => handleFilterChange("radiusMiles", e.target.value)}
+          onBlur={handleFilterBlur}
           placeholder="Radius (mi)"
           disabled={isFilterDisabled("radiusMiles")}
           className="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
@@ -763,7 +465,6 @@ export default function MapView() {
 
         <div className="mx-1 h-6 w-px bg-gray-200" />
 
-        {/* Layer toggle */}
         <div className="flex gap-1 rounded bg-gray-100 p-0.5">
           {(["density", "gaps", "entities"] as LayerMode[]).map((mode) => (
             <button
@@ -780,7 +481,6 @@ export default function MapView() {
           ))}
         </div>
 
-        {/* Entity type legend for entities layer */}
         {layer === "entities" && (
           <>
             <div className="mx-1 h-6 w-px bg-gray-200" />
@@ -801,24 +501,189 @@ export default function MapView() {
         )}
       </div>
 
-      {/* Messages */}
       {(error || message) && (
-        <div className={`px-4 py-2 text-sm ${error ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>
+        <div
+          className={`px-4 py-2 text-sm ${error ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}
+        >
           {error || message}
         </div>
       )}
 
-      {/* Loading overlay */}
       {loading && (
         <div className="absolute top-12 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white px-4 py-1.5 text-sm text-gray-500 shadow">
           Loading...
         </div>
       )}
 
-      {/* Map container */}
-      <div ref={containerRef} className="flex-1" />
+      {/* Map */}
+      <div className="flex-1">
+        <Map
+          ref={mapRef}
+          mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
+          initialViewState={{
+            longitude: savedViewport?.center?.[0] ?? -93.265,
+            latitude: savedViewport?.center?.[1] ?? 44.978,
+            zoom: savedViewport?.zoom ?? 6,
+          }}
+          style={{ width: "100%", height: "100%" }}
+          mapStyle="mapbox://styles/mapbox/light-v11"
+          onLoad={handleMapLoad}
+          onClick={handleMapClick}
+          onMoveEnd={(e) => {
+            const { longitude, latitude } = e.viewState;
+            localStorage.setItem(
+              "map-viewport",
+              JSON.stringify({ center: [longitude, latitude], zoom: e.viewState.zoom }),
+            );
+          }}
+          interactiveLayerIds={["clusters", "unclustered-point", "search-pins"]}
+          cursor="auto"
+        >
+          {/* Density / Entities layer */}
+          {(layer === "density" || layer === "entities") && heatData.features.length > 0 && (
+            <Source
+              id="heat-source"
+              type="geojson"
+              data={heatData}
+              cluster={true}
+              clusterMaxZoom={14}
+              clusterRadius={50}
+            >
+              {layer === "density" && (
+                <Layer
+                  id="heatmap-layer"
+                  type="heatmap"
+                  maxzoom={9}
+                  paint={{
+                    "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 10, 1],
+                    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 9, 3],
+                    "heatmap-color": [
+                      "interpolate",
+                      ["linear"],
+                      ["heatmap-density"],
+                      0, "rgba(33,102,172,0)",
+                      0.2, "rgb(103,169,207)",
+                      0.4, "rgb(209,229,240)",
+                      0.6, "rgb(253,219,199)",
+                      0.8, "rgb(239,138,98)",
+                      1, "rgb(178,24,43)",
+                    ],
+                    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20],
+                    "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 9, 0],
+                  }}
+                />
+              )}
+              <Layer
+                id="clusters"
+                type="circle"
+                filter={["has", "point_count"]}
+                paint={{
+                  "circle-color":
+                    layer === "entities"
+                      ? "#94a3b8"
+                      : ["step", ["get", "point_count"], "#51bbd6", 100, "#f1f075", 750, "#f28cb1"],
+                  "circle-radius": ["step", ["get", "point_count"], 20, 100, 30, 750, 40],
+                  "circle-opacity": 0.8,
+                }}
+              />
+              <Layer
+                id="cluster-count"
+                type="symbol"
+                filter={["has", "point_count"]}
+                layout={{
+                  "text-field": ["get", "point_count_abbreviated"],
+                  "text-size": 12,
+                }}
+                paint={{ "text-color": layer === "entities" ? "#fff" : "#000" }}
+              />
+              <Layer
+                id="unclustered-point"
+                type="circle"
+                filter={["!", ["has", "point_count"]]}
+                paint={{
+                  "circle-color":
+                    layer === "entities"
+                      ? [
+                          "match",
+                          ["get", "entityType"],
+                          "nonprofit", ENTITY_COLORS.nonprofit,
+                          "government", ENTITY_COLORS.government,
+                          "business", ENTITY_COLORS.business,
+                          "faith_organization", ENTITY_COLORS.faith_organization,
+                          "listing", ENTITY_COLORS.listing,
+                          "#6b7280",
+                        ]
+                      : "#11b4da",
+                  "circle-radius": layer === "entities" ? 7 : 6,
+                  "circle-stroke-width": layer === "entities" ? 2 : 1,
+                  "circle-stroke-color": "#fff",
+                }}
+              />
+            </Source>
+          )}
 
-      {/* Detail sidebar */}
+          {/* Gaps layer */}
+          {layer === "gaps" && gapsData.features.length > 0 && (
+            <Source id="gaps-source" type="geojson" data={gapsData}>
+              <Layer
+                id="gaps-circles"
+                type="circle"
+                paint={{
+                  "circle-color": [
+                    "interpolate",
+                    ["linear"],
+                    ["get", "listingCount"],
+                    0, "#dc2626",
+                    maxGapCount, "#fca5a5",
+                  ],
+                  "circle-radius": [
+                    "interpolate",
+                    ["linear"],
+                    ["get", "listingCount"],
+                    0, 20,
+                    maxGapCount, 6,
+                  ],
+                  "circle-opacity": 0.7,
+                  "circle-stroke-width": 1,
+                  "circle-stroke-color": "#fff",
+                }}
+              />
+              <Layer
+                id="gaps-labels"
+                type="symbol"
+                layout={{
+                  "text-field": [
+                    "concat",
+                    ["get", "city"],
+                    "\n",
+                    ["to-string", ["get", "listingCount"]],
+                  ],
+                  "text-size": 10,
+                  "text-offset": [0, 2.5] as [number, number],
+                }}
+                paint={{ "text-color": "#6b7280" }}
+              />
+            </Source>
+          )}
+
+          {/* Search results overlay */}
+          {searchData.features.length > 0 && (
+            <Source id="search-source" type="geojson" data={searchData}>
+              <Layer
+                id="search-pins"
+                type="circle"
+                paint={{
+                  "circle-color": "#7c3aed",
+                  "circle-radius": 8,
+                  "circle-stroke-width": 2,
+                  "circle-stroke-color": "#fff",
+                }}
+              />
+            </Source>
+          )}
+        </Map>
+      </div>
+
       {selectedPin && (
         <Sidebar
           entityType={selectedPin.entityType}

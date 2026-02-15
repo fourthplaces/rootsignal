@@ -20,6 +20,7 @@ interface Entity {
   locations: { id: string; name: string | null; addressLocality: string | null; addressRegion: string | null }[];
   services: { id: string; name: string; status: string }[];
   listings: { id: string; title: string; status: string }[];
+  sources: { id: string; name: string; sourceType: string; url: string | null; isActive: boolean; qualificationStatus: string }[];
 }
 
 export default function EntityDetailPage() {
@@ -46,6 +47,7 @@ export default function EntityDetailPage() {
             locations { id name addressLocality addressRegion }
             services { id name status }
             listings { id title status }
+            sources { id name sourceType url isActive qualificationStatus }
           }
         }`,
         variables: { id: params.id },
@@ -200,6 +202,37 @@ export default function EntityDetailPage() {
                   <li key={l.id} className="rounded border border-gray-200 bg-white px-3 py-2 text-sm">
                     <Link href={`/listings/${l.id}`} className="text-green-700 hover:underline">{l.title}</Link>
                     <span className="ml-2 text-xs text-gray-400">{l.status}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {entity.sources.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-gray-500">Sources</h3>
+              <ul className="space-y-1">
+                {entity.sources.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between rounded border border-gray-200 bg-white px-3 py-2 text-sm">
+                    <div>
+                      <Link href={`/sources/${s.id}`} className="text-green-700 hover:underline">{s.name}</Link>
+                      {s.url && (
+                        <a href={s.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-xs text-blue-500 hover:underline">{s.url}</a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs">{s.sourceType}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${s.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {s.isActive ? "active" : "inactive"}
+                      </span>
+                      {s.qualificationStatus !== "pending" && (
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${
+                          s.qualificationStatus === "green" ? "bg-green-100 text-green-700" :
+                          s.qualificationStatus === "yellow" ? "bg-yellow-100 text-yellow-700" :
+                          s.qualificationStatus === "red" ? "bg-red-100 text-red-700" : "bg-gray-100"
+                        }`}>{s.qualificationStatus}</span>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>

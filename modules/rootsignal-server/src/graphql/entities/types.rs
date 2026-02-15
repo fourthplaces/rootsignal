@@ -8,6 +8,7 @@ use super::super::contacts::types::GqlContact;
 use super::super::locations::types::GqlLocation;
 use super::super::notes::types::GqlNote;
 use super::super::schedules::types::GqlSchedule;
+use super::super::sources::types::GqlSource;
 use super::super::tags::types::GqlTag;
 
 #[derive(SimpleObject, Clone)]
@@ -77,6 +78,15 @@ impl GqlEntity {
         let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<NotesForLoader>>();
         let key = PolymorphicKey("entity".to_string(), self.id);
         Ok(loader.load_one(key).await?.unwrap_or_default())
+    }
+
+    async fn sources(&self, ctx: &Context<'_>) -> Result<Vec<GqlSource>> {
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+        let sources =
+            rootsignal_domains::scraping::Source::find_by_entity_id(self.id, pool)
+                .await
+                .unwrap_or_default();
+        Ok(sources.into_iter().map(GqlSource::from).collect())
     }
 
     async fn services(&self, ctx: &Context<'_>) -> Result<Vec<GqlService>> {

@@ -20,7 +20,7 @@ interface Source {
 export function SourcesTable({ sources }: { sources: Source[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
   const allSelected = sources.length > 0 && selected.size === sources.length;
@@ -45,14 +45,14 @@ export function SourcesTable({ sources }: { sources: Source[] }) {
     });
   }
 
-  async function handleDelete() {
-    setDeleting(true);
+  async function batchMutation(query: string, label: string) {
+    setBusy(true);
     try {
       const res = await fetch("/api/graphql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: `mutation DeleteSources($ids: [UUID!]!) { deleteSources(ids: $ids) }`,
+          query,
           variables: { ids: Array.from(selected) },
         }),
       });
@@ -61,23 +61,73 @@ export function SourcesTable({ sources }: { sources: Source[] }) {
       setSelected(new Set());
       router.refresh();
     } catch (err) {
-      console.error("Delete failed:", err);
+      console.error(`${label} failed:`, err);
     } finally {
-      setDeleting(false);
+      setBusy(false);
       setShowConfirm(false);
     }
+  }
+
+  function handleDelete() {
+    batchMutation(
+      `mutation DeleteSources($ids: [UUID!]!) { deleteSources(ids: $ids) }`,
+      "Delete",
+    );
+  }
+
+  function handleQualify() {
+    batchMutation(
+      `mutation QualifySources($ids: [UUID!]!) { qualifySources(ids: $ids) }`,
+      "Qualify",
+    );
+  }
+
+  function handleActivate() {
+    batchMutation(
+      `mutation ActivateSources($ids: [UUID!]!) { activateSources(ids: $ids) }`,
+      "Activate",
+    );
+  }
+
+  function handleDeactivate() {
+    batchMutation(
+      `mutation DeactivateSources($ids: [UUID!]!) { deactivateSources(ids: $ids) }`,
+      "Deactivate",
+    );
   }
 
   return (
     <>
       {selected.size > 0 && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2">
-          <span className="text-sm font-medium text-red-800">
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2">
+          <span className="text-sm font-medium text-gray-800">
             {selected.size} selected
           </span>
           <button
+            onClick={handleQualify}
+            disabled={busy}
+            className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Qualify
+          </button>
+          <button
+            onClick={handleActivate}
+            disabled={busy}
+            className="rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            Activate
+          </button>
+          <button
+            onClick={handleDeactivate}
+            disabled={busy}
+            className="rounded bg-yellow-600 px-3 py-1 text-sm text-white hover:bg-yellow-700 disabled:opacity-50"
+          >
+            Deactivate
+          </button>
+          <button
             onClick={() => setShowConfirm(true)}
-            className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
+            disabled={busy}
+            className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700 disabled:opacity-50"
           >
             Delete
           </button>
@@ -102,17 +152,17 @@ export function SourcesTable({ sources }: { sources: Source[] }) {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setShowConfirm(false)}
-                disabled={deleting}
+                disabled={busy}
                 className="rounded border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDelete}
-                disabled={deleting}
+                disabled={busy}
                 className="rounded bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700 disabled:opacity-50"
               >
-                {deleting ? "Deleting..." : "Delete"}
+                {busy ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>

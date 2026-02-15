@@ -154,6 +154,16 @@ impl Source {
         Ok((source, true))
     }
 
+    pub async fn find_by_entity_id(entity_id: Uuid, pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(
+            "SELECT * FROM sources WHERE entity_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(entity_id)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn set_entity_id(id: Uuid, entity_id: Uuid, pool: &PgPool) -> Result<()> {
         sqlx::query("UPDATE sources SET entity_id = $2 WHERE id = $1")
             .bind(id)
@@ -169,6 +179,15 @@ impl Source {
             .execute(pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn set_active_many(ids: &[Uuid], active: bool, pool: &PgPool) -> Result<u64> {
+        let result = sqlx::query("UPDATE sources SET is_active = $2 WHERE id = ANY($1)")
+            .bind(ids)
+            .bind(active)
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     pub async fn delete_many(ids: &[Uuid], pool: &PgPool) -> Result<u64> {

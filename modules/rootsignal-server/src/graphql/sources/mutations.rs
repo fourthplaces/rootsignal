@@ -70,6 +70,70 @@ impl SourceMutation {
         Ok(GqlSource::from(source))
     }
 
+    async fn activate_sources(
+        &self,
+        ctx: &Context<'_>,
+        ids: Vec<Uuid>,
+    ) -> Result<i32> {
+        tracing::info!(count = ids.len(), "graphql.activate_sources");
+        require_admin(ctx)?;
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+
+        let updated = rootsignal_domains::scraping::Source::set_active_many(&ids, true, pool)
+            .await
+            .map_err(|e| error::internal(e))?;
+
+        tracing::info!(updated = updated, "graphql.activate_sources.ok");
+        Ok(updated as i32)
+    }
+
+    async fn deactivate_sources(
+        &self,
+        ctx: &Context<'_>,
+        ids: Vec<Uuid>,
+    ) -> Result<i32> {
+        tracing::info!(count = ids.len(), "graphql.deactivate_sources");
+        require_admin(ctx)?;
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+
+        let updated = rootsignal_domains::scraping::Source::set_active_many(&ids, false, pool)
+            .await
+            .map_err(|e| error::internal(e))?;
+
+        tracing::info!(updated = updated, "graphql.deactivate_sources.ok");
+        Ok(updated as i32)
+    }
+
+    async fn qualify_sources(
+        &self,
+        ctx: &Context<'_>,
+        ids: Vec<Uuid>,
+    ) -> Result<i32> {
+        tracing::info!(count = ids.len(), "graphql.qualify_sources");
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?.clone();
+
+        let mut triggered = 0;
+        for id in &ids {
+            let key = format!("{}-{}", id, chrono::Utc::now().timestamp());
+            if let Err(e) = trigger_restate_workflow(
+                &deps,
+                "QualifyWorkflow",
+                &key,
+                serde_json::json!({ "source_id": id.to_string() }),
+            )
+            .await
+            {
+                tracing::warn!(source_id = %id, error = ?e, "Failed to trigger qualification");
+            } else {
+                triggered += 1;
+            }
+        }
+
+        tracing::info!(triggered = triggered, "graphql.qualify_sources.ok");
+        Ok(triggered)
+    }
+
     async fn delete_sources(
         &self,
         ctx: &Context<'_>,
