@@ -10,7 +10,7 @@ use crate::taxonomy::build_tag_instructions;
 struct PageSnapshot {
     id: Uuid,
     url: String,
-    markdown: Option<String>,
+    content: Option<String>,
     html: Option<String>,
 }
 
@@ -38,14 +38,14 @@ pub async fn extract_from_snapshot(snapshot_id: Uuid, deps: &ServerDeps) -> Resu
         .await?;
 
     let snapshot = sqlx::query_as::<_, PageSnapshot>(
-        "SELECT id, url, markdown, html FROM page_snapshots WHERE id = $1",
+        "SELECT id, url, content, html FROM page_snapshots WHERE id = $1",
     )
     .bind(snapshot_id)
     .fetch_one(pool)
     .await?;
 
     let content = snapshot
-        .markdown
+        .content
         .as_deref()
         .or(snapshot.html.as_deref())
         .unwrap_or("");

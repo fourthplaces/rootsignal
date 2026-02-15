@@ -40,13 +40,13 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<ScrapeO
 
     let mut snapshot_ids = Vec::new();
     for page in &pages {
-        match super::store_page_snapshot(page, source_id, deps.pool()).await {
+        match super::store_page_snapshot(page, source_id, deps).await {
             Ok(id) => snapshot_ids.push(id),
             Err(e) => tracing::warn!(url = %page.url, error = %e, "Failed to store snapshot"),
         }
     }
 
-    Source::update_last_scraped(source_id, deps.pool()).await?;
+    Source::record_scrape_result(source_id, !snapshot_ids.is_empty(), deps.pool()).await?;
     tracing::info!(source_id = %source_id, snapshots = snapshot_ids.len(), "Stored snapshots");
 
     Ok(ScrapeOutput {
@@ -96,7 +96,7 @@ async fn scrape_web_search(
         .collect();
 
     tracing::info!(source_id = %source_id, discovered = discovered_pages.len(), "Web search complete");
-    Source::update_last_scraped(source_id, deps.pool()).await?;
+    Source::record_scrape_result(source_id, !discovered_pages.is_empty(), deps.pool()).await?;
 
     Ok(ScrapeOutput {
         snapshot_ids: vec![],
@@ -166,8 +166,36 @@ async fn scrape_content_source(source: &Source, deps: &ServerDeps) -> Result<Vec
         }
     }
 
-    ingestor
-        .discover(&config)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
+    let pages = ingestor.discover(&config).await;
+
+    // For spider-based sources, fall back to firecrawl if spider returned no pages
+    if adapter_name == "spider" {
+        match &pages {
+            Ok(p) if !p.is_empty() => return pages.map_err(|e| anyhow::anyhow!(e)),
+            _ => {}
+        }
+
+        if deps.config.firecrawl_api_key.is_some() {
+            let spider_err = pages.err().map(|e| e.to_string());
+            tracing::warn!(
+                url = url,
+                spider_error = spider_err.as_deref(),
+                "Spider returned no pages, falling back to firecrawl"
+            );
+
+            let fallback = adapters::build_ingestor(
+                "firecrawl",
+                &deps.http_client,
+                deps.config.firecrawl_api_key.as_deref(),
+                deps.config.apify_api_key.as_deref(),
+            )?;
+
+            return fallback
+                .discover(&config)
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
+    }
+
+    pages.map_err(|e| anyhow::anyhow!(e))
 }

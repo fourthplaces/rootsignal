@@ -1,6 +1,5 @@
 import { headers } from "next/headers";
 import { authedClient } from "@/lib/client";
-import Link from "next/link";
 
 import { SourcesTable } from "./sources-table";
 
@@ -10,39 +9,64 @@ interface Source {
   sourceType: string;
   url: string | null;
   handle: string | null;
-  cadenceHours: number;
+  nextRunAt: string | null;
+  consecutiveMisses: number;
   lastScrapedAt: string | null;
   isActive: boolean;
   entityId: string | null;
-  qualificationStatus: string;
+  signalCount: string;
 }
-
-const SOURCE_TYPES = [
-  { value: "website", label: "Website" },
-  { value: "web_search", label: "Web Search" },
-  { value: "instagram", label: "Instagram" },
-  { value: "facebook", label: "Facebook" },
-  { value: "x", label: "X" },
-  { value: "tiktok", label: "TikTok" },
-  { value: "gofundme", label: "GoFundMe" },
-];
 
 export default async function SourcesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string }>;
+  searchParams: Promise<{ type?: string; q?: string }>;
 }) {
   const params = await searchParams;
   const headerStore = await headers();
   const api = authedClient(headerStore.get("cookie") ?? undefined);
+  const searchQuery = params.q || null;
 
-  const { sources: allSources } = await api.query<{ sources: Source[] }>(
-    `query Sources {
-      sources {
-        id name sourceType url handle cadenceHours lastScrapedAt isActive entityId qualificationStatus
+  let allSources: Source[];
+
+  if (searchQuery) {
+    const { searchSources } = await api.query<{ searchSources: Source[] }>(
+      `query SearchSources($q: String!) {
+        searchSources(q: $q) {
+          id name sourceType url handle nextRunAt consecutiveMisses lastScrapedAt isActive entityId signalCount
+        }
+      }`,
+      { q: searchQuery },
+    );
+    allSources = searchSources;
+  } else {
+    const { sources } = await api.query<{ sources: Source[] }>(
+      `query Sources {
+        sources {
+          id name sourceType url handle nextRunAt consecutiveMisses lastScrapedAt isActive entityId signalCount
+        }
+      }`,
+    );
+    allSources = sources;
+  }
+
+  // Fetch active workflows from Restate
+  const { activeWorkflows } = await api.query<{
+    activeWorkflows: { workflowType: string; sourceId: string; status: string; stage: string | null }[];
+  }>(
+    `query ActiveWorkflows {
+      activeWorkflows {
+        workflowType sourceId status stage
       }
     }`,
-  );
+  ).catch(() => ({ activeWorkflows: [] as { workflowType: string; sourceId: string; status: string; stage: string | null }[] }));
+
+  // Build a map: sourceId -> workflow info
+  const workflowsBySource: Record<string, { workflowType: string; stage: string | null }[]> = {};
+  for (const w of activeWorkflows) {
+    if (!workflowsBySource[w.sourceId]) workflowsBySource[w.sourceId] = [];
+    workflowsBySource[w.sourceId].push({ workflowType: w.workflowType, stage: w.stage });
+  }
 
   const activeType = params.type || null;
   const sources = activeType
@@ -51,47 +75,13 @@ export default async function SourcesPage({
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Sources</h1>
-        <Link
-          href="/sources/new"
-          className="rounded bg-green-700 px-4 py-2 text-sm text-white hover:bg-green-800"
-        >
-          New Source
-        </Link>
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Link
-          href="/sources"
-          className={`rounded-full px-3 py-1 text-sm font-medium ${
-            !activeType
-              ? "bg-green-700 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-        >
-          All ({allSources.length})
-        </Link>
-        {SOURCE_TYPES.map((t) => {
-          const count = allSources.filter((s) => s.sourceType === t.value).length;
-          if (count === 0) return null;
-          return (
-            <Link
-              key={t.value}
-              href={`/sources?type=${t.value}`}
-              className={`rounded-full px-3 py-1 text-sm font-medium ${
-                activeType === t.value
-                  ? "bg-green-700 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {t.label} ({count})
-            </Link>
-          );
-        })}
-      </div>
-
-      <SourcesTable sources={sources} />
+      <SourcesTable
+        sources={sources}
+        allSources={allSources}
+        initialQuery={searchQuery ?? ""}
+        activeType={activeType}
+        workflowsBySource={workflowsBySource}
+      />
     </div>
   );
 }

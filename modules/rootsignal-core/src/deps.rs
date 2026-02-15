@@ -60,4 +60,20 @@ impl ServerDeps {
     pub fn pool(&self) -> &PgPool {
         &self.db_pool
     }
+
+    /// Create a memoized computation builder.
+    ///
+    /// ```ignore
+    /// let result: MyType = deps.memo("my_func_v1", &input)
+    ///     .ttl(86_400_000) // optional, ms
+    ///     .get_or(|| async { expensive_call().await })
+    ///     .await?;
+    /// ```
+    pub fn memo<'a, K: serde::Serialize>(
+        &'a self,
+        function_name: &'a str,
+        key: K,
+    ) -> crate::memo::MemoBuilder<'a, K> {
+        crate::memo::MemoBuilder::new(function_name, key, &self.db_pool)
+    }
 }

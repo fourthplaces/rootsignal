@@ -1,13 +1,16 @@
 use anyhow::Result;
-use rootsignal_core::RawPage;
-use sqlx::PgPool;
+use pgvector::Vector;
+use rootsignal_core::{RawPage, ServerDeps};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::scraping::url_alias::{normalize_url, UrlAlias};
+use crate::search::Embedding;
 
 /// Store a raw page as an immutable page_snapshot. Returns the snapshot ID.
 /// Deduplicates by (canonical_url, content_hash).
-pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, pool: &PgPool) -> Result<Uuid> {
+pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerDeps) -> Result<Uuid> {
+    let pool = deps.pool();
     let content_hash = page.content_hash();
     let metadata = serde_json::to_value(&page.metadata)?;
 
@@ -28,7 +31,7 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, pool: &PgPool)
     // Upsert page_snapshot (immutable — conflict means we already have it)
     let snapshot = sqlx::query_as::<_, (Uuid,)>(
         r#"
-        INSERT INTO page_snapshots (url, canonical_url, content_hash, html, markdown, fetched_via, metadata, crawled_at)
+        INSERT INTO page_snapshots (url, canonical_url, content_hash, html, raw_content, fetched_via, metadata, crawled_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (canonical_url, content_hash) DO UPDATE SET url = EXCLUDED.url
         RETURNING id
@@ -66,6 +69,35 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, pool: &PgPool)
     .bind(snapshot_id)
     .execute(pool)
     .await?;
+
+    // Embed the page content for qualification pre-screening
+    if !page.content.is_empty() {
+        {
+            // Truncate to ~8K chars for embedding model token limit
+            let embed_text = if page.content.len() > 8000 {
+                &page.content[..8000]
+            } else {
+                page.content.as_str()
+            };
+
+            let mut hasher = Sha256::new();
+            hasher.update(embed_text.as_bytes());
+            let hash = hex::encode(hasher.finalize());
+
+            match deps.embedding_service.embed(embed_text).await {
+                Ok(raw_embedding) => {
+                    let vector = Vector::from(raw_embedding);
+                    match Embedding::upsert("page_snapshot", snapshot_id, "en", vector, &hash, pool).await {
+                        Ok(_) => tracing::debug!(snapshot_id = %snapshot_id, chars = embed_text.len(), "Embedded page snapshot"),
+                        Err(e) => tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to store page embedding"),
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to embed page content");
+                }
+            }
+        }
+    }
 
     Ok(snapshot_id)
 }

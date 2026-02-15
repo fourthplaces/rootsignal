@@ -1,13 +1,10 @@
 use async_graphql::*;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use super::types::GqlSource;
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
 use crate::graphql::entities::types::GqlEntity;
-use crate::graphql::workflows::trigger_restate_workflow;
-use rootsignal_core::ServerDeps;
 
 #[derive(InputObject)]
 pub struct CreateSourceInput {
@@ -16,7 +13,6 @@ pub struct CreateSourceInput {
     pub url: Option<String>,
     pub handle: Option<String>,
     pub entity_id: Option<Uuid>,
-    pub cadence_hours: Option<i32>,
     pub config: Option<serde_json::Value>,
 }
 
@@ -44,7 +40,6 @@ impl SourceMutation {
             input.url.as_deref(),
             input.handle.as_deref(),
             input.entity_id,
-            input.cadence_hours,
             config,
             pool,
         )
@@ -52,21 +47,25 @@ impl SourceMutation {
         .map_err(|e| error::internal(e))?;
 
         tracing::info!(id = %source.id, "graphql.create_source.ok");
+        Ok(GqlSource::from(source))
+    }
 
-        // Auto-trigger qualification for new sources
-        let deps = ctx.data::<Arc<ServerDeps>>()?.clone();
-        let source_id = source.id;
-        tokio::spawn(async move {
-            if let Err(e) = trigger_restate_workflow(
-                &deps,
-                "QualifyWorkflow",
-                &source_id.to_string(),
-                serde_json::json!({}),
-            ).await {
-                tracing::warn!(source_id = %source_id, error = e.message, "Auto-qualification trigger failed");
-            }
-        });
+    /// Simplified source creation: just provide a URL or search query.
+    /// The backend auto-detects source type, name, and handle.
+    async fn add_source(
+        &self,
+        ctx: &Context<'_>,
+        input: String,
+    ) -> Result<GqlSource> {
+        tracing::info!(input = %input, "graphql.add_source");
+        require_admin(ctx)?;
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
+        let source = rootsignal_domains::scraping::Source::create_from_input(&input, pool)
+            .await
+            .map_err(|e| error::internal(e))?;
+
+        tracing::info!(id = %source.id, source_type = %source.source_type, name = %source.name, "graphql.add_source.ok");
         Ok(GqlSource::from(source))
     }
 
@@ -104,12 +103,12 @@ impl SourceMutation {
         Ok(updated as i32)
     }
 
-    async fn qualify_sources(
+    async fn scrape_sources(
         &self,
         ctx: &Context<'_>,
         ids: Vec<Uuid>,
     ) -> Result<i32> {
-        tracing::info!(count = ids.len(), "graphql.qualify_sources");
+        tracing::info!(count = ids.len(), "graphql.scrape_sources");
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?.clone();
 
@@ -118,19 +117,19 @@ impl SourceMutation {
             let key = format!("{}-{}", id, chrono::Utc::now().timestamp());
             if let Err(e) = trigger_restate_workflow(
                 &deps,
-                "QualifyWorkflow",
+                "ScrapeWorkflow",
                 &key,
                 serde_json::json!({ "source_id": id.to_string() }),
             )
             .await
             {
-                tracing::warn!(source_id = %id, error = ?e, "Failed to trigger qualification");
+                tracing::warn!(source_id = %id, error = ?e, "Failed to trigger scrape");
             } else {
                 triggered += 1;
             }
         }
 
-        tracing::info!(triggered = triggered, "graphql.qualify_sources.ok");
+        tracing::info!(triggered = triggered, "graphql.scrape_sources.ok");
         Ok(triggered)
     }
 

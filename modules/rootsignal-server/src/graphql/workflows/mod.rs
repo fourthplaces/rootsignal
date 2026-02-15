@@ -145,55 +145,6 @@ impl WorkflowMutation {
         })).await
     }
 
-    /// Trigger source qualification — sample scrape + AI evaluation.
-    async fn trigger_qualification(
-        &self,
-        ctx: &Context<'_>,
-        source_id: Uuid,
-    ) -> Result<WorkflowTriggerResult> {
-        tracing::info!(source_id = %source_id, "graphql.trigger_qualification");
-        require_admin(ctx)?;
-        let deps = ctx.data::<Arc<ServerDeps>>()?;
-        let key = format!("{}-{}", source_id, chrono::Utc::now().timestamp());
-        trigger_restate_workflow(deps, "QualifyWorkflow", &key, serde_json::json!({
-            "source_id": source_id.to_string(),
-        })).await
-    }
-
-    /// Trigger qualification for all sources with pending status.
-    async fn trigger_qualify_pending(&self, ctx: &Context<'_>) -> Result<WorkflowTriggerResult> {
-        tracing::info!("graphql.trigger_qualify_pending");
-        require_admin(ctx)?;
-        let deps = ctx.data::<Arc<ServerDeps>>()?;
-        let pool = ctx.data_unchecked::<sqlx::PgPool>();
-
-        let pending = rootsignal_domains::scraping::Source::find_pending_qualification(pool)
-            .await
-            .map_err(|e| Error::new(format!("database error: {e}")))?;
-
-        let count = pending.len();
-        tracing::info!(count = count, "Qualifying pending sources");
-
-        for source in &pending {
-            let key = format!("{}-{}", source.id, chrono::Utc::now().timestamp());
-            if let Err(e) = trigger_restate_workflow(
-                deps,
-                "QualifyWorkflow",
-                &key,
-                serde_json::json!({ "source_id": source.id.to_string() }),
-            )
-            .await
-            {
-                tracing::warn!(source_id = %source.id, error = ?e, "Failed to trigger qualification");
-            }
-        }
-
-        Ok(WorkflowTriggerResult {
-            workflow_id: format!("qualify-pending-{}", count),
-            status: format!("triggered {} qualifications", count),
-        })
-    }
-
     /// Trigger translation for a specific record.
     async fn trigger_translation(
         &self,
@@ -214,11 +165,119 @@ impl WorkflowMutation {
     }
 }
 
+#[derive(SimpleObject, Clone)]
+pub struct ActiveWorkflow {
+    pub workflow_type: String,
+    pub source_id: String,
+    pub status: String,
+    /// Application-level stage (e.g. "scraping", "extracting", "qualifying")
+    pub stage: Option<String>,
+    pub created_at: Option<String>,
+}
+
 #[derive(Default)]
 pub struct WorkflowQuery;
 
 #[Object]
 impl WorkflowQuery {
+    /// List active (non-completed) workflows, optionally filtered by source ID.
+    async fn active_workflows(
+        &self,
+        ctx: &Context<'_>,
+        source_id: Option<Uuid>,
+    ) -> Result<Vec<ActiveWorkflow>> {
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?;
+
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
+            .ok_or_else(|| Error::new("Restate not configured"))?;
+
+        let sql = if let Some(id) = source_id {
+            format!(
+                "SELECT inv.target_service_name, inv.target_service_key, inv.status, inv.created_at, s.value_utf8 \
+                 FROM sys_invocation inv \
+                 LEFT JOIN state s ON s.service_name = inv.target_service_name \
+                 AND s.service_key = inv.target_service_key \
+                 AND s.key = 'status' \
+                 WHERE inv.target_service_name IN ('ScrapeWorkflow') \
+                 AND inv.target_service_key LIKE '{}-%%' \
+                 AND inv.status NOT IN ('completed') \
+                 ORDER BY inv.created_at DESC",
+                id
+            )
+        } else {
+            "SELECT inv.target_service_name, inv.target_service_key, inv.status, inv.created_at, s.value_utf8 \
+             FROM sys_invocation inv \
+             LEFT JOIN state s ON s.service_name = inv.target_service_name \
+             AND s.service_key = inv.target_service_key \
+             AND s.key = 'status' \
+             WHERE inv.target_service_name IN ('ScrapeWorkflow') \
+             AND inv.status NOT IN ('completed') \
+             ORDER BY inv.created_at DESC"
+                .to_string()
+        };
+
+        let response = deps
+            .http_client
+            .post(format!("{}/query", restate_admin_url))
+            .header("Accept", "application/json")
+            .json(&serde_json::json!({ "query": sql }))
+            .send()
+            .await
+            .map_err(|e| Error::new(format!("Restate query failed: {e}")))?;
+
+        let status_code = response.status();
+        let raw_body = response.text().await.unwrap_or_default();
+
+        if !status_code.is_success() {
+            tracing::warn!(status = %status_code, body = %raw_body, "Restate introspection query failed");
+            return Ok(vec![]);
+        }
+
+        tracing::debug!(body = %raw_body, "Restate introspection response");
+
+        let body: serde_json::Value = serde_json::from_str(&raw_body)
+            .map_err(|e| {
+                tracing::warn!(body = %raw_body, error = %e, "Failed to parse Restate response as JSON");
+                Error::new(format!("Failed to parse Restate response: {e}"))
+            })?;
+
+        let empty = vec![];
+        let rows = body["rows"].as_array().unwrap_or(&empty);
+
+        let workflows: Vec<ActiveWorkflow> = rows
+            .iter()
+            .filter_map(|row| {
+                let key = row["target_service_key"].as_str()?;
+                // Extract source_id from key format "{source_id}-{timestamp}"
+                // UUIDs are 36 chars (8-4-4-4-12)
+                let extracted_source_id = if key.len() > 36 {
+                    &key[..36]
+                } else {
+                    key
+                };
+
+                // App-level stage from Restate KV state, strip JSON quotes
+                let stage = row["value_utf8"]
+                    .as_str()
+                    .map(|s| s.trim_matches('"').to_string());
+
+                Some(ActiveWorkflow {
+                    workflow_type: row["target_service_name"].as_str()?.to_string(),
+                    source_id: extracted_source_id.to_string(),
+                    status: row["status"].as_str()?.to_string(),
+                    stage,
+                    created_at: row["created_at"].as_str().map(String::from),
+                })
+            })
+            .collect();
+
+        Ok(workflows)
+    }
+
     /// Check the status of a running workflow.
     async fn workflow_status(
         &self,

@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use async_graphql::*;
 use uuid::Uuid;
 
+use rootsignal_core::ServerDeps;
+
+use super::super::sources::types::GqlSource;
 use super::types::{GqlEntity, GqlService};
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
@@ -151,5 +156,42 @@ impl EntityMutation {
 
         tracing::info!(id = %id, "graphql.update_service.ok");
         Ok(GqlService::from(service))
+    }
+
+    async fn discover_social_links(
+        &self,
+        ctx: &Context<'_>,
+        entity_id: Uuid,
+    ) -> Result<Vec<GqlSource>> {
+        tracing::info!(entity_id = %entity_id, "graphql.discover_social_links");
+        require_admin(ctx)?;
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+
+        let mut sources =
+            rootsignal_domains::entities::activities::discover_social_for_entity(entity_id, pool)
+                .await
+                .map_err(|e| error::internal(e))?;
+
+        // Fall back to fetching the entity's website URL if no snapshots yielded results
+        if sources.is_empty() {
+            let entity = rootsignal_domains::entities::Entity::find_by_id(entity_id, pool)
+                .await
+                .map_err(|e| error::internal(e))?;
+
+            if let Some(ref website) = entity.website {
+                let deps = ctx.data::<Arc<ServerDeps>>()?;
+                sources = rootsignal_domains::entities::activities::discover_social_from_url(
+                    website,
+                    entity_id,
+                    &deps.http_client,
+                    pool,
+                )
+                .await
+                .map_err(|e| error::internal(e))?;
+            }
+        }
+
+        tracing::info!(entity_id = %entity_id, count = sources.len(), "graphql.discover_social_links.ok");
+        Ok(sources.into_iter().map(GqlSource::from).collect())
     }
 }

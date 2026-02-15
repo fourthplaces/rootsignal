@@ -17,9 +17,6 @@ pub struct Source {
     pub last_scraped_at: Option<DateTime<Utc>>,
     pub is_active: bool,
     pub config: serde_json::Value,
-    pub qualification_status: String,
-    pub qualification_summary: Option<String>,
-    pub qualification_score: Option<i32>,
     pub content_summary: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -317,15 +314,6 @@ impl Source {
                 }
             })
             .collect())
-    }
-
-    pub async fn find_pending_qualification(pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as::<_, Self>(
-            "SELECT * FROM sources WHERE qualification_status = 'pending' ORDER BY created_at ASC",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
     }
 
     /// Find an existing website source by domain, or create a new one.

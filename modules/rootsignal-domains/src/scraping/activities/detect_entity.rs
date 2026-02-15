@@ -3,6 +3,7 @@ use rootsignal_core::ServerDeps;
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::entities::activities::{discover_social_for_entity, discover_social_from_url};
 use crate::entities::Entity;
 use crate::scraping::Source;
 
@@ -16,19 +17,6 @@ pub struct ExtractedEntity {
     /// A brief 1-3 sentence description of the entity.
     pub description: Option<String>,
 }
-
-const DETECT_ENTITY_PROMPT: &str = r#"You are extracting organization information from a source's scraped pages.
-
-From the provided page content, extract:
-
-1. **name** — The organization's official name. Look in headers, page titles, about pages, and footer content.
-2. **entity_type** — One of: "Organization", "GovernmentEntity", or "LocalBusiness".
-   - "Organization" for nonprofits, community groups, churches, schools, etc.
-   - "GovernmentEntity" for government agencies, city departments, parks departments, etc.
-   - "LocalBusiness" for businesses, stores, restaurants, etc.
-3. **description** — A brief 1-3 sentence description or mission statement.
-
-If you cannot determine the entity from the provided content, set the name to "unknown"."#;
 
 /// Detect the entity behind a source using AI extraction, then find-or-create
 /// the entity and link it to the source.
@@ -45,7 +33,7 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
     // Load scraped page content
     let snapshot_rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
         r#"
-        SELECT ps.url, ps.markdown, ps.html
+        SELECT ps.url, ps.raw_content, ps.html
         FROM page_snapshots ps
         JOIN domain_snapshots ds ON ds.page_snapshot_id = ps.id
         WHERE ds.source_id = $1
@@ -70,8 +58,8 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
         source.handle.as_deref().unwrap_or("—"),
     );
 
-    for (i, (url, markdown, html)) in snapshot_rows.iter().enumerate() {
-        let content = markdown.as_deref().or(html.as_deref()).unwrap_or("[empty]");
+    for (i, (url, content, html)) in snapshot_rows.iter().enumerate() {
+        let content = content.as_deref().or(html.as_deref()).unwrap_or("[empty]");
         let truncated = if content.len() > 8000 {
             &content[..8000]
         } else {
@@ -81,8 +69,9 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
     }
 
     let model = &deps.file_config.models.extraction;
+    let system_prompt = deps.prompts.detect_entity_prompt();
 
-    let extracted: ExtractedEntity = deps.ai.extract(model, DETECT_ENTITY_PROMPT, &user_prompt).await?;
+    let extracted: ExtractedEntity = deps.ai.extract(model, system_prompt, &user_prompt).await?;
 
     if extracted.name.to_lowercase() == "unknown" || extracted.name.len() < 2 {
         bail!("Could not determine entity from scraped content");
@@ -113,6 +102,25 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
         entity_id = %entity.id,
         "Source linked to entity"
     );
+
+    // Best-effort social discovery: try page snapshots first, fall back to website URL
+    if let Err(e) = async {
+        let social_sources = discover_social_for_entity(entity.id, pool).await?;
+        if social_sources.is_empty() {
+            if let Some(ref website) = entity.website {
+                discover_social_from_url(website, entity.id, &deps.http_client, pool).await?;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await
+    {
+        tracing::warn!(
+            entity_id = %entity.id,
+            error = %e,
+            "Social discovery failed (non-fatal)"
+        );
+    }
 
     Ok(entity)
 }

@@ -282,6 +282,15 @@ pub fn exec(cmd: DockerCmd) -> Result<()> {
             for s in &services {
                 c.arg(s);
             }
+            run(&mut c)?;
+
+            // Recreate running containers with the new images
+            println!("{}", style("Restarting with new images:").cyan());
+            let mut c = compose(&root);
+            c.args(["up", "-d", "--force-recreate"]);
+            for s in &services {
+                c.arg(s);
+            }
             run(&mut c)
         }
         DockerCmd::Logs { services, tail } => {

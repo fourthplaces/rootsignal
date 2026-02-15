@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use rootsignal_core::error::CrawlResult;
 use rootsignal_core::{DiscoverConfig, Ingestor, RawPage};
+use spider::features::chrome_common::RequestInterceptConfiguration;
 use spider::website::Website;
 
 /// Spider adapter — local Rust-native HTTP crawler. No API key, no per-page cost.
@@ -52,6 +53,9 @@ impl Ingestor for SpiderIngestor {
             "Spider: starting crawl"
         );
 
+        website.with_stealth(true);
+        website.with_chrome_intercept(RequestInterceptConfiguration::new(true));
+
         website.scrape().await;
 
         let mut pages = Vec::new();
@@ -77,8 +81,9 @@ impl Ingestor for SpiderIngestor {
                 }
 
                 let title = Self::extract_title(&html);
+                let clean = rootsignal_core::html_to_plain_text(&html);
 
-                let mut raw_page = RawPage::new(&url, &html)
+                let mut raw_page = RawPage::new(&url, &clean)
                     .with_content_type("text/html".to_string())
                     .with_html(html.clone())
                     .with_metadata(
@@ -110,6 +115,8 @@ impl Ingestor for SpiderIngestor {
             let mut website = Website::new(url);
             website.with_limit(1);
             website.with_depth(0);
+            website.with_stealth(true);
+            website.with_chrome_intercept(RequestInterceptConfiguration::new(true));
 
             website.scrape().await;
 
@@ -118,7 +125,8 @@ impl Ingestor for SpiderIngestor {
                     let html = page.get_html();
                     if !html.trim().is_empty() {
                         let title = Self::extract_title(&html);
-                        let mut raw_page = RawPage::new(url, &html)
+                        let clean = rootsignal_core::html_to_plain_text(&html);
+                        let mut raw_page = RawPage::new(url, &clean)
                             .with_content_type("text/html".to_string())
                             .with_html(html.clone())
                             .with_metadata(

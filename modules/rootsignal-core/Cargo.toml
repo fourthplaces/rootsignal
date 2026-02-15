@@ -25,3 +25,4 @@ url.workspace = true
 ipnet.workspace = true
 regex.workspace = true
 ai-client.workspace = true
+html2text = "0.14"

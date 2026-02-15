@@ -34,7 +34,6 @@ pub struct PromptsConfig {
     pub extraction: PathBuf,
     pub investigation: PathBuf,
     pub nlq: PathBuf,
-    pub qualification: PathBuf,
     pub detect_entity: PathBuf,
     pub signal_extraction: PathBuf,
 }

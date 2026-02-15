@@ -11,7 +11,6 @@ pub struct PromptRegistry {
     extraction: String,
     investigation: String,
     nlq: String,
-    qualification: String,
     detect_entity: String,
     signal_extraction: String,
 }
@@ -20,7 +19,6 @@ pub struct PromptRegistry {
 const EXTRACTION_RUNTIME_VARS: &[&str] = &["taxonomy"];
 const INVESTIGATION_RUNTIME_VARS: &[&str] = &[];
 const NLQ_RUNTIME_VARS: &[&str] = &["taxonomy", "today"];
-const QUALIFICATION_RUNTIME_VARS: &[&str] = &[];
 const DETECT_ENTITY_RUNTIME_VARS: &[&str] = &[];
 const SIGNAL_EXTRACTION_RUNTIME_VARS: &[&str] = &[];
 
@@ -51,14 +49,6 @@ impl PromptRegistry {
             "nlq",
         )?;
 
-        let qualification = load_and_resolve(
-            &config.prompts.qualification,
-            config_dir,
-            toml_value,
-            QUALIFICATION_RUNTIME_VARS,
-            "qualification",
-        )?;
-
         let detect_entity = load_and_resolve(
             &config.prompts.detect_entity,
             config_dir,
@@ -79,7 +69,6 @@ impl PromptRegistry {
             extraction,
             investigation,
             nlq,
-            qualification,
             detect_entity,
             signal_extraction,
         })
@@ -101,11 +90,6 @@ impl PromptRegistry {
     /// Get investigation prompt (no runtime vars currently).
     pub fn investigation_prompt(&self) -> &str {
         &self.investigation
-    }
-
-    /// Get qualification prompt (no runtime vars).
-    pub fn qualification_prompt(&self) -> &str {
-        &self.qualification
     }
 
     /// Get detect-entity prompt (no runtime vars).

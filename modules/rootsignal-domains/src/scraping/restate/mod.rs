@@ -6,94 +6,6 @@ use uuid::Uuid;
 
 use crate::extraction::restate::{ExtractRequest, ExtractWorkflowClient};
 
-// ─── Qualify types ───────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QualifyRequest {
-    pub source_id: String,
-}
-impl_restate_serde!(QualifyRequest);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QualifyResult {
-    pub score: i32,
-    pub verdict: String,
-    pub reasoning: String,
-}
-impl_restate_serde!(QualifyResult);
-
-// ─── QualifyWorkflow ────────────────────────────────────────────────────────
-
-#[restate_sdk::workflow]
-#[name = "QualifyWorkflow"]
-pub trait QualifyWorkflow {
-    async fn run(req: QualifyRequest) -> Result<QualifyResult, HandlerError>;
-
-    #[shared]
-    async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
-}
-
-pub struct QualifyWorkflowImpl {
-    deps: Arc<ServerDeps>,
-}
-
-impl QualifyWorkflowImpl {
-    pub fn with_deps(deps: Arc<ServerDeps>) -> Self {
-        Self { deps }
-    }
-}
-
-impl QualifyWorkflow for QualifyWorkflowImpl {
-    async fn run(
-        &self,
-        ctx: WorkflowContext<'_>,
-        req: QualifyRequest,
-    ) -> Result<QualifyResult, HandlerError> {
-        let source_id: Uuid = req
-            .source_id
-            .parse()
-            .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
-
-        tracing::info!(source_id = %source_id, "QualifyWorkflow.start");
-        ctx.set("status", "qualifying".to_string());
-
-        let deps = self.deps.clone();
-        let result_json: String = ctx
-            .run(|| async move {
-                let result = crate::scraping::activities::qualify_source(source_id, &deps)
-                    .await
-                    .map_err(|e| TerminalError::new(format!("Qualification failed: {}", e)))?;
-                serde_json::to_string(&result)
-                    .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
-            })
-            .await?;
-
-        let qualification: crate::scraping::activities::qualify_source::SourceQualification =
-            serde_json::from_str(&result_json)
-                .map_err(|e| TerminalError::new(format!("Deserialize: {}", e)))?;
-
-        ctx.set("status", "completed".to_string());
-
-        tracing::info!(source_id = %source_id, score = qualification.score, verdict = %qualification.verdict, "QualifyWorkflow.completed");
-        Ok(QualifyResult {
-            score: qualification.score,
-            verdict: qualification.verdict,
-            reasoning: qualification.reasoning,
-        })
-    }
-
-    async fn get_status(
-        &self,
-        ctx: SharedWorkflowContext<'_>,
-        _req: EmptyRequest,
-    ) -> Result<String, HandlerError> {
-        Ok(ctx
-            .get::<String>("status")
-            .await?
-            .unwrap_or_else(|| "unknown".to_string()))
-    }
-}
-
 // ─── Request / Response types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +41,7 @@ impl_restate_serde!(EmptyRequest);
 //
 // Two distinct paths depending on source type:
 //
-//   web_search:  search → discover sources → qualify each (no snapshots, no extraction)
+//   web_search:  search → discover sources (sources start active, no qualification gate)
 //   everything else:  fetch pages → store snapshots → extract → normalize → translate
 //
 
@@ -228,17 +140,6 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
 
             let new_ids: Vec<String> = serde_json::from_str(&new_ids_json)
                 .map_err(|e| TerminalError::new(format!("Deserialize failed: {}", e)))?;
-
-            // Fire QualifyWorkflow for each new source (non-blocking)
-            for id in &new_ids {
-                let qualify_key = format!("{}-{}", id, chrono::Utc::now().timestamp());
-                let _ = ctx
-                    .workflow_client::<QualifyWorkflowClient>(&qualify_key)
-                    .run(QualifyRequest {
-                        source_id: id.clone(),
-                    })
-                    .send();
-            }
 
             tracing::info!(source_id = %source_id, new_sources = new_ids.len(), "ScrapeWorkflow.completed (web_search)");
             ctx.set("status", "completed".to_string());

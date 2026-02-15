@@ -23,7 +23,6 @@ export default function NewSourceModal() {
   const [handle, setHandle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [maxResults, setMaxResults] = useState("10");
-  const [cadenceHours, setCadenceHours] = useState("24");
   const [entityId, setEntityId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -46,7 +45,6 @@ export default function NewSourceModal() {
     const input: Record<string, unknown> = {
       name,
       sourceType,
-      cadenceHours: parseInt(cadenceHours, 10),
       config: Object.keys(config).length > 0 ? config : null,
     };
 
@@ -166,17 +164,6 @@ export default function NewSourceModal() {
               />
             </div>
           )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Cadence (hours)</label>
-            <input
-              type="number"
-              value={cadenceHours}
-              onChange={(e) => setCadenceHours(e.target.value)}
-              min={1}
-              className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
-            />
-          </div>
 
           {sourceType !== "web_search" && (
             <div>

@@ -68,7 +68,7 @@ strsim = "0.11"
 petgraph = "0.7"
 
 # Web crawling
-spider = { version = "2.45", default-features = false, features = ["basic"] }
+spider = { version = "2.45", default-features = false, features = ["basic", "chrome", "chrome_stealth"] }
 
 # URL / network validation
 url = "2.5"
