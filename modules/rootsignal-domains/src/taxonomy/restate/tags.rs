@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 
 use crate::taxonomy::{Tag, TagKindConfig};
 
@@ -152,8 +152,6 @@ impl TagsService for TagsServiceImpl {
             .await
             .map_err(|e| TerminalError::new(format!("Create failed: {}", e)))?;
 
-        Ok(TagResult {
-            tag: tag.into(),
-        })
+        Ok(TagResult { tag: tag.into() })
     }
 }

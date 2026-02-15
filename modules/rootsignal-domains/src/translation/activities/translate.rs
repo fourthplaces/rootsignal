@@ -15,8 +15,8 @@ fn translatable_fields(record_type: &str) -> &'static [&'static str] {
         "service" => &[
             "name",
             "description",
-            "eligibility_description",
-            "fees_description",
+            "eligibility",
+            "price_range",
             "application_process",
         ],
         "tag" => &["display_name"],
@@ -64,7 +64,7 @@ async fn fetch_source_fields(
         }
         "service" => {
             let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>)>(
-                "SELECT name, description, eligibility_description, fees_description, application_process FROM services WHERE id = $1",
+                "SELECT name, description, eligibility, price_range, application_process FROM services WHERE id = $1",
             )
             .bind(record_id)
             .fetch_one(pool)
@@ -76,10 +76,10 @@ async fn fetch_source_fields(
                 result.push(("description".to_string(), v));
             }
             if let Some(v) = row.2 {
-                result.push(("eligibility_description".to_string(), v));
+                result.push(("eligibility".to_string(), v));
             }
             if let Some(v) = row.3 {
-                result.push(("fees_description".to_string(), v));
+                result.push(("price_range".to_string(), v));
             }
             if let Some(v) = row.4 {
                 result.push(("application_process".to_string(), v));
@@ -141,9 +141,10 @@ pub async fn translate_record(
     let record_source_locale = if record_type == "tag" {
         "en".to_string()
     } else {
-        sqlx::query_as::<_, (String,)>(
-            &format!("SELECT source_locale FROM {}s WHERE id = $1", record_type),
-        )
+        sqlx::query_as::<_, (String,)>(&format!(
+            "SELECT in_language FROM {}s WHERE id = $1",
+            record_type
+        ))
         .bind(record_id)
         .fetch_optional(deps.pool())
         .await?

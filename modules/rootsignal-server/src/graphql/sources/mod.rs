@@ -2,8 +2,8 @@ pub mod mutations;
 pub mod types;
 
 use async_graphql::*;
-use uuid::Uuid;
 use types::GqlSource;
+use uuid::Uuid;
 
 #[derive(Default)]
 pub struct SourceQuery;

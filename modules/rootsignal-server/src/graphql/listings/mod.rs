@@ -151,7 +151,7 @@ struct ListingWithGeo {
     service_id: Option<Uuid>,
     source_url: Option<String>,
     location_text: Option<String>,
-    source_locale: String,
+    in_language: String,
     expires_at: Option<DateTime<Utc>>,
     freshness_score: f32,
     relevance_score: Option<i32>,
@@ -174,7 +174,7 @@ impl From<ListingWithGeo> for (GqlListing, GqlListingEdgeData) {
             service_id: r.service_id,
             source_url: r.source_url,
             location_text: r.location_text,
-            source_locale: r.source_locale,
+            in_language: r.in_language,
             expires_at: r.expires_at,
             freshness_score: r.freshness_score,
             relevance_score: r.relevance_score,
@@ -225,11 +225,11 @@ async fn query_geo(
                 SELECT
                     l.id, l.title, l.description, l.status,
                     l.entity_id, l.service_id, l.source_url, l.location_text,
-                    l.source_locale, l.expires_at, l.freshness_score, l.relevance_score,
+                    l.in_language, l.expires_at, l.freshness_score, l.relevance_score,
                     l.created_at, l.updated_at,
                     MIN(haversine_distance(center.latitude, center.longitude, loc.latitude, loc.longitude)) as distance_miles,
                     loc.postal_code as nearest_zip,
-                    loc.city as nearest_city
+                    loc.address_locality as nearest_city
                 FROM listings l
                 CROSS JOIN center
                 JOIN locationables la ON la.locatable_type = 'listing' AND la.locatable_id = l.id
@@ -253,8 +253,8 @@ async fn query_geo(
 
             qb.push(
                 "GROUP BY l.id, l.title, l.description, l.status, l.entity_id, l.service_id, \
-                 l.source_url, l.location_text, l.source_locale, l.expires_at, l.freshness_score, \
-                 l.relevance_score, l.created_at, l.updated_at, loc.postal_code, loc.city ",
+                 l.source_url, l.location_text, l.in_language, l.expires_at, l.freshness_score, \
+                 l.relevance_score, l.created_at, l.updated_at, loc.postal_code, loc.address_locality ",
             );
             qb.push("HAVING MIN(haversine_distance(center.latitude, center.longitude, loc.latitude, loc.longitude)) <= ");
             qb.push_bind(radius);

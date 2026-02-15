@@ -58,13 +58,11 @@ impl Cluster {
         new_representative_id: Uuid,
         pool: &PgPool,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE clusters SET representative_id = $1, updated_at = now() WHERE id = $2",
-        )
-        .bind(new_representative_id)
-        .bind(cluster_id)
-        .execute(pool)
-        .await?;
+        sqlx::query("UPDATE clusters SET representative_id = $1, updated_at = now() WHERE id = $2")
+            .bind(new_representative_id)
+            .bind(cluster_id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
@@ -106,12 +104,11 @@ impl Cluster {
 
     /// Count clusters by type.
     pub async fn count_by_type(cluster_type: &str, pool: &PgPool) -> Result<i64> {
-        let row = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM clusters WHERE cluster_type = $1",
-        )
-        .bind(cluster_type)
-        .fetch_one(pool)
-        .await?;
+        let row =
+            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM clusters WHERE cluster_type = $1")
+                .bind(cluster_type)
+                .fetch_one(pool)
+                .await?;
         Ok(row.0)
     }
 }

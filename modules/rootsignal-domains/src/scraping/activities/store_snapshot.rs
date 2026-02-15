@@ -1,17 +1,13 @@
 use anyhow::Result;
-use sqlx::PgPool;
 use rootsignal_core::RawPage;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::scraping::url_alias::{normalize_url, UrlAlias};
 
 /// Store a raw page as an immutable page_snapshot. Returns the snapshot ID.
 /// Deduplicates by (canonical_url, content_hash).
-pub async fn store_page_snapshot(
-    page: &RawPage,
-    source_id: Uuid,
-    pool: &PgPool,
-) -> Result<Uuid> {
+pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, pool: &PgPool) -> Result<Uuid> {
     let content_hash = page.content_hash();
     let metadata = serde_json::to_value(&page.metadata)?;
 

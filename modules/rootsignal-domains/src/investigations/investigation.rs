@@ -78,12 +78,7 @@ impl Investigation {
         Ok(())
     }
 
-    pub async fn complete(
-        id: Uuid,
-        summary: &str,
-        confidence: f32,
-        pool: &PgPool,
-    ) -> Result<()> {
+    pub async fn complete(id: Uuid, summary: &str, confidence: f32, pool: &PgPool) -> Result<()> {
         sqlx::query(
             "UPDATE investigations SET status = 'completed', summary = $1, summary_confidence = $2, completed_at = NOW() WHERE id = $3",
         )

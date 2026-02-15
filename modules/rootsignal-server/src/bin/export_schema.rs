@@ -6,10 +6,14 @@ use async_graphql::*;
 use rootsignal_server::graphql::{MutationRoot, QueryRoot};
 
 fn main() {
-    let schema = Schema::build(QueryRoot::default(), MutationRoot::default(), EmptySubscription)
-        .limit_depth(10)
-        .limit_complexity(1000)
-        .finish();
+    let schema = Schema::build(
+        QueryRoot::default(),
+        MutationRoot::default(),
+        EmptySubscription,
+    )
+    .limit_depth(10)
+    .limit_complexity(1000)
+    .finish();
 
     let sdl = schema.sdl();
 

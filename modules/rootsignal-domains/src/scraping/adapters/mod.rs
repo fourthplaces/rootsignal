@@ -8,8 +8,8 @@ pub mod tiktok;
 pub mod x;
 
 use anyhow::Result;
-use std::sync::Arc;
 use rootsignal_core::{Ingestor, ValidatedIngestor, WebSearcher};
+use std::sync::Arc;
 
 /// Build an ingestor based on adapter name from source config.
 ///
@@ -23,8 +23,9 @@ pub fn build_ingestor(
 ) -> Result<Arc<dyn Ingestor>> {
     match adapter {
         "firecrawl" => {
-            let key = firecrawl_api_key
-                .ok_or_else(|| anyhow::anyhow!("FIRECRAWL_API_KEY required for firecrawl adapter"))?;
+            let key = firecrawl_api_key.ok_or_else(|| {
+                anyhow::anyhow!("FIRECRAWL_API_KEY required for firecrawl adapter")
+            })?;
             let ingestor = firecrawl::FirecrawlIngestor::new(key.to_string(), http_client.clone());
             Ok(Arc::new(ValidatedIngestor::new(ingestor)))
         }
@@ -33,13 +34,15 @@ pub fn build_ingestor(
             Ok(Arc::new(ValidatedIngestor::new(ingestor)))
         }
         "apify_instagram" => {
-            let key = apify_api_key
-                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_instagram adapter"))?;
+            let key = apify_api_key.ok_or_else(|| {
+                anyhow::anyhow!("APIFY_API_KEY required for apify_instagram adapter")
+            })?;
             Ok(Arc::new(instagram::InstagramIngestor::new(key.to_string())))
         }
         "apify_facebook" => {
-            let key = apify_api_key
-                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_facebook adapter"))?;
+            let key = apify_api_key.ok_or_else(|| {
+                anyhow::anyhow!("APIFY_API_KEY required for apify_facebook adapter")
+            })?;
             Ok(Arc::new(facebook::FacebookIngestor::new(key.to_string())))
         }
         "apify_x" => {
@@ -48,13 +51,15 @@ pub fn build_ingestor(
             Ok(Arc::new(x::XIngestor::new(key.to_string())))
         }
         "apify_tiktok" => {
-            let key = apify_api_key
-                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_tiktok adapter"))?;
+            let key = apify_api_key.ok_or_else(|| {
+                anyhow::anyhow!("APIFY_API_KEY required for apify_tiktok adapter")
+            })?;
             Ok(Arc::new(tiktok::TikTokIngestor::new(key.to_string())))
         }
         "apify_gofundme" => {
-            let key = apify_api_key
-                .ok_or_else(|| anyhow::anyhow!("APIFY_API_KEY required for apify_gofundme adapter"))?;
+            let key = apify_api_key.ok_or_else(|| {
+                anyhow::anyhow!("APIFY_API_KEY required for apify_gofundme adapter")
+            })?;
             Ok(Arc::new(gofundme::GoFundMeIngestor::new(key.to_string())))
         }
         "tavily" => Err(anyhow::anyhow!(

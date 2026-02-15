@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
 // ─── Qualify types ───────────────────────────────────────────────────────────
@@ -55,12 +55,9 @@ impl QualifyWorkflow for QualifyWorkflowImpl {
         let deps = self.deps.clone();
         let result_json: String = ctx
             .run(|| async move {
-                let result =
-                    crate::scraping::activities::qualify_source(source_id, &deps)
-                        .await
-                        .map_err(|e| {
-                            TerminalError::new(format!("Qualification failed: {}", e))
-                        })?;
+                let result = crate::scraping::activities::qualify_source(source_id, &deps)
+                    .await
+                    .map_err(|e| TerminalError::new(format!("Qualification failed: {}", e)))?;
                 serde_json::to_string(&result)
                     .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
             })
@@ -149,9 +146,10 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: ScrapeRequest,
     ) -> Result<ScrapeResult, HandlerError> {
-        let source_id: Uuid = req.source_id.parse().map_err(|e: uuid::Error| {
-            TerminalError::new(format!("Invalid UUID: {}", e))
-        })?;
+        let source_id: Uuid = req
+            .source_id
+            .parse()
+            .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
         ctx.set("status", "scraping".to_string());
 
@@ -214,9 +212,10 @@ impl SourceObject for SourceObjectImpl {
         ctx: ObjectContext<'_>,
         req: ScrapeRequest,
     ) -> Result<ScrapeResult, HandlerError> {
-        let source_id: Uuid = req.source_id.parse().map_err(|e: uuid::Error| {
-            TerminalError::new(format!("Invalid UUID: {}", e))
-        })?;
+        let source_id: Uuid = req
+            .source_id
+            .parse()
+            .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
         let deps = self.deps.clone();
         let snapshot_ids_json: String = ctx

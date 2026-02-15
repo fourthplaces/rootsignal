@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use pgvector::Vector;
-use sha2::{Digest, Sha256};
 use rootsignal_core::ServerDeps;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::search::Embedding;
@@ -63,8 +63,7 @@ async fn compose_embedding_text(
         }
     } else {
         // Fetch English translations
-        let translations =
-            Translation::find_for(record_type, record_id, "en", pool).await?;
+        let translations = Translation::find_for(record_type, record_id, "en", pool).await?;
 
         let (title_fields, desc_fields) = match record_type {
             "listing" => ("title", "description"),

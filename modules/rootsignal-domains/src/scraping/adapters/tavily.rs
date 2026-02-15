@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use rootsignal_core::{RawPage, WebSearcher};
+use serde::{Deserialize, Serialize};
 
 /// Tavily web search adapter.
 pub struct TavilySearcher {

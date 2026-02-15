@@ -73,14 +73,17 @@ pub async fn normalize_extraction(
         let entity = Entity::find_or_create(org_name, entity_type, None, None, pool).await?;
 
         // Create type-specific record if it doesn't exist
-        if entity_type == "organization" || entity_type == "nonprofit" || entity_type == "community" || entity_type == "faith" || entity_type == "coalition" {
-            if Organization::find_by_entity_id(entity.id, pool).await?.is_none() {
-                let _ = Organization::create(
-                    entity.id,
-                    Some(entity_type),
-                    None,
-                    pool,
-                ).await;
+        if entity_type == "organization"
+            || entity_type == "nonprofit"
+            || entity_type == "community"
+            || entity_type == "faith"
+            || entity_type == "coalition"
+        {
+            if Organization::find_by_entity_id(entity.id, pool)
+                .await?
+                .is_none()
+            {
+                let _ = Organization::create(entity.id, Some(entity_type), None, pool).await;
             }
         }
 
@@ -101,7 +104,7 @@ pub async fn normalize_extraction(
 
     // ── Compute expires_at ──────────────────────────────────────────────────
 
-    let source_locale = listing_data.source_locale.as_deref().unwrap_or("en");
+    let in_language = listing_data.source_locale.as_deref().unwrap_or("en");
 
     let valid_from = listing_data
         .start_time
@@ -109,7 +112,7 @@ pub async fn normalize_extraction(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    let valid_to = listing_data
+    let valid_through = listing_data
         .end_time
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -120,13 +123,13 @@ pub async fn normalize_extraction(
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .or(valid_to);
+        .or(valid_through);
 
     // ── Create listing ──────────────────────────────────────────────────────
 
     let listing = sqlx::query_as::<_, (Uuid,)>(
         r#"
-        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, source_locale, expires_at, freshness_score)
+        INSERT INTO listings (title, description, entity_id, service_id, source_url, location_text, in_language, expires_at, freshness_score)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1.0)
         RETURNING id
         "#,
@@ -137,7 +140,7 @@ pub async fn normalize_extraction(
     .bind(service_id)
     .bind(&listing_data.source_url)
     .bind(&listing_data.location_text)
-    .bind(source_locale)
+    .bind(in_language)
     .bind(expires_at)
     .fetch_one(pool)
     .await?;
@@ -146,12 +149,12 @@ pub async fn normalize_extraction(
 
     // ── Create schedule ─────────────────────────────────────────────────────
 
-    if valid_from.is_some() || valid_to.is_some() || listing_data.is_recurring == Some(true) {
+    if valid_from.is_some() || valid_through.is_some() || listing_data.is_recurring == Some(true) {
         let is_recurring = listing_data.is_recurring.unwrap_or(false);
-        let (freq, byday, description) = if is_recurring {
+        let (repeat_frequency, byday, description) = if is_recurring {
             let desc = listing_data.recurrence_description.as_deref();
             // Parse simple recurrence patterns into iCal fields
-            let freq = desc.and_then(|d| {
+            let repeat_frequency = desc.and_then(|d| {
                 let lower = d.to_lowercase();
                 if lower.contains("daily") {
                     Some("DAILY")
@@ -163,7 +166,7 @@ pub async fn normalize_extraction(
                     None
                 }
             });
-            (freq, None::<&str>, desc)
+            (repeat_frequency, None::<&str>, desc)
         } else {
             (None, None, None)
         };
@@ -171,15 +174,15 @@ pub async fn normalize_extraction(
         let _ = Schedule::create(
             "listing",
             listing_id,
-            None,        // dtstart
-            freq,
+            None, // dtstart
+            repeat_frequency,
             byday,
-            None,        // bymonthday
+            None, // bymonthday
             description,
             valid_from,
-            valid_to,
-            None,        // opens_at
-            None,        // closes_at
+            valid_through,
+            None, // opens_at
+            None, // closes_at
             pool,
         )
         .await;
@@ -203,7 +206,14 @@ pub async fn normalize_extraction(
 
     // ── Tags — all taxonomy dimensions via Taggable::tag() ──────────────────
 
-    Taggable::tag("listing", listing_id, "listing_type", &listing_data.listing_type, pool).await?;
+    Taggable::tag(
+        "listing",
+        listing_id,
+        "listing_type",
+        &listing_data.listing_type,
+        pool,
+    )
+    .await?;
 
     for cat in &listing_data.categories {
         Taggable::tag("listing", listing_id, "category", cat, pool).await?;

@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 
 interface ServiceArea {
   id: string;
-  city: string;
-  state: string;
+  addressLocality: string;
+  addressRegion: string;
   isActive: boolean;
   createdAt: string;
 }
@@ -14,15 +14,15 @@ async function addServiceArea(formData: FormData) {
   "use server";
   const headerStore = await headers();
   const api = authedClient(headerStore.get("cookie") ?? undefined);
-  const city = formData.get("city") as string;
-  const state = formData.get("state") as string;
-  if (!city || !state) return;
+  const addressLocality = formData.get("addressLocality") as string;
+  const addressRegion = formData.get("addressRegion") as string;
+  if (!addressLocality || !addressRegion) return;
 
   await api.mutate(
     `mutation CreateServiceArea($input: CreateServiceAreaInput!) {
       createServiceArea(input: $input) { id }
     }`,
-    { input: { city, state } },
+    { input: { addressLocality, addressRegion } },
   );
   revalidatePath("/service-areas");
 }
@@ -48,7 +48,7 @@ export default async function ServiceAreasPage() {
 
   const { serviceAreas } = await api.query<{ serviceAreas: ServiceArea[] }>(
     `query ServiceAreas {
-      serviceAreas { id city state isActive createdAt }
+      serviceAreas { id addressLocality addressRegion isActive createdAt }
     }`,
   );
 
@@ -60,7 +60,7 @@ export default async function ServiceAreasPage() {
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">City</label>
           <input
-            name="city"
+            name="addressLocality"
             type="text"
             required
             placeholder="Minneapolis"
@@ -70,7 +70,7 @@ export default async function ServiceAreasPage() {
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">State</label>
           <input
-            name="state"
+            name="addressRegion"
             type="text"
             required
             placeholder="MN"
@@ -99,8 +99,8 @@ export default async function ServiceAreasPage() {
           <tbody className="divide-y divide-gray-200">
             {serviceAreas.map((sa) => (
               <tr key={sa.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm font-medium">{sa.city}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{sa.state}</td>
+                <td className="px-4 py-3 text-sm font-medium">{sa.addressLocality}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{sa.addressRegion}</td>
                 <td className="px-4 py-3">
                   {sa.isActive ? (
                     <span className="text-green-600">Yes</span>

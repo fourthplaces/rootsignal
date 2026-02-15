@@ -19,7 +19,7 @@ pub struct HeatMapPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ZipDensity {
     pub zip_code: String,
-    pub city: String,
+    pub address_locality: String,
     pub latitude: f64,
     pub longitude: f64,
     pub listing_count: i64,
@@ -139,7 +139,7 @@ impl HeatMapPoint {
         let mut qb = sqlx::QueryBuilder::new(
             r#"SELECT
                 z.zip_code,
-                z.city,
+                z.address_locality,
                 z.latitude,
                 z.longitude,
                 COUNT(DISTINCT h.entity_id) AS listing_count,
@@ -176,7 +176,7 @@ impl HeatMapPoint {
             qb.push(" ");
         }
 
-        qb.push("GROUP BY z.zip_code, z.city, z.latitude, z.longitude ORDER BY listing_count DESC");
+        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY listing_count DESC");
 
         qb.build_query_as::<ZipDensity>()
             .fetch_all(pool)
@@ -194,7 +194,7 @@ impl HeatMapPoint {
         let mut qb = sqlx::QueryBuilder::new(
             r#"SELECT
                 z.zip_code,
-                z.city,
+                z.address_locality,
                 z.latitude,
                 z.longitude,
                 COUNT(DISTINCT h.entity_id) AS listing_count,
@@ -216,7 +216,7 @@ impl HeatMapPoint {
             qb.push(" ");
         }
 
-        qb.push("GROUP BY z.zip_code, z.city, z.latitude, z.longitude ORDER BY listing_count ASC LIMIT ");
+        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY listing_count ASC LIMIT ");
         qb.push_bind(limit);
 
         qb.build_query_as::<ZipDensity>()
@@ -287,11 +287,7 @@ impl HeatMapPoint {
     }
 
     /// Find heat map points near a zip code within a radius.
-    pub async fn find_near_zip(
-        zip: &str,
-        radius_miles: f64,
-        pool: &PgPool,
-    ) -> Result<Vec<Self>> {
+    pub async fn find_near_zip(zip: &str, radius_miles: f64, pool: &PgPool) -> Result<Vec<Self>> {
         let radius_miles = radius_miles.min(100.0);
         let lat_delta = radius_miles / 69.0;
         let lng_delta = radius_miles / 54.6;

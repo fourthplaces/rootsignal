@@ -7,13 +7,13 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Media {
     pub id: Uuid,
-    pub url: String,
+    pub content_url: String,
     pub media_type: String,
-    pub content_type: Option<String>,
+    pub encoding_format: Option<String>,
     pub alt_text: Option<String>,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub file_size_bytes: Option<i64>,
+    pub content_size: Option<i64>,
     pub source_url: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -30,30 +30,30 @@ pub struct MediaAttachment {
 
 impl Media {
     pub async fn create(
-        url: &str,
+        content_url: &str,
         media_type: &str,
-        content_type: Option<&str>,
+        encoding_format: Option<&str>,
         alt_text: Option<&str>,
         width: Option<i32>,
         height: Option<i32>,
-        file_size_bytes: Option<i64>,
+        content_size: Option<i64>,
         source_url: Option<&str>,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO media (url, media_type, content_type, alt_text, width, height, file_size_bytes, source_url)
+            INSERT INTO media (content_url, media_type, encoding_format, alt_text, width, height, content_size, source_url)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
             "#,
         )
-        .bind(url)
+        .bind(content_url)
         .bind(media_type)
-        .bind(content_type)
+        .bind(encoding_format)
         .bind(alt_text)
         .bind(width)
         .bind(height)
-        .bind(file_size_bytes)
+        .bind(content_size)
         .bind(source_url)
         .fetch_one(pool)
         .await

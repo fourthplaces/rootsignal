@@ -29,13 +29,41 @@ impl From<rootsignal_domains::listings::ListingStats> for GqlListingStats {
             total_snapshots: s.total_snapshots,
             total_extractions: s.total_extractions,
             total_entities: s.total_entities,
-            listings_by_type: s.listings_by_type.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_role: s.listings_by_role.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_category: s.listings_by_category.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_domain: s.listings_by_domain.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_urgency: s.listings_by_urgency.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_confidence: s.listings_by_confidence.into_iter().map(GqlTagCount::from).collect(),
-            listings_by_capacity: s.listings_by_capacity.into_iter().map(GqlTagCount::from).collect(),
+            listings_by_type: s
+                .listings_by_type
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_role: s
+                .listings_by_role
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_category: s
+                .listings_by_category
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_domain: s
+                .listings_by_domain
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_urgency: s
+                .listings_by_urgency
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_confidence: s
+                .listings_by_confidence
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
+            listings_by_capacity: s
+                .listings_by_capacity
+                .into_iter()
+                .map(GqlTagCount::from)
+                .collect(),
             recent_7d: s.recent_7d,
         }
     }

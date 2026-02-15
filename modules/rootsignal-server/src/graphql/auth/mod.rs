@@ -2,8 +2,8 @@ pub mod jwt;
 pub mod middleware;
 
 use async_graphql::*;
-use std::sync::Arc;
 use rootsignal_core::ServerDeps;
+use std::sync::Arc;
 
 use self::jwt::JwtService;
 
@@ -13,16 +13,14 @@ pub struct AuthMutation;
 #[Object]
 impl AuthMutation {
     /// Send a verification code via SMS to the given phone number.
-    async fn send_verification_code(
-        &self,
-        ctx: &Context<'_>,
-        phone: String,
-    ) -> Result<bool> {
+    async fn send_verification_code(&self, ctx: &Context<'_>, phone: String) -> Result<bool> {
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
         // Validate phone format
         if !phone.starts_with('+') || phone.len() < 10 {
-            return Err(Error::new("Invalid phone number. Use E.164 format (e.g. +15551234567)"));
+            return Err(Error::new(
+                "Invalid phone number. Use E.164 format (e.g. +15551234567)",
+            ));
         }
 
         // Check if this is a test identifier
@@ -31,11 +29,20 @@ impl AuthMutation {
         }
 
         // Validate Twilio is configured
-        let account_sid = deps.config.twilio_account_sid.as_ref()
+        let account_sid = deps
+            .config
+            .twilio_account_sid
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
-        let auth_token = deps.config.twilio_auth_token.as_ref()
+        let auth_token = deps
+            .config
+            .twilio_auth_token
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
-        let service_sid = deps.config.twilio_verify_service_sid.as_ref()
+        let service_sid = deps
+            .config
+            .twilio_verify_service_sid
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
 
         let twilio = twilio::TwilioService::new(twilio::TwilioOptions {
@@ -53,12 +60,7 @@ impl AuthMutation {
     }
 
     /// Verify an OTP code and return a JWT token on success.
-    async fn verify_code(
-        &self,
-        ctx: &Context<'_>,
-        phone: String,
-        code: String,
-    ) -> Result<String> {
+    async fn verify_code(&self, ctx: &Context<'_>, phone: String, code: String) -> Result<String> {
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
         // Check test identifier
@@ -72,11 +74,20 @@ impl AuthMutation {
         }
 
         // Validate Twilio is configured
-        let account_sid = deps.config.twilio_account_sid.as_ref()
+        let account_sid = deps
+            .config
+            .twilio_account_sid
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
-        let auth_token = deps.config.twilio_auth_token.as_ref()
+        let auth_token = deps
+            .config
+            .twilio_auth_token
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
-        let service_sid = deps.config.twilio_verify_service_sid.as_ref()
+        let service_sid = deps
+            .config
+            .twilio_verify_service_sid
+            .as_ref()
             .ok_or_else(|| Error::new("Twilio not configured"))?;
 
         let twilio = twilio::TwilioService::new(twilio::TwilioOptions {

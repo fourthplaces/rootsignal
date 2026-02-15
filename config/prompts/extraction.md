@@ -25,7 +25,7 @@ Only extract items that are genuinely actionable — someone in the {{config.ide
 Each listing should have one clear call-to-action. Never fabricate information not present in the source.
 If no actionable listings exist in the content, return an empty listings array.
 
-Additionally, detect the primary language of the content and return it as `source_locale`:
+Additionally, detect the primary language of the content and return it as `in_language`:
 - "en" for English
 - "es" for Spanish
 - "so" for Somali

@@ -18,10 +18,10 @@ pub struct GqlEntity {
     pub entity_type: String,
     pub description: Option<String>,
     pub website: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
     pub email: Option<String>,
     pub verified: bool,
-    pub source_locale: String,
+    pub in_language: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -34,10 +34,10 @@ impl From<rootsignal_domains::entities::Entity> for GqlEntity {
             entity_type: e.entity_type,
             description: e.description,
             website: e.website,
-            phone: e.phone,
+            telephone: e.telephone,
             email: e.email,
             verified: e.verified,
-            source_locale: e.source_locale,
+            in_language: e.in_language,
             created_at: e.created_at,
             updated_at: e.updated_at,
         }
@@ -87,7 +87,10 @@ impl GqlEntity {
         Ok(services.into_iter().map(GqlService::from).collect())
     }
 
-    async fn listings(&self, ctx: &Context<'_>) -> Result<Vec<super::super::listings::types::GqlListing>> {
+    async fn listings(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Vec<super::super::listings::types::GqlListing>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let listings = sqlx::query_as::<_, rootsignal_domains::listings::Listing>(
             "SELECT * FROM listings WHERE entity_id = $1 AND status = 'active' ORDER BY created_at DESC",
@@ -96,7 +99,10 @@ impl GqlEntity {
         .fetch_all(pool)
         .await
         .unwrap_or_default();
-        Ok(listings.into_iter().map(super::super::listings::types::GqlListing::from).collect())
+        Ok(listings
+            .into_iter()
+            .map(super::super::listings::types::GqlListing::from)
+            .collect())
     }
 }
 
@@ -109,12 +115,12 @@ pub struct GqlService {
     pub status: String,
     pub url: Option<String>,
     pub email: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
     pub interpretation_services: Option<String>,
     pub application_process: Option<String>,
-    pub fees_description: Option<String>,
-    pub eligibility_description: Option<String>,
-    pub source_locale: String,
+    pub price_range: Option<String>,
+    pub eligibility: Option<String>,
+    pub in_language: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -129,12 +135,12 @@ impl From<rootsignal_domains::shared::Service> for GqlService {
             status: s.status,
             url: s.url,
             email: s.email,
-            phone: s.phone,
+            telephone: s.telephone,
             interpretation_services: s.interpretation_services,
             application_process: s.application_process,
-            fees_description: s.fees_description,
-            eligibility_description: s.eligibility_description,
-            source_locale: s.source_locale,
+            price_range: s.price_range,
+            eligibility: s.eligibility,
+            in_language: s.in_language,
             created_at: s.created_at,
             updated_at: s.updated_at,
         }

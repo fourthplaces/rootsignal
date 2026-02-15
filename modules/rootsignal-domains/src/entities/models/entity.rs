@@ -11,10 +11,10 @@ pub struct Entity {
     pub entity_type: String,
     pub description: Option<String>,
     pub website: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
     pub email: Option<String>,
     pub verified: bool,
-    pub source_locale: String,
+    pub in_language: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -56,14 +56,12 @@ impl Entity {
         entity_type: &str,
         pool: &PgPool,
     ) -> Result<Option<Self>> {
-        sqlx::query_as::<_, Self>(
-            "SELECT * FROM entities WHERE name = $1 AND entity_type = $2",
-        )
-        .bind(name)
-        .bind(entity_type)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+        sqlx::query_as::<_, Self>("SELECT * FROM entities WHERE name = $1 AND entity_type = $2")
+            .bind(name)
+            .bind(entity_type)
+            .fetch_optional(pool)
+            .await
+            .map_err(Into::into)
     }
 
     /// Find or create an entity by name and type (atomic upsert).
@@ -96,7 +94,7 @@ impl Entity {
         name: Option<&str>,
         description: Option<&str>,
         website: Option<&str>,
-        phone: Option<&str>,
+        telephone: Option<&str>,
         email: Option<&str>,
         pool: &PgPool,
     ) -> Result<Self> {
@@ -106,7 +104,7 @@ impl Entity {
                 name = COALESCE($2, name),
                 description = COALESCE($3, description),
                 website = COALESCE($4, website),
-                phone = COALESCE($5, phone),
+                telephone = COALESCE($5, telephone),
                 email = COALESCE($6, email),
                 updated_at = NOW()
             WHERE id = $1
@@ -117,7 +115,7 @@ impl Entity {
         .bind(name)
         .bind(description)
         .bind(website)
-        .bind(phone)
+        .bind(telephone)
         .bind(email)
         .fetch_one(pool)
         .await
@@ -159,7 +157,7 @@ pub struct Organization {
     pub id: Uuid,
     pub entity_id: Uuid,
     pub organization_type: Option<String>,
-    pub ein: Option<String>,
+    pub tax_id: Option<String>,
     pub mission: Option<String>,
 }
 
@@ -238,11 +236,7 @@ pub struct BusinessEntity {
 }
 
 impl BusinessEntity {
-    pub async fn create(
-        entity_id: Uuid,
-        industry: Option<&str>,
-        pool: &PgPool,
-    ) -> Result<Self> {
+    pub async fn create(entity_id: Uuid, industry: Option<&str>, pool: &PgPool) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
             INSERT INTO business_entities (entity_id, industry)

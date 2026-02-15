@@ -5,9 +5,8 @@ use uuid::Uuid;
 use crate::graphql::context::Locale;
 use crate::graphql::error;
 use crate::graphql::loaders::{
-    ContactsForLoader, EntityByIdLoader, LocationsForLoader, NotesForLoader,
-    PolymorphicKey, SchedulesForLoader, ServiceByIdLoader, TagsForLoader,
-    TranslationKey, TranslationLoader,
+    ContactsForLoader, EntityByIdLoader, LocationsForLoader, NotesForLoader, PolymorphicKey,
+    SchedulesForLoader, ServiceByIdLoader, TagsForLoader, TranslationKey, TranslationLoader,
 };
 
 use super::super::contacts::types::GqlContact;
@@ -29,7 +28,7 @@ pub struct GqlListing {
     pub service_id: Option<Uuid>,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub source_locale: String,
+    pub in_language: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub freshness_score: f32,
     pub relevance_score: Option<i32>,
@@ -48,7 +47,7 @@ impl From<rootsignal_domains::listings::Listing> for GqlListing {
             service_id: l.service_id,
             source_url: l.source_url,
             location_text: l.location_text,
-            source_locale: l.source_locale,
+            in_language: l.in_language,
             expires_at: l.expires_at,
             freshness_score: l.freshness_score,
             relevance_score: l.relevance_score,
@@ -64,7 +63,8 @@ impl GqlListing {
         let Some(entity_id) = self.entity_id else {
             return Ok(None);
         };
-        let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<EntityByIdLoader>>();
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<EntityByIdLoader>>();
         Ok(loader.load_one(entity_id).await?)
     }
 
@@ -134,7 +134,8 @@ impl GqlListing {
     /// Translated title for the requested locale (with fallback chain).
     async fn translated_title(&self, ctx: &Context<'_>) -> Result<String> {
         let locale = ctx.data_unchecked::<Locale>();
-        let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<TranslationLoader>>();
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<TranslationLoader>>();
 
         // Try requested locale
         let key = TranslationKey {
@@ -166,7 +167,8 @@ impl GqlListing {
     /// Translated description for the requested locale (with fallback chain).
     async fn translated_description(&self, ctx: &Context<'_>) -> Result<Option<String>> {
         let locale = ctx.data_unchecked::<Locale>();
-        let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<TranslationLoader>>();
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<TranslationLoader>>();
 
         // Try requested locale
         let key = TranslationKey {

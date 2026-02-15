@@ -9,10 +9,7 @@ use super::types::*;
 ///
 /// When query text/embedding are present, runs both CTE pipelines and fuses ranks.
 /// When absent, falls back to filter-only mode with relevance_score ordering.
-pub async fn hybrid_search(
-    params: &HybridSearchParams,
-    pool: &PgPool,
-) -> Result<SearchResponse> {
+pub async fn hybrid_search(params: &HybridSearchParams, pool: &PgPool) -> Result<SearchResponse> {
     let start = Instant::now();
 
     let has_semantic = params.query_embedding.is_some();
@@ -147,13 +144,11 @@ async fn hybrid_ranked_search(
     qb.push("l.entity_id, ");
     qb.push("e.name AS entity_name, e.entity_type, ");
     qb.push("l.source_url, l.location_text, ");
-    qb.push("l.created_at, l.source_locale, ");
+    qb.push("l.created_at, l.in_language, ");
     qb.push("CASE WHEN t_title.content IS NOT NULL THEN ");
     qb.push_bind(params.locale.clone());
-    qb.push(" WHEN en_title.content IS NOT NULL THEN 'en' ELSE l.source_locale END AS locale, ");
-    qb.push(
-        "CASE WHEN t_title.content IS NOT NULL THEN false ELSE true END AS is_fallback, ",
-    );
+    qb.push(" WHEN en_title.content IS NOT NULL THEN 'en' ELSE l.in_language END AS locale, ");
+    qb.push("CASE WHEN t_title.content IS NOT NULL THEN false ELSE true END AS is_fallback, ");
     qb.push(
         "CASE WHEN sc.sem_distance IS NOT NULL THEN (1.0 - sc.sem_distance) ELSE NULL END AS semantic_score, ",
     );
@@ -200,9 +195,11 @@ async fn hybrid_ranked_search(
     append_tag_filters(&mut qb, &params.filters);
 
     // Geo filter with bounding-box pre-filter for B-tree index usage
-    if let (Some(lat), Some(lng), Some(radius_km)) =
-        (params.filters.lat, params.filters.lng, params.filters.radius_km)
-    {
+    if let (Some(lat), Some(lng), Some(radius_km)) = (
+        params.filters.lat,
+        params.filters.lng,
+        params.filters.radius_km,
+    ) {
         let lat_delta = radius_km / 111.0;
         qb.push("AND lp.latitude IS NOT NULL ");
         // Bounding box pre-filter (uses B-tree indexes)
@@ -267,13 +264,11 @@ async fn filters_only_search(
     qb.push("l.entity_id, ");
     qb.push("e.name AS entity_name, e.entity_type, ");
     qb.push("l.source_url, l.location_text, ");
-    qb.push("l.created_at, l.source_locale, ");
+    qb.push("l.created_at, l.in_language, ");
     qb.push("CASE WHEN t_title.content IS NOT NULL THEN ");
     qb.push_bind(params.locale.clone());
-    qb.push(" WHEN en_title.content IS NOT NULL THEN 'en' ELSE l.source_locale END AS locale, ");
-    qb.push(
-        "CASE WHEN t_title.content IS NOT NULL THEN false ELSE true END AS is_fallback, ",
-    );
+    qb.push(" WHEN en_title.content IS NOT NULL THEN 'en' ELSE l.in_language END AS locale, ");
+    qb.push("CASE WHEN t_title.content IS NOT NULL THEN false ELSE true END AS is_fallback, ");
     qb.push("NULL::double precision AS semantic_score, ");
     qb.push("NULL::double precision AS text_score, ");
     qb.push("COALESCE(l.relevance_score, 0)::double precision AS combined_score, ");
@@ -316,9 +311,11 @@ async fn filters_only_search(
     append_tag_filters(&mut qb, &params.filters);
 
     // Geo filter with bounding-box pre-filter for B-tree index usage
-    if let (Some(lat), Some(lng), Some(radius_km)) =
-        (params.filters.lat, params.filters.lng, params.filters.radius_km)
-    {
+    if let (Some(lat), Some(lng), Some(radius_km)) = (
+        params.filters.lat,
+        params.filters.lng,
+        params.filters.radius_km,
+    ) {
         let lat_delta = radius_km / 111.0;
         qb.push("AND lp.latitude IS NOT NULL ");
         // Bounding box pre-filter
@@ -361,16 +358,22 @@ async fn filters_only_search(
 }
 
 /// Append tag EXISTS subqueries to a QueryBuilder.
-fn append_tag_filters(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, filters: &crate::listings::ListingFilters) {
+fn append_tag_filters(
+    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    filters: &crate::listings::ListingFilters,
+) {
     crate::query_helpers::append_tag_filters(qb, filters, "l");
 }
 
 /// Append temporal WHERE clauses to a QueryBuilder.
-fn append_temporal_filters(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, temporal: &TemporalFilter) {
+fn append_temporal_filters(
+    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    temporal: &TemporalFilter,
+) {
     if let Some(date) = &temporal.happening_on {
         qb.push("AND s.valid_from::date <= ");
         qb.push_bind(*date);
-        qb.push(" AND (s.valid_to IS NULL OR s.valid_to::date >= ");
+        qb.push(" AND (s.valid_through IS NULL OR s.valid_through::date >= ");
         qb.push_bind(*date);
         qb.push(") ");
     }
@@ -378,7 +381,7 @@ fn append_temporal_filters(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, temp
     if let Some((start, end)) = &temporal.happening_between {
         qb.push("AND s.valid_from::date <= ");
         qb.push_bind(*end);
-        qb.push(" AND (s.valid_to IS NULL OR s.valid_to::date >= ");
+        qb.push(" AND (s.valid_through IS NULL OR s.valid_through::date >= ");
         qb.push_bind(*start);
         qb.push(") ");
     }

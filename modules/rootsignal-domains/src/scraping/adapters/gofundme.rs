@@ -62,16 +62,20 @@ impl Ingestor for GoFundMeIngestor {
                     page = page.with_metadata("donations_count", serde_json::json!(donations));
                 }
                 if let Some(category) = &campaign.category {
-                    page = page.with_metadata("category", serde_json::Value::String(category.clone()));
+                    page =
+                        page.with_metadata("category", serde_json::Value::String(category.clone()));
                 }
                 if let Some(location) = &campaign.location {
-                    page = page.with_metadata("location", serde_json::Value::String(location.clone()));
+                    page =
+                        page.with_metadata("location", serde_json::Value::String(location.clone()));
                 }
                 if let Some(organizer) = &campaign.organizer_name {
-                    page = page.with_metadata("organizer", serde_json::Value::String(organizer.clone()));
+                    page = page
+                        .with_metadata("organizer", serde_json::Value::String(organizer.clone()));
                 }
                 if let Some(created) = &campaign.created_at {
-                    page = page.with_metadata("created_at", serde_json::Value::String(created.clone()));
+                    page = page
+                        .with_metadata("created_at", serde_json::Value::String(created.clone()));
                 }
                 page
             })
@@ -81,7 +85,10 @@ impl Ingestor for GoFundMeIngestor {
     }
 
     async fn fetch_specific(&self, urls: &[String]) -> CrawlResult<Vec<RawPage>> {
-        tracing::warn!(count = urls.len(), "fetch_specific not supported for GoFundMe; use discover()");
+        tracing::warn!(
+            count = urls.len(),
+            "fetch_specific not supported for GoFundMe; use discover()"
+        );
         Ok(Vec::new())
     }
 

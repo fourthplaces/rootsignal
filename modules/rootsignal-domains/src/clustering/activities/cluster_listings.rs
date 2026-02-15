@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use pgvector::Vector;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
 use crate::clustering::{Cluster, ClusterItem};
@@ -104,10 +104,8 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
     .fetch_all(&mut *tx)
     .await?;
 
-    let candidate_map: HashMap<Uuid, ClusterCandidate> = all_candidates
-        .into_iter()
-        .map(|c| (c.id, c))
-        .collect();
+    let candidate_map: HashMap<Uuid, ClusterCandidate> =
+        all_candidates.into_iter().map(|c| (c.id, c)).collect();
 
     // Batch-load all embeddings in one query
     let embedding_rows: Vec<(Uuid, Vector)> = sqlx::query_as::<_, (Uuid, Vector)>(
@@ -117,9 +115,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
     .fetch_all(&mut *tx)
     .await?;
 
-    let embedding_map: HashMap<Uuid, Vector> = embedding_rows
-        .into_iter()
-        .collect();
+    let embedding_map: HashMap<Uuid, Vector> = embedding_rows.into_iter().collect();
 
     let mut stats = ClusterStats {
         items_processed: unclustered_ids.len() as u32,
@@ -215,14 +211,8 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
         match best_match {
             Some((_neighbor_id, score, Some(cluster_id))) => {
                 // Assign to existing cluster
-                ClusterItem::create(
-                    cluster_id,
-                    item_id,
-                    "listing",
-                    Some(score as f32),
-                    pool,
-                )
-                .await?;
+                ClusterItem::create(cluster_id, item_id, "listing", Some(score as f32), pool)
+                    .await?;
                 assignments.insert(item_id, cluster_id);
                 stats.items_assigned += 1;
 
@@ -246,16 +236,9 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
                     recompute_representative(existing_cluster_id, pool).await?;
                 } else {
                     // Create new cluster with the neighbor as initial representative
-                    let cluster =
-                        Cluster::create("listing", neighbor_id, pool).await?;
-                    ClusterItem::create(
-                        cluster.id,
-                        item_id,
-                        "listing",
-                        Some(score as f32),
-                        pool,
-                    )
-                    .await?;
+                    let cluster = Cluster::create("listing", neighbor_id, pool).await?;
+                    ClusterItem::create(cluster.id, item_id, "listing", Some(score as f32), pool)
+                        .await?;
                     assignments.insert(neighbor_id, cluster.id);
                     assignments.insert(item_id, cluster.id);
                     stats.clusters_created += 1;
@@ -461,8 +444,12 @@ mod tests {
     #[test]
     fn test_geo_score_close() {
         let score = geo_proximity_score(
-            Some(44.9778), Some(-93.2650), None,
-            Some(44.9779), Some(-93.2651), None,
+            Some(44.9778),
+            Some(-93.2650),
+            None,
+            Some(44.9779),
+            Some(-93.2651),
+            None,
             500.0,
         );
         assert!(score > 0.9);
@@ -472,8 +459,12 @@ mod tests {
     fn test_geo_score_far() {
         // Minneapolis to St Paul
         let score = geo_proximity_score(
-            Some(44.9778), Some(-93.2650), None,
-            Some(44.9537), Some(-93.0900), None,
+            Some(44.9778),
+            Some(-93.2650),
+            None,
+            Some(44.9537),
+            Some(-93.0900),
+            None,
             500.0,
         );
         assert!(score < 0.01);
@@ -482,8 +473,12 @@ mod tests {
     #[test]
     fn test_geo_score_text_fallback() {
         let score = geo_proximity_score(
-            None, None, Some("Minneapolis, MN"),
-            None, None, Some("Minneapolis, MN"),
+            None,
+            None,
+            Some("Minneapolis, MN"),
+            None,
+            None,
+            Some("Minneapolis, MN"),
             500.0,
         );
         assert!(score > 0.9);

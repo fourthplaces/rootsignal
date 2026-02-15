@@ -8,7 +8,7 @@ input CreateEntityInput {
 input CreateListingInput {
 	title: String!
 	description: String
-	sourceLocale: String!
+	inLanguage: String!
 	entityId: UUID
 	serviceId: UUID
 }
@@ -31,7 +31,7 @@ type GqlContact {
 	name: String
 	title: String
 	email: String
-	phone: String
+	telephone: String
 	department: String
 	createdAt: DateTime!
 }
@@ -42,10 +42,10 @@ type GqlEntity {
 	entityType: String!
 	description: String
 	website: String
-	phone: String
+	telephone: String
 	email: String
 	verified: Boolean!
-	sourceLocale: String!
+	inLanguage: String!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 	tags: [GqlTag!]!
@@ -122,7 +122,7 @@ type GqlListing {
 	serviceId: UUID
 	sourceUrl: String
 	locationText: String
-	sourceLocale: String!
+	inLanguage: String!
 	expiresAt: DateTime
 	freshnessScore: Float!
 	relevanceScore: Int
@@ -198,9 +198,9 @@ type GqlListingStats {
 type GqlLocation {
 	id: UUID!
 	name: String
-	addressLine1: String
-	city: String
-	state: String
+	streetAddress: String
+	addressLocality: String
+	addressRegion: String
 	postalCode: String
 	latitude: Float
 	longitude: Float
@@ -220,7 +220,7 @@ type GqlNote {
 	sourceUrl: String
 	sourceType: String
 	isPublic: Boolean!
-	createdBy: String!
+	author: String!
 	expiredAt: DateTime
 	createdAt: DateTime!
 }
@@ -266,9 +266,9 @@ type GqlParsedTemporal {
 type GqlSchedule {
 	id: UUID!
 	validFrom: DateTime
-	validTo: DateTime
+	validThrough: DateTime
 	dtstart: String
-	freq: String
+	repeatFrequency: String
 	byday: String
 	bymonthday: String
 	opensAt: NaiveTime
@@ -301,7 +301,7 @@ type GqlSearchResult {
 	sourceUrl: String
 	locationText: String
 	createdAt: DateTime!
-	sourceLocale: String!
+	inLanguage: String!
 	locale: String!
 	isFallback: Boolean!
 	semanticScore: Float
@@ -322,12 +322,12 @@ type GqlService {
 	status: String!
 	url: String
 	email: String
-	phone: String
+	telephone: String
 	interpretationServices: String
 	applicationProcess: String
-	feesDescription: String
-	eligibilityDescription: String
-	sourceLocale: String!
+	priceRange: String
+	eligibility: String
+	inLanguage: String!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 }
@@ -530,14 +530,14 @@ input UpdateEntityInput {
 	name: String
 	description: String
 	website: String
-	phone: String
+	telephone: String
 	email: String
 }
 
 input UpdateListingInput {
 	title: String
 	description: String
-	sourceLocale: String
+	inLanguage: String
 	entityId: UUID
 	serviceId: UUID
 }
@@ -547,7 +547,7 @@ input UpdateServiceInput {
 	description: String
 	url: String
 	email: String
-	phone: String
+	telephone: String
 }
 
 type WorkflowTriggerResult {

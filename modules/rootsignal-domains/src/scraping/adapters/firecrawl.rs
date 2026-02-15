@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use rootsignal_core::error::{CrawlError, CrawlResult};
 use rootsignal_core::{DiscoverConfig, Ingestor, RawPage};
+use serde::{Deserialize, Serialize};
 
 /// Firecrawl adapter — uses Firecrawl API for JavaScript-rendered crawling.
 pub struct FirecrawlIngestor {

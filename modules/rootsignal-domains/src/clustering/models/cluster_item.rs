@@ -24,12 +24,11 @@ impl ClusterItem {
         pool: &PgPool,
     ) -> Result<Self> {
         // Validate item_type matches cluster_type
-        let cluster_type = sqlx::query_as::<_, (String,)>(
-            "SELECT cluster_type FROM clusters WHERE id = $1",
-        )
-        .bind(cluster_id)
-        .fetch_one(pool)
-        .await?;
+        let cluster_type =
+            sqlx::query_as::<_, (String,)>("SELECT cluster_type FROM clusters WHERE id = $1")
+                .bind(cluster_id)
+                .fetch_one(pool)
+                .await?;
 
         if cluster_type.0 != item_type {
             bail!(

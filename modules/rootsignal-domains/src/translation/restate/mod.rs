@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
 use crate::translation::activities::translate::ALL_LOCALES;
@@ -51,9 +51,10 @@ impl TranslateWorkflow for TranslateWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: TranslateRequest,
     ) -> Result<TranslateResult, HandlerError> {
-        let record_id: Uuid = req.translatable_id.parse().map_err(|e: uuid::Error| {
-            TerminalError::new(format!("Invalid UUID: {}", e))
-        })?;
+        let record_id: Uuid = req
+            .translatable_id
+            .parse()
+            .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
         let record_type = req.translatable_type.clone();
         let source_locale = req.source_locale.clone();
@@ -97,9 +98,7 @@ impl TranslateWorkflow for TranslateWorkflowImpl {
                     &rt, record_id, &sl, &deps,
                 )
                 .await
-                .map_err(|e| {
-                    TerminalError::new(format!("Embedding generation failed: {}", e))
-                })?;
+                .map_err(|e| TerminalError::new(format!("Embedding generation failed: {}", e)))?;
                 serde_json::to_string(&id.is_some())
                     .map_err(|e| TerminalError::new(format!("Serialize: {}", e)).into())
             })
@@ -136,10 +135,7 @@ impl TranslateWorkflow for TranslateWorkflowImpl {
                     )
                     .await
                     .map_err(|e| {
-                        TerminalError::new(format!(
-                            "Translation to {} failed: {}",
-                            tl, e
-                        ))
+                        TerminalError::new(format!("Translation to {} failed: {}", tl, e))
                     })?;
                     serde_json::to_string(&ids.len())
                         .map_err(|e| TerminalError::new(format!("Serialize: {}", e)).into())

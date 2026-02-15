@@ -65,50 +65,51 @@ pub fn build_schema(deps: Arc<ServerDeps>) -> AppSchema {
         .as_ref()
         .map(|secret| auth::jwt::JwtService::new(secret, "rootsignal".to_string()));
 
-    let mut builder = Schema::build(QueryRoot::default(), MutationRoot::default(), EmptySubscription)
-        .data(pool.clone())
-        .data(deps)
-        // DataLoaders
-        .data(DataLoader::new(
-            EntityByIdLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            ServiceByIdLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            TagsForLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            LocationsForLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            SchedulesForLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            ContactsForLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            NotesForLoader { pool: pool.clone() },
-            tokio::spawn,
-        ))
-        .data(DataLoader::new(
-            TranslationLoader { pool: pool.clone() },
-            tokio::spawn,
-        ));
+    let mut builder = Schema::build(
+        QueryRoot::default(),
+        MutationRoot::default(),
+        EmptySubscription,
+    )
+    .data(pool.clone())
+    .data(deps)
+    // DataLoaders
+    .data(DataLoader::new(
+        EntityByIdLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        ServiceByIdLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        TagsForLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        LocationsForLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        SchedulesForLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        ContactsForLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        NotesForLoader { pool: pool.clone() },
+        tokio::spawn,
+    ))
+    .data(DataLoader::new(
+        TranslationLoader { pool: pool.clone() },
+        tokio::spawn,
+    ));
 
     // Register JWT service if configured
     if let Some(jwt) = jwt_service {
         builder = builder.data(jwt);
     }
 
-    builder
-        .limit_depth(10)
-        .limit_complexity(1000)
-        .finish()
+    builder.limit_depth(10).limit_complexity(1000).finish()
 }

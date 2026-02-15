@@ -1,10 +1,10 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 
-use crate::taxonomy::TagKindConfig;
 use crate::listings::models::listing::{Listing, ListingFilters, ListingStats, TagCount};
+use crate::taxonomy::TagKindConfig;
 
 // ─── Request / Response types ────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ pub struct ListingJson {
     pub status: String,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub source_locale: String,
+    pub in_language: String,
     pub relevance_score: Option<i32>,
     pub created_at: String,
 }
@@ -63,7 +63,7 @@ impl From<Listing> for ListingJson {
             status: l.status,
             source_url: l.source_url,
             location_text: l.location_text,
-            source_locale: l.source_locale,
+            in_language: l.in_language,
             relevance_score: l.relevance_score,
             created_at: l.created_at.to_rfc3339(),
         }
@@ -142,10 +142,7 @@ impl ListingsService for ListingsServiceImpl {
     ) -> Result<ListingListResult, HandlerError> {
         let pool = self.deps.pool();
 
-        let hotspot_id = req
-            .hotspot_id
-            .as_ref()
-            .and_then(|s| s.parse().ok());
+        let hotspot_id = req.hotspot_id.as_ref().and_then(|s| s.parse().ok());
 
         let since = req
             .since

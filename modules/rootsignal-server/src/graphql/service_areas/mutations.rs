@@ -1,14 +1,14 @@
 use async_graphql::*;
 use uuid::Uuid;
 
+use super::types::GqlServiceArea;
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
-use super::types::GqlServiceArea;
 
 #[derive(InputObject)]
 pub struct CreateServiceAreaInput {
-    pub city: String,
-    pub state: String,
+    pub address_locality: String,
+    pub address_region: String,
 }
 
 #[derive(Default)]
@@ -24,9 +24,13 @@ impl ServiceAreaMutation {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let sa = rootsignal_domains::config::ServiceArea::create(&input.city, &input.state, pool)
-            .await
-            .map_err(|e| error::internal(e))?;
+        let sa = rootsignal_domains::config::ServiceArea::create(
+            &input.address_locality,
+            &input.address_region,
+            pool,
+        )
+        .await
+        .map_err(|e| error::internal(e))?;
 
         Ok(GqlServiceArea::from(sa))
     }

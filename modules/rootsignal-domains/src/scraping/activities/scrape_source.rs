@@ -3,8 +3,8 @@ use rootsignal_core::{DiscoverConfig, ServerDeps};
 use uuid::Uuid;
 
 use crate::config::ServiceArea;
-use crate::scraping::Source;
 use crate::scraping::adapters;
+use crate::scraping::Source;
 
 /// Scrape a source, store page_snapshots, return snapshot IDs for extraction.
 pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uuid>> {
@@ -78,14 +78,22 @@ pub async fn scrape_source(source_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uui
             }
 
             // Apply include/exclude patterns from source config
-            if let Some(includes) = source.config.get("include_patterns").and_then(|v| v.as_array()) {
+            if let Some(includes) = source
+                .config
+                .get("include_patterns")
+                .and_then(|v| v.as_array())
+            {
                 for pattern in includes {
                     if let Some(p) = pattern.as_str() {
                         config = config.include(p);
                     }
                 }
             }
-            if let Some(excludes) = source.config.get("exclude_patterns").and_then(|v| v.as_array()) {
+            if let Some(excludes) = source
+                .config
+                .get("exclude_patterns")
+                .and_then(|v| v.as_array())
+            {
                 for pattern in excludes {
                     if let Some(p) = pattern.as_str() {
                         config = config.exclude(p);

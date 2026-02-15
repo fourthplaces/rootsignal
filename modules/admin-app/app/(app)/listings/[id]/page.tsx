@@ -12,7 +12,7 @@ interface Listing {
   serviceId: string | null;
   sourceUrl: string | null;
   locationText: string | null;
-  sourceLocale: string;
+  inLanguage: string;
   freshnessScore: number;
   relevanceScore: number | null;
   createdAt: string;
@@ -20,7 +20,7 @@ interface Listing {
   entity: { id: string; name: string } | null;
   service: { id: string; name: string } | null;
   tags: { id: string; kind: string; value: string }[];
-  locations: { id: string; name: string | null; city: string | null; state: string | null }[];
+  locations: { id: string; name: string | null; addressLocality: string | null; addressRegion: string | null }[];
 }
 
 export default function ListingDetailPage() {
@@ -42,10 +42,10 @@ export default function ListingDetailPage() {
         query: `query Listing($id: UUID!) {
           listing(id: $id) {
             id title description status entityId serviceId sourceUrl locationText
-            sourceLocale freshnessScore relevanceScore createdAt updatedAt
+            inLanguage freshnessScore relevanceScore createdAt updatedAt
             entity { id name } service { id name }
             tags { id kind value }
-            locations { id name city state }
+            locations { id name addressLocality addressRegion }
           }
         }`,
         variables: { id: params.id },
@@ -190,7 +190,7 @@ export default function ListingDetailPage() {
               </div>
               <div>
                 <dt className="text-sm text-gray-500">Locale</dt>
-                <dd>{listing.sourceLocale}</dd>
+                <dd>{listing.inLanguage}</dd>
               </div>
               <div>
                 <dt className="text-sm text-gray-500">Entity</dt>
@@ -242,7 +242,7 @@ export default function ListingDetailPage() {
               <ul className="space-y-1 text-sm">
                 {listing.locations.map((loc) => (
                   <li key={loc.id}>
-                    {[loc.name, loc.city, loc.state].filter(Boolean).join(", ")}
+                    {[loc.name, loc.addressLocality, loc.addressRegion].filter(Boolean).join(", ")}
                   </li>
                 ))}
               </ul>

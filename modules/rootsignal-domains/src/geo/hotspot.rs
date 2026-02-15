@@ -18,12 +18,10 @@ pub struct Hotspot {
 
 impl Hotspot {
     pub async fn find_active(pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as::<_, Self>(
-            "SELECT * FROM hotspots WHERE is_active = TRUE ORDER BY name",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
+        sqlx::query_as::<_, Self>("SELECT * FROM hotspots WHERE is_active = TRUE ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn find_by_id(id: Uuid, pool: &PgPool) -> Result<Self> {

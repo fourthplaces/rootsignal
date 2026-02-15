@@ -7,7 +7,7 @@ interface Entity {
   name: string;
   entityType: string;
   verified: boolean;
-  sourceLocale: string;
+  inLanguage: string;
   createdAt: string;
 }
 
@@ -31,7 +31,7 @@ export default async function EntitiesPage({
   }>(
     `query Entities($first: Int, $after: String) {
       entities(first: $first, after: $after) {
-        nodes { id name entityType verified sourceLocale createdAt }
+        nodes { id name entityType verified inLanguage createdAt }
         pageInfo { hasNextPage endCursor }
       }
     }`,
@@ -77,7 +77,7 @@ export default async function EntitiesPage({
                     <span className="text-gray-400">No</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600">{e.sourceLocale}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{e.inLanguage}</td>
                 <td className="px-4 py-3 text-sm text-gray-500">
                   {new Date(e.createdAt).toLocaleDateString()}
                 </td>

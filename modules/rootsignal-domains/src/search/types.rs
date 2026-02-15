@@ -31,7 +31,7 @@ pub struct SearchResultRow {
     pub source_url: Option<String>,
     pub location_text: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub source_locale: String,
+    pub in_language: String,
     pub locale: String,
     pub is_fallback: bool,
     pub semantic_score: Option<f64>,

@@ -8,9 +8,9 @@ use uuid::Uuid;
 pub struct Schedule {
     pub id: Uuid,
     pub valid_from: Option<DateTime<Utc>>,
-    pub valid_to: Option<DateTime<Utc>>,
+    pub valid_through: Option<DateTime<Utc>>,
     pub dtstart: Option<String>,
-    pub freq: Option<String>,
+    pub repeat_frequency: Option<String>,
     pub byday: Option<String>,
     pub bymonthday: Option<String>,
     pub opens_at: Option<NaiveTime>,
@@ -26,19 +26,19 @@ impl Schedule {
         scheduleable_type: &str,
         scheduleable_id: Uuid,
         dtstart: Option<&str>,
-        freq: Option<&str>,
+        repeat_frequency: Option<&str>,
         byday: Option<&str>,
         bymonthday: Option<&str>,
         description: Option<&str>,
         valid_from: Option<DateTime<Utc>>,
-        valid_to: Option<DateTime<Utc>>,
+        valid_through: Option<DateTime<Utc>>,
         opens_at: Option<NaiveTime>,
         closes_at: Option<NaiveTime>,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO schedules (scheduleable_type, scheduleable_id, dtstart, freq, byday, bymonthday, description, valid_from, valid_to, opens_at, closes_at)
+            INSERT INTO schedules (scheduleable_type, scheduleable_id, dtstart, repeat_frequency, byday, bymonthday, description, valid_from, valid_through, opens_at, closes_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (scheduleable_type, scheduleable_id, dtstart) DO NOTHING
             RETURNING *
@@ -47,12 +47,12 @@ impl Schedule {
         .bind(scheduleable_type)
         .bind(scheduleable_id)
         .bind(dtstart)
-        .bind(freq)
+        .bind(repeat_frequency)
         .bind(byday)
         .bind(bymonthday)
         .bind(description)
         .bind(valid_from)
-        .bind(valid_to)
+        .bind(valid_through)
         .bind(opens_at)
         .bind(closes_at)
         .fetch_one(pool)

@@ -8,7 +8,7 @@ export default function NewListingModal() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
-  const [sourceLocale, setSourceLocale] = useState("en");
+  const [inLanguage, setSourceLocale] = useState("en");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -34,7 +34,7 @@ export default function NewListingModal() {
               title,
               description: description || null,
               sourceUrl: sourceUrl || null,
-              sourceLocale,
+              inLanguage,
             },
           },
         }),
@@ -93,9 +93,9 @@ export default function NewListingModal() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Source Locale</label>
+            <label className="block text-sm font-medium text-gray-700">Language</label>
             <select
-              value={sourceLocale}
+              value={inLanguage}
               onChange={(e) => setSourceLocale(e.target.value)}
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
             >

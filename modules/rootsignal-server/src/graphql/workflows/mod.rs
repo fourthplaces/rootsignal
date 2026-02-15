@@ -17,22 +17,35 @@ pub struct WorkflowMutation;
 #[Object]
 impl WorkflowMutation {
     /// Trigger a scrape workflow for a specific source.
-    async fn trigger_scrape(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<WorkflowTriggerResult> {
+    async fn trigger_scrape(
+        &self,
+        ctx: &Context<'_>,
+        source_id: Uuid,
+    ) -> Result<WorkflowTriggerResult> {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080"); // Restate ingress port
 
         let url = format!("{}/ScrapeWorkflow/{}/run/send", ingress_url, source_id);
-        let response = deps.http_client.post(&url)
+        let response = deps
+            .http_client
+            .post(&url)
             .json(&serde_json::json!({}))
             .send()
             .await
             .map_err(|e| Error::new(format!("Failed to trigger scrape: {e}")))?;
 
-        let status = if response.status().is_success() { "triggered" } else { "failed" };
+        let status = if response.status().is_success() {
+            "triggered"
+        } else {
+            "failed"
+        };
 
         Ok(WorkflowTriggerResult {
             workflow_id: source_id.to_string(),
@@ -45,18 +58,27 @@ impl WorkflowMutation {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080");
 
         let url = format!("{}/SchedulerService/scheduler/startCycle/send", ingress_url);
-        let response = deps.http_client.post(&url)
+        let response = deps
+            .http_client
+            .post(&url)
             .json(&serde_json::json!({}))
             .send()
             .await
             .map_err(|e| Error::new(format!("Failed to trigger scrape cycle: {e}")))?;
 
-        let status = if response.status().is_success() { "triggered" } else { "failed" };
+        let status = if response.status().is_success() {
+            "triggered"
+        } else {
+            "failed"
+        };
 
         Ok(WorkflowTriggerResult {
             workflow_id: "scrape-cycle".to_string(),
@@ -65,22 +87,35 @@ impl WorkflowMutation {
     }
 
     /// Trigger extraction for a specific snapshot.
-    async fn trigger_extraction(&self, ctx: &Context<'_>, snapshot_id: Uuid) -> Result<WorkflowTriggerResult> {
+    async fn trigger_extraction(
+        &self,
+        ctx: &Context<'_>,
+        snapshot_id: Uuid,
+    ) -> Result<WorkflowTriggerResult> {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080");
 
         let url = format!("{}/ExtractWorkflow/{}/run/send", ingress_url, snapshot_id);
-        let response = deps.http_client.post(&url)
+        let response = deps
+            .http_client
+            .post(&url)
             .json(&serde_json::json!({}))
             .send()
             .await
             .map_err(|e| Error::new(format!("Failed to trigger extraction: {e}")))?;
 
-        let status = if response.status().is_success() { "triggered" } else { "failed" };
+        let status = if response.status().is_success() {
+            "triggered"
+        } else {
+            "failed"
+        };
 
         Ok(WorkflowTriggerResult {
             workflow_id: snapshot_id.to_string(),
@@ -89,22 +124,35 @@ impl WorkflowMutation {
     }
 
     /// Trigger source qualification — sample scrape + AI evaluation.
-    async fn trigger_qualification(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<WorkflowTriggerResult> {
+    async fn trigger_qualification(
+        &self,
+        ctx: &Context<'_>,
+        source_id: Uuid,
+    ) -> Result<WorkflowTriggerResult> {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080");
 
         let url = format!("{}/QualifyWorkflow/{}/run/send", ingress_url, source_id);
-        let response = deps.http_client.post(&url)
+        let response = deps
+            .http_client
+            .post(&url)
             .json(&serde_json::json!({}))
             .send()
             .await
             .map_err(|e| Error::new(format!("Failed to trigger qualification: {e}")))?;
 
-        let status = if response.status().is_success() { "triggered" } else { "failed" };
+        let status = if response.status().is_success() {
+            "triggered"
+        } else {
+            "failed"
+        };
 
         Ok(WorkflowTriggerResult {
             workflow_id: source_id.to_string(),
@@ -123,13 +171,18 @@ impl WorkflowMutation {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080");
 
         let workflow_id = format!("{}-{}", translatable_type, translatable_id);
         let url = format!("{}/TranslateWorkflow/{}/run/send", ingress_url, workflow_id);
-        let response = deps.http_client.post(&url)
+        let response = deps
+            .http_client
+            .post(&url)
             .json(&serde_json::json!({
                 "translatable_type": translatable_type,
                 "translatable_id": translatable_id.to_string(),
@@ -139,7 +192,11 @@ impl WorkflowMutation {
             .await
             .map_err(|e| Error::new(format!("Failed to trigger translation: {e}")))?;
 
-        let status = if response.status().is_success() { "triggered" } else { "failed" };
+        let status = if response.status().is_success() {
+            "triggered"
+        } else {
+            "failed"
+        };
 
         Ok(WorkflowTriggerResult {
             workflow_id,
@@ -162,12 +219,20 @@ impl WorkflowQuery {
     ) -> Result<String> {
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let restate_admin_url = deps.config.restate_admin_url.as_ref()
+        let restate_admin_url = deps
+            .config
+            .restate_admin_url
+            .as_ref()
             .ok_or_else(|| Error::new("Restate not configured"))?;
         let ingress_url = restate_admin_url.replace(":9070", ":8080");
 
-        let url = format!("{}/{}/{}/get_status", ingress_url, workflow_type, workflow_id);
-        let response = deps.http_client.get(&url)
+        let url = format!(
+            "{}/{}/{}/get_status",
+            ingress_url, workflow_type, workflow_id
+        );
+        let response = deps
+            .http_client
+            .get(&url)
             .send()
             .await
             .map_err(|e| Error::new(format!("Failed to get workflow status: {e}")))?;

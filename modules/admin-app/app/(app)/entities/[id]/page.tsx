@@ -10,14 +10,14 @@ interface Entity {
   entityType: string;
   description: string | null;
   website: string | null;
-  phone: string | null;
+  telephone: string | null;
   email: string | null;
   verified: boolean;
-  sourceLocale: string;
+  inLanguage: string;
   createdAt: string;
   updatedAt: string;
   tags: { id: string; kind: string; value: string }[];
-  locations: { id: string; name: string | null; city: string | null; state: string | null }[];
+  locations: { id: string; name: string | null; addressLocality: string | null; addressRegion: string | null }[];
   services: { id: string; name: string; status: string }[];
   listings: { id: string; title: string; status: string }[];
 }
@@ -40,10 +40,10 @@ export default function EntityDetailPage() {
       body: JSON.stringify({
         query: `query Entity($id: UUID!) {
           entity(id: $id) {
-            id name entityType description website phone email verified
-            sourceLocale createdAt updatedAt
+            id name entityType description website telephone email verified
+            inLanguage createdAt updatedAt
             tags { id kind value }
-            locations { id name city state }
+            locations { id name addressLocality addressRegion }
             services { id name status }
             listings { id title status }
           }
@@ -163,8 +163,8 @@ export default function EntityDetailPage() {
             <dl className="grid grid-cols-2 gap-4">
               <div><dt className="text-sm text-gray-500">Type</dt><dd className="font-medium">{entity.entityType}</dd></div>
               <div><dt className="text-sm text-gray-500">Verified</dt><dd>{entity.verified ? "Yes" : "No"}</dd></div>
-              <div><dt className="text-sm text-gray-500">Locale</dt><dd>{entity.sourceLocale}</dd></div>
-              <div><dt className="text-sm text-gray-500">Phone</dt><dd>{entity.phone ?? "-"}</dd></div>
+              <div><dt className="text-sm text-gray-500">Language</dt><dd>{entity.inLanguage}</dd></div>
+              <div><dt className="text-sm text-gray-500">Phone</dt><dd>{entity.telephone ?? "-"}</dd></div>
               <div><dt className="text-sm text-gray-500">Email</dt><dd>{entity.email ?? "-"}</dd></div>
               <div><dt className="text-sm text-gray-500">Website</dt>
                 <dd>{entity.website ? <a href={entity.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{entity.website}</a> : "-"}</dd>

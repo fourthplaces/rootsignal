@@ -1,9 +1,9 @@
 use ai_client::tool::ToolDefinition;
 use ai_client::Tool;
 use async_trait::async_trait;
+use rootsignal_core::WebSearcher;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::WebSearcher;
 
 #[derive(Debug, Deserialize)]
 pub struct TavilyEntitySearchArgs {

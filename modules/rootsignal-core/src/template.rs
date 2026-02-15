@@ -199,8 +199,7 @@ mod tests {
     #[test]
     fn resolves_config_vars() {
         let toml = test_toml();
-        let result =
-            resolve_config_vars("Hello {{config.identity.region}}!", &toml).unwrap();
+        let result = resolve_config_vars("Hello {{config.identity.region}}!", &toml).unwrap();
         assert_eq!(result, "Hello Twin Cities!");
     }
 

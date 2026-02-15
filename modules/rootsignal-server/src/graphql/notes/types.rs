@@ -10,7 +10,7 @@ pub struct GqlNote {
     pub source_url: Option<String>,
     pub source_type: Option<String>,
     pub is_public: bool,
-    pub created_by: String,
+    pub author: String,
     pub expired_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -24,7 +24,7 @@ impl From<rootsignal_domains::shared::Note> for GqlNote {
             source_url: n.source_url,
             source_type: n.source_type,
             is_public: n.is_public,
-            created_by: n.created_by,
+            author: n.author,
             expired_at: n.expired_at,
             created_at: n.created_at,
         }

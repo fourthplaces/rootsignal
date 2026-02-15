@@ -1,8 +1,8 @@
 use async_graphql::*;
 use uuid::Uuid;
 
-use crate::graphql::auth::middleware::require_admin;
 use super::types::GqlObservation;
+use crate::graphql::auth::middleware::require_admin;
 
 #[derive(Enum, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewDecision {
@@ -42,9 +42,10 @@ impl ObservationMutation {
             ReviewDecision::Reject => "rejected",
         };
 
-        let updated = rootsignal_domains::investigations::Observation::set_review_status(id, status, pool)
-            .await
-            .map_err(|e| Error::new(format!("Failed to update observation: {e}")))?;
+        let updated =
+            rootsignal_domains::investigations::Observation::set_review_status(id, status, pool)
+                .await
+                .map_err(|e| Error::new(format!("Failed to update observation: {e}")))?;
 
         Ok(GqlObservation::from(updated))
     }

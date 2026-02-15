@@ -30,7 +30,8 @@ impl ObservationQuery {
         #[graphql(default = 50)] limit: i64,
     ) -> Result<Vec<GqlObservation>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let obs = rootsignal_domains::investigations::Observation::find_pending(limit, pool).await?;
+        let obs =
+            rootsignal_domains::investigations::Observation::find_pending(limit, pool).await?;
         Ok(obs.into_iter().map(GqlObservation::from).collect())
     }
 

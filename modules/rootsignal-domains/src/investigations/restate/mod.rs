@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,9 +69,7 @@ impl InvestigateWorkflow for InvestigateWorkflowImpl {
                     &deps,
                 )
                 .await
-                .map_err(|e| {
-                    TerminalError::new(format!("Investigation failed: {}", e))
-                })?;
+                .map_err(|e| TerminalError::new(format!("Investigation failed: {}", e)))?;
 
                 let result = InvestigateResult {
                     investigation_id: investigation.id.to_string(),

@@ -218,7 +218,9 @@ fn parse_temporal(
         .map(|s| {
             let parts: Vec<&str> = s.split('/').collect();
             if parts.len() != 2 {
-                return Err(Error::new("happening_between must be 'YYYY-MM-DD/YYYY-MM-DD'"));
+                return Err(Error::new(
+                    "happening_between must be 'YYYY-MM-DD/YYYY-MM-DD'",
+                ));
             }
             let start = NaiveDate::parse_from_str(parts[0], "%Y-%m-%d")
                 .map_err(|e| Error::new(format!("Invalid start date: {}", e)))?;

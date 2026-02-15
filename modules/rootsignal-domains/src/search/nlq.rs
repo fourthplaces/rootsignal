@@ -1,14 +1,11 @@
 use anyhow::Result;
 use rootsignal_core::ServerDeps;
 
-use crate::taxonomy::build_tag_instructions;
 use super::types::ParsedQuery;
+use crate::taxonomy::build_tag_instructions;
 
 /// Parse a natural language query into structured filters + search text using AI.
-pub async fn parse_natural_language_query(
-    query: &str,
-    deps: &ServerDeps,
-) -> Result<ParsedQuery> {
+pub async fn parse_natural_language_query(query: &str, deps: &ServerDeps) -> Result<ParsedQuery> {
     let pool = deps.pool();
     let tag_instructions = build_tag_instructions("listing", pool).await?;
 
@@ -17,10 +14,7 @@ pub async fn parse_natural_language_query(
 
     let model = &deps.file_config.models.nlq;
 
-    let parsed: ParsedQuery = deps
-        .ai
-        .extract(model, &system_prompt, query)
-        .await?;
+    let parsed: ParsedQuery = deps.ai.extract(model, &system_prompt, query).await?;
 
     Ok(parsed)
 }

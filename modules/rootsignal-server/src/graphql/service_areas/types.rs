@@ -5,8 +5,8 @@ use uuid::Uuid;
 #[derive(SimpleObject, Clone)]
 pub struct GqlServiceArea {
     pub id: Uuid,
-    pub city: String,
-    pub state: String,
+    pub address_locality: String,
+    pub address_region: String,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
 }
@@ -15,8 +15,8 @@ impl From<rootsignal_domains::config::ServiceArea> for GqlServiceArea {
     fn from(sa: rootsignal_domains::config::ServiceArea) -> Self {
         Self {
             id: sa.id,
-            city: sa.city,
-            state: sa.state,
+            address_locality: sa.address_locality,
+            address_region: sa.address_region,
             is_active: sa.is_active,
             created_at: sa.created_at,
         }

@@ -4,7 +4,11 @@ use axum::http::HeaderMap;
 pub struct Locale(pub String);
 
 /// Extract locale using precedence: explicit arg > Accept-Language header > "en" default.
-pub fn extract_locale(headers: &HeaderMap, explicit: Option<&str>, supported_locales: &[String]) -> Locale {
+pub fn extract_locale(
+    headers: &HeaderMap,
+    explicit: Option<&str>,
+    supported_locales: &[String],
+) -> Locale {
     let supported: Vec<&str> = supported_locales.iter().map(|s| s.as_str()).collect();
 
     if let Some(locale) = explicit {

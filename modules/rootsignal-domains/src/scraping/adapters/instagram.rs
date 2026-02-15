@@ -47,7 +47,10 @@ impl Ingestor for InstagramIngestor {
                 let mut page = RawPage::new(url, &content)
                     .with_content_type("social/instagram")
                     .with_metadata("platform", serde_json::Value::String("instagram".into()))
-                    .with_metadata("post_type", serde_json::Value::String(post.post_type.unwrap_or_default()));
+                    .with_metadata(
+                        "post_type",
+                        serde_json::Value::String(post.post_type.unwrap_or_default()),
+                    );
 
                 if let Some(ts) = post.timestamp {
                     page = page.with_fetched_at(ts);
@@ -74,7 +77,10 @@ impl Ingestor for InstagramIngestor {
     async fn fetch_specific(&self, urls: &[String]) -> CrawlResult<Vec<RawPage>> {
         // Apify doesn't support fetching specific post URLs directly.
         // Return empty — callers should use discover() with a handle.
-        tracing::warn!(count = urls.len(), "fetch_specific not supported for Instagram; use discover()");
+        tracing::warn!(
+            count = urls.len(),
+            "fetch_specific not supported for Instagram; use discover()"
+        );
         Ok(Vec::new())
     }
 

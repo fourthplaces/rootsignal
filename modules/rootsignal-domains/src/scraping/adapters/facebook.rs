@@ -44,10 +44,7 @@ impl Ingestor for FacebookIngestor {
             .into_iter()
             .map(|post| {
                 let content = post.text.clone().unwrap_or_default();
-                let url = post
-                    .url
-                    .clone()
-                    .unwrap_or_else(|| page_url.clone());
+                let url = post.url.clone().unwrap_or_else(|| page_url.clone());
 
                 let mut page = RawPage::new(url, &content)
                     .with_content_type("social/facebook")
@@ -76,7 +73,10 @@ impl Ingestor for FacebookIngestor {
     }
 
     async fn fetch_specific(&self, urls: &[String]) -> CrawlResult<Vec<RawPage>> {
-        tracing::warn!(count = urls.len(), "fetch_specific not supported for Facebook; use discover()");
+        tracing::warn!(
+            count = urls.len(),
+            "fetch_specific not supported for Facebook; use discover()"
+        );
         Ok(Vec::new())
     }
 

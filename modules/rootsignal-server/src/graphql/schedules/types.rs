@@ -6,9 +6,9 @@ use uuid::Uuid;
 pub struct GqlSchedule {
     pub id: Uuid,
     pub valid_from: Option<DateTime<Utc>>,
-    pub valid_to: Option<DateTime<Utc>>,
+    pub valid_through: Option<DateTime<Utc>>,
     pub dtstart: Option<String>,
-    pub freq: Option<String>,
+    pub repeat_frequency: Option<String>,
     pub byday: Option<String>,
     pub bymonthday: Option<String>,
     pub opens_at: Option<NaiveTime>,
@@ -22,9 +22,9 @@ impl From<rootsignal_domains::shared::Schedule> for GqlSchedule {
         Self {
             id: s.id,
             valid_from: s.valid_from,
-            valid_to: s.valid_to,
+            valid_through: s.valid_through,
             dtstart: s.dtstart,
-            freq: s.freq,
+            repeat_frequency: s.repeat_frequency,
             byday: s.byday,
             bymonthday: s.bymonthday,
             opens_at: s.opens_at,

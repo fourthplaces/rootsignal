@@ -49,11 +49,13 @@ impl Ingestor for XIngestor {
 
                 if let Some(author) = &tweet.author {
                     if let Some(name) = &author.user_name {
-                        page = page.with_metadata("handle", serde_json::Value::String(name.clone()));
+                        page =
+                            page.with_metadata("handle", serde_json::Value::String(name.clone()));
                     }
                 }
                 if let Some(created) = &tweet.created_at {
-                    page = page.with_metadata("posted_at", serde_json::Value::String(created.clone()));
+                    page =
+                        page.with_metadata("posted_at", serde_json::Value::String(created.clone()));
                 }
                 if let Some(likes) = tweet.like_count {
                     page = page.with_metadata("likes", serde_json::json!(likes));
@@ -72,7 +74,10 @@ impl Ingestor for XIngestor {
     }
 
     async fn fetch_specific(&self, urls: &[String]) -> CrawlResult<Vec<RawPage>> {
-        tracing::warn!(count = urls.len(), "fetch_specific not supported for X; use discover()");
+        tracing::warn!(
+            count = urls.len(),
+            "fetch_specific not supported for X; use discover()"
+        );
         Ok(Vec::new())
     }
 

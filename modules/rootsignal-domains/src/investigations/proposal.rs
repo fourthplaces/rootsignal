@@ -160,10 +160,7 @@ impl Proposal {
         Ok(())
     }
 
-    pub async fn auto_approve_above_threshold(
-        threshold: f32,
-        pool: &PgPool,
-    ) -> Result<Vec<Self>> {
+    pub async fn auto_approve_above_threshold(threshold: f32, pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>(
             r#"
             UPDATE proposals

@@ -30,7 +30,7 @@ impl From<rootsignal_domains::heat_map::HeatMapPoint> for GqlHeatMapPoint {
 #[derive(SimpleObject, Clone)]
 pub struct GqlZipDensity {
     pub zip_code: String,
-    pub city: String,
+    pub address_locality: String,
     pub latitude: f64,
     pub longitude: f64,
     pub listing_count: i32,
@@ -41,7 +41,7 @@ impl From<rootsignal_domains::heat_map::ZipDensity> for GqlZipDensity {
     fn from(z: rootsignal_domains::heat_map::ZipDensity) -> Self {
         Self {
             zip_code: z.zip_code,
-            city: z.city,
+            address_locality: z.address_locality,
             latitude: z.latitude,
             longitude: z.longitude,
             listing_count: z.listing_count as i32,

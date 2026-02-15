@@ -1,9 +1,9 @@
 use async_graphql::*;
 use uuid::Uuid;
 
+use super::types::{GqlEntity, GqlService};
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
-use super::types::{GqlEntity, GqlService};
 
 #[derive(InputObject)]
 pub struct CreateEntityInput {
@@ -18,7 +18,7 @@ pub struct UpdateEntityInput {
     pub name: Option<String>,
     pub description: Option<String>,
     pub website: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
     pub email: Option<String>,
 }
 
@@ -35,7 +35,7 @@ pub struct UpdateServiceInput {
     pub description: Option<String>,
     pub url: Option<String>,
     pub email: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
 }
 
 #[derive(Default)]
@@ -78,7 +78,7 @@ impl EntityMutation {
             input.name.as_deref(),
             input.description.as_deref(),
             input.website.as_deref(),
-            input.phone.as_deref(),
+            input.telephone.as_deref(),
             input.email.as_deref(),
             pool,
         )
@@ -134,7 +134,7 @@ impl EntityMutation {
             input.description.as_deref(),
             input.url.as_deref(),
             input.email.as_deref(),
-            input.phone.as_deref(),
+            input.telephone.as_deref(),
             pool,
         )
         .await

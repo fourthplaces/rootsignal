@@ -37,11 +37,10 @@ impl TagKindConfig {
     }
 
     pub async fn tag_count_for_slug(slug: &str, pool: &PgPool) -> Result<i64> {
-        let row =
-            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM tags WHERE kind = $1")
-                .bind(slug)
-                .fetch_one(pool)
-                .await?;
+        let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM tags WHERE kind = $1")
+            .bind(slug)
+            .fetch_one(pool)
+            .await?;
         Ok(row.0)
     }
 }

@@ -106,9 +106,7 @@ impl Loader<PolymorphicKey> for TagsForLoader {
         let mut map: HashMap<PolymorphicKey, Vec<GqlTag>> = HashMap::new();
         for row in rows {
             let key = PolymorphicKey(row.taggable_type, row.taggable_id);
-            map.entry(key)
-                .or_default()
-                .push(GqlTag::from(row.tag));
+            map.entry(key).or_default().push(GqlTag::from(row.tag));
         }
         Ok(map)
     }
@@ -191,9 +189,7 @@ impl Loader<PolymorphicKey> for SchedulesForLoader {
         let mut map: HashMap<PolymorphicKey, Vec<GqlSchedule>> = HashMap::new();
         for row in rows {
             let key = PolymorphicKey(row.scheduleable_type.clone(), row.scheduleable_id);
-            map.entry(key)
-                .or_default()
-                .push(GqlSchedule::from(row));
+            map.entry(key).or_default().push(GqlSchedule::from(row));
         }
         Ok(map)
     }
@@ -228,9 +224,7 @@ impl Loader<PolymorphicKey> for ContactsForLoader {
         let mut map: HashMap<PolymorphicKey, Vec<GqlContact>> = HashMap::new();
         for row in rows {
             let key = PolymorphicKey(row.contactable_type.clone(), row.contactable_id);
-            map.entry(key)
-                .or_default()
-                .push(GqlContact::from(row));
+            map.entry(key).or_default().push(GqlContact::from(row));
         }
         Ok(map)
     }
@@ -336,9 +330,7 @@ impl Loader<PolymorphicKey> for NotesForLoader {
         let mut map: HashMap<PolymorphicKey, Vec<GqlNote>> = HashMap::new();
         for row in rows {
             let key = PolymorphicKey(row.noteable_type, row.noteable_id);
-            map.entry(key)
-                .or_default()
-                .push(GqlNote::from(row.note));
+            map.entry(key).or_default().push(GqlNote::from(row.note));
         }
         Ok(map)
     }

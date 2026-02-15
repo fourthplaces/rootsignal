@@ -9,9 +9,9 @@ pub struct Location {
     pub id: Uuid,
     pub entity_id: Option<Uuid>,
     pub name: Option<String>,
-    pub address_line_1: Option<String>,
-    pub city: Option<String>,
-    pub state: Option<String>,
+    pub street_address: Option<String>,
+    pub address_locality: Option<String>,
+    pub address_region: Option<String>,
     pub postal_code: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
@@ -23,9 +23,9 @@ impl Location {
     pub async fn create(
         entity_id: Option<Uuid>,
         name: Option<&str>,
-        address_line_1: Option<&str>,
-        city: Option<&str>,
-        state: Option<&str>,
+        street_address: Option<&str>,
+        address_locality: Option<&str>,
+        address_region: Option<&str>,
         postal_code: Option<&str>,
         latitude: Option<f64>,
         longitude: Option<f64>,
@@ -34,16 +34,16 @@ impl Location {
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO locations (entity_id, name, address_line_1, city, state, postal_code, latitude, longitude, location_type)
+            INSERT INTO locations (entity_id, name, street_address, address_locality, address_region, postal_code, latitude, longitude, location_type)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             "#,
         )
         .bind(entity_id)
         .bind(name)
-        .bind(address_line_1)
-        .bind(city)
-        .bind(state)
+        .bind(street_address)
+        .bind(address_locality)
+        .bind(address_region)
         .bind(postal_code)
         .bind(latitude)
         .bind(longitude)
@@ -55,20 +55,19 @@ impl Location {
 
     /// Find or create a location from extraction data, auto-resolving lat/lng from zip_codes.
     pub async fn find_or_create_from_extraction(
-        city: Option<&str>,
-        state: Option<&str>,
+        address_locality: Option<&str>,
+        address_region: Option<&str>,
         postal_code: Option<&str>,
         address: Option<&str>,
         pool: &PgPool,
     ) -> Result<Self> {
         // Try to find existing location by postal code
         if let Some(zip) = postal_code {
-            let existing = sqlx::query_as::<_, Self>(
-                "SELECT * FROM locations WHERE postal_code = $1 LIMIT 1",
-            )
-            .bind(zip)
-            .fetch_optional(pool)
-            .await?;
+            let existing =
+                sqlx::query_as::<_, Self>("SELECT * FROM locations WHERE postal_code = $1 LIMIT 1")
+                    .bind(zip)
+                    .fetch_optional(pool)
+                    .await?;
 
             if let Some(loc) = existing {
                 return Ok(loc);
@@ -87,10 +86,10 @@ impl Location {
                 Some((lat, lng)) => (Some(lat), Some(lng)),
                 None => (None, None),
             }
-        } else if let (Some(c), Some(s)) = (city, state) {
+        } else if let (Some(c), Some(s)) = (address_locality, address_region) {
             // Fallback: look up by city/state, take first match
             let coords = sqlx::query_as::<_, (f64, f64)>(
-                "SELECT latitude, longitude FROM zip_codes WHERE LOWER(city) = LOWER($1) AND state = $2 LIMIT 1",
+                "SELECT latitude, longitude FROM zip_codes WHERE LOWER(address_locality) = LOWER($1) AND address_region = $2 LIMIT 1",
             )
             .bind(c)
             .bind(s)
@@ -108,8 +107,8 @@ impl Location {
             None,
             None,
             address,
-            city,
-            state,
+            address_locality,
+            address_region,
             postal_code,
             lat,
             lng,

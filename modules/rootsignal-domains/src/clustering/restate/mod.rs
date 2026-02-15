@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 
 use crate::clustering::activities::ClusterStats;
 
@@ -78,9 +78,7 @@ impl ClusteringJob for ClusteringJobImpl {
             .run(|| async move {
                 let stats = crate::clustering::activities::cluster_listings(&deps)
                     .await
-                    .map_err(|e| {
-                        TerminalError::new(format!("Clustering failed: {}", e))
-                    })?;
+                    .map_err(|e| TerminalError::new(format!("Clustering failed: {}", e)))?;
                 serde_json::to_string(&stats)
                     .map_err(|e| TerminalError::new(format!("Serialize: {}", e)).into())
             })

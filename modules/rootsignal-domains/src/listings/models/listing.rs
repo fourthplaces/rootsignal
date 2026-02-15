@@ -14,7 +14,7 @@ pub struct Listing {
     pub service_id: Option<Uuid>,
     pub source_url: Option<String>,
     pub location_text: Option<String>,
-    pub source_locale: String,
+    pub in_language: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub freshness_score: f32,
     pub relevance_score: Option<i32>,
@@ -82,21 +82,21 @@ impl Listing {
     pub async fn create(
         title: &str,
         description: Option<&str>,
-        source_locale: &str,
+        in_language: &str,
         entity_id: Option<Uuid>,
         service_id: Option<Uuid>,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO listings (title, description, status, source_locale, entity_id, service_id)
+            INSERT INTO listings (title, description, status, in_language, entity_id, service_id)
             VALUES ($1, $2, 'active', $3, $4, $5)
             RETURNING *
             "#,
         )
         .bind(title)
         .bind(description)
-        .bind(source_locale)
+        .bind(in_language)
         .bind(entity_id)
         .bind(service_id)
         .fetch_one(pool)
@@ -108,7 +108,7 @@ impl Listing {
         id: Uuid,
         title: Option<&str>,
         description: Option<&str>,
-        source_locale: Option<&str>,
+        in_language: Option<&str>,
         entity_id: Option<Option<Uuid>>,
         service_id: Option<Option<Uuid>>,
         pool: &PgPool,
@@ -118,7 +118,7 @@ impl Listing {
             UPDATE listings SET
                 title = COALESCE($2, title),
                 description = COALESCE($3, description),
-                source_locale = COALESCE($4, source_locale),
+                in_language = COALESCE($4, in_language),
                 entity_id = CASE WHEN $5 THEN $6 ELSE entity_id END,
                 service_id = CASE WHEN $7 THEN $8 ELSE service_id END,
                 updated_at = NOW()
@@ -129,7 +129,7 @@ impl Listing {
         .bind(id)
         .bind(title)
         .bind(description)
-        .bind(source_locale)
+        .bind(in_language)
         .bind(entity_id.is_some())
         .bind(entity_id.flatten())
         .bind(service_id.is_some())
@@ -150,19 +150,16 @@ impl Listing {
     }
 
     pub async fn count_active(pool: &PgPool) -> Result<i64> {
-        let row = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM listings WHERE status = 'active'",
-        )
-        .fetch_one(pool)
-        .await?;
+        let row =
+            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM listings WHERE status = 'active'")
+                .fetch_one(pool)
+                .await?;
         Ok(row.0)
     }
 
     /// Dynamic filtered query using tag-based filters, geo, temporal, and pagination.
     pub async fn find_filtered(filters: &ListingFilters, pool: &PgPool) -> Result<Vec<Self>> {
-        let mut qb = sqlx::QueryBuilder::new(
-            "SELECT DISTINCT l.* FROM listings l "
-        );
+        let mut qb = sqlx::QueryBuilder::new("SELECT DISTINCT l.* FROM listings l ");
 
         // If geo filter, join locations
         if filters.lat.is_some() && filters.lng.is_some() {
@@ -198,7 +195,9 @@ impl Listing {
         }
 
         // Geo filter (Haversine)
-        if let (Some(lat), Some(lng), Some(radius_km)) = (filters.lat, filters.lng, filters.radius_km) {
+        if let (Some(lat), Some(lng), Some(radius_km)) =
+            (filters.lat, filters.lng, filters.radius_km)
+        {
             qb.push("AND lp.latitude IS NOT NULL AND (6371 * acos(cos(radians(");
             qb.push_bind(lat);
             qb.push(")) * cos(radians(lp.latitude)) * cos(radians(lp.longitude) - radians(");
@@ -286,7 +285,7 @@ pub struct ListingDetail {
     pub location_text: Option<String>,
     pub schedule_description: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub source_locale: String,
+    pub in_language: String,
     pub locale: String,
     pub is_fallback: bool,
 }
@@ -329,11 +328,11 @@ impl ListingDetail {
                 l.source_url, l.location_text,
                 COALESCE(s.description, to_char(s.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
                 l.created_at,
-                l.source_locale,
+                l.in_language,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN $1
                     WHEN en_title.content IS NOT NULL THEN 'en'
-                    ELSE l.source_locale
+                    ELSE l.in_language
                 END as locale,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN false
@@ -395,8 +394,8 @@ impl ListingDetail {
                 l.source_url, l.location_text,
                 COALESCE(sch.description, to_char(sch.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
                 l.created_at,
-                l.source_locale,
-                l.source_locale as locale,
+                l.in_language,
+                l.in_language as locale,
                 false as is_fallback
             FROM cluster_items ci
             JOIN cluster_items ci2 ON ci2.cluster_id = ci.cluster_id AND ci2.item_type = 'listing'
@@ -433,7 +432,7 @@ pub struct ListingWithDistance {
     pub location_text: Option<String>,
     pub schedule_description: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub source_locale: String,
+    pub in_language: String,
     pub locale: String,
     pub is_fallback: bool,
     pub distance_miles: f64,
@@ -471,7 +470,7 @@ impl ListingWithDistance {
                 l.source_url, l.location_text,
                 COALESCE(sch.description, to_char(sch.valid_from, 'YYYY-MM-DD HH24:MI')) as schedule_description,
                 l.created_at,
-                l.source_locale,
+                l.in_language,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN "#,
         );
@@ -479,7 +478,7 @@ impl ListingWithDistance {
         qb.push(
             r#"
                     WHEN en_title.content IS NOT NULL THEN 'en'
-                    ELSE l.source_locale
+                    ELSE l.in_language
                 END as locale,
                 CASE
                     WHEN t_title.content IS NOT NULL THEN false
@@ -487,7 +486,7 @@ impl ListingWithDistance {
                 END as is_fallback,
                 MIN(haversine_distance(center.latitude, center.longitude, loc.latitude, loc.longitude)) as distance_miles,
                 loc.postal_code as zip_code,
-                loc.city as location_city
+                loc.address_locality as location_city
             FROM listings l
             CROSS JOIN center
             LEFT JOIN LATERAL (
@@ -569,8 +568,8 @@ impl ListingWithDistance {
         qb.push(
             "GROUP BY l.id, l.title, l.description, l.status, e.name, e.entity_type, \
              l.source_url, l.location_text, sch.description, sch.valid_from, l.created_at, \
-             l.source_locale, t_title.content, t_desc.content, en_title.content, en_desc.content, \
-             loc.postal_code, loc.city \
+             l.in_language, t_title.content, t_desc.content, en_title.content, en_desc.content, \
+             loc.postal_code, loc.address_locality \
              HAVING MIN(haversine_distance(center.latitude, center.longitude, loc.latitude, loc.longitude)) <= ",
         );
         qb.push_bind(radius_miles);
@@ -647,10 +646,7 @@ impl ListingWithDistance {
             }
         }
 
-        let row = qb
-            .build_query_as::<(i64,)>()
-            .fetch_one(pool)
-            .await?;
+        let row = qb.build_query_as::<(i64,)>().fetch_one(pool).await?;
         Ok(row.0)
     }
 }
@@ -701,27 +697,45 @@ impl ListingStats {
         ) = tokio::try_join!(
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM listings")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM listings WHERE status = 'active'")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM sources")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM page_snapshots")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM extractions")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM entities")
-                    .fetch_one(pool).await.map(|r| r.0).map_err(anyhow::Error::from)
+                    .fetch_one(pool)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(anyhow::Error::from)
             },
             async {
                 sqlx::query_as::<_, (i64,)>(

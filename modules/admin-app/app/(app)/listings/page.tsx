@@ -6,7 +6,7 @@ interface Listing {
   id: string;
   title: string;
   status: string;
-  sourceLocale: string;
+  inLanguage: string;
   createdAt: string;
   entity: { id: string; name: string } | null;
 }
@@ -36,7 +36,7 @@ export default async function ListingsPage({
   }>(
     `query Listings($first: Int, $after: String) {
       listings(first: $first, after: $after) {
-        nodes { id title status sourceLocale createdAt entity { id name } }
+        nodes { id title status inLanguage createdAt entity { id name } }
         pageInfo { hasNextPage endCursor }
       }
     }`,
@@ -86,7 +86,7 @@ export default async function ListingsPage({
                 <td className="px-4 py-3">
                   <StatusBadge status={l.status} />
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600">{l.sourceLocale}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{l.inLanguage}</td>
                 <td className="px-4 py-3 text-sm text-gray-500">
                   {new Date(l.createdAt).toLocaleDateString()}
                 </td>

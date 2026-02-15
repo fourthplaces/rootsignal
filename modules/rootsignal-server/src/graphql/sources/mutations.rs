@@ -1,9 +1,9 @@
 use async_graphql::*;
 use uuid::Uuid;
 
+use super::types::GqlSource;
 use crate::graphql::auth::middleware::require_admin;
 use crate::graphql::error;
-use super::types::GqlSource;
 
 #[derive(InputObject)]
 pub struct CreateSourceInput {
@@ -29,7 +29,9 @@ impl SourceMutation {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let config = input.config.unwrap_or(serde_json::Value::Object(Default::default()));
+        let config = input
+            .config
+            .unwrap_or(serde_json::Value::Object(Default::default()));
 
         let source = rootsignal_domains::scraping::Source::create(
             &input.name,

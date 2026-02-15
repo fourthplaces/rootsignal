@@ -29,10 +29,7 @@ impl ClaudeClient {
 
     fn headers(&self) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-api-key",
-            HeaderValue::from_str(&self.api_key)?,
-        );
+        headers.insert("x-api-key", HeaderValue::from_str(&self.api_key)?);
         headers.insert(
             "anthropic-version",
             HeaderValue::from_static(ANTHROPIC_VERSION),

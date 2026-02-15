@@ -13,12 +13,12 @@ pub struct Service {
     pub status: String,
     pub url: Option<String>,
     pub email: Option<String>,
-    pub phone: Option<String>,
+    pub telephone: Option<String>,
     pub interpretation_services: Option<String>,
     pub application_process: Option<String>,
-    pub fees_description: Option<String>,
-    pub eligibility_description: Option<String>,
-    pub source_locale: String,
+    pub price_range: Option<String>,
+    pub eligibility: Option<String>,
+    pub in_language: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -70,13 +70,12 @@ impl Service {
         description: Option<&str>,
         pool: &PgPool,
     ) -> Result<Self> {
-        if let Some(existing) = sqlx::query_as::<_, Self>(
-            "SELECT * FROM services WHERE entity_id = $1 AND name = $2",
-        )
-        .bind(entity_id)
-        .bind(name)
-        .fetch_optional(pool)
-        .await?
+        if let Some(existing) =
+            sqlx::query_as::<_, Self>("SELECT * FROM services WHERE entity_id = $1 AND name = $2")
+                .bind(entity_id)
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
         {
             return Ok(existing);
         }
@@ -89,7 +88,7 @@ impl Service {
         description: Option<&str>,
         url: Option<&str>,
         email: Option<&str>,
-        phone: Option<&str>,
+        telephone: Option<&str>,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
@@ -99,7 +98,7 @@ impl Service {
                 description = COALESCE($3, description),
                 url = COALESCE($4, url),
                 email = COALESCE($5, email),
-                phone = COALESCE($6, phone),
+                telephone = COALESCE($6, telephone),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING *
@@ -110,7 +109,7 @@ impl Service {
         .bind(description)
         .bind(url)
         .bind(email)
-        .bind(phone)
+        .bind(telephone)
         .fetch_one(pool)
         .await
         .map_err(Into::into)

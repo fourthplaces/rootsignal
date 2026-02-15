@@ -25,7 +25,7 @@ pub struct GqlSearchResult {
     pub source_url: Option<String>,
     pub location_text: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub source_locale: String,
+    pub in_language: String,
     pub locale: String,
     pub is_fallback: bool,
     pub semantic_score: Option<f64>,
@@ -47,7 +47,7 @@ impl From<rootsignal_domains::search::SearchResultRow> for GqlSearchResult {
             source_url: r.source_url,
             location_text: r.location_text,
             created_at: r.created_at,
-            source_locale: r.source_locale,
+            in_language: r.in_language,
             locale: r.locale,
             is_fallback: r.is_fallback,
             semantic_score: r.semantic_score,
@@ -66,7 +66,8 @@ impl GqlSearchResult {
             None => return Ok(None),
         };
 
-        let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<EntityByIdLoader>>();
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<EntityByIdLoader>>();
         Ok(loader.load_one(entity_id).await?)
     }
 
@@ -192,7 +193,9 @@ impl From<rootsignal_domains::search::SearchIntent> for GqlSearchIntent {
         match i {
             rootsignal_domains::search::SearchIntent::InScope => Self::InScope,
             rootsignal_domains::search::SearchIntent::OutOfScope => Self::OutOfScope,
-            rootsignal_domains::search::SearchIntent::NeedsClarification => Self::NeedsClarification,
+            rootsignal_domains::search::SearchIntent::NeedsClarification => {
+                Self::NeedsClarification
+            }
             rootsignal_domains::search::SearchIntent::KnowledgeQuestion => Self::KnowledgeQuestion,
         }
     }

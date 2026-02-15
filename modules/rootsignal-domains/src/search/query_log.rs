@@ -52,11 +52,7 @@ impl QueryLog {
         .map_err(Into::into)
     }
 
-    pub async fn record_click(
-        id: Uuid,
-        listing_id: Uuid,
-        pool: &PgPool,
-    ) -> Result<Self> {
+    pub async fn record_click(id: Uuid, listing_id: Uuid, pool: &PgPool) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             "UPDATE query_logs SET clicked_listing_id = $1 WHERE id = $2 RETURNING *",
         )

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use std::collections::{HashSet, VecDeque};
 use rootsignal_core::error::{CrawlError, CrawlResult};
 use rootsignal_core::{DiscoverConfig, Ingestor, RawPage};
+use std::collections::{HashSet, VecDeque};
 use url::Url;
 
 /// HTTP ingestor with BFS link-following, HTML-to-markdown, and rate limiting.
@@ -68,7 +68,10 @@ impl HttpIngestor {
 
         // Check include patterns
         if !config.include_patterns.is_empty() {
-            let matches = config.include_patterns.iter().any(|p| path.contains(p.as_str()));
+            let matches = config
+                .include_patterns
+                .iter()
+                .any(|p| path.contains(p.as_str()));
             if !matches {
                 return false;
             }
@@ -76,7 +79,10 @@ impl HttpIngestor {
 
         // Check exclude patterns
         if !config.exclude_patterns.is_empty() {
-            let excluded = config.exclude_patterns.iter().any(|p| path.contains(p.as_str()));
+            let excluded = config
+                .exclude_patterns
+                .iter()
+                .any(|p| path.contains(p.as_str()));
             if excluded {
                 return false;
             }

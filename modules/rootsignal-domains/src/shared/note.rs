@@ -13,7 +13,7 @@ pub struct Note {
     pub source_type: Option<String>,
     pub source_id: Option<Uuid>,
     pub is_public: bool,
-    pub created_by: String,
+    pub author: String,
     pub expired_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -24,12 +24,12 @@ impl Note {
         content: &str,
         severity: &str,
         source_type: Option<&str>,
-        created_by: &str,
+        author: &str,
         pool: &PgPool,
     ) -> Result<Self> {
         sqlx::query_as::<_, Self>(
             r#"
-            INSERT INTO notes (content, severity, source_type, created_by)
+            INSERT INTO notes (content, severity, source_type, author)
             VALUES ($1, $2, $3, $4)
             RETURNING *
             "#,
@@ -37,7 +37,7 @@ impl Note {
         .bind(content)
         .bind(severity)
         .bind(source_type)
-        .bind(created_by)
+        .bind(author)
         .fetch_one(pool)
         .await
         .map_err(Into::into)
@@ -102,10 +102,10 @@ impl Notable {
         content: &str,
         severity: &str,
         source_type: Option<&str>,
-        created_by: &str,
+        author: &str,
         pool: &PgPool,
     ) -> Result<Note> {
-        let note = Note::create(content, severity, source_type, created_by, pool).await?;
+        let note = Note::create(content, severity, source_type, author, pool).await?;
         Self::create(note.id, noteable_type, noteable_id, pool).await?;
         Ok(note)
     }

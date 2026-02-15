@@ -8,18 +8,21 @@ use tracing_subscriber::EnvFilter;
 use rootsignal_server::routes;
 
 // Import Restate traits to bring `.serve()` into scope
+use rootsignal_domains::clustering::ClusteringJob;
+use rootsignal_domains::extraction::restate::ExtractWorkflow;
+use rootsignal_domains::investigations::restate::InvestigateWorkflow;
+use rootsignal_domains::listings::restate::ListingsService;
 use rootsignal_domains::scraping::restate::{
     QualifyWorkflow, SchedulerService, ScrapeWorkflow, SourceObject,
 };
-use rootsignal_domains::extraction::restate::ExtractWorkflow;
-use rootsignal_domains::investigations::restate::InvestigateWorkflow;
-use rootsignal_domains::translation::restate::TranslateWorkflow;
-use rootsignal_domains::clustering::ClusteringJob;
-use rootsignal_domains::listings::restate::ListingsService;
 use rootsignal_domains::taxonomy::restate::tags::TagsService;
+use rootsignal_domains::translation::restate::TranslateWorkflow;
 
 #[derive(Parser)]
-#[command(name = "rootsignal-server", about = "Root Signal community signal server")]
+#[command(
+    name = "rootsignal-server",
+    about = "Root Signal community signal server"
+)]
 struct Cli {
     /// Path to config TOML file
     #[arg(long, default_value = "./config/rootsignal.toml")]
@@ -131,14 +134,14 @@ async fn main() -> Result<()> {
     };
 
     // Web searcher
-    let web_searcher =
-        rootsignal_domains::scraping::adapters::build_web_searcher(&config.tavily_api_key, &http_client);
+    let web_searcher = rootsignal_domains::scraping::adapters::build_web_searcher(
+        &config.tavily_api_key,
+        &http_client,
+    );
 
     // Embedding service (OpenAI embeddings via wrapper)
     let embedding_service: Arc<dyn rootsignal_core::EmbeddingService> =
-        Arc::new(OpenAiEmbeddingService {
-            ai: openai.clone(),
-        });
+        Arc::new(OpenAiEmbeddingService { ai: openai.clone() });
 
     // ServerDeps — HTTP handlers use http_pool, workers use worker_pool
     let http_deps = Arc::new(rootsignal_core::ServerDeps::new(
@@ -174,7 +177,8 @@ async fn main() -> Result<()> {
 
     let restate_endpoint = restate_sdk::endpoint::Endpoint::builder()
         .bind(
-            rootsignal_domains::scraping::ScrapeWorkflowImpl::with_deps(worker_deps.clone()).serve(),
+            rootsignal_domains::scraping::ScrapeWorkflowImpl::with_deps(worker_deps.clone())
+                .serve(),
         )
         .bind(
             rootsignal_domains::scraping::SourceObjectImpl::with_deps(worker_deps.clone()).serve(),
@@ -205,10 +209,7 @@ async fn main() -> Result<()> {
             rootsignal_domains::listings::ListingsServiceImpl::with_deps(worker_deps.clone())
                 .serve(),
         )
-        .bind(
-            rootsignal_domains::taxonomy::TagsServiceImpl::with_deps(worker_deps.clone())
-                .serve(),
-        )
+        .bind(rootsignal_domains::taxonomy::TagsServiceImpl::with_deps(worker_deps.clone()).serve())
         .bind(
             rootsignal_domains::clustering::ClusteringJobImpl::with_deps(worker_deps.clone())
                 .serve(),
@@ -235,12 +236,13 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| format!("http://localhost:{}", port));
 
         let client = reqwest::Client::new();
-        let mut request = client
-            .post(format!("{}/deployments", admin_url))
-            .json(&serde_json::json!({
-                "uri": self_url,
-                "force": true,
-            }));
+        let mut request =
+            client
+                .post(format!("{}/deployments", admin_url))
+                .json(&serde_json::json!({
+                    "uri": self_url,
+                    "force": true,
+                }));
 
         if let Some(token) = &server_deps.config.restate_auth_token {
             request = request.bearer_auth(token);

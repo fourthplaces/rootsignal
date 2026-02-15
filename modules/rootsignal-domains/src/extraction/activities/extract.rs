@@ -1,6 +1,6 @@
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 use rootsignal_core::{ExtractedListings, ServerDeps};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::taxonomy::build_tag_instructions;
@@ -28,10 +28,7 @@ async fn build_system_prompt(deps: &ServerDeps) -> Result<String> {
 }
 
 /// Extract structured listings from a page_snapshot using AI.
-pub async fn extract_from_snapshot(
-    snapshot_id: Uuid,
-    deps: &ServerDeps,
-) -> Result<Vec<Uuid>> {
+pub async fn extract_from_snapshot(snapshot_id: Uuid, deps: &ServerDeps) -> Result<Vec<Uuid>> {
     let pool = deps.pool();
 
     // Mark as processing
@@ -81,10 +78,7 @@ pub async fn extract_from_snapshot(
     let model = &deps.file_config.models.extraction;
 
     // Use AI structured extraction
-    let extracted: ExtractedListings = deps
-        .ai
-        .extract(model, &system_prompt, &user_prompt)
-        .await?;
+    let extracted: ExtractedListings = deps.ai.extract(model, &system_prompt, &user_prompt).await?;
 
     let mut extraction_ids = Vec::new();
 

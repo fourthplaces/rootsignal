@@ -9,8 +9,8 @@ pub use observation::Observation;
 pub use restate::InvestigateWorkflowImpl;
 
 use anyhow::Result;
-use std::sync::Arc;
 use rootsignal_core::ServerDeps;
+use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -28,8 +28,7 @@ pub async fn run_investigation(
     let pool = deps.pool();
 
     // Create investigation record
-    let investigation =
-        Investigation::create(subject_type, subject_id, trigger, pool).await?;
+    let investigation = Investigation::create(subject_type, subject_id, trigger, pool).await?;
     Investigation::update_status(investigation.id, "running", pool).await?;
 
     info!(
@@ -43,7 +42,8 @@ pub async fn run_investigation(
     let entity = Entity::find_by_id(subject_id, pool).await?;
 
     // Build the agent with investigation tools
-    let agent = (*deps.ai).clone()
+    let agent = (*deps.ai)
+        .clone()
         .tool(WhoisLookupTool::new(deps.http_client.clone()))
         .tool(TavilyEntitySearchTool::new(deps.web_searcher.clone()))
         .tool(InternalSignalHistoryTool::new(deps.db_pool.clone()));

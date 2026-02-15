@@ -88,10 +88,7 @@ impl EntityRelationship {
         .map_err(Into::into)
     }
 
-    pub async fn find_by_type(
-        relationship_type: &str,
-        pool: &PgPool,
-    ) -> Result<Vec<Self>> {
+    pub async fn find_by_type(relationship_type: &str, pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>(
             "SELECT * FROM entity_relationships WHERE relationship_type = $1 ORDER BY created_at DESC",
         )

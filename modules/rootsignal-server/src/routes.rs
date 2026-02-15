@@ -7,15 +7,15 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use sqlx::PgPool;
-use std::sync::Arc;
 use rootsignal_core::ServerDeps;
 use rootsignal_domains::listings::{ListingDetail, ListingStats};
+use sqlx::PgPool;
+use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::graphql::{self, AppSchema};
 use crate::graphql::auth;
 use crate::graphql::context;
+use crate::graphql::{self, AppSchema};
 
 pub fn build_router(deps: Arc<ServerDeps>) -> Router {
     let pool = deps.pool().clone();
@@ -52,7 +52,12 @@ pub fn build_router(deps: Arc<ServerDeps>) -> Router {
         .route("/graphql", get(graphiql_handler).post(graphql_handler))
         .route("/health", get(health))
         .layer(cors)
-        .with_state(AppState { pool, schema, jwt_service, supported_locales })
+        .with_state(AppState {
+            pool,
+            schema,
+            jwt_service,
+            supported_locales,
+        })
 }
 
 #[derive(Clone)]
@@ -95,22 +100,24 @@ async fn health() -> &'static str {
 }
 
 async fn assessment_page(State(state): State<AppState>) -> Html<String> {
-    let stats = ListingStats::compute(&state.pool).await.unwrap_or_else(|_| ListingStats {
-        total_listings: 0,
-        active_listings: 0,
-        total_sources: 0,
-        total_snapshots: 0,
-        total_extractions: 0,
-        total_entities: 0,
-        listings_by_type: vec![],
-        listings_by_role: vec![],
-        listings_by_category: vec![],
-        listings_by_domain: vec![],
-        listings_by_urgency: vec![],
-        listings_by_confidence: vec![],
-        listings_by_capacity: vec![],
-        recent_7d: 0,
-    });
+    let stats = ListingStats::compute(&state.pool)
+        .await
+        .unwrap_or_else(|_| ListingStats {
+            total_listings: 0,
+            active_listings: 0,
+            total_sources: 0,
+            total_snapshots: 0,
+            total_extractions: 0,
+            total_entities: 0,
+            listings_by_type: vec![],
+            listings_by_role: vec![],
+            listings_by_category: vec![],
+            listings_by_domain: vec![],
+            listings_by_urgency: vec![],
+            listings_by_confidence: vec![],
+            listings_by_capacity: vec![],
+            recent_7d: 0,
+        });
 
     let listings = ListingDetail::find_active(30, 0, &state.pool)
         .await
@@ -168,11 +175,7 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
     let listing_rows: String = listings
         .iter()
         .map(|l| {
-            let timing = l
-                .schedule_description
-                .as_deref()
-                .unwrap_or("-")
-                .to_string();
+            let timing = l.schedule_description.as_deref().unwrap_or("-").to_string();
             let source = l
                 .source_url
                 .as_deref()
@@ -266,12 +269,28 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
         extractions = stats.total_extractions,
         entities = stats.total_entities,
         recent_7d = stats.recent_7d,
-        gate_vol = if stats.active_listings >= 100 { "gate pass" } else { "gate fail" },
-        gate_fresh = if stats.recent_7d > 0 { "gate pass" } else { "gate fail" },
+        gate_vol = if stats.active_listings >= 100 {
+            "gate pass"
+        } else {
+            "gate fail"
+        },
+        gate_fresh = if stats.recent_7d > 0 {
+            "gate pass"
+        } else {
+            "gate fail"
+        },
         type_count = stats.listings_by_type.len(),
-        gate_types = if stats.listings_by_type.len() >= 3 { "gate pass" } else { "gate fail" },
+        gate_types = if stats.listings_by_type.len() >= 3 {
+            "gate pass"
+        } else {
+            "gate fail"
+        },
         role_count = stats.listings_by_role.len(),
-        gate_roles = if stats.listings_by_role.len() >= 3 { "gate pass" } else { "gate fail" },
+        gate_roles = if stats.listings_by_role.len() >= 3 {
+            "gate pass"
+        } else {
+            "gate fail"
+        },
         type_rows = type_rows,
         role_rows = role_rows,
         category_rows = category_rows,

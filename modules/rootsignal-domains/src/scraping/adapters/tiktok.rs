@@ -49,10 +49,12 @@ impl Ingestor for TikTokIngestor {
 
                 if let Some(author) = &post.author_meta {
                     if let Some(name) = &author.name {
-                        page = page.with_metadata("handle", serde_json::Value::String(name.clone()));
+                        page =
+                            page.with_metadata("handle", serde_json::Value::String(name.clone()));
                     }
                     if let Some(nick) = &author.nick_name {
-                        page = page.with_metadata("display_name", serde_json::Value::String(nick.clone()));
+                        page = page
+                            .with_metadata("display_name", serde_json::Value::String(nick.clone()));
                     }
                 }
                 if let Some(ts) = &post.create_time_iso {
@@ -71,10 +73,8 @@ impl Ingestor for TikTokIngestor {
                     page = page.with_metadata("comments", serde_json::json!(comments));
                 }
                 if let Some(hashtags) = &post.hashtags {
-                    let tags: Vec<String> = hashtags
-                        .iter()
-                        .filter_map(|h| h.name.clone())
-                        .collect();
+                    let tags: Vec<String> =
+                        hashtags.iter().filter_map(|h| h.name.clone()).collect();
                     if !tags.is_empty() {
                         page = page.with_metadata("hashtags", serde_json::json!(tags));
                     }
@@ -87,7 +87,10 @@ impl Ingestor for TikTokIngestor {
     }
 
     async fn fetch_specific(&self, urls: &[String]) -> CrawlResult<Vec<RawPage>> {
-        tracing::warn!(count = urls.len(), "fetch_specific not supported for TikTok; use discover()");
+        tracing::warn!(
+            count = urls.len(),
+            "fetch_specific not supported for TikTok; use discover()"
+        );
         Ok(Vec::new())
     }
 

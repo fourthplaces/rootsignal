@@ -1,7 +1,7 @@
 use restate_sdk::prelude::*;
+use rootsignal_core::ServerDeps;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use rootsignal_core::ServerDeps;
 use uuid::Uuid;
 
 use crate::translation::restate::TranslateWorkflowClient;
@@ -52,18 +52,15 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
     ) -> Result<ExtractResult, HandlerError> {
         ctx.set("status", "extracting".to_string());
 
-        let source_id = req
-            .source_id
-            .as_ref()
-            .and_then(|s| s.parse::<Uuid>().ok());
+        let source_id = req.source_id.as_ref().and_then(|s| s.parse::<Uuid>().ok());
 
         let mut all_listing_ids = Vec::new();
         let mut extraction_count: u32 = 0;
 
         for snapshot_id_str in &req.snapshot_ids {
-            let snapshot_id: Uuid = snapshot_id_str.parse().map_err(|e: uuid::Error| {
-                TerminalError::new(format!("Invalid UUID: {}", e))
-            })?;
+            let snapshot_id: Uuid = snapshot_id_str
+                .parse()
+                .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
             // Step 1: AI extraction
             let deps = self.deps.clone();
@@ -72,13 +69,9 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
                     let ids =
                         crate::extraction::activities::extract_from_snapshot(snapshot_id, &deps)
                             .await
-                            .map_err(|e| {
-                                TerminalError::new(format!("Extraction failed: {}", e))
-                            })?;
-                    serde_json::to_string(
-                        &ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                    )
-                    .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
+                            .map_err(|e| TerminalError::new(format!("Extraction failed: {}", e)))?;
+                    serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
+                        .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
                 })
                 .await?;
 
@@ -89,10 +82,9 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
 
             // Step 2: Normalize each extraction into entities/listings
             for extraction_id_str in &extraction_ids {
-                let extraction_id: Uuid =
-                    extraction_id_str.parse().map_err(|e: uuid::Error| {
-                        TerminalError::new(format!("Invalid UUID: {}", e))
-                    })?;
+                let extraction_id: Uuid = extraction_id_str
+                    .parse()
+                    .map_err(|e: uuid::Error| TerminalError::new(format!("Invalid UUID: {}", e)))?;
 
                 let deps = self.deps.clone();
                 let sid = source_id;
@@ -104,13 +96,9 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
                             &deps,
                         )
                         .await
-                        .map_err(|e| {
-                            TerminalError::new(format!("Normalization failed: {}", e))
-                        })?;
+                        .map_err(|e| TerminalError::new(format!("Normalization failed: {}", e)))?;
                         serde_json::to_string(&id.map(|id| id.to_string()))
-                            .map_err(|e| {
-                                TerminalError::new(format!("Serialize: {}", e)).into()
-                            })
+                            .map_err(|e| TerminalError::new(format!("Serialize: {}", e)).into())
                     })
                     .await?;
 
@@ -125,16 +113,17 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
                     let lid_for_translate = lid.clone();
                     let source_locale_json: String = ctx
                         .run(|| async move {
-                            let listing_id: Uuid = lid_for_translate.parse().map_err(|e: uuid::Error| {
-                                TerminalError::new(format!("Invalid UUID: {}", e))
-                            })?;
+                            let listing_id: Uuid =
+                                lid_for_translate.parse().map_err(|e: uuid::Error| {
+                                    TerminalError::new(format!("Invalid UUID: {}", e))
+                                })?;
                             let row = sqlx::query_as::<_, (String,)>(
-                                "SELECT source_locale FROM listings WHERE id = $1",
+                                "SELECT in_language FROM listings WHERE id = $1",
                             )
                             .bind(listing_id)
                             .fetch_one(deps.pool())
                             .await
-                            .map_err(|e| TerminalError::new(format!("Fetch source_locale: {}", e)))?;
+                            .map_err(|e| TerminalError::new(format!("Fetch in_language: {}", e)))?;
                             Ok(row.0)
                         })
                         .await?;

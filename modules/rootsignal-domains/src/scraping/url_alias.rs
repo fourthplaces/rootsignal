@@ -40,13 +40,11 @@ impl UrlAlias {
     }
 
     pub async fn find_canonical(original_url: &str, pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as::<_, Self>(
-            "SELECT * FROM url_aliases WHERE original_url = $1",
-        )
-        .bind(original_url)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+        sqlx::query_as::<_, Self>("SELECT * FROM url_aliases WHERE original_url = $1")
+            .bind(original_url)
+            .fetch_optional(pool)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn find_all_aliases(canonical_url: &str, pool: &PgPool) -> Result<Vec<Self>> {
