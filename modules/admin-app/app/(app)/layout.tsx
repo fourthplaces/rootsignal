@@ -6,6 +6,7 @@ import { logout } from "@/lib/actions";
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
   { href: "/signals", label: "Signals" },
+  { href: "/findings", label: "Findings" },
   { href: "/listings", label: "Listings" },
   { href: "/entities", label: "Entities" },
   { href: "/sources", label: "Sources" },

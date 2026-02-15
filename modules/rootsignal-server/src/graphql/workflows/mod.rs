@@ -145,6 +145,21 @@ impl WorkflowMutation {
         })).await
     }
 
+    /// Trigger cluster detection scan for signal clusters that warrant investigation.
+    async fn trigger_cluster_detection(&self, ctx: &Context<'_>) -> Result<WorkflowTriggerResult> {
+        tracing::info!("graphql.trigger_cluster_detection");
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?;
+        let key = format!("cluster-{}", chrono::Utc::now().timestamp());
+        trigger_restate_workflow(
+            deps,
+            "ClusterDetectionWorkflow",
+            &key,
+            serde_json::json!({}),
+        )
+        .await
+    }
+
     /// Trigger translation for a specific record.
     async fn trigger_translation(
         &self,
