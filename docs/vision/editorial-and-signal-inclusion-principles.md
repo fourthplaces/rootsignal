@@ -94,7 +94,7 @@ The statistic alone is evidence — it enters the graph as an Evidence node conn
 A closure changes the graph — a Resource node goes inactive. If another food shelf nearby is accepting new clients, or a mutual aid group has stepped in, surface that. Root Signal shows people where to go and how the landscape is shifting.
 
 **"ICE is conducting operations in this neighborhood."**
-This is a tension. It enters the graph connected to responses (legal aid hotlines, know-your-rights trainings, sanctuary churches, GoFundMes for affected families) and context (the federal policy, the corporate actors). Sensitive-signal holdback rules apply — the tension is not surfaced until corroborated, and exact locations are geographically fuzzed.
+This is a tension — and a critical one. It enters the graph connected to responses (legal aid hotlines, know-your-rights trainings, sanctuary churches, GoFundMes for affected families) and context (the federal policy, the corporate actors). The people posting about ICE activity on Reddit, Bluesky, and community forums are neighbors, organizers, and journalists who *want* this signal amplified. They are acting in the open because visibility is the point. The people who need protection — undocumented individuals and families — are not the ones broadcasting on social media. They communicate through encrypted channels, through proxies, through trusted networks. Suppressing public civic signal about enforcement activity doesn't protect vulnerable people — it silences the community members trying to organize a response. Root Signal treats this signal the same as any other public civic signal: it flows through the graph, links to responses, and is surfaced with geographic fuzziness appropriate to the sensitivity level. The signal is not held back. The community's voice is not muted.
 
 **Pattern:** When confronted with a problem or negative condition, Root Signal surfaces both the organized, constructive response *and* the civic context that helps people understand what's happening. The response is the primary signal. The context is what makes it meaningful.
 
@@ -108,6 +108,7 @@ These principles extend beyond data ingestion into how Root Signal presents info
 - Urgency should be about opportunity windows ("public comment closes Friday") not about threats ("they're about to approve this")
 - Tension should be presented with context and connection to action, not as fear
 - Language should assume the user wants to participate, not that they need to be protected
+- Public civic voice should be amplified, never suppressed out of fear of bad actors
 - Gaps in coverage should be acknowledged honestly, not papered over with fear-based framing
 
 ---
@@ -119,7 +120,7 @@ When evaluating a new source for ingestion, use this quick checklist:
 | Question | Required Answer |
 |---|---|
 | Does the source carry civic signal — needs, resources, events, tensions, evidence, or actors? | Yes |
-| Could the data, if aggregated and mapped, put vulnerable people at risk? | No (or: mitigated by holdback rules and geographic fuzziness) |
+| Is this private content that was not intended to be public? | No — Root Signal only ingests public signal. Public broadcasts don't create new risk by being aggregated; they were already public. Geographic fuzziness applies to sensitive signals at the display layer. |
 | Is the data traceable to an identifiable source? | Yes |
 | Would surfacing this data in a community platform feel constructive? | Yes |
 

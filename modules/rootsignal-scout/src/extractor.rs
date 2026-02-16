@@ -55,6 +55,7 @@ pub struct ExtractedSignal {
 /// The full extraction response from the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractionResponse {
+    #[serde(default)]
     pub signals: Vec<ExtractedSignal>,
 }
 
@@ -125,7 +126,11 @@ impl Extractor {
     ) -> Result<Vec<Node>> {
         // Truncate content to avoid token limits
         let content = if content.len() > 30_000 {
-            &content[..30_000]
+            let mut end = 30_000;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
         } else {
             content
         };
@@ -143,6 +148,20 @@ impl Extractor {
         let mut nodes = Vec::new();
 
         for signal in response.signals {
+            // Skip junk signals from extraction failures
+            let title_lower = signal.title.to_lowercase();
+            if ["unable to extract", "page not found", "error loading"]
+                .iter()
+                .any(|junk| title_lower.contains(junk))
+            {
+                warn!(
+                    source_url,
+                    title = signal.title,
+                    "Filtered junk signal from extraction"
+                );
+                continue;
+            }
+
             // PII check on title + summary
             let combined = format!("{} {}", signal.title, signal.summary);
             let pii = detect_pii(&combined);

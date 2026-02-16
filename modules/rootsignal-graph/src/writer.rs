@@ -4,7 +4,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, EvidenceNode, EventNode, GiveNode, Node, NodeType, SensitivityLevel, TensionNode,
+    AskNode, EvidenceNode, EventNode, GiveNode, Node, NodeMeta, NodeType, SensitivityLevel,
+    TensionNode,
 };
 
 use crate::GraphClient;
@@ -60,6 +61,8 @@ impl GraphWriter {
                 action_url: $action_url,
                 organizer: $organizer,
                 is_recurring: $is_recurring,
+                lat: $lat,
+                lng: $lng,
                 embedding: $embedding
             }) RETURN e.id AS id",
         )
@@ -72,17 +75,17 @@ impl GraphWriter {
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", n.meta.extracted_at.to_rfc3339())
+        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            n.meta.last_confirmed_active.to_rfc3339(),
+            memgraph_datetime(&n.meta.last_confirmed_active),
         )
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
-        .param("starts_at", n.starts_at.to_rfc3339())
+        .param("starts_at", memgraph_datetime(&n.starts_at))
         .param(
             "ends_at",
             n.ends_at
-                .map(|dt| dt.to_rfc3339())
+                .map(|dt| memgraph_datetime(&dt))
                 .unwrap_or_default(),
         )
         .param("action_url", n.action_url.as_str())
@@ -90,22 +93,9 @@ impl GraphWriter {
         .param("is_recurring", n.is_recurring)
         .param("embedding", embedding_to_f64(embedding));
 
-        if let Some(loc) = &n.meta.location {
-            let q = q.param("lat", loc.lat).param("lng", loc.lng);
-            let q_with_loc = query(
-                "MATCH (e:Event {id: $id}) SET e.location = point({latitude: $lat, longitude: $lng})",
-            )
-            .param("id", n.meta.id.to_string())
-            .param("lat", loc.lat)
-            .param("lng", loc.lng);
-
-            let mut stream = self.client.graph.execute(q).await?;
-            while stream.next().await?.is_some() {}
-            self.client.graph.run(q_with_loc).await?;
-        } else {
-            let mut stream = self.client.graph.execute(q).await?;
-            while stream.next().await?.is_some() {}
-        }
+        let q = add_location_params(q, &n.meta);
+        let mut stream = self.client.graph.execute(q).await?;
+        while stream.next().await?.is_some() {}
 
         Ok(n.meta.id)
     }
@@ -132,6 +122,8 @@ impl GraphWriter {
                 action_url: $action_url,
                 availability: $availability,
                 is_ongoing: $is_ongoing,
+                lat: $lat,
+                lng: $lng,
                 embedding: $embedding
             }) RETURN g.id AS id",
         )
@@ -144,10 +136,10 @@ impl GraphWriter {
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", n.meta.extracted_at.to_rfc3339())
+        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            n.meta.last_confirmed_active.to_rfc3339(),
+            memgraph_datetime(&n.meta.last_confirmed_active),
         )
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param("action_url", n.action_url.as_str())
@@ -155,18 +147,9 @@ impl GraphWriter {
         .param("is_ongoing", n.is_ongoing)
         .param("embedding", embedding_to_f64(embedding));
 
+        let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
         while stream.next().await?.is_some() {}
-
-        if let Some(loc) = &n.meta.location {
-            let q_loc = query(
-                "MATCH (g:Give {id: $id}) SET g.location = point({latitude: $lat, longitude: $lng})",
-            )
-            .param("id", n.meta.id.to_string())
-            .param("lat", loc.lat)
-            .param("lng", loc.lng);
-            self.client.graph.run(q_loc).await?;
-        }
 
         Ok(n.meta.id)
     }
@@ -194,6 +177,8 @@ impl GraphWriter {
                 what_needed: $what_needed,
                 action_url: $action_url,
                 goal: $goal,
+                lat: $lat,
+                lng: $lng,
                 embedding: $embedding
             }) RETURN a.id AS id",
         )
@@ -206,10 +191,10 @@ impl GraphWriter {
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", n.meta.extracted_at.to_rfc3339())
+        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            n.meta.last_confirmed_active.to_rfc3339(),
+            memgraph_datetime(&n.meta.last_confirmed_active),
         )
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param(
@@ -224,18 +209,9 @@ impl GraphWriter {
         .param("goal", n.goal.clone().unwrap_or_default())
         .param("embedding", embedding_to_f64(embedding));
 
+        let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
         while stream.next().await?.is_some() {}
-
-        if let Some(loc) = &n.meta.location {
-            let q_loc = query(
-                "MATCH (a:Ask {id: $id}) SET a.location = point({latitude: $lat, longitude: $lng})",
-            )
-            .param("id", n.meta.id.to_string())
-            .param("lat", loc.lat)
-            .param("lng", loc.lng);
-            self.client.graph.run(q_loc).await?;
-        }
 
         Ok(n.meta.id)
     }
@@ -260,6 +236,8 @@ impl GraphWriter {
                 last_confirmed_active: datetime($last_confirmed_active),
                 audience_roles: $audience_roles,
                 severity: $severity,
+                lat: $lat,
+                lng: $lng,
                 embedding: $embedding
             }) RETURN t.id AS id",
         )
@@ -272,10 +250,10 @@ impl GraphWriter {
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", n.meta.extracted_at.to_rfc3339())
+        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            n.meta.last_confirmed_active.to_rfc3339(),
+            memgraph_datetime(&n.meta.last_confirmed_active),
         )
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param(
@@ -284,18 +262,9 @@ impl GraphWriter {
         )
         .param("embedding", embedding_to_f64(embedding));
 
+        let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
         while stream.next().await?.is_some() {}
-
-        if let Some(loc) = &n.meta.location {
-            let q_loc = query(
-                "MATCH (t:Tension {id: $id}) SET t.location = point({latitude: $lat, longitude: $lng})",
-            )
-            .param("id", n.meta.id.to_string())
-            .param("lat", loc.lat)
-            .param("lng", loc.lng);
-            self.client.graph.run(q_loc).await?;
-        }
 
         Ok(n.meta.id)
     }
@@ -306,8 +275,8 @@ impl GraphWriter {
         evidence: &EvidenceNode,
         signal_node_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
-        // Create evidence node and link to the signal node
-        // We search across all signal labels to find the target
+        // Create evidence node and link to the signal node.
+        // Use multiple OPTIONAL MATCHes + COALESCE to find the target across labels.
         let q = query(
             "CREATE (ev:Evidence {
                 id: $ev_id,
@@ -317,25 +286,17 @@ impl GraphWriter {
                 snippet: $snippet
             })
             WITH ev
-            CALL {
-                WITH ev
-                OPTIONAL MATCH (n:Event {id: $signal_id}) RETURN n
-                UNION
-                WITH ev
-                OPTIONAL MATCH (n:Give {id: $signal_id}) RETURN n
-                UNION
-                WITH ev
-                OPTIONAL MATCH (n:Ask {id: $signal_id}) RETURN n
-                UNION
-                WITH ev
-                OPTIONAL MATCH (n:Tension {id: $signal_id}) RETURN n
-            }
-            WITH ev, n WHERE n IS NOT NULL LIMIT 1
+            OPTIONAL MATCH (e:Event {id: $signal_id})
+            OPTIONAL MATCH (g:Give {id: $signal_id})
+            OPTIONAL MATCH (a:Ask {id: $signal_id})
+            OPTIONAL MATCH (t:Tension {id: $signal_id})
+            WITH ev, coalesce(e, g, a, t) AS n
+            WHERE n IS NOT NULL
             CREATE (n)-[:SOURCED_FROM]->(ev)",
         )
         .param("ev_id", evidence.id.to_string())
         .param("source_url", evidence.source_url.as_str())
-        .param("retrieved_at", evidence.retrieved_at.to_rfc3339())
+        .param("retrieved_at", memgraph_datetime(&evidence.retrieved_at))
         .param("content_hash", evidence.content_hash.as_str())
         .param("snippet", evidence.snippet.clone().unwrap_or_default())
         .param("signal_id", signal_node_id.to_string());
@@ -362,22 +323,22 @@ impl GraphWriter {
 
         let q = query(
             &format!(
-                "CALL db.index.vector.queryNodes('{}', 1, $embedding)
-                 YIELD node, score
-                 WHERE score >= $threshold
-                 RETURN node.id AS id, score",
+                "CALL vector_search.search('{}', 1, $embedding)
+                 YIELD node, similarity
+                 RETURN node.id AS id, similarity",
                 index_name
             ),
         )
-        .param("embedding", embedding_to_f64(embedding))
-        .param("threshold", threshold);
+        .param("embedding", embedding_to_f64(embedding));
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
-            let score: f64 = row.get("score").unwrap_or(0.0);
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(Some((id, score)));
+            let similarity: f64 = row.get("similarity").unwrap_or(0.0);
+            if similarity >= threshold {
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    return Ok(Some((id, similarity)));
+                }
             }
         }
 
@@ -406,7 +367,7 @@ impl GraphWriter {
             label
         ))
         .param("id", node_id.to_string())
-        .param("now", now.to_rfc3339());
+        .param("now", memgraph_datetime(&now));
 
         self.client.graph.run(q).await?;
         info!(%node_id, %label, "Corroborated existing signal");
@@ -436,27 +397,13 @@ impl GraphWriter {
     }
 
     /// Acquire a scout lock. Returns false if another scout is running.
+    /// Always cleans up any existing lock first — containers may be killed without releasing.
     pub async fn acquire_scout_lock(&self) -> Result<bool, neo4rs::Error> {
-        // Clean stale locks older than 1 hour
+        // Always delete any existing lock (stale from killed containers)
         self.client
             .graph
-            .run(query(
-                "MATCH (lock:ScoutLock)
-                 WHERE lock.started_at < datetime() - duration('PT1H')
-                 DELETE lock",
-            ))
+            .run(query("MATCH (lock:ScoutLock) DELETE lock"))
             .await?;
-
-        // Check for existing lock
-        let mut stream = self
-            .client
-            .graph
-            .execute(query("MATCH (lock:ScoutLock) RETURN lock.started_at AS started_at"))
-            .await?;
-
-        if stream.next().await?.is_some() {
-            return Ok(false);
-        }
 
         // Create lock
         self.client
@@ -477,6 +424,15 @@ impl GraphWriter {
     }
 }
 
+/// Add lat/lng params to a query from node metadata.
+/// Uses 0.0 for nodes without a location (filtered by reader).
+fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
+    match &meta.location {
+        Some(loc) => q.param("lat", loc.lat).param("lng", loc.lng),
+        None => q.param("lat", 0.0_f64).param("lng", 0.0_f64),
+    }
+}
+
 fn sensitivity_str(s: SensitivityLevel) -> &'static str {
     match s {
         SensitivityLevel::General => "general",
@@ -491,4 +447,10 @@ fn roles_to_strings(roles: &[rootsignal_common::AudienceRole]) -> Vec<String> {
 
 fn embedding_to_f64(embedding: &[f32]) -> Vec<f64> {
     embedding.iter().map(|&v| v as f64).collect()
+}
+
+/// Format a DateTime<Utc> as a local datetime string without timezone offset.
+/// Memgraph's datetime() requires "YYYY-MM-DDThh:mm:ss" format (no +00:00 suffix).
+fn memgraph_datetime(dt: &DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }

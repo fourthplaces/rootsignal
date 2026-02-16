@@ -46,6 +46,8 @@ The system handles sensitive information — where people need help, who's in cr
 
 The boundary is **public vs. private**, not which platform something came from. Public posts on Instagram, public GoFundMe campaigns, public Facebook events — these are civic signal and are treated the same as org websites or government data. Private messages, friends-only posts, closed groups — these are never touched. Personal information from direct intake is handled with care. Location data is served at the minimum precision necessary. The system does not build profiles of people seeking help.
 
+Privacy protection is not signal suppression. When community members post publicly about civic tensions — including enforcement activity, sanctuary responses, or organizing — they are exercising voice, not exposing vulnerability. Muting that signal out of paternalistic caution silences the people trying to help. The privacy boundary protects *private* content. Public civic voice flows freely.
+
 This means: privacy isn't a policy — it's architecture. The system is designed so that certain violations are structurally impossible, not merely discouraged.
 
 ### 6. Attribution and Linking Back

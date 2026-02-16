@@ -1,22 +1,92 @@
 use anyhow::{Context, Result};
-use firecrawl::FirecrawlApp;
+use async_trait::async_trait;
 use tracing::{info, warn};
 
-/// Scrape a URL using Firecrawl and return clean markdown content.
-pub struct Scraper {
-    app: FirecrawlApp,
+// --- PageScraper trait ---
+
+#[async_trait]
+pub trait PageScraper: Send + Sync {
+    async fn scrape(&self, url: &str) -> Result<String>;
+    fn name(&self) -> &str;
 }
 
-impl Scraper {
-    pub fn new(firecrawl_api_key: &str) -> Result<Self> {
-        let app = FirecrawlApp::new(firecrawl_api_key)
+// --- Spider (default, no API key) ---
+
+/// Scraper that uses Chromium's --dump-dom for full JS rendering.
+/// Bypasses Spider's broken chromiumoxide CDP layer entirely.
+pub struct ChromeScraper;
+
+impl ChromeScraper {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn html_to_text(html: &str) -> String {
+        html2text::from_read(html.as_bytes(), 120).unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl PageScraper for ChromeScraper {
+    async fn scrape(&self, url: &str) -> Result<String> {
+        info!(url, scraper = "chrome", "Scraping URL");
+
+        let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
+
+        let output = tokio::process::Command::new(&chrome_bin)
+            .args([
+                "--headless",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--dump-dom",
+                url,
+            ])
+            .output()
+            .await
+            .context(format!("Failed to run Chrome for {url}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(url, scraper = "chrome", stderr = %stderr, "Chrome exited with error");
+            return Ok(String::new());
+        }
+
+        let html = String::from_utf8_lossy(&output.stdout).to_string();
+
+        if html.trim().is_empty() {
+            warn!(url, scraper = "chrome", "Empty DOM output");
+            return Ok(String::new());
+        }
+
+        let text = Self::html_to_text(&html);
+        info!(url, scraper = "chrome", bytes = text.len(), "Scraped successfully");
+        Ok(text)
+    }
+
+    fn name(&self) -> &str {
+        "chrome"
+    }
+}
+
+// --- Firecrawl (API-based fallback) ---
+
+pub struct FirecrawlScraper {
+    app: firecrawl::FirecrawlApp,
+}
+
+impl FirecrawlScraper {
+    pub fn new(api_key: &str) -> Result<Self> {
+        let app = firecrawl::FirecrawlApp::new(api_key)
             .context("Failed to create Firecrawl client")?;
         Ok(Self { app })
     }
+}
 
-    /// Scrape a single URL and return its markdown content.
-    pub async fn scrape(&self, url: &str) -> Result<String> {
-        info!(url, "Scraping URL");
+#[async_trait]
+impl PageScraper for FirecrawlScraper {
+    async fn scrape(&self, url: &str) -> Result<String> {
+        info!(url, scraper = "firecrawl", "Scraping URL");
 
         let result = self
             .app
@@ -27,16 +97,73 @@ impl Scraper {
         let markdown = result.markdown.unwrap_or_default();
 
         if markdown.is_empty() {
-            warn!(url, "Scrape returned empty content");
+            warn!(url, scraper = "firecrawl", "Scrape returned empty content");
         } else {
-            info!(url, bytes = markdown.len(), "Scraped successfully");
+            info!(url, scraper = "firecrawl", bytes = markdown.len(), "Scraped successfully");
         }
 
         Ok(markdown)
     }
+
+    fn name(&self) -> &str {
+        "firecrawl"
+    }
 }
 
-/// Search Tavily for civic signals and return a list of URLs with snippets.
+// --- Fallback: tries Spider first, then Firecrawl ---
+
+pub struct FallbackScraper {
+    primary: Box<dyn PageScraper>,
+    fallback: Box<dyn PageScraper>,
+}
+
+impl FallbackScraper {
+    pub fn new(primary: Box<dyn PageScraper>, fallback: Box<dyn PageScraper>) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+#[async_trait]
+impl PageScraper for FallbackScraper {
+    async fn scrape(&self, url: &str) -> Result<String> {
+        match self.primary.scrape(url).await {
+            Ok(content) if !content.is_empty() => Ok(content),
+            Ok(_) => {
+                warn!(
+                    url,
+                    primary = self.primary.name(),
+                    fallback = self.fallback.name(),
+                    "Primary scraper returned empty, trying fallback"
+                );
+                self.fallback.scrape(url).await
+            }
+            Err(e) => {
+                warn!(
+                    url,
+                    primary = self.primary.name(),
+                    fallback = self.fallback.name(),
+                    error = %e,
+                    "Primary scraper failed, trying fallback"
+                );
+                self.fallback.scrape(url).await
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "fallback"
+    }
+}
+
+// --- Builder helper ---
+
+pub fn build_scraper(firecrawl_api_key: &str) -> Result<Box<dyn PageScraper>> {
+    info!("Using Chrome scraper (headless Chromium --dump-dom)");
+    Ok(Box::new(ChromeScraper::new()))
+}
+
+// --- Tavily (unchanged) ---
+
 pub struct TavilySearcher {
     api_key: String,
     client: reqwest::Client,
@@ -57,7 +184,6 @@ impl TavilySearcher {
         }
     }
 
-    /// Search Tavily and return results.
     pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
         info!(query, max_results, "Tavily search");
 

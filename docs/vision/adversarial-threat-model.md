@@ -37,7 +37,7 @@ Federal agencies (ICE, FBI, DHS), state law enforcement, and local police have d
 - Identity information on people reporting sensitive signal
 
 **Specific scenarios:**
-- ICE queries the API for all Response nodes connected to immigration-related Tensions in a metro area — effectively getting a list of every org and individual helping undocumented people
+- ICE queries the API for Response nodes connected to immigration-related Tensions — but this information is already public (org websites, GoFundMe pages, public social media posts). Root Signal aggregates public signal; it doesn't create new exposure. The mitigations (no actor timelines, no network graph exposure, geographic fuzziness) limit what's queryable beyond what's already on the open web
 - FBI uses the actor graph to map connections between advocacy organizations, identifying coordination patterns
 - Local police use heat map data to pre-position resources at anticipated protest locations
 - A subpoena demands server logs, query logs, or the graph itself
@@ -132,7 +132,7 @@ People submitting signal directly (SMS, web form, email, voice) create a two-way
 
 Geographic visualizations of signal density — where organizing is concentrated, where needs are highest, where tensions are hottest — are powerful for community awareness and for surveillance alike.
 
-**Risk:** A heat map of "immigration-related Response activity" is a map of sanctuary networks. A heat map of "police accountability organizing" is a target list.
+**Risk:** Geographic visualizations aggregate public signal in ways that reveal patterns. However, these organizations are already publicly broadcasting their work — sanctuary churches, legal aid clinics, and community orgs *want* to be found by the people they serve. The mitigation is aggregate-only heat maps for sensitive domains (density without individual node links), not suppression of the signal itself.
 
 ### Query Patterns
 
@@ -273,6 +273,8 @@ These are honest acknowledgments of problems this document does not fully solve:
 **The "legitimate use" blur.** A journalist investigating which organizations are responding to a crisis is doing legitimate work. A government agent doing the same thing for surveillance purposes is asking the same queries. The system cannot distinguish intent. The mitigations limit the *tools* available, not the *users*.
 
 **Scale changes the threat model.** A small system serving one metro with modest traffic is not an interesting surveillance target. A national system mapping civic activity across every city becomes one. Mitigations that are sufficient at small scale may be insufficient at national scale. This document should be revisited at each phase of growth.
+
+**Over-suppression is itself a threat.** The impulse to protect vulnerable people by suppressing public civic signal is well-intentioned but misguided. The people posting about enforcement activity, organizing sanctuary responses, and fundraising for affected families on public platforms are doing so deliberately — they want visibility. They are acting in the open because that's how community response works. The people who need protection (undocumented individuals, at-risk families) are not the ones broadcasting on Reddit or Bluesky. They communicate through encrypted channels, through proxies, through trusted in-person networks. If Root Signal suppresses or holds back public civic signal out of fear of bad actors, it doesn't protect vulnerable people — it silences the community members trying to help them. The structural mitigations above (geographic fuzziness, no query logging, no organizer profiles) are the right protections. Muting the signal is not.
 
 ---
 

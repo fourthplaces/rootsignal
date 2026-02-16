@@ -23,5 +23,9 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
+spider = { workspace = true }
 firecrawl = { workspace = true }
+async-trait = { workspace = true }
 regex = { workspace = true }
+html2text = { workspace = true }
+futures = { workspace = true }

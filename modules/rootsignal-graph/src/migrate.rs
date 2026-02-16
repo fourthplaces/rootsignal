@@ -1,9 +1,10 @@
 use neo4rs::query;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::GraphClient;
 
 /// Run idempotent schema migrations: constraints, indexes.
+/// Memgraph does not support IF NOT EXISTS — we ignore "already exists" errors.
 pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
@@ -11,75 +12,121 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- UUID uniqueness constraints ---
     let constraints = [
-        "CREATE CONSTRAINT event_id IF NOT EXISTS FOR (n:Event) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT give_id IF NOT EXISTS FOR (n:Give) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT ask_id IF NOT EXISTS FOR (n:Ask) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT tension_id IF NOT EXISTS FOR (n:Tension) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (n:Evidence) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Event) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Give) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Ask) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Tension) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Evidence) ASSERT n.id IS UNIQUE",
     ];
 
     for c in &constraints {
-        g.run(query(c)).await?;
+        run_ignoring_exists(g, c).await?;
     }
     info!("UUID uniqueness constraints created");
 
-    // --- NOT NULL constraints on safety-critical fields ---
-    let not_null = [
-        "CREATE CONSTRAINT event_sensitivity IF NOT EXISTS FOR (n:Event) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT give_sensitivity IF NOT EXISTS FOR (n:Give) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT ask_sensitivity IF NOT EXISTS FOR (n:Ask) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT tension_sensitivity IF NOT EXISTS FOR (n:Tension) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT event_confidence IF NOT EXISTS FOR (n:Event) REQUIRE n.confidence IS NOT NULL",
-        "CREATE CONSTRAINT give_confidence IF NOT EXISTS FOR (n:Give) REQUIRE n.confidence IS NOT NULL",
-        "CREATE CONSTRAINT ask_confidence IF NOT EXISTS FOR (n:Ask) REQUIRE n.confidence IS NOT NULL",
-        "CREATE CONSTRAINT tension_confidence IF NOT EXISTS FOR (n:Tension) REQUIRE n.confidence IS NOT NULL",
+    // --- Existence (NOT NULL) constraints ---
+    // Memgraph supports these for free (Neo4j required Enterprise).
+    let existence = [
+        // Event
+        "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.sensitivity)",
+        "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.confidence)",
+        // Give
+        "CREATE CONSTRAINT ON (n:Give) ASSERT EXISTS (n.sensitivity)",
+        "CREATE CONSTRAINT ON (n:Give) ASSERT EXISTS (n.confidence)",
+        // Ask
+        "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.sensitivity)",
+        "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.confidence)",
+        // Tension
+        "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.sensitivity)",
+        "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.confidence)",
     ];
 
-    for c in &not_null {
-        g.run(query(c)).await?;
+    for e in &existence {
+        run_ignoring_exists(g, e).await?;
     }
-    info!("NOT NULL constraints on sensitivity/confidence created");
+    info!("Existence constraints created");
 
-    // --- Spatial indexes (POINT) ---
-    let spatial = [
-        "CREATE POINT INDEX event_location IF NOT EXISTS FOR (n:Event) ON (n.location)",
-        "CREATE POINT INDEX give_location IF NOT EXISTS FOR (n:Give) ON (n.location)",
-        "CREATE POINT INDEX ask_location IF NOT EXISTS FOR (n:Ask) ON (n.location)",
-        "CREATE POINT INDEX tension_location IF NOT EXISTS FOR (n:Tension) ON (n.location)",
+    // --- Property indexes (lat/lng for bounding box queries) ---
+    let indexes = [
+        "CREATE INDEX ON :Event(lat)",
+        "CREATE INDEX ON :Event(lng)",
+        "CREATE INDEX ON :Give(lat)",
+        "CREATE INDEX ON :Give(lng)",
+        "CREATE INDEX ON :Ask(lat)",
+        "CREATE INDEX ON :Ask(lng)",
+        "CREATE INDEX ON :Tension(lat)",
+        "CREATE INDEX ON :Tension(lng)",
     ];
 
-    for s in &spatial {
-        g.run(query(s)).await?;
+    for idx in &indexes {
+        run_ignoring_exists(g, idx).await?;
     }
-    info!("Spatial indexes created");
+    info!("Property indexes created");
+
+    // --- Backfill lat/lng from point() locations, then drop point() property ---
+    // neo4rs can't deserialize nodes that contain point() values (Memgraph serialization quirk),
+    // so we store lat/lng as plain floats and remove the point() property entirely.
+    let backfill = [
+        "MATCH (n:Event) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Give) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Ask) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Tension) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n) WHERE n.location IS NOT NULL REMOVE n.location",
+    ];
+
+    for b in &backfill {
+        match g.run(query(b)).await {
+            Ok(_) => {}
+            Err(e) => warn!("Backfill failed (non-fatal): {e}"),
+        }
+    }
+    info!("Location backfill complete");
 
     // --- Full-text indexes ---
     let fulltext = [
-        "CREATE FULLTEXT INDEX event_text IF NOT EXISTS FOR (n:Event) ON EACH [n.title, n.summary]",
-        "CREATE FULLTEXT INDEX give_text IF NOT EXISTS FOR (n:Give) ON EACH [n.title, n.summary]",
-        "CREATE FULLTEXT INDEX ask_text IF NOT EXISTS FOR (n:Ask) ON EACH [n.title, n.summary]",
-        "CREATE FULLTEXT INDEX tension_text IF NOT EXISTS FOR (n:Tension) ON EACH [n.title, n.summary]",
+        "CREATE TEXT INDEX event_text ON :Event(title, summary)",
+        "CREATE TEXT INDEX give_text ON :Give(title, summary)",
+        "CREATE TEXT INDEX ask_text ON :Ask(title, summary)",
+        "CREATE TEXT INDEX tension_text ON :Tension(title, summary)",
     ];
 
     for f in &fulltext {
-        g.run(query(f)).await?;
+        run_ignoring_exists(g, f).await?;
     }
     info!("Full-text indexes created");
 
     // --- Vector indexes (1024-dim for Voyage embeddings) ---
-    // Neo4j 5.x vector index syntax
     let vector = [
-        "CREATE VECTOR INDEX event_embedding IF NOT EXISTS FOR (n:Event) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
-        "CREATE VECTOR INDEX give_embedding IF NOT EXISTS FOR (n:Give) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
-        "CREATE VECTOR INDEX ask_embedding IF NOT EXISTS FOR (n:Ask) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
-        "CREATE VECTOR INDEX tension_embedding IF NOT EXISTS FOR (n:Tension) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        r#"CREATE VECTOR INDEX event_embedding ON :Event(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
+        r#"CREATE VECTOR INDEX give_embedding ON :Give(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
+        r#"CREATE VECTOR INDEX ask_embedding ON :Ask(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
+        r#"CREATE VECTOR INDEX tension_embedding ON :Tension(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
     ];
 
     for v in &vector {
-        g.run(query(v)).await?;
+        run_ignoring_exists(g, v).await?;
     }
     info!("Vector indexes created");
 
     info!("Schema migration complete");
     Ok(())
+}
+
+/// Run a Cypher statement, ignoring errors that indicate the constraint/index already exists.
+async fn run_ignoring_exists(
+    g: &neo4rs::Graph,
+    cypher: &str,
+) -> Result<(), neo4rs::Error> {
+    match g.run(query(cypher)).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("already exists") || msg.contains("equivalent") {
+                warn!("Already exists (skipped): {}", cypher.chars().take(80).collect::<String>());
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }

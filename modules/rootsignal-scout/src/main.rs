@@ -16,7 +16,8 @@ async fn main() -> Result<()> {
     info!("Root Signal Scout starting...");
 
     // Load config
-    let config = Config::from_env();
+    let config = Config::scout_from_env();
+    config.log_redacted();
 
     // Connect to Neo4j
     let client =

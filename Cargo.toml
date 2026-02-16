@@ -51,7 +51,11 @@ tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-he
 tower = "0.5"
 
 # Web scraping
+spider = { version = "2.45", default-features = false, features = ["basic", "chrome", "chrome_stealth"] }
 firecrawl = "1"
+
+# HTML to text
+html2text = "0.14"
 
 # Regex (PII detection)
 regex = "1"

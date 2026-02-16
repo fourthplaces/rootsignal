@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
+use futures::stream::{self, StreamExt};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -9,7 +10,7 @@ use rootsignal_graph::{GraphWriter, GraphClient};
 use crate::embedder::Embedder;
 use crate::extractor::Extractor;
 use crate::quality;
-use crate::scraper::{Scraper, TavilySearcher};
+use crate::scraper::{self, PageScraper, TavilySearcher};
 use crate::sources;
 
 /// Stats from a scout run.
@@ -61,7 +62,7 @@ pub struct Scout {
     writer: GraphWriter,
     extractor: Extractor,
     embedder: Embedder,
-    scraper: Scraper,
+    scraper: Box<dyn PageScraper>,
     tavily: TavilySearcher,
 }
 
@@ -77,7 +78,7 @@ impl Scout {
             writer: GraphWriter::new(graph_client),
             extractor: Extractor::new(anthropic_api_key),
             embedder: Embedder::new(voyage_api_key),
-            scraper: Scraper::new(firecrawl_api_key)?,
+            scraper: scraper::build_scraper(firecrawl_api_key)?,
             tavily: TavilySearcher::new(tavily_api_key),
         })
     }
@@ -103,10 +104,20 @@ impl Scout {
         let mut stats = ScoutStats::default();
         let mut all_urls: Vec<(String, f32)> = Vec::new();
 
-        // 1. Tavily searches
+        // 1. Tavily searches (parallel, 5 at a time)
         info!("Starting Tavily searches...");
-        for query in sources::tavily_queries() {
-            match self.tavily.search(query, 5).await {
+        let queries = sources::tavily_queries();
+        let search_results: Vec<_> = stream::iter(queries.into_iter().map(|query| {
+            async move {
+                (query, self.tavily.search(query, 5).await)
+            }
+        }))
+        .buffer_unordered(5)
+        .collect()
+        .await;
+
+        for (query, result) in search_results {
+            match result {
                 Ok(results) => {
                     for r in results {
                         let trust = sources::source_trust(&r.url);
@@ -130,14 +141,47 @@ impl Scout {
         all_urls.dedup_by(|a, b| a.0 == b.0);
         info!(total_urls = all_urls.len(), "Unique URLs to scrape");
 
-        // 3. Scrape and extract each URL
-        for (url, source_trust) in &all_urls {
-            match self.process_url(url, *source_trust, &mut stats).await {
-                Ok(_) => stats.urls_scraped += 1,
-                Err(e) => {
-                    warn!(url, error = %e, "Failed to process URL");
-                    stats.urls_failed += 1;
+        // 3. Scrape + extract in parallel (5 concurrent), then write to graph sequentially
+        let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|(url, source_trust)| {
+            let url = url.clone();
+            let source_trust = *source_trust;
+            async move {
+                // Scrape
+                let content = match self.scraper.scrape(&url).await {
+                    Ok(c) if !c.is_empty() => c,
+                    Ok(_) => return (url, source_trust, None),
+                    Err(e) => {
+                        warn!(url, error = %e, "Scrape failed");
+                        return (url, source_trust, None);
+                    }
+                };
+                // Extract (LLM call)
+                match self.extractor.extract(&content, &url, source_trust).await {
+                    Ok(nodes) => (url, source_trust, Some((content, nodes))),
+                    Err(e) => {
+                        warn!(url, error = %e, "Failed to process URL");
+                        (url, source_trust, None)
+                    }
                 }
+            }
+        }))
+        .buffer_unordered(5)
+        .collect()
+        .await;
+
+        // Process extracted nodes sequentially (batch embed + dedup + graph writes)
+        for (url, source_trust, result) in pipeline_results {
+            match result {
+                Some((content, nodes)) => {
+                    match self.store_signals(&url, &content, nodes, &mut stats).await {
+                        Ok(_) => stats.urls_scraped += 1,
+                        Err(e) => {
+                            warn!(url, error = %e, "Failed to store signals");
+                            stats.urls_failed += 1;
+                        }
+                    }
+                }
+                None => stats.urls_failed += 1,
             }
         }
 
@@ -145,20 +189,13 @@ impl Scout {
         Ok(stats)
     }
 
-    async fn process_url(
+    async fn store_signals(
         &self,
         url: &str,
-        source_trust: f32,
+        content: &str,
+        mut nodes: Vec<Node>,
         stats: &mut ScoutStats,
     ) -> Result<()> {
-        // Scrape
-        let content = self.scraper.scrape(url).await?;
-        if content.is_empty() {
-            return Ok(());
-        }
-
-        // Extract signals
-        let mut nodes = self.extractor.extract(&content, url, source_trust).await?;
         stats.signals_extracted += nodes.len() as u32;
 
         // Score quality and set confidence
@@ -169,9 +206,41 @@ impl Scout {
             }
         }
 
-        // Process each signal
+        // Filter to signal nodes only (skip Evidence)
+        let nodes: Vec<_> = nodes
+            .into_iter()
+            .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
+            .collect();
+
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
+        // Batch embed all signals at once (1 API call instead of N)
+        let embed_texts: Vec<String> = nodes
+            .iter()
+            .map(|n| {
+                format!(
+                    "{} {}",
+                    n.title(),
+                    n.meta().map(|m| m.summary.as_str()).unwrap_or("")
+                )
+            })
+            .collect();
+
+        let embeddings = match self.embedder.embed_batch(embed_texts).await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(url, error = %e, "Batch embedding failed, skipping all signals");
+                return Ok(());
+            }
+        };
+
+        // Process each signal with its pre-computed embedding
         let now = Utc::now();
-        for node in nodes {
+        let content_hash = format!("{:x}", md5_hash(content));
+
+        for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
             let node_type = node.node_type();
             let type_idx = match node_type {
                 NodeType::Event => 0,
@@ -179,16 +248,6 @@ impl Scout {
                 NodeType::Ask => 2,
                 NodeType::Tension => 3,
                 NodeType::Evidence => continue,
-            };
-
-            // Embed for dedup
-            let embed_text = format!("{} {}", node.title(), node.meta().map(|m| m.summary.as_str()).unwrap_or(""));
-            let embedding = match self.embedder.embed(&embed_text).await {
-                Ok(e) => e,
-                Err(e) => {
-                    warn!(title = node.title(), error = %e, "Embedding failed, skipping");
-                    continue;
-                }
             };
 
             // Dedup check
@@ -202,12 +261,11 @@ impl Scout {
                     );
                     self.writer.corroborate(existing_id, node_type, now).await?;
 
-                    // Also link evidence
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
                         source_url: url.to_string(),
                         retrieved_at: now,
-                        content_hash: format!("{:x}", md5_hash(&content)),
+                        content_hash: content_hash.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
                     };
                     self.writer.create_evidence(&evidence, existing_id).await?;
@@ -215,7 +273,7 @@ impl Scout {
                     stats.signals_deduplicated += 1;
                     continue;
                 }
-                Ok(None) => {} // No duplicate
+                Ok(None) => {}
                 Err(e) => {
                     warn!(error = %e, "Dedup check failed, proceeding with creation");
                 }
@@ -224,12 +282,11 @@ impl Scout {
             // Create new node
             let node_id = self.writer.create_node(&node, &embedding).await?;
 
-            // Create evidence
             let evidence = EvidenceNode {
                 id: Uuid::new_v4(),
                 source_url: url.to_string(),
                 retrieved_at: now,
-                content_hash: format!("{:x}", md5_hash(&content)),
+                content_hash: content_hash.clone(),
                 snippet: node.meta().map(|m| m.summary.clone()),
             };
             self.writer.create_evidence(&evidence, node_id).await?;
@@ -237,7 +294,7 @@ impl Scout {
             // Update stats
             stats.signals_stored += 1;
             stats.by_type[type_idx] += 1;
-            stats.fresh_7d += 1; // All newly extracted signals are fresh
+            stats.fresh_7d += 1;
 
             if let Some(meta) = node.meta() {
                 for role in &meta.audience_roles {

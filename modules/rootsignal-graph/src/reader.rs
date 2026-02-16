@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use neo4rs::query;
 use uuid::Uuid;
 
@@ -41,10 +41,16 @@ impl PublicGraphReader {
 
         for nt in &types {
             let label = node_type_label(*nt);
+            // Use bounding box on plain lat/lng properties to avoid Memgraph point() serialization issues.
+            // ~1 degree lat ≈ 111km, 1 degree lng ≈ 111km * cos(lat)
+            let lat_delta = radius_km / 111.0;
+            let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
             let cypher = format!(
                 "MATCH (n:{label})
-                 WHERE n.location IS NOT NULL
-                   AND point.distance(n.location, point({{latitude: $lat, longitude: $lng}})) <= $radius_m
+                 WHERE n.lat <> 0.0
+                   AND n.lat >= $min_lat AND n.lat <= $max_lat
+                   AND n.lng >= $min_lng AND n.lng <= $max_lng
                    AND n.confidence >= $min_confidence
                  RETURN n
                  ORDER BY n.confidence DESC, n.last_confirmed_active DESC
@@ -52,9 +58,10 @@ impl PublicGraphReader {
             );
 
             let q = query(&cypher)
-                .param("lat", lat)
-                .param("lng", lng)
-                .param("radius_m", radius_km * 1000.0)
+                .param("min_lat", lat - lat_delta)
+                .param("max_lat", lat + lat_delta)
+                .param("min_lng", lng - lng_delta)
+                .param("max_lng", lng + lng_delta)
                 .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
 
             let mut stream = self.client.graph.execute(q).await?;
@@ -171,19 +178,12 @@ impl PublicGraphReader {
     /// Get confidence distribution (for quality dashboard).
     pub async fn confidence_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
-            "CALL {
-                MATCH (n:Event) RETURN n.confidence AS conf
-                UNION ALL
-                MATCH (n:Give) RETURN n.confidence AS conf
-                UNION ALL
-                MATCH (n:Ask) RETURN n.confidence AS conf
-                UNION ALL
-                MATCH (n:Tension) RETURN n.confidence AS conf
-            }
+            "MATCH (n)
+            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
             WITH CASE
-                WHEN conf >= 0.8 THEN 'high (0.8+)'
-                WHEN conf >= 0.6 THEN 'good (0.6-0.8)'
-                WHEN conf >= 0.4 THEN 'limited (0.4-0.6)'
+                WHEN n.confidence >= 0.8 THEN 'high (0.8+)'
+                WHEN n.confidence >= 0.6 THEN 'good (0.6-0.8)'
+                WHEN n.confidence >= 0.4 THEN 'limited (0.4-0.6)'
                 ELSE 'low (<0.4)'
             END AS bucket
             RETURN bucket, count(*) AS cnt
@@ -203,15 +203,9 @@ impl PublicGraphReader {
     /// Get audience role distribution (for quality dashboard).
     pub async fn audience_role_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
-            "CALL {
-                MATCH (n:Event) UNWIND n.audience_roles AS role RETURN role
-                UNION ALL
-                MATCH (n:Give) UNWIND n.audience_roles AS role RETURN role
-                UNION ALL
-                MATCH (n:Ask) UNWIND n.audience_roles AS role RETURN role
-                UNION ALL
-                MATCH (n:Tension) UNWIND n.audience_roles AS role RETURN role
-            }
+            "MATCH (n)
+            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
+            UNWIND n.audience_roles AS role
             RETURN role, count(*) AS cnt
             ORDER BY cnt DESC",
         );
@@ -229,16 +223,9 @@ impl PublicGraphReader {
     /// Get freshness distribution (for quality dashboard).
     pub async fn freshness_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
-            "CALL {
-                MATCH (n:Event) RETURN n.last_confirmed_active AS ts
-                UNION ALL
-                MATCH (n:Give) RETURN n.last_confirmed_active AS ts
-                UNION ALL
-                MATCH (n:Ask) RETURN n.last_confirmed_active AS ts
-                UNION ALL
-                MATCH (n:Tension) RETURN n.last_confirmed_active AS ts
-            }
-            WITH duration.between(ts, datetime()).days AS age_days
+            "MATCH (n)
+            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
+            WITH (datetime() - n.last_confirmed_active).day AS age_days
             WITH CASE
                 WHEN age_days <= 7 THEN '< 7 days'
                 WHEN age_days <= 30 THEN '7-30 days'
@@ -447,21 +434,27 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
 }
 
 fn parse_location(n: &neo4rs::Node) -> Option<GeoPoint> {
-    // neo4rs returns BoltPoint2D for point() values
-    // Try to extract lat/lng from the point
-    let point: neo4rs::BoltPoint2D = n.get("location").ok()?;
+    let lat: f64 = n.get("lat").ok()?;
+    let lng: f64 = n.get("lng").ok()?;
+    if lat == 0.0 && lng == 0.0 {
+        return None;
+    }
     Some(GeoPoint {
-        lat: point.y.value,
-        lng: point.x.value,
+        lat,
+        lng,
         precision: GeoPrecision::Exact,
     })
 }
 
 fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
-    // Neo4j datetime comes back as a string when stored via datetime($str)
+    // Writer stores as "%Y-%m-%dT%H:%M:%S%.6f" (no timezone, implicitly UTC)
     if let Ok(s) = n.get::<String>(prop) {
+        // Try RFC3339 first (has timezone), then naive datetime (writer format)
         if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
             return dt.with_timezone(&Utc);
+        }
+        if let Ok(naive) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f") {
+            return naive.and_utc();
         }
     }
     Utc::now()
@@ -511,6 +504,9 @@ fn parse_evidence_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     if let Ok(s) = n.get::<String>(prop) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
             return dt.with_timezone(&Utc);
+        }
+        if let Ok(naive) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f") {
+            return naive.and_utc();
         }
     }
     Utc::now()
