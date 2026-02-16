@@ -115,42 +115,56 @@ pub fn curated_sources() -> Vec<(&'static str, f32)> {
 }
 
 /// Instagram accounts to scrape via Apify.
-/// These are Twin Cities orgs that post volunteer needs, events, and community updates.
+/// Verified handles for Twin Cities orgs that post volunteer needs, events, and community updates.
 /// Returns (username, trust_score).
 pub fn instagram_accounts() -> Vec<(&'static str, f32)> {
     vec![
-        // Volunteer / community orgs
+        // Volunteer coordination
         ("handsontwincities", 0.7),
-        ("unitedwaytwincities", 0.7),
-        ("gtcuw", 0.7), // Greater Twin Cities United Way
-        // Food shelves / mutual aid
+        ("unitedwaytc", 0.7),
+        ("tchabitat", 0.7), // Twin Cities Habitat for Humanity
+        // Food shelves / hunger relief
         ("secondharvestheartland", 0.7),
-        ("loaborealforest", 0.6),
+        ("everymealorg", 0.7),
+        ("loavesandfishesmn", 0.6),
+        ("openarmsmn", 0.7),
+        // Mutual aid / community support
+        ("communityaidnetworkmn", 0.6),
+        ("peopleservingpeople", 0.6),
         ("pillsburyunited", 0.7),
-        // Ecological / parks
-        ("maborealforest", 0.6),
-        ("friendsofthemsriver", 0.6),
-        ("mplsparks", 0.7),
+        // Parks / ecology
+        ("minneapolisparks", 0.7),
+        ("friendsmissriv", 0.6),
+        ("parkconnection", 0.6),
+        // Immigration support
+        ("miracmn", 0.5),       // MN Immigrant Rights Action Committee
+        ("unidosmn", 0.5),
+        ("immigrantlawcentermn", 0.6),
+        ("cluesofficial", 0.6), // Comunidades Latinas Unidas En Servicio
         // Civic / advocacy
-        ("acabortionfund", 0.5),
-        ("navigatormn", 0.6),
-        ("mnimmigrantrights", 0.5),
-        // Community centers
-        ("eastsidefreedomlibrary", 0.6),
-        ("midaborecenter", 0.6),
+        ("voices4rj", 0.5), // Voices for Racial Justice
+        // Libraries
+        ("hclib", 0.7),              // Hennepin County Library
+        ("stpaulpubliclibrary", 0.7),
     ]
 }
 
 /// Facebook pages to scrape via Apify.
+/// Verified page URLs for Twin Cities community orgs.
 /// Returns (page_url, trust_score).
 pub fn facebook_pages() -> Vec<(&'static str, f32)> {
     vec![
-        ("https://www.facebook.com/handsontwincities", 0.7),
-        ("https://www.facebook.com/MinneapolisParks", 0.7),
-        ("https://www.facebook.com/SecondHarvestHeartland", 0.7),
-        ("https://www.facebook.com/UnitedWayTwinCities", 0.7),
-        ("https://www.facebook.com/PillsburyUnited", 0.7),
-        ("https://www.facebook.com/OpenArmsMinnesota", 0.7),
-        ("https://www.facebook.com/simpsonhousing", 0.6),
+        ("https://www.facebook.com/HandsOnTC", 0.7),
+        ("https://www.facebook.com/unitedwaytwincities", 0.7),
+        ("https://www.facebook.com/2harvest", 0.7),
+        ("https://www.facebook.com/EveryMealOrg", 0.7),
+        ("https://www.facebook.com/openarmsmn", 0.7),
+        ("https://www.facebook.com/tchabitat", 0.7),
+        ("https://www.facebook.com/FriendsMissRiv", 0.6),
+        // Immigration
+        ("https://www.facebook.com/miracmn", 0.5),
+        ("https://www.facebook.com/unidosmn", 0.5),
+        ("https://www.facebook.com/immigrantlawcenterMN", 0.6),
+        ("https://www.facebook.com/CLUESPage", 0.6),
     ]
 }
