@@ -22,7 +22,7 @@ pub struct ZipDensity {
     pub address_locality: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub listing_count: i64,
+    pub signal_count: i64,
     pub signal_domain_counts: serde_json::Value,
 }
 
@@ -69,7 +69,7 @@ impl HeatMapPoint {
 
     /// Recompute heat map points from locationables + notes urgency weighting.
     /// Truncates existing points and inserts fresh ones in a transaction.
-    /// Enriches listing points with signal_domain, category, and listing_type from tags.
+    /// Enriches points with signal_domain and category from tags.
     pub async fn compute_and_store(pool: &PgPool) -> Result<usize> {
         let mut tx = pool.begin().await?;
 
@@ -78,10 +78,10 @@ impl HeatMapPoint {
             .await?;
 
         // Weight: urgent notes = 10, notice/warning = 5, info/default = 1
-        // Enrich with tag metadata for listings
+        // Enrich with tag metadata
         let result = sqlx::query(
             r#"
-            INSERT INTO heat_map_points (latitude, longitude, weight, entity_type, entity_id, signal_domain, category, listing_type)
+            INSERT INTO heat_map_points (latitude, longitude, weight, entity_type, entity_id, signal_domain, category)
             SELECT
                 loc.latitude,
                 loc.longitude,
@@ -95,14 +95,13 @@ impl HeatMapPoint {
                 la.locatable_type as entity_type,
                 la.locatable_id as entity_id,
                 MAX(CASE WHEN t.kind = 'signal_domain' THEN t.value END) as signal_domain,
-                MAX(CASE WHEN t.kind = 'category' THEN t.value END) as category,
-                MAX(CASE WHEN t.kind = 'listing_type' THEN t.value END) as listing_type
+                MAX(CASE WHEN t.kind = 'category' THEN t.value END) as category
             FROM locationables la
             JOIN locations loc ON loc.id = la.location_id
             LEFT JOIN noteables na ON na.notable_type = la.locatable_type AND na.notable_id = la.locatable_id
             LEFT JOIN notes n ON n.id = na.note_id
             LEFT JOIN taggables tg ON tg.taggable_type = la.locatable_type AND tg.taggable_id = la.locatable_id
-            LEFT JOIN tags t ON t.id = tg.tag_id AND t.kind IN ('signal_domain', 'category', 'listing_type')
+            LEFT JOIN tags t ON t.id = tg.tag_id AND t.kind IN ('signal_domain', 'category')
             WHERE loc.latitude IS NOT NULL AND loc.longitude IS NOT NULL
             GROUP BY loc.latitude, loc.longitude, la.locatable_type, la.locatable_id
             "#,
@@ -130,7 +129,7 @@ impl HeatMapPoint {
         .map_err(Into::into)
     }
 
-    /// Signal density: listing counts per zip code with domain breakdown.
+    /// Signal density: signal counts per zip code with domain breakdown.
     pub async fn signal_density_by_zip(
         signal_domain: Option<&str>,
         category: Option<&str>,
@@ -142,7 +141,7 @@ impl HeatMapPoint {
                 z.address_locality,
                 z.latitude,
                 z.longitude,
-                COUNT(DISTINCT h.entity_id) AS listing_count,
+                COUNT(DISTINCT h.entity_id) AS signal_count,
                 COALESCE(
                     jsonb_object_agg(
                         COALESCE(h.signal_domain, 'unknown'),
@@ -176,7 +175,7 @@ impl HeatMapPoint {
             qb.push(" ");
         }
 
-        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY listing_count DESC");
+        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY signal_count DESC");
 
         qb.build_query_as::<ZipDensity>()
             .fetch_all(pool)
@@ -197,7 +196,7 @@ impl HeatMapPoint {
                 z.address_locality,
                 z.latitude,
                 z.longitude,
-                COUNT(DISTINCT h.entity_id) AS listing_count,
+                COUNT(DISTINCT h.entity_id) AS signal_count,
                 '{}'::jsonb AS signal_domain_counts
             FROM zip_codes z
             LEFT JOIN heat_map_points h ON
@@ -216,7 +215,7 @@ impl HeatMapPoint {
             qb.push(" ");
         }
 
-        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY listing_count ASC LIMIT ");
+        qb.push("GROUP BY z.zip_code, z.address_locality, z.latitude, z.longitude ORDER BY signal_count ASC LIMIT ");
         qb.push_bind(limit);
 
         qb.build_query_as::<ZipDensity>()

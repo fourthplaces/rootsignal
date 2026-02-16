@@ -8,7 +8,9 @@ use crate::clustering::activities::ClusterStats;
 // ─── Request / Response types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterRequest {}
+pub struct ClusterRequest {
+    pub cluster_type: String,
+}
 impl_restate_serde!(ClusterRequest);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +50,7 @@ impl ClusteringJob for ClusteringJobImpl {
     async fn run(
         &self,
         ctx: ObjectContext<'_>,
-        _req: ClusterRequest,
+        req: ClusterRequest,
     ) -> Result<ClusterResult, HandlerError> {
         tracing::info!("ClusteringJob.start");
         ctx.set("status", "clustering".to_string());
@@ -57,9 +59,10 @@ impl ClusteringJob for ClusteringJobImpl {
 
         // Step 2: Run clustering algorithm
         let deps = self.deps.clone();
+        let cluster_type = req.cluster_type.clone();
         let stats_json: String = ctx
             .run(|| async move {
-                let stats = crate::clustering::activities::cluster_listings(&deps)
+                let stats = crate::clustering::activities::cluster_signals(&deps, &cluster_type)
                     .await
                     .map_err(|e| TerminalError::new(format!("Clustering failed: {}", e)))?;
                 serde_json::to_string(&stats)

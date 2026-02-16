@@ -8,7 +8,6 @@ use crate::template::{resolve_config_vars, resolve_runtime_vars, validate_templa
 /// Holds pre-resolved prompt templates (config vars resolved, runtime vars intact).
 #[derive(Debug, Clone)]
 pub struct PromptRegistry {
-    extraction: String,
     investigation: String,
     nlq: String,
     detect_entity: String,
@@ -18,7 +17,6 @@ pub struct PromptRegistry {
 }
 
 /// Allowed runtime variables per prompt type.
-const EXTRACTION_RUNTIME_VARS: &[&str] = &["taxonomy"];
 const INVESTIGATION_RUNTIME_VARS: &[&str] = &[];
 const NLQ_RUNTIME_VARS: &[&str] = &["taxonomy", "today"];
 const DETECT_ENTITY_RUNTIME_VARS: &[&str] = &[];
@@ -29,14 +27,6 @@ const FINDING_VALIDATION_RUNTIME_VARS: &[&str] = &[];
 impl PromptRegistry {
     /// Load all prompt files, resolve config vars, validate runtime vars.
     pub fn load(config: &FileConfig, config_dir: &Path, toml_value: &toml::Value) -> Result<Self> {
-        let extraction = load_and_resolve(
-            &config.prompts.extraction,
-            config_dir,
-            toml_value,
-            EXTRACTION_RUNTIME_VARS,
-            "extraction",
-        )?;
-
         let investigation = load_and_resolve(
             &config.prompts.investigation,
             config_dir,
@@ -86,7 +76,6 @@ impl PromptRegistry {
         )?;
 
         Ok(Self {
-            extraction,
             investigation,
             nlq,
             detect_entity,
@@ -94,11 +83,6 @@ impl PromptRegistry {
             finding_investigation,
             finding_validation,
         })
-    }
-
-    /// Get extraction prompt with runtime vars filled in.
-    pub fn extraction_prompt(&self, taxonomy: &str) -> String {
-        resolve_runtime_vars(&self.extraction, &HashMap::from([("taxonomy", taxonomy)]))
     }
 
     /// Get NLQ prompt with runtime vars filled in.

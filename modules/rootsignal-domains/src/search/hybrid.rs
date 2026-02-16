@@ -127,11 +127,7 @@ async fn hybrid_ranked_search(
     // -- CTE: cluster dedup
     qb.push(
         ", cluster_reps AS ( \
-            SELECT DISTINCT ON (c.id) ci.item_id AS signal_id \
-            FROM clusters c \
-            JOIN cluster_items ci ON ci.cluster_id = c.id AND ci.item_type = 'signal' \
-            WHERE c.cluster_type = 'signal' \
-            ORDER BY c.id, (ci.item_id = c.representative_id) DESC, ci.similarity_score DESC NULLS LAST \
+            SELECT representative_id AS signal_id FROM clusters WHERE cluster_type = 'entity' \
         ) ",
     );
 
@@ -182,7 +178,7 @@ async fn hybrid_ranked_search(
     // Cluster dedup
     qb.push(
         "AND (s.id IN (SELECT signal_id FROM cluster_reps) \
-         OR s.id NOT IN (SELECT item_id FROM cluster_items WHERE item_type = 'signal')) ",
+         OR NOT EXISTS (SELECT 1 FROM cluster_items ci WHERE ci.item_type = 'signal' AND ci.item_id = s.id AND ci.cluster_type = 'entity')) ",
     );
 
     // Geo filter with bounding-box pre-filter for B-tree index usage
@@ -239,11 +235,7 @@ async fn filters_only_search(
 ) -> Result<Vec<SearchResultRow>> {
     let mut qb = sqlx::QueryBuilder::new(
         "WITH cluster_reps AS ( \
-            SELECT DISTINCT ON (c.id) ci.item_id AS signal_id \
-            FROM clusters c \
-            JOIN cluster_items ci ON ci.cluster_id = c.id AND ci.item_type = 'signal' \
-            WHERE c.cluster_type = 'signal' \
-            ORDER BY c.id, (ci.item_id = c.representative_id) DESC, ci.similarity_score DESC NULLS LAST \
+            SELECT representative_id AS signal_id FROM clusters WHERE cluster_type = 'entity' \
         ) SELECT s.id, ",
     );
 
@@ -289,7 +281,7 @@ async fn filters_only_search(
     // Cluster dedup
     qb.push(
         "AND (s.id IN (SELECT signal_id FROM cluster_reps) \
-         OR s.id NOT IN (SELECT item_id FROM cluster_items WHERE item_type = 'signal')) ",
+         OR NOT EXISTS (SELECT 1 FROM cluster_items ci WHERE ci.item_type = 'signal' AND ci.item_id = s.id AND ci.cluster_type = 'entity')) ",
     );
 
     // Geo filter with bounding-box pre-filter for B-tree index usage

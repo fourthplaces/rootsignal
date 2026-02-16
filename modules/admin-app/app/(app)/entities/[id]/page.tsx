@@ -117,7 +117,6 @@ export default function EntityDetailPage() {
             tags { id kind value }
             locations { id name addressLocality addressRegion }
             services { id name status }
-            listings { id title status }
             sources { id name sourceType url isActive signalCount }
           }
         }`,
@@ -159,7 +158,7 @@ export default function EntityDetailPage() {
   }
 
   async function handleArchive() {
-    if (!confirm("Archive this entity? It must have no active listings.")) return;
+    if (!confirm("Archive this entity? It must have no active signals.")) return;
     try {
       const res = await fetch("/api/graphql", {
         method: "POST",

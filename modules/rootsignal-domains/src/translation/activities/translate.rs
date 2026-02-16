@@ -10,7 +10,6 @@ pub const ALL_LOCALES: &[&str] = &["en", "es", "so", "ht"];
 /// Fields to translate per record type.
 fn translatable_fields(record_type: &str) -> &'static [&'static str] {
     match record_type {
-        "listing" => &["title", "description"],
         "entity" => &["description"],
         "service" => &[
             "name",
@@ -35,20 +34,6 @@ async fn fetch_source_fields(
     let mut result = Vec::new();
 
     match record_type {
-        "listing" => {
-            let row = sqlx::query_as::<_, (String, Option<String>)>(
-                "SELECT title, description FROM listings WHERE id = $1",
-            )
-            .bind(record_id)
-            .fetch_one(pool)
-            .await
-            .context("fetch listing for translation")?;
-
-            result.push(("title".to_string(), row.0));
-            if let Some(desc) = row.1 {
-                result.push(("description".to_string(), desc));
-            }
-        }
         "entity" => {
             let row = sqlx::query_as::<_, (Option<String>,)>(
                 "SELECT description FROM entities WHERE id = $1",

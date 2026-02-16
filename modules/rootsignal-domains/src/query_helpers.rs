@@ -12,7 +12,6 @@ pub fn append_tag_filters(
         ("signal_domain", &filters.signal_domain),
         ("audience_role", &filters.audience_role),
         ("category", &filters.category),
-        ("listing_type", &filters.listing_type),
         ("urgency", &filters.urgency),
         ("confidence", &filters.confidence),
         ("capacity_status", &filters.capacity_status),

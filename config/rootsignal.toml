@@ -10,7 +10,6 @@ nlq = "gpt-4o-mini"
 investigation = "gpt-4o"
 
 [prompts]
-extraction = "./prompts/extraction.md"
 investigation = "./prompts/investigation.md"
 nlq = "./prompts/nlq.md"
 detect_entity = "./prompts/detect_entity.md"

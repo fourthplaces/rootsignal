@@ -13,7 +13,7 @@ impl_restate_serde!(ExtractRequest);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractResult {
-    pub listing_ids: Vec<String>,
+    pub signal_ids: Vec<String>,
     pub extraction_count: u32,
     pub status: String,
 }
@@ -82,7 +82,7 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
         let signal_count = all_signal_ids.len() as u32;
         tracing::info!(signals = signal_count, "ExtractWorkflow.completed");
         Ok(ExtractResult {
-            listing_ids: all_signal_ids,
+            signal_ids: all_signal_ids,
             extraction_count: signal_count,
             status: "completed".to_string(),
         })

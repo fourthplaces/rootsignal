@@ -1,6 +1,8 @@
 use async_graphql::*;
 use uuid::Uuid;
 
+use rootsignal_domains::signals::Signal;
+
 use super::types::*;
 
 #[derive(Default)]
@@ -34,5 +36,14 @@ impl SignalMutation {
         .map_err(|e| Error::new(format!("Failed to flag signal: {}", e)))?;
 
         Ok(true)
+    }
+
+    /// Delete all signals associated with a source.
+    async fn delete_signals_by_source(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<i32> {
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+        let count = Signal::delete_by_source(source_id, pool)
+            .await
+            .map_err(|e| Error::new(format!("Failed to delete signals: {}", e)))?;
+        Ok(count as i32)
     }
 }
