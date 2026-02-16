@@ -32,7 +32,9 @@ impl GraphWriter {
             Node::Ask(n) => self.create_ask(n, embedding).await,
             Node::Tension(n) => self.create_tension(n, embedding).await,
             Node::Evidence(_) => {
-                panic!("Use create_evidence() for Evidence nodes")
+                return Err(neo4rs::Error::UnsupportedVersion(
+                    "Evidence nodes should use create_evidence() directly".to_string(),
+                ));
             }
         }
     }
@@ -278,20 +280,19 @@ impl GraphWriter {
         // Create evidence node and link to the signal node.
         // Use multiple OPTIONAL MATCHes + COALESCE to find the target across labels.
         let q = query(
-            "CREATE (ev:Evidence {
+            "OPTIONAL MATCH (e:Event {id: $signal_id})
+            OPTIONAL MATCH (g:Give {id: $signal_id})
+            OPTIONAL MATCH (a:Ask {id: $signal_id})
+            OPTIONAL MATCH (t:Tension {id: $signal_id})
+            WITH coalesce(e, g, a, t) AS n
+            WHERE n IS NOT NULL
+            CREATE (ev:Evidence {
                 id: $ev_id,
                 source_url: $source_url,
                 retrieved_at: datetime($retrieved_at),
                 content_hash: $content_hash,
                 snippet: $snippet
             })
-            WITH ev
-            OPTIONAL MATCH (e:Event {id: $signal_id})
-            OPTIONAL MATCH (g:Give {id: $signal_id})
-            OPTIONAL MATCH (a:Ask {id: $signal_id})
-            OPTIONAL MATCH (t:Tension {id: $signal_id})
-            WITH ev, coalesce(e, g, a, t) AS n
-            WHERE n IS NOT NULL
             CREATE (n)-[:SOURCED_FROM]->(ev)",
         )
         .param("ev_id", evidence.id.to_string())
@@ -397,13 +398,27 @@ impl GraphWriter {
     }
 
     /// Acquire a scout lock. Returns false if another scout is running.
-    /// Always cleans up any existing lock first — containers may be killed without releasing.
+    /// Cleans up stale locks (>30 min) from killed containers.
     pub async fn acquire_scout_lock(&self) -> Result<bool, neo4rs::Error> {
-        // Always delete any existing lock (stale from killed containers)
+        // Delete stale locks older than 30 minutes
         self.client
             .graph
-            .run(query("MATCH (lock:ScoutLock) DELETE lock"))
+            .run(query(
+                "MATCH (lock:ScoutLock) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
+            ))
             .await?;
+
+        // Check if a recent lock exists
+        let mut result = self.client.graph.execute(
+            query("MATCH (lock:ScoutLock) RETURN count(lock) AS cnt")
+        ).await?;
+
+        if let Some(row) = result.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            if cnt > 0 {
+                return Ok(false);
+            }
+        }
 
         // Create lock
         self.client

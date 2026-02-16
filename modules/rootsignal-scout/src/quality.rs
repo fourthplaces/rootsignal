@@ -36,7 +36,10 @@ pub fn score(node: &Node) -> ExtractionQuality {
         Node::Evidence(_) => (false, false),
     };
 
-    let actionable = has_action_url && (has_timing || matches!(node, Node::Give(g) if g.is_ongoing));
+    let actionable = has_action_url
+        && (has_timing
+            || matches!(node, Node::Give(g) if g.is_ongoing)
+            || matches!(node, Node::Ask(_)));
 
     // Completeness: fraction of 7 key fields populated
     // title, summary, signal_type (always), audience_roles, location, action_url, timing

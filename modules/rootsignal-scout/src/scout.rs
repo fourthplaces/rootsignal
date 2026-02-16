@@ -294,9 +294,18 @@ impl Scout {
             // Update stats
             stats.signals_stored += 1;
             stats.by_type[type_idx] += 1;
-            stats.fresh_7d += 1;
 
+            // Freshness bucketing based on extracted_at
             if let Some(meta) = node.meta() {
+                let age = now - meta.extracted_at;
+                if age.num_days() < 7 {
+                    stats.fresh_7d += 1;
+                } else if age.num_days() < 30 {
+                    stats.fresh_30d += 1;
+                } else if age.num_days() < 90 {
+                    stats.fresh_90d += 1;
+                }
+
                 for role in &meta.audience_roles {
                     *stats
                         .audience_roles
