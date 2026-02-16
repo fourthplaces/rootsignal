@@ -23,7 +23,6 @@ pub fn build_ingestor(
     http_client: &reqwest::Client,
     firecrawl_api_key: Option<&str>,
     apify_api_key: Option<&str>,
-    chrome_url: Option<&str>,
 ) -> Result<Arc<dyn Ingestor>> {
     match adapter {
         "spider" => {
