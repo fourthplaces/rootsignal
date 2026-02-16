@@ -6,46 +6,40 @@ interface TagCount {
   count: number;
 }
 
-interface ListingStats {
-  totalListings: number;
-  activeListings: number;
+interface SignalStats {
+  totalSignals: number;
   totalSources: number;
   totalSnapshots: number;
   totalExtractions: number;
   totalEntities: number;
   recent7D: number;
-  listingsByType: TagCount[];
-  listingsByRole: TagCount[];
-  listingsByCategory: TagCount[];
-  listingsByDomain: TagCount[];
+  signalsByType: TagCount[];
+  signalsByDomain: TagCount[];
 }
 
 export default async function StatsPage() {
   const headerStore = await headers();
   const api = authedClient(headerStore.get("cookie") ?? undefined);
 
-  const { listingStats } = await api.query<{ listingStats: ListingStats }>(
+  const { signalStats } = await api.query<{ signalStats: SignalStats }>(
     `query {
-      listingStats {
-        totalListings activeListings totalSources totalSnapshots
+      signalStats {
+        totalSignals totalSources totalSnapshots
         totalExtractions totalEntities recent7D
-        listingsByType { value count }
-        listingsByRole { value count }
-        listingsByCategory { value count }
-        listingsByDomain { value count }
+        signalsByType { value count }
+        signalsByDomain { value count }
       }
     }`,
   );
 
-  const stats = listingStats;
+  const stats = signalStats;
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">Statistics</h1>
 
       <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Total Listings" value={stats.totalListings} />
-        <Stat label="Active" value={stats.activeListings} />
+        <Stat label="Total Signals" value={stats.totalSignals} />
         <Stat label="Entities" value={stats.totalEntities} />
         <Stat label="Sources" value={stats.totalSources} />
         <Stat label="Snapshots" value={stats.totalSnapshots} />
@@ -54,10 +48,8 @@ export default async function StatsPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <BreakdownTable title="By Signal Domain" data={stats.listingsByDomain} />
-        <BreakdownTable title="By Category" data={stats.listingsByCategory} />
-        <BreakdownTable title="By Listing Type" data={stats.listingsByType} />
-        <BreakdownTable title="By Audience Role" data={stats.listingsByRole} />
+        <BreakdownTable title="By Signal Type" data={stats.signalsByType} />
+        <BreakdownTable title="By Signal Domain" data={stats.signalsByDomain} />
       </div>
     </div>
   );

@@ -12,7 +12,6 @@ use rootsignal_server::routes;
 use rootsignal_domains::clustering::ClusteringJob;
 use rootsignal_domains::extraction::restate::ExtractWorkflow;
 use rootsignal_domains::investigations::restate::InvestigateWorkflow;
-use rootsignal_domains::listings::restate::ListingsService;
 use rootsignal_domains::scraping::restate::{
     SchedulerService, ScrapeWorkflow, SourceObject,
 };
@@ -196,10 +195,6 @@ async fn main() -> Result<()> {
         )
         .bind(
             rootsignal_domains::translation::TranslateWorkflowImpl::with_deps(worker_deps.clone())
-                .serve(),
-        )
-        .bind(
-            rootsignal_domains::listings::ListingsServiceImpl::with_deps(worker_deps.clone())
                 .serve(),
         )
         .bind(rootsignal_domains::taxonomy::TagsServiceImpl::with_deps(worker_deps.clone()).serve())

@@ -19,7 +19,6 @@ interface Entity {
   tags: { id: string; kind: string; value: string }[];
   locations: { id: string; name: string | null; addressLocality: string | null; addressRegion: string | null }[];
   services: { id: string; name: string; status: string }[];
-  listings: { id: string; title: string; status: string }[];
   signals: { id: string; signalType: string; content: string; about: string | null; createdAt: string }[];
   sources: { id: string; name: string; sourceType: string; url: string | null; isActive: boolean; signalCount: number }[];
 }
@@ -50,7 +49,6 @@ export default function EntityDetailPage() {
               tags { id kind value }
               locations { id name addressLocality addressRegion }
               services { id name status }
-              listings { id title status }
               sources { id name sourceType url isActive signalCount }
             }
           }`,
@@ -257,20 +255,6 @@ export default function EntityDetailPage() {
                   <li key={s.id} className="flex items-center justify-between rounded border border-gray-200 bg-white px-3 py-2 text-sm">
                     <span>{s.name}</span>
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs">{s.status}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {entity.listings.length > 0 && (
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-gray-500">Listings</h3>
-              <ul className="space-y-1">
-                {entity.listings.map((l) => (
-                  <li key={l.id} className="rounded border border-gray-200 bg-white px-3 py-2 text-sm">
-                    <Link href={`/listings/${l.id}`} className="text-green-700 hover:underline">{l.title}</Link>
-                    <span className="ml-2 text-xs text-gray-400">{l.status}</span>
                   </li>
                 ))}
               </ul>

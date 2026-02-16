@@ -3,6 +3,7 @@ import { authedClient } from "@/lib/client";
 import Link from "next/link";
 import { DetectEntityButton } from "./detect-entity-button";
 import { RunButton, SourceMoreMenu, WorkflowStatus } from "./run-button";
+import { SourceTabs } from "./source-tabs";
 
 interface Source {
   id: string;
@@ -29,6 +30,14 @@ interface PageSnapshot {
   contentPreview: string | null;
   crawledAt: string;
   scrapeStatus: string;
+}
+
+interface Signal {
+  id: string;
+  signalType: string;
+  content: string;
+  about: string | null;
+  createdAt: string;
 }
 
 function formatTimeUntil(dateStr: string): string {
@@ -67,7 +76,7 @@ export default async function SourceDetailPage({
     { id },
   );
 
-  const [{ sourcePageSnapshots: snapshots }, { activeWorkflows }] = await Promise.all([
+  const [{ sourcePageSnapshots: snapshots }, { activeWorkflows }, { signals: signalsConnection }] = await Promise.all([
     api.query<{ sourcePageSnapshots: PageSnapshot[] }>(
       `query Snapshots($sourceId: UUID!) {
         sourcePageSnapshots(sourceId: $sourceId) {
@@ -86,7 +95,17 @@ export default async function SourceDetailPage({
       }`,
       { sourceId: id },
     ).catch(() => ({ activeWorkflows: [] as { workflowType: string; sourceId: string; status: string; stage: string | null; createdAt: string | null }[] })),
+    api.query<{ signals: { nodes: Signal[]; totalCount: number } }>(
+      `query SourceSignals($sourceId: UUID!) {
+        signals(sourceId: $sourceId, limit: 100) {
+          nodes { id signalType content about createdAt }
+          totalCount
+        }
+      }`,
+      { sourceId: id },
+    ).catch(() => ({ signals: { nodes: [] as Signal[], totalCount: 0 } })),
   ]);
+  const signals = signalsConnection.nodes;
 
   return (
     <div>
@@ -204,65 +223,7 @@ export default async function SourceDetailPage({
           </div>
         </dl>
       </div>
-      {/* Page Snapshots */}
-      <div className="mt-8">
-        <h2 className="mb-4 text-lg font-semibold">
-          Page Snapshots{" "}
-          <span className="text-sm font-normal text-gray-500">({snapshots.length})</span>
-        </h2>
-        {snapshots.length === 0 ? (
-          <p className="text-sm text-gray-500">No snapshots yet. Run a scrape to collect pages.</p>
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">Page URL</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">Via</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">Crawled</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">Preview</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {snapshots.map((snap) => (
-                  <tr key={snap.id} className="hover:bg-gray-50">
-                    <td className="max-w-xs truncate px-4 py-3 text-sm">
-                      <Link
-                        href={`/snapshots/${snap.id}`}
-                        className="text-green-700 hover:underline"
-                        title={snap.pageUrl}
-                      >
-                        {snap.pageUrl.replace(/^https?:\/\//, "").slice(0, 60)}
-                      </Link>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
-                      {snap.fetchedVia}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs">
-                      <span
-                        className={`rounded px-2 py-0.5 text-xs font-medium ${
-                          snap.scrapeStatus === "completed"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-yellow-100 text-yellow-700"
-                        }`}
-                      >
-                        {snap.scrapeStatus}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
-                      {new Date(snap.crawledAt).toLocaleString()}
-                    </td>
-                    <td className="max-w-xs truncate px-4 py-3 text-xs text-gray-400">
-                      {snap.contentPreview || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <SourceTabs snapshots={snapshots} signals={signals} />
     </div>
   );
 }

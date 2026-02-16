@@ -185,6 +185,8 @@ pub struct ExtractedSignal {
     pub end_date: Option<String>,
     pub is_recurring: Option<bool>,
     pub recurrence_description: Option<String>,
+    /// When this signal was broadcast into the world (ISO 8601), if visible on the page
+    pub broadcasted_at: Option<String>,
     /// Source URL
     pub source_url: Option<String>,
     /// Detected language (BCP 47)

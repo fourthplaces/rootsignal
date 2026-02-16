@@ -73,21 +73,21 @@ impl GqlSearchResult {
 
     async fn tags(&self, ctx: &Context<'_>) -> Result<Vec<GqlTag>> {
         let loader = ctx.data_unchecked::<async_graphql::dataloader::DataLoader<TagsForLoader>>();
-        let key = PolymorphicKey("listing".to_string(), self.id);
+        let key = PolymorphicKey("signal".to_string(), self.id);
         Ok(loader.load_one(key).await?.unwrap_or_default())
     }
 
     async fn locations(&self, ctx: &Context<'_>) -> Result<Vec<GqlLocation>> {
         let loader =
             ctx.data_unchecked::<async_graphql::dataloader::DataLoader<LocationsForLoader>>();
-        let key = PolymorphicKey("listing".to_string(), self.id);
+        let key = PolymorphicKey("signal".to_string(), self.id);
         Ok(loader.load_one(key).await?.unwrap_or_default())
     }
 
     async fn schedules(&self, ctx: &Context<'_>) -> Result<Vec<GqlSchedule>> {
         let loader =
             ctx.data_unchecked::<async_graphql::dataloader::DataLoader<SchedulesForLoader>>();
-        let key = PolymorphicKey("listing".to_string(), self.id);
+        let key = PolymorphicKey("signal".to_string(), self.id);
         Ok(loader.load_one(key).await?.unwrap_or_default())
     }
 }

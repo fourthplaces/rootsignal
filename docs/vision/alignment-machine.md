@@ -4,8 +4,6 @@
 
 This document names something that emerged from the architecture rather than being designed into it. Root Signal was built as a broadcast index — collect signals, make them findable, let communities act. But the structure of what it collects naturally produces something larger: a system that surfaces where life is out of alignment and reflects when alignment is restored.
 
-This wasn't planned. It's a recognition.
-
 ---
 
 ## Signals Are Declarations of Alignment State

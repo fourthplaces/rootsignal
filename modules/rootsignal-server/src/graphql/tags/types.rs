@@ -54,8 +54,8 @@ pub struct GqlTagCount {
     pub count: i64,
 }
 
-impl From<rootsignal_domains::listings::TagCount> for GqlTagCount {
-    fn from(t: rootsignal_domains::listings::TagCount) -> Self {
+impl From<rootsignal_domains::signals::TagCount> for GqlTagCount {
+    fn from(t: rootsignal_domains::signals::TagCount) -> Self {
         Self {
             value: t.value,
             count: t.count,

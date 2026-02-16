@@ -18,11 +18,11 @@ pub struct ClusterStats {
     pub items_assigned: u32,
 }
 
-/// A listing row with the fields needed for clustering.
+/// A signal row with the fields needed for clustering.
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ClusterCandidate {
     id: Uuid,
-    title: String,
+    content: String,
     entity_id: Option<Uuid>,
     location_text: Option<String>,
     latitude: Option<f32>,
@@ -35,7 +35,7 @@ struct ClusterCandidate {
 #[derive(Debug, sqlx::FromRow)]
 struct AnnCandidate {
     id: Uuid,
-    title: String,
+    content: String,
     entity_id: Option<Uuid>,
     location_text: Option<String>,
     latitude: Option<f32>,
@@ -45,7 +45,7 @@ struct AnnCandidate {
     similarity: f64,
 }
 
-/// Run one batch of listing clustering.
+/// Run one batch of signal clustering.
 pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
     let pool = deps.pool();
     let clustering = &deps.file_config.clustering;
@@ -66,8 +66,8 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
         .execute(&mut *tx)
         .await?;
 
-    // Fetch unclustered listings with embeddings
-    let unclustered_ids = ClusterItem::unclustered("listing", batch_size, &mut *tx).await?;
+    // Fetch unclustered signals with embeddings
+    let unclustered_ids = ClusterItem::unclustered("signal", batch_size, &mut *tx).await?;
 
     if unclustered_ids.is_empty() {
         tx.commit().await?;
@@ -82,22 +82,22 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
     // Batch-load all ClusterCandidates in one query
     let all_candidates: Vec<ClusterCandidate> = sqlx::query_as::<_, ClusterCandidate>(
         r#"
-        SELECT l.id, l.title, l.entity_id, l.location_text,
+        SELECT s.id, s.content, s.entity_id, NULL::text AS location_text,
                lp.latitude::real AS latitude, lp.longitude::real AS longitude,
-               s.valid_from AS timing_start,
+               sch.valid_from AS timing_start,
                COALESCE((SELECT t.value = 'true' FROM taggables tg
                          JOIN tags t ON t.id = tg.tag_id
-                         WHERE tg.taggable_type = 'listing' AND tg.taggable_id = l.id
+                         WHERE tg.taggable_type = 'signal' AND tg.taggable_id = s.id
                          AND t.kind = 'is_recurring'), false) as is_recurring
-        FROM listings l
-        LEFT JOIN locationables la ON la.locatable_type = 'listing' AND la.locatable_id = l.id AND la.is_primary = true
+        FROM signals s
+        LEFT JOIN locationables la ON la.locatable_type = 'signal' AND la.locatable_id = s.id AND la.is_primary = true
         LEFT JOIN locations lp ON lp.id = la.location_id
         LEFT JOIN LATERAL (
             SELECT valid_from FROM schedules
-            WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+            WHERE scheduleable_type = 'signal' AND scheduleable_id = s.id
             ORDER BY valid_from DESC NULLS LAST LIMIT 1
-        ) s ON true
-        WHERE l.id = ANY($1)
+        ) sch ON true
+        WHERE s.id = ANY($1)
         "#,
     )
     .bind(&unclustered_ids)
@@ -109,7 +109,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
 
     // Batch-load all embeddings in one query
     let embedding_rows: Vec<(Uuid, Vector)> = sqlx::query_as::<_, (Uuid, Vector)>(
-        "SELECT embeddable_id, embedding FROM embeddings WHERE embeddable_type = 'listing' AND locale = 'en' AND embeddable_id = ANY($1)",
+        "SELECT embeddable_id, embedding FROM embeddings WHERE embeddable_type = 'signal' AND locale = 'en' AND embeddable_id = ANY($1)",
     )
     .bind(&unclustered_ids)
     .fetch_all(&mut *tx)
@@ -128,7 +128,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
     // Key: index in unclustered_ids, Value: cluster_id they should join
     let mut assignments: HashMap<Uuid, Uuid> = HashMap::new();
 
-    // Process each unclustered listing
+    // Process each unclustered signal
     for &item_id in &unclustered_ids {
         // Load the item's data from pre-fetched map
         let item = match candidate_map.get(&item_id) {
@@ -148,29 +148,29 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
             r#"
             WITH candidates AS MATERIALIZED (
                 SELECT e.embeddable_id AS id,
-                       l.title, l.entity_id, l.location_text,
+                       sig.content, sig.entity_id, NULL::text AS location_text,
                        lp.latitude::real AS latitude, lp.longitude::real AS longitude,
-                       s.valid_from AS timing_start,
+                       sch.valid_from AS timing_start,
                        COALESCE((SELECT t.value = 'true' FROM taggables tg
                                  JOIN tags t ON t.id = tg.tag_id
-                                 WHERE tg.taggable_type = 'listing' AND tg.taggable_id = l.id
+                                 WHERE tg.taggable_type = 'signal' AND tg.taggable_id = sig.id
                                  AND t.kind = 'is_recurring'), false) as is_recurring,
                        e.embedding <=> $1 AS distance
                 FROM embeddings e
-                JOIN listings l ON l.id = e.embeddable_id
-                LEFT JOIN locationables la ON la.locatable_type = 'listing' AND la.locatable_id = l.id AND la.is_primary = true
+                JOIN signals sig ON sig.id = e.embeddable_id
+                LEFT JOIN locationables la ON la.locatable_type = 'signal' AND la.locatable_id = sig.id AND la.is_primary = true
                 LEFT JOIN locations lp ON lp.id = la.location_id
                 LEFT JOIN LATERAL (
                     SELECT valid_from FROM schedules
-                    WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+                    WHERE scheduleable_type = 'signal' AND scheduleable_id = sig.id
                     ORDER BY valid_from DESC NULLS LAST LIMIT 1
-                ) s ON true
-                WHERE e.embeddable_type = 'listing' AND e.locale = 'en'
+                ) sch ON true
+                WHERE e.embeddable_type = 'signal' AND e.locale = 'en'
                   AND e.embeddable_id != $2
                 ORDER BY e.embedding <=> $1
                 LIMIT 50
             )
-            SELECT id, title, entity_id, location_text, latitude, longitude,
+            SELECT id, content, entity_id, location_text, latitude, longitude,
                    timing_start, is_recurring,
                    (1.0 - distance)::float8 AS similarity
             FROM candidates
@@ -195,7 +195,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
 
             // Look up which cluster this neighbor belongs to
             let neighbor_cluster =
-                ClusterItem::find_cluster_for("listing", neighbor.id, &mut *tx).await?;
+                ClusterItem::find_cluster_for("signal", neighbor.id, &mut *tx).await?;
 
             let cluster_id = neighbor_cluster.map(|ci| ci.cluster_id);
 
@@ -211,7 +211,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
         match best_match {
             Some((_neighbor_id, score, Some(cluster_id))) => {
                 // Assign to existing cluster
-                ClusterItem::create(cluster_id, item_id, "listing", Some(score as f32), pool)
+                ClusterItem::create(cluster_id, item_id, "signal", Some(score as f32), pool)
                     .await?;
                 assignments.insert(item_id, cluster_id);
                 stats.items_assigned += 1;
@@ -226,7 +226,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
                     ClusterItem::create(
                         existing_cluster_id,
                         item_id,
-                        "listing",
+                        "signal",
                         Some(score as f32),
                         pool,
                     )
@@ -236,8 +236,8 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
                     recompute_representative(existing_cluster_id, pool).await?;
                 } else {
                     // Create new cluster with the neighbor as initial representative
-                    let cluster = Cluster::create("listing", neighbor_id, pool).await?;
-                    ClusterItem::create(cluster.id, item_id, "listing", Some(score as f32), pool)
+                    let cluster = Cluster::create("signal", neighbor_id, pool).await?;
+                    ClusterItem::create(cluster.id, item_id, "signal", Some(score as f32), pool)
                         .await?;
                     assignments.insert(neighbor_id, cluster.id);
                     assignments.insert(item_id, cluster.id);
@@ -248,7 +248,7 @@ pub async fn cluster_listings(deps: &ServerDeps) -> Result<ClusterStats> {
             }
             None => {
                 // No matches — create singleton cluster
-                let cluster = Cluster::create("listing", item_id, pool).await?;
+                let cluster = Cluster::create("signal", item_id, pool).await?;
                 assignments.insert(item_id, cluster.id);
                 stats.clusters_created += 1;
             }
@@ -295,7 +295,7 @@ fn composite_match_score(
         time_window_hours,
     );
 
-    let name_sim = strsim::jaro_winkler(&item.title, &neighbor.title);
+    let name_sim = strsim::jaro_winkler(&item.content, &neighbor.content);
 
     let org_match = match (item.entity_id, neighbor.entity_id) {
         (Some(a), Some(b)) if a == b => 1.0,
@@ -382,34 +382,32 @@ fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 
 /// Recompute the representative for a cluster based on field completeness and provenance.
 async fn recompute_representative(cluster_id: Uuid, pool: &PgPool) -> Result<()> {
-    // Select the best representative: most non-null fields + most provenance
+    // Select the best representative: most non-null fields + recency
     let best = sqlx::query_as::<_, (Uuid,)>(
         r#"
         SELECT ci.item_id
         FROM cluster_items ci
-        JOIN listings l ON l.id = ci.item_id
-        LEFT JOIN locationables la ON la.locatable_type = 'listing' AND la.locatable_id = l.id AND la.is_primary = true
+        JOIN signals s ON s.id = ci.item_id
+        LEFT JOIN locationables la ON la.locatable_type = 'signal' AND la.locatable_id = s.id AND la.is_primary = true
         LEFT JOIN locations lp ON lp.id = la.location_id
         LEFT JOIN LATERAL (
             SELECT valid_from FROM schedules
-            WHERE scheduleable_type = 'listing' AND scheduleable_id = l.id
+            WHERE scheduleable_type = 'signal' AND scheduleable_id = s.id
             LIMIT 1
-        ) s ON true
-        WHERE ci.cluster_id = $1 AND ci.item_type = 'listing' AND l.status = 'active'
+        ) sch ON true
+        WHERE ci.cluster_id = $1 AND ci.item_type = 'signal'
         ORDER BY
             -- Field completeness: count non-null optional fields
-            (CASE WHEN l.description IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN l.location_text IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN l.entity_id IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN l.service_id IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN l.source_url IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN s.valid_from IS NOT NULL THEN 1 ELSE 0 END
+            (CASE WHEN s.about IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN s.entity_id IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN s.source_url IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN sch.valid_from IS NOT NULL THEN 1 ELSE 0 END
              + CASE WHEN lp.latitude IS NOT NULL THEN 1 ELSE 0 END
             ) DESC,
-            -- Provenance count (corroboration)
-            (SELECT COUNT(*) FROM listing_extractions le WHERE le.listing_id = l.id) DESC,
+            -- Confidence
+            s.confidence DESC,
             -- Recency
-            l.created_at DESC
+            s.created_at DESC
         LIMIT 1
         "#,
     )

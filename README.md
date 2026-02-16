@@ -15,7 +15,9 @@ Sources ──→ Engine (crawl, extract, geo-locate, dedup, store) ──→ Gr
 
 Root Signal crawls public sources (org websites, Eventbrite, GoFundMe, VolunteerMatch, government sites, environmental orgs, news outlets), extracts structured signal via AI, geo-localizes it, deduplicates it, and serves it through a typed API. The engine is domain-agnostic — what makes it serve community signal is configuration.
 
-Signal is organized across four domains: **human services**, **ecological stewardship**, **civic & economic action**, and **knowledge & awareness**. Each signal is tagged with audience roles (volunteer, donor, attendee, advocate, citizen scientist, land steward, etc.) so people can filter by how they want to help.
+Every signal is one of four types: **ask** (something is needed — you can help), **give** (something is offered — you can receive), **event** (people are gathering — you can show up), or **informative** (a published fact — you can know). Signals are organized across four domains: **human services**, **ecological stewardship**, **civic & economic action**, and **knowledge & awareness**, and tagged with audience roles (volunteer, donor, attendee, advocate, citizen scientist, land steward, etc.) so people can filter by how they want to help.
+
+This structure produces something larger than a broadcast index. Asks are declarations of misalignment — gaps between what a community has and what it needs. Gives are attempts to close those gaps. When asks stop clustering, the system reflects that alignment was restored — no engagement tracking required. The system measures the world's state, not its own impact. See [`docs/vision/alignment-machine.md`](docs/vision/alignment-machine.md).
 
 ## Architecture
 
@@ -27,6 +29,7 @@ Rust + TypeScript monorepo under `modules/`:
 | `rootsignal-core` | Shared types, database queries, core logic |
 | `rootsignal-domains` | Domain models and business rules |
 | `ai-client` | LLM extraction client (Claude API) |
+| `apify-client` | Apify integration for web scraping |
 | `twilio-rs` | Twilio integration for SMS/voice intake |
 | `api-client-js` | TypeScript GraphQL client with codegen |
 | `admin-app` | Next.js admin interface |
@@ -107,8 +110,8 @@ Tier 2 data manifests only as computed flags (freshness score, capacity status, 
 
 Detailed project documentation lives in `docs/`:
 
-- [`docs/vision/`](docs/vision/) — Problem space, principles, milestones, kill tests
-- [`docs/architecture/`](docs/architecture/) — Signal taxonomy, service architecture, discovery queries
+- [`docs/vision/`](docs/vision/) — Problem space, principles, milestones, kill tests, alignment machine, editorial principles
+- [`docs/architecture/`](docs/architecture/) — Signal architecture, taxonomy, service architecture, discovery queries
 - [`docs/landscape/`](docs/landscape/) — Ecosystem and adjacent systems
 - [`docs/brainstorms/`](docs/brainstorms/) — Feature exploration sessions
 - [`docs/plans/`](docs/plans/) — Implementation plans

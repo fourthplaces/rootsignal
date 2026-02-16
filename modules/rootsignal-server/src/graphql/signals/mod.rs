@@ -29,6 +29,7 @@ impl SignalQuery {
         ctx: &Context<'_>,
         #[graphql(name = "type")] signal_type: Option<SignalType>,
         entity_id: Option<Uuid>,
+        source_id: Option<Uuid>,
         search: Option<String>,
         lat: Option<f64>,
         lng: Option<f64>,
@@ -40,6 +41,21 @@ impl SignalQuery {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let limit = limit.min(100) as i64;
         let offset = offset.max(0) as i64;
+
+        // Source filter
+        if let Some(source_id) = source_id {
+            let nodes: Vec<GqlSignal> =
+                Signal::find_by_source(source_id, limit, offset, pool)
+                    .await?
+                    .into_iter()
+                    .map(GqlSignal::from)
+                    .collect();
+            let total = nodes.len() as i64;
+            return Ok(GqlSignalConnection {
+                nodes,
+                total_count: total,
+            });
+        }
 
         // Geo search
         if let (Some(lat), Some(lng), Some(radius)) = (lat, lng, radius_km) {

@@ -2,6 +2,9 @@ use async_graphql::*;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::graphql::loaders::*;
+use super::super::locations::types::GqlLocation;
+use super::super::schedules::types::GqlSchedule;
 use rootsignal_domains::signals::Signal;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -43,6 +46,7 @@ impl FlagType {
 }
 
 #[derive(SimpleObject, Clone)]
+#[graphql(complex)]
 pub struct GqlSignal {
     pub id: Uuid,
     pub signal_type: String,
@@ -54,6 +58,7 @@ pub struct GqlSignal {
     pub institutional_source: Option<String>,
     pub confidence: f32,
     pub in_language: String,
+    pub broadcasted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -71,9 +76,27 @@ impl From<Signal> for GqlSignal {
             institutional_source: s.institutional_source,
             confidence: s.confidence,
             in_language: s.in_language,
+            broadcasted_at: s.broadcasted_at,
             created_at: s.created_at,
             updated_at: s.updated_at,
         }
+    }
+}
+
+#[ComplexObject]
+impl GqlSignal {
+    async fn locations(&self, ctx: &Context<'_>) -> Result<Vec<GqlLocation>> {
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<LocationsForLoader>>();
+        let key = PolymorphicKey("signal".to_string(), self.id);
+        Ok(loader.load_one(key).await?.unwrap_or_default())
+    }
+
+    async fn schedules(&self, ctx: &Context<'_>) -> Result<Vec<GqlSchedule>> {
+        let loader =
+            ctx.data_unchecked::<async_graphql::dataloader::DataLoader<SchedulesForLoader>>();
+        let key = PolymorphicKey("signal".to_string(), self.id);
+        Ok(loader.load_one(key).await?.unwrap_or_default())
     }
 }
 

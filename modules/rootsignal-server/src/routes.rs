@@ -5,10 +5,10 @@ use axum::{
     http::HeaderMap,
     response::{Html, IntoResponse},
     routing::get,
-    Json, Router,
+    Router,
 };
 use rootsignal_core::ServerDeps;
-use rootsignal_domains::listings::{ListingDetail, ListingStats};
+use rootsignal_domains::signals::SignalStats;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -100,97 +100,30 @@ async fn health() -> &'static str {
 }
 
 async fn assessment_page(State(state): State<AppState>) -> Html<String> {
-    let stats = ListingStats::compute(&state.pool)
+    let stats = SignalStats::compute(&state.pool)
         .await
-        .unwrap_or_else(|_| ListingStats {
-            total_listings: 0,
-            active_listings: 0,
+        .unwrap_or_else(|_| SignalStats {
+            total_signals: 0,
             total_sources: 0,
             total_snapshots: 0,
             total_extractions: 0,
             total_entities: 0,
-            listings_by_type: vec![],
-            listings_by_role: vec![],
-            listings_by_category: vec![],
-            listings_by_domain: vec![],
-            listings_by_urgency: vec![],
-            listings_by_confidence: vec![],
-            listings_by_capacity: vec![],
+            signals_by_type: vec![],
+            signals_by_domain: vec![],
             recent_7d: 0,
         });
 
-    let listings = ListingDetail::find_active(30, 0, &state.pool)
-        .await
-        .unwrap_or_default();
-
     let type_rows: String = stats
-        .listings_by_type
-        .iter()
-        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let role_rows: String = stats
-        .listings_by_role
-        .iter()
-        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let category_rows: String = stats
-        .listings_by_category
+        .signals_by_type
         .iter()
         .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
         .collect::<Vec<_>>()
         .join("\n");
 
     let domain_rows: String = stats
-        .listings_by_domain
+        .signals_by_domain
         .iter()
         .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let urgency_rows: String = stats
-        .listings_by_urgency
-        .iter()
-        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let confidence_rows: String = stats
-        .listings_by_confidence
-        .iter()
-        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let capacity_rows: String = stats
-        .listings_by_capacity
-        .iter()
-        .map(|t| format!("<tr><td>{}</td><td>{}</td></tr>", t.value, t.count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let listing_rows: String = listings
-        .iter()
-        .map(|l| {
-            let timing = l.schedule_description.as_deref().unwrap_or("-").to_string();
-            let source = l
-                .source_url
-                .as_deref()
-                .map(|u| format!("<a href=\"{}\" target=\"_blank\">link</a>", u))
-                .unwrap_or_else(|| "-".to_string());
-            format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                l.title,
-                l.entity_name.as_deref().unwrap_or("-"),
-                l.entity_type.as_deref().unwrap_or("-"),
-                l.location_text.as_deref().unwrap_or("-"),
-                timing,
-                source,
-            )
-        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -218,10 +151,9 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
 </head>
 <body>
     <h1>Root Signal Assessment</h1>
-    <p>Milestone 1: Signal Proof</p>
 
     <div class="stats">
-        <div class="stat"><div class="value">{active}</div><div class="label">Active Listings</div></div>
+        <div class="stat"><div class="value">{signals}</div><div class="label">Total Signals</div></div>
         <div class="stat"><div class="value">{sources}</div><div class="label">Sources</div></div>
         <div class="stat"><div class="value">{snapshots}</div><div class="label">Page Snapshots</div></div>
         <div class="stat"><div class="value">{extractions}</div><div class="label">Extractions</div></div>
@@ -230,46 +162,24 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
     </div>
 
     <h2>Milestone Gates</h2>
-    <div class="{gate_vol}">Volume: {active} active listings (target: 100+)</div>
-    <div class="{gate_fresh}">Freshness: {recent_7d} listings with timing in last 7 days</div>
-    <div class="{gate_types}">Type diversity: {type_count} listing types (target: 3+)</div>
-    <div class="{gate_roles}">Role diversity: {role_count} audience roles (target: 3+)</div>
+    <div class="{gate_vol}">Volume: {signals} signals (target: 100+)</div>
+    <div class="{gate_fresh}">Freshness: {recent_7d} signals in last 7 days</div>
+    <div class="{gate_types}">Type diversity: {type_count} signal types (target: 3+)</div>
 
-    <h2>By Listing Type</h2>
+    <h2>By Signal Type</h2>
     <table><tr><th>Type</th><th>Count</th></tr>{type_rows}</table>
-
-    <h2>By Audience Role</h2>
-    <table><tr><th>Role</th><th>Count</th></tr>{role_rows}</table>
-
-    <h2>By Category</h2>
-    <table><tr><th>Category</th><th>Count</th></tr>{category_rows}</table>
 
     <h2>By Signal Domain</h2>
     <table><tr><th>Domain</th><th>Count</th></tr>{domain_rows}</table>
-
-    <h2>By Urgency</h2>
-    <table><tr><th>Urgency</th><th>Count</th></tr>{urgency_rows}</table>
-
-    <h2>By Confidence</h2>
-    <table><tr><th>Confidence</th><th>Count</th></tr>{confidence_rows}</table>
-
-    <h2>By Capacity Status</h2>
-    <table><tr><th>Status</th><th>Count</th></tr>{capacity_rows}</table>
-
-    <h2>Sample Listings (30 random)</h2>
-    <table>
-        <tr><th>Title</th><th>Entity</th><th>Type</th><th>Location</th><th>Timing</th><th>Source</th></tr>
-        {listing_rows}
-    </table>
 </body>
 </html>"#,
-        active = stats.active_listings,
+        signals = stats.total_signals,
         sources = stats.total_sources,
         snapshots = stats.total_snapshots,
         extractions = stats.total_extractions,
         entities = stats.total_entities,
         recent_7d = stats.recent_7d,
-        gate_vol = if stats.active_listings >= 100 {
+        gate_vol = if stats.total_signals >= 100 {
             "gate pass"
         } else {
             "gate fail"
@@ -279,26 +189,14 @@ async fn assessment_page(State(state): State<AppState>) -> Html<String> {
         } else {
             "gate fail"
         },
-        type_count = stats.listings_by_type.len(),
-        gate_types = if stats.listings_by_type.len() >= 3 {
-            "gate pass"
-        } else {
-            "gate fail"
-        },
-        role_count = stats.listings_by_role.len(),
-        gate_roles = if stats.listings_by_role.len() >= 3 {
+        type_count = stats.signals_by_type.len(),
+        gate_types = if stats.signals_by_type.len() >= 3 {
             "gate pass"
         } else {
             "gate fail"
         },
         type_rows = type_rows,
-        role_rows = role_rows,
-        category_rows = category_rows,
         domain_rows = domain_rows,
-        urgency_rows = urgency_rows,
-        confidence_rows = confidence_rows,
-        capacity_rows = capacity_rows,
-        listing_rows = listing_rows,
     );
 
     Html(html)

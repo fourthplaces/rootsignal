@@ -8,7 +8,6 @@ pub mod findings;
 pub mod geo;
 pub mod heat_map;
 pub mod investigations;
-pub mod listings;
 pub mod members;
 pub mod query_helpers;
 pub mod scraping;

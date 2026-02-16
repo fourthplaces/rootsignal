@@ -3,14 +3,31 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::listings::ListingFilters;
+/// Geo and tag filters for hybrid search.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilters {
+    // Tag-based filters
+    pub signal_domain: Option<String>,
+    pub audience_role: Option<String>,
+    pub category: Option<String>,
+    pub listing_type: Option<String>,
+    pub urgency: Option<String>,
+    pub confidence: Option<String>,
+    pub capacity_status: Option<String>,
+    pub radius_relevant: Option<String>,
+    pub population: Option<String>,
+    // Geo
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub radius_km: Option<f64>,
+}
 
 /// Input parameters for the hybrid search engine.
 #[derive(Debug, Clone, Default)]
 pub struct HybridSearchParams {
     pub query_embedding: Option<pgvector::Vector>,
     pub query_text: Option<String>,
-    pub filters: ListingFilters,
+    pub filters: SearchFilters,
     pub temporal: TemporalFilter,
     pub locale: String,
     pub limit: i64,

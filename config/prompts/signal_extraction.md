@@ -37,8 +37,11 @@ NOT a signal. "We need volunteers for Sunday service" IS an ask.
 4. Extract location if mentioned (address, city, state, postal code — will be geocoded)
 5. Extract dates if mentioned (ISO 8601). For recurring programs, note recurrence
    ("Mon-Fri 9-5" → is_recurring: true, recurrence_description: "Monday through Friday, 9am to 5pm")
-6. If content contains MULTIPLE signals, extract each separately
-7. If content is purely descriptive (not a broadcast), return empty array
+6. Extract `broadcasted_at` (ISO 8601) — when this content was published or posted,
+   if a date is visible on the page (article date, post timestamp, press release date).
+   Leave null if no publication date is visible. Do NOT guess.
+7. If content contains MULTIPLE signals, extract each separately
+8. If content is purely descriptive (not a broadcast), return empty array
 
 Do NOT classify urgency or tone. The system stores facts (about, when, where, who).
 The user decides what's urgent to them. Emotional language ("URGENT!",

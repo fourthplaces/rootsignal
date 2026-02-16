@@ -110,21 +110,17 @@ impl GqlEntity {
         Ok(services.into_iter().map(GqlService::from).collect())
     }
 
-    async fn listings(
+    async fn signals(
         &self,
         ctx: &Context<'_>,
-    ) -> Result<Vec<super::super::listings::types::GqlListing>> {
+    ) -> Result<Vec<super::super::signals::types::GqlSignal>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let listings = sqlx::query_as::<_, rootsignal_domains::listings::Listing>(
-            "SELECT * FROM listings WHERE entity_id = $1 AND status = 'active' ORDER BY created_at DESC",
-        )
-        .bind(self.id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-        Ok(listings
+        let signals = rootsignal_domains::signals::Signal::find_by_entity(self.id, 100, 0, pool)
+            .await
+            .unwrap_or_default();
+        Ok(signals
             .into_iter()
-            .map(super::super::listings::types::GqlListing::from)
+            .map(super::super::signals::types::GqlSignal::from)
             .collect())
     }
 }

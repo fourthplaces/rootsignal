@@ -51,27 +51,9 @@ impl ClusteringJob for ClusteringJobImpl {
         _req: ClusterRequest,
     ) -> Result<ClusterResult, HandlerError> {
         tracing::info!("ClusteringJob.start");
-        ctx.set("status", "generating_embeddings".to_string());
-
-        // Step 1: Generate embeddings for un-embedded listings
-        let deps = self.deps.clone();
-        let batch_size = deps.file_config.clustering.batch_size;
-        let embed_count_json: String = ctx
-            .run(|| async move {
-                let count = crate::extraction::activities::generate_embeddings(batch_size, &deps)
-                    .await
-                    .map_err(|e| {
-                        TerminalError::new(format!("Embedding generation failed: {}", e))
-                    })?;
-                serde_json::to_string(&count)
-                    .map_err(|e| TerminalError::new(format!("Serialize: {}", e)).into())
-            })
-            .await?;
-
-        let embedding_count: u32 = serde_json::from_str(&embed_count_json)
-            .map_err(|e| TerminalError::new(format!("Deserialize: {}", e)))?;
-
         ctx.set("status", "clustering".to_string());
+
+        let embedding_count: u32 = 0;
 
         // Step 2: Run clustering algorithm
         let deps = self.deps.clone();

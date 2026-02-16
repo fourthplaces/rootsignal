@@ -39,7 +39,7 @@ pub async fn extract_signals_from_snapshot(
         .await?;
 
     let snapshot = sqlx::query_as::<_, PageSnapshot>(
-        "SELECT id, url, content, html FROM page_snapshots WHERE id = $1",
+        "SELECT id, url, raw_content AS content, html FROM page_snapshots WHERE id = $1",
     )
     .bind(snapshot_id)
     .fetch_one(pool)
@@ -131,6 +131,13 @@ pub async fn extract_signals_from_snapshot(
         .fetch_one(pool)
         .await?;
 
+        // Parse broadcasted_at if the LLM extracted one
+        let broadcasted_at = signal
+            .broadcasted_at
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+
         // Create signal row
         let signal_row = super::super::models::signal::Signal::create(
             &signal.signal_type,
@@ -146,6 +153,7 @@ pub async fn extract_signals_from_snapshot(
             0.7,
             &fingerprint,
             in_language,
+            broadcasted_at,
             pool,
         )
         .await?;

@@ -6,25 +6,23 @@ export default async function DashboardPage() {
   const headerStore = await headers();
   const api = authedClient(headerStore.get("cookie") ?? undefined);
 
-  const { listingStats } = await api.query<{
-    listingStats: {
-      totalListings: number;
-      activeListings: number;
+  const { signalStats } = await api.query<{
+    signalStats: {
+      totalSignals: number;
       totalEntities: number;
       totalSources: number;
       totalExtractions: number;
       recent7D: number;
     };
-  }>(`query { listingStats { totalListings activeListings totalEntities totalSources totalExtractions recent7D } }`);
+  }>(`query { signalStats { totalSignals totalEntities totalSources totalExtractions recent7D } }`);
 
-  const stats = listingStats;
+  const stats = signalStats;
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">Dashboard</h1>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        <StatCard label="Total Listings" value={stats.totalListings} />
-        <StatCard label="Active Listings" value={stats.activeListings} />
+        <StatCard label="Total Signals" value={stats.totalSignals} />
         <StatCard label="Entities" value={stats.totalEntities} />
         <StatCard label="Sources" value={stats.totalSources} />
         <StatCard label="Extractions" value={stats.totalExtractions} />
@@ -38,12 +36,6 @@ export default async function DashboardPage() {
           className="rounded bg-yellow-100 px-4 py-2 text-sm font-medium text-yellow-800 hover:bg-yellow-200"
         >
           Review Observations
-        </Link>
-        <Link
-          href="/listings/new"
-          className="rounded bg-green-100 px-4 py-2 text-sm font-medium text-green-800 hover:bg-green-200"
-        >
-          New Listing
         </Link>
         <Link
           href="/workflows"

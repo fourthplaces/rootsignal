@@ -1,19 +1,19 @@
 pub mod types;
 
 use async_graphql::*;
-use types::GqlListingStats;
+use types::GqlSignalStats;
 
 #[derive(Default)]
 pub struct StatsQuery;
 
 #[Object]
 impl StatsQuery {
-    async fn listing_stats(&self, ctx: &Context<'_>) -> Result<GqlListingStats> {
-        tracing::info!("graphql.listing_stats");
+    async fn signal_stats(&self, ctx: &Context<'_>) -> Result<GqlSignalStats> {
+        tracing::info!("graphql.signal_stats");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let stats = rootsignal_domains::listings::ListingStats::compute(pool)
+        let stats = rootsignal_domains::signals::SignalStats::compute(pool)
             .await
             .map_err(|e| async_graphql::Error::new(format!("failed to compute stats: {e}")))?;
-        Ok(GqlListingStats::from(stats))
+        Ok(GqlSignalStats::from(stats))
     }
 }

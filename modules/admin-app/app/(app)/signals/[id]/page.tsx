@@ -13,8 +13,30 @@ interface Signal {
   institutionalSource: string | null;
   confidence: number;
   inLanguage: string;
+  broadcastedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  locations: {
+    id: string;
+    name: string | null;
+    streetAddress: string | null;
+    addressLocality: string | null;
+    addressRegion: string | null;
+    postalCode: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  }[];
+  schedules: {
+    id: string;
+    validFrom: string | null;
+    validThrough: string | null;
+    dtstart: string | null;
+    repeatFrequency: string | null;
+    byday: string | null;
+    description: string | null;
+    opensAt: string | null;
+    closesAt: string | null;
+  }[];
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -45,7 +67,13 @@ export default async function SignalDetailPage({
       signal(id: $id) {
         id signalType content about entityId
         sourceUrl sourceCitationUrl institutionalSource
-        confidence inLanguage createdAt updatedAt
+        confidence inLanguage broadcastedAt createdAt updatedAt
+        locations {
+          id name streetAddress addressLocality addressRegion postalCode latitude longitude
+        }
+        schedules {
+          id validFrom validThrough dtstart repeatFrequency byday description opensAt closesAt
+        }
       }
     }`,
     { id },
@@ -72,6 +100,11 @@ export default async function SignalDetailPage({
             Confidence: {Math.round(signal.confidence * 100)}%
           </span>
           <span className="text-sm text-gray-400">{signal.inLanguage}</span>
+          {signal.broadcastedAt && (
+            <span className="text-sm text-gray-400">
+              Broadcasted {new Date(signal.broadcastedAt).toLocaleDateString()}
+            </span>
+          )}
         </div>
 
         <p className="mb-4 text-lg">{signal.content}</p>
@@ -91,6 +124,68 @@ export default async function SignalDetailPage({
             >
               View Entity &rarr;
             </Link>
+          </div>
+        )}
+
+        {signal.locations.length > 0 && (
+          <div className="mt-6 border-t border-gray-100 pt-4">
+            <h3 className="mb-2 text-sm font-medium text-gray-500">Location</h3>
+            {signal.locations.map((loc) => (
+              <div key={loc.id} className="text-sm">
+                {loc.name && <p className="font-medium">{loc.name}</p>}
+                {loc.streetAddress && <p>{loc.streetAddress}</p>}
+                <p>
+                  {[loc.addressLocality, loc.addressRegion, loc.postalCode]
+                    .filter(Boolean)
+                    .join(", ")}
+                </p>
+                {loc.latitude != null && loc.longitude != null && (
+                  <p className="text-xs text-gray-400">
+                    {loc.latitude.toFixed(4)}, {loc.longitude.toFixed(4)}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {signal.schedules.length > 0 && (
+          <div className="mt-6 border-t border-gray-100 pt-4">
+            <h3 className="mb-2 text-sm font-medium text-gray-500">Schedule</h3>
+            {signal.schedules.map((sch) => (
+              <dl key={sch.id} className="grid grid-cols-2 gap-2 text-sm">
+                {sch.validFrom && (
+                  <>
+                    <dt className="text-gray-500">Starts</dt>
+                    <dd>{new Date(sch.validFrom).toLocaleDateString()}</dd>
+                  </>
+                )}
+                {sch.validThrough && (
+                  <>
+                    <dt className="text-gray-500">Ends</dt>
+                    <dd>{new Date(sch.validThrough).toLocaleDateString()}</dd>
+                  </>
+                )}
+                {sch.repeatFrequency && (
+                  <>
+                    <dt className="text-gray-500">Repeats</dt>
+                    <dd>{sch.repeatFrequency}{sch.byday ? ` (${sch.byday})` : ""}</dd>
+                  </>
+                )}
+                {sch.description && (
+                  <>
+                    <dt className="text-gray-500">Details</dt>
+                    <dd>{sch.description}</dd>
+                  </>
+                )}
+                {sch.opensAt && (
+                  <>
+                    <dt className="text-gray-500">Hours</dt>
+                    <dd>{sch.opensAt}{sch.closesAt ? ` – ${sch.closesAt}` : ""}</dd>
+                  </>
+                )}
+              </dl>
+            ))}
           </div>
         )}
 

@@ -6,7 +6,6 @@ pub mod error;
 pub mod findings;
 pub mod heat_map;
 pub mod hotspots;
-pub mod listings;
 pub mod loaders;
 pub mod locations;
 pub mod notes;
@@ -31,7 +30,6 @@ use loaders::*;
 /// Merged query root composing all domain query modules.
 #[derive(MergedObject, Default)]
 pub struct QueryRoot(
-    listings::ListingQuery,
     entities::EntityQuery,
     tags::TagQuery,
     observations::ObservationQuery,
@@ -49,7 +47,6 @@ pub struct QueryRoot(
 #[derive(MergedObject, Default)]
 pub struct MutationRoot(
     auth::AuthMutation,
-    listings::mutations::ListingMutation,
     entities::mutations::EntityMutation,
     observations::mutations::ObservationMutation,
     workflows::WorkflowMutation,

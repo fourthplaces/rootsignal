@@ -5,7 +5,6 @@ use std::sync::Arc;
 use async_graphql::*;
 use chrono::NaiveDate;
 use rootsignal_core::ServerDeps;
-use rootsignal_domains::listings::ListingFilters;
 use rootsignal_domains::search;
 
 use crate::graphql::context::Locale;
@@ -90,7 +89,7 @@ impl SearchQuery {
         let params = search::HybridSearchParams {
             query_embedding,
             query_text: english_q,
-            filters: ListingFilters {
+            filters: search::SearchFilters {
                 signal_domain,
                 audience_role,
                 category,
@@ -170,7 +169,7 @@ impl SearchQuery {
             let params = search::HybridSearchParams {
                 query_embedding,
                 query_text,
-                filters: ListingFilters {
+                filters: search::SearchFilters {
                     signal_domain: parsed.filters.signal_domain.clone(),
                     audience_role: parsed.filters.audience_role.clone(),
                     category: parsed.filters.category.clone(),
