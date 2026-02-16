@@ -195,6 +195,10 @@ pub struct ExtractedSignal {
     pub needs_investigation: Option<bool>,
     /// Brief reason why investigation is warranted
     pub investigation_reason: Option<String>,
+    /// If this signal updates a previously known signal, set this to the
+    /// alias provided in the prompt context (e.g. "signal_3").
+    /// Leave null if this is a new signal.
+    pub existing_signal_alias: Option<String>,
 }
 
 /// Wrapper for batch signal extraction response.

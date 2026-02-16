@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub apify_api_key: Option<String>,
     pub eventbrite_api_key: Option<String>,
 
+    // Browser (Chrome CDP for JS rendering)
+    pub chrome_url: Option<String>,
+
     // Geocoding
     pub geocoding_api_key: Option<String>,
 
@@ -44,6 +47,7 @@ impl AppConfig {
             openai_api_key: std::env::var("OPENAI_API_KEY")?,
             anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
             tavily_api_key: std::env::var("TAVILY_API_KEY")?,
+            chrome_url: std::env::var("CHROME_URL").ok(),
             firecrawl_api_key: std::env::var("FIRECRAWL_API_KEY").ok(),
             apify_api_key: std::env::var("APIFY_API_KEY").ok(),
             eventbrite_api_key: std::env::var("EVENTBRITE_API_KEY").ok(),
@@ -87,6 +91,7 @@ impl AppConfig {
         tracing::info!("  OPENAI_API_KEY: {}", preview(&self.openai_api_key));
         tracing::info!("  ANTHROPIC_API_KEY: {}", preview_opt(&self.anthropic_api_key));
         tracing::info!("  TAVILY_API_KEY: {}", preview(&self.tavily_api_key));
+        tracing::info!("  CHROME_URL: {}", preview_opt(&self.chrome_url));
         tracing::info!("  FIRECRAWL_API_KEY: {}", preview_opt(&self.firecrawl_api_key));
         tracing::info!("  APIFY_API_KEY: {}", preview_opt(&self.apify_api_key));
         tracing::info!("  RESTATE_ADMIN_URL: {}", preview_opt(&self.restate_admin_url));

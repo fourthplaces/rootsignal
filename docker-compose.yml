@@ -54,6 +54,8 @@ services:
         condition: service_healthy
       restate:
         condition: service_started
+      chrome:
+        condition: service_started
     volumes:
       - ./Cargo.toml:/app/Cargo.toml
       - ./Cargo.lock:/app/Cargo.lock

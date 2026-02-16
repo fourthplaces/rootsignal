@@ -56,6 +56,7 @@ impl Ingestor for SpiderIngestor {
         website.with_stealth(true);
         website.with_chrome_intercept(RequestInterceptConfiguration::new(true));
 
+
         website.scrape().await;
 
         let mut pages = Vec::new();

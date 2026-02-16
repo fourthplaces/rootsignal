@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use chrono::DateTime;
 use pgvector::Vector;
@@ -9,6 +11,7 @@ use crate::entities::Entity;
 use crate::geo::{Location, Locationable};
 use crate::search::Embedding;
 use crate::shared::Schedule;
+use crate::signals::models::signal::Signal;
 
 /// Page snapshot row (just the fields we need).
 #[derive(Debug, sqlx::FromRow)]
@@ -23,6 +26,35 @@ struct PageSnapshot {
 #[derive(Debug, sqlx::FromRow)]
 struct ExtractionRow {
     id: Uuid,
+}
+
+/// Build the alias map and prompt context from existing signals for this source.
+fn build_signal_context(existing_signals: &[Signal]) -> (HashMap<String, Uuid>, String) {
+    let mut alias_map = HashMap::new();
+    let mut context_lines = Vec::new();
+
+    for (i, signal) in existing_signals.iter().enumerate() {
+        let alias = format!("signal_{}", i + 1);
+        alias_map.insert(alias.clone(), signal.id);
+
+        let about_str = signal
+            .about
+            .as_deref()
+            .map(|a| format!(" (about: \"{}\")", a))
+            .unwrap_or_default();
+
+        let date_str = signal
+            .broadcasted_at
+            .map(|dt| format!(" — {}", dt.format("%Y-%m-%d")))
+            .unwrap_or_default();
+
+        context_lines.push(format!(
+            "{}: [{}] \"{}\"{}{}\n",
+            alias, signal.signal_type, signal.content, about_str, date_str,
+        ));
+    }
+
+    (alias_map, context_lines.join(""))
 }
 
 /// Extract structured signals from a page_snapshot using AI.
@@ -44,6 +76,19 @@ pub async fn extract_signals_from_snapshot(
     .bind(snapshot_id)
     .fetch_one(pool)
     .await?;
+
+    // Resolve source_id from the source chain: snapshot → domain_snapshot → source
+    let source_id: Option<Uuid> = sqlx::query_as::<_, (Option<Uuid>,)>(
+        r#"
+        SELECT ds.source_id FROM domain_snapshots ds
+        WHERE ds.page_snapshot_id = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(snapshot_id)
+    .fetch_optional(pool)
+    .await?
+    .and_then(|row| row.0);
 
     let content = snapshot
         .content
@@ -68,11 +113,27 @@ pub async fn extract_signals_from_snapshot(
         content
     };
 
+    // Fetch existing signals for this source (for LLM-driven matching)
+    let existing_signals = if let Some(sid) = source_id {
+        Signal::find_by_source(sid, 50, 0, pool).await?
+    } else {
+        vec![]
+    };
+    let (alias_map, signals_context) = build_signal_context(&existing_signals);
+
     let system_prompt = deps.prompts.signal_extraction_prompt();
-    let user_prompt = format!(
-        "Extract signals from this page (URL: {}):\n\n{}",
-        snapshot.url, content
-    );
+
+    let user_prompt = if alias_map.is_empty() {
+        format!(
+            "Extract signals from this page (URL: {}):\n\n{}",
+            snapshot.url, content
+        )
+    } else {
+        format!(
+            "Extract signals from this page (URL: {}):\n\n{}\n\n## Previously Known Signals\n\n{}",
+            snapshot.url, content, signals_context
+        )
+    };
 
     let model = &deps.file_config.models.extraction;
 
@@ -138,25 +199,68 @@ pub async fn extract_signals_from_snapshot(
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&chrono::Utc));
 
-        // Create signal row
-        let signal_row = super::super::models::signal::Signal::create(
-            &signal.signal_type,
-            &signal.content,
-            signal.about.as_deref(),
-            entity_id,
-            signal.source_url.as_deref().or(Some(&snapshot.url)),
-            Some(snapshot_id),
-            Some(extraction.id),
-            None, // institutional_source (community extraction)
-            None, // institutional_record_id
-            None, // source_citation_url
-            0.7,
-            &fingerprint,
-            in_language,
-            broadcasted_at,
-            pool,
-        )
-        .await?;
+        // Determine if this is an UPDATE of an existing signal or a new INSERT
+        let is_update = signal
+            .existing_signal_alias
+            .as_deref()
+            .and_then(|alias| alias_map.get(alias));
+
+        let signal_row = if let Some(&existing_id) = is_update {
+            // UPDATE: refresh existing signal with new extraction data
+            tracing::info!(existing_id = %existing_id, "Updating existing signal via LLM match");
+
+            sqlx::query_as::<_, Signal>(
+                r#"
+                UPDATE signals SET
+                    signal_type = $2,
+                    content = $3,
+                    about = $4,
+                    entity_id = $5,
+                    source_url = $6,
+                    page_snapshot_id = $7,
+                    extraction_id = $8,
+                    confidence = $9,
+                    fingerprint = $10,
+                    broadcasted_at = COALESCE($11, signals.broadcasted_at),
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING *
+                "#,
+            )
+            .bind(existing_id)
+            .bind(&signal.signal_type)
+            .bind(&signal.content)
+            .bind(signal.about.as_deref())
+            .bind(entity_id)
+            .bind(signal.source_url.as_deref().or(Some(snapshot.url.as_str())))
+            .bind(snapshot_id)
+            .bind(extraction.id)
+            .bind(0.7_f32)
+            .bind(&fingerprint)
+            .bind(broadcasted_at)
+            .fetch_one(pool)
+            .await?
+        } else {
+            // INSERT: new signal (fingerprint ON CONFLICT handles exact dupes)
+            Signal::create(
+                &signal.signal_type,
+                &signal.content,
+                signal.about.as_deref(),
+                entity_id,
+                signal.source_url.as_deref().or(Some(&snapshot.url)),
+                Some(snapshot_id),
+                Some(extraction.id),
+                None, // institutional_source
+                None, // institutional_record_id
+                None, // source_citation_url
+                0.7,
+                &fingerprint,
+                in_language,
+                broadcasted_at,
+                pool,
+            )
+            .await?
+        };
 
         // Flag for investigation if the LLM detected deeper phenomenon
         if signal.needs_investigation == Some(true) {
@@ -246,9 +350,22 @@ pub async fn extract_signals_from_snapshot(
     .execute(pool)
     .await?;
 
+    let matched_count = extracted
+        .signals
+        .iter()
+        .filter(|s| {
+            s.existing_signal_alias
+                .as_deref()
+                .and_then(|a| alias_map.get(a))
+                .is_some()
+        })
+        .count();
+
     tracing::info!(
         snapshot_id = %snapshot_id,
         signals = signal_ids.len(),
+        existing_shown = alias_map.len(),
+        existing_matched = matched_count,
         "Signal extraction complete"
     );
 
