@@ -55,8 +55,27 @@ pub struct ExtractedSignal {
 /// The full extraction response from the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractionResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_signals")]
     pub signals: Vec<ExtractedSignal>,
+}
+
+/// Handle LLM returning signals as either a proper JSON array or a stringified JSON array.
+fn deserialize_signals<'de, D>(deserializer: D) -> std::result::Result<Vec<ExtractedSignal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(de::Error::custom)
+        }
+        serde_json::Value::String(ref s) => {
+            serde_json::from_str(s).map_err(de::Error::custom)
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Err(de::Error::custom("signals must be an array or JSON string")),
+    }
 }
 
 // StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
