@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { authedClient } from "@/lib/client";
 import Link from "next/link";
+import { RunInvestigationsButton } from "./run-investigations-button";
 
 interface Signal {
   id: string;
@@ -82,9 +83,12 @@ export default async function SignalsPage({
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Signals</h1>
-        <span className="text-sm text-gray-500">
-          {signals.totalCount} total
-        </span>
+        <div className="flex items-center gap-4">
+          <RunInvestigationsButton />
+          <span className="text-sm text-gray-500">
+            {signals.totalCount} total
+          </span>
+        </div>
       </div>
 
       {/* Type filter tabs */}

@@ -61,6 +61,32 @@ impl ServerDeps {
         &self.db_pool
     }
 
+    /// Trigger a Restate workflow via HTTP ingress.
+    /// Returns Ok(()) on success, Err if Restate is not configured or the request fails.
+    pub async fn trigger_workflow(
+        &self,
+        workflow: &str,
+        key: &str,
+        body: serde_json::Value,
+    ) -> Result<()> {
+        let restate_admin_url = self
+            .config
+            .restate_admin_url
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Restate not configured"))?;
+        let ingress_url = restate_admin_url.replace(":9070", ":8080");
+        let url = format!("{}/{}/{}/run/send", ingress_url, workflow, key);
+        tracing::info!(url = %url, "Triggering Restate workflow");
+
+        let response = self.http_client.post(&url).json(&body).send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Restate trigger failed ({}): {}", status, text);
+        }
+        Ok(())
+    }
+
     /// Create a memoized computation builder.
     ///
     /// ```ignore

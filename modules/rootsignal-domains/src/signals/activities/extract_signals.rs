@@ -220,12 +220,36 @@ pub async fn extract_signals_from_snapshot(
         // Flag for investigation if the LLM detected deeper phenomenon
         if signal.needs_investigation == Some(true) {
             sqlx::query(
-                "UPDATE signals SET needs_investigation = true, investigation_reason = $1 WHERE id = $2",
+                "UPDATE signals SET needs_investigation = true, investigation_status = 'pending', investigation_reason = $1 WHERE id = $2",
             )
             .bind(signal.investigation_reason.as_deref())
             .bind(signal_row.id)
             .execute(pool)
             .await?;
+
+            // Auto-trigger investigation if under concurrency limit
+            let in_progress: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM signals WHERE investigation_status = 'in_progress'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+            if in_progress < 5 {
+                let key = format!("why-{}-{}", signal_row.id, chrono::Utc::now().timestamp());
+                if let Err(e) = deps
+                    .trigger_workflow(
+                        "WhyInvestigationWorkflow",
+                        &key,
+                        serde_json::json!({ "signal_id": signal_row.id.to_string() }),
+                    )
+                    .await
+                {
+                    tracing::warn!(signal_id = %signal_row.id, error = %e, "Failed to auto-trigger investigation");
+                }
+            } else {
+                tracing::info!(signal_id = %signal_row.id, "Skipping auto-investigation: {} already in progress", in_progress);
+            }
         }
 
         // Normalize into polymorphic tables:

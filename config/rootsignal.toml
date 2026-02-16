@@ -7,7 +7,7 @@ locales = ["en", "es", "so", "ht"]
 [models]
 extraction = "gpt-4o"
 nlq = "gpt-4o-mini"
-investigation = "gpt-4o"
+investigation = "gpt-5-mini"
 
 [prompts]
 investigation = "./prompts/investigation.md"

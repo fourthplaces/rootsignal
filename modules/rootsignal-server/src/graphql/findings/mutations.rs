@@ -57,6 +57,63 @@ impl FindingMutation {
         .await
     }
 
+    /// Trigger investigations for all pending signals (up to concurrency limit).
+    async fn run_pending_investigations(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<i32> {
+        require_admin(ctx)?;
+        let deps = ctx.data::<Arc<ServerDeps>>()?;
+        let pool = deps.pool();
+
+        // Check how many are already running
+        let in_progress: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM signals WHERE investigation_status = 'in_progress'",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::new(format!("Query failed: {e}")))?;
+
+        let slots = (5 - in_progress).max(0) as i64;
+        if slots == 0 {
+            return Ok(0);
+        }
+
+        // Find signals that need investigation but aren't yet running
+        let pending_ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM signals WHERE needs_investigation = true AND (investigation_status IS NULL OR investigation_status = 'pending') ORDER BY created_at DESC LIMIT $1",
+        )
+        .bind(slots)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::new(format!("Query failed: {e}")))?;
+
+        let mut triggered = 0;
+        for signal_id in pending_ids {
+            sqlx::query(
+                "UPDATE signals SET investigation_status = 'pending' WHERE id = $1",
+            )
+            .bind(signal_id)
+            .execute(pool)
+            .await?;
+
+            let key = format!("why-{}-{}", signal_id, chrono::Utc::now().timestamp());
+            if trigger_restate_workflow(
+                deps,
+                "WhyInvestigationWorkflow",
+                &key,
+                serde_json::json!({ "signal_id": signal_id.to_string() }),
+            )
+            .await
+            .is_ok()
+            {
+                triggered += 1;
+            }
+        }
+
+        Ok(triggered)
+    }
+
     /// Admin override: update finding status.
     async fn update_finding_status(
         &self,

@@ -596,6 +596,10 @@ type MutationRoot {
 	"""
 	triggerInvestigation(signalId: UUID!): WorkflowTriggerResult!
 	"""
+	Trigger investigations for all pending signals (up to concurrency limit).
+	"""
+	runPendingInvestigations: Int!
+	"""
 	Admin override: update finding status.
 	"""
 	updateFindingStatus(id: UUID!, status: FindingStatus!): GqlFinding!
