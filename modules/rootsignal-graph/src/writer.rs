@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AskNode, EvidenceNode, EventNode, GiveNode, Node, NodeMeta, NodeType, SensitivityLevel,
-    TensionNode,
+    TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS,
 };
 
 use crate::GraphClient;
@@ -375,6 +375,84 @@ impl GraphWriter {
         Ok(())
     }
 
+    /// Reap expired signals from the graph. Runs at the start of each scout cycle.
+    ///
+    /// Deletes:
+    /// - Non-recurring events whose end (or start) is past the grace period
+    /// - Ask signals older than ASK_EXPIRE_DAYS
+    /// - Any signal not confirmed within FRESHNESS_MAX_DAYS (except ongoing gives, recurring events)
+    ///
+    /// Also detaches and deletes orphaned Evidence nodes.
+    pub async fn reap_expired(&self) -> Result<ReapStats, neo4rs::Error> {
+        let mut stats = ReapStats::default();
+
+        // 1. Past non-recurring events
+        let q = query(&format!(
+            "MATCH (n:Event)
+             WHERE n.is_recurring = false
+               AND CASE
+                   WHEN n.ends_at IS NOT NULL AND n.ends_at <> ''
+                   THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
+                   ELSE datetime(n.starts_at) < datetime() - duration('PT{}H')
+               END
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            EVENT_PAST_GRACE_HOURS, EVENT_PAST_GRACE_HOURS
+        ));
+        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
+            stats.events = row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 2. Expired asks
+        let q = query(&format!(
+            "MATCH (n:Ask)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            ASK_EXPIRE_DAYS
+        ));
+        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
+            stats.asks = row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 3. Stale unconfirmed signals (excluding ongoing gives and recurring events)
+        for label in &["Give", "Tension"] {
+            let extra = if *label == "Give" {
+                "AND n.is_ongoing = false"
+            } else {
+                ""
+            };
+            let q = query(&format!(
+                "MATCH (n:{label})
+                 WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
+                 {extra}
+                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+                 DETACH DELETE n, ev
+                 RETURN count(DISTINCT n) AS deleted",
+                label = label,
+                days = FRESHNESS_MAX_DAYS,
+                extra = extra,
+            ));
+            if let Some(row) = self.client.graph.execute(q).await?.next().await? {
+                stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
+            }
+        }
+
+        let total = stats.events + stats.asks + stats.stale;
+        if total > 0 {
+            info!(
+                events = stats.events,
+                asks = stats.asks,
+                stale = stats.stale,
+                "Reaped expired signals"
+            );
+        }
+
+        Ok(stats)
+    }
+
     /// Delete all nodes sourced from a given URL (opt-out support).
     pub async fn delete_by_source_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
         // Delete evidence nodes linked to signals from this URL, then the signals themselves
@@ -435,6 +513,13 @@ impl GraphWriter {
             .await?;
         Ok(())
     }
+}
+
+#[derive(Debug, Default)]
+pub struct ReapStats {
+    pub events: u64,
+    pub asks: u64,
+    pub stale: u64,
 }
 
 /// Add lat/lng params to a query from node metadata.

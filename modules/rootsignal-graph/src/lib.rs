@@ -5,4 +5,4 @@ pub mod migrate;
 
 pub use client::GraphClient;
 pub use reader::PublicGraphReader;
-pub use writer::GraphWriter;
+pub use writer::{GraphWriter, ReapStats};

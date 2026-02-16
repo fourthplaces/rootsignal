@@ -40,3 +40,10 @@ pub const SENSITIVE_CORROBORATION_MIN: u32 = 2;
 
 /// Freshness threshold — signals not confirmed within this many days are hidden (unless ongoing)
 pub const FRESHNESS_MAX_DAYS: i64 = 30;
+
+/// Ask signals expire after this many days (fundraisers, volunteer calls, etc.)
+pub const ASK_EXPIRE_DAYS: i64 = 60;
+
+/// Grace period after an event ends before it's hidden (hours).
+/// Allows same-day events to remain visible until the day is over.
+pub const EVENT_PAST_GRACE_HOURS: i64 = 12;

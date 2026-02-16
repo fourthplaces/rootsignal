@@ -5,7 +5,8 @@ use uuid::Uuid;
 use rootsignal_common::{
     fuzz_location, AskNode, AudienceRole, EvidenceNode, EventNode, GeoPoint, GeoPrecision,
     GiveNode, Node, NodeMeta, NodeType, Severity, SensitivityLevel, TensionNode, Urgency,
-    CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS, SENSITIVE_CORROBORATION_MIN,
+    ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS,
+    SENSITIVE_CORROBORATION_MIN,
 };
 
 use crate::GraphClient;
@@ -52,9 +53,11 @@ impl PublicGraphReader {
                    AND n.lat >= $min_lat AND n.lat <= $max_lat
                    AND n.lng >= $min_lng AND n.lng <= $max_lng
                    AND n.confidence >= $min_confidence
+                   {expiry}
                  RETURN n
                  ORDER BY n.confidence DESC, n.last_confirmed_active DESC
-                 LIMIT 200"
+                 LIMIT 200",
+                expiry = expiry_clause(*nt),
             );
 
             let q = query(&cypher)
@@ -128,9 +131,11 @@ impl PublicGraphReader {
             let cypher = format!(
                 "MATCH (n:{label})
                  WHERE n.confidence >= $min_confidence
+                   {expiry}
                  RETURN n
                  ORDER BY n.last_confirmed_active DESC
-                 LIMIT $limit"
+                 LIMIT $limit",
+                expiry = expiry_clause(*nt),
             );
 
             let q = query(&cypher)
@@ -265,6 +270,36 @@ fn node_type_label(nt: NodeType) -> &'static str {
     }
 }
 
+/// Per-type Cypher WHERE clause fragment for expiration.
+/// Returns an AND clause (or empty string) to inject into existing WHERE blocks.
+fn expiry_clause(nt: NodeType) -> String {
+    match nt {
+        NodeType::Event => format!(
+            "AND (n.is_recurring = true OR \
+             CASE \
+               WHEN n.ends_at IS NOT NULL AND n.ends_at <> '' \
+               THEN datetime(n.ends_at) >= datetime() - duration('PT{grace}H') \
+               ELSE datetime(n.starts_at) >= datetime() - duration('PT{grace}H') \
+             END)",
+            grace = EVENT_PAST_GRACE_HOURS,
+        ),
+        NodeType::Ask => format!(
+            "AND datetime(n.extracted_at) >= datetime() - duration('P{days}D')",
+            days = ASK_EXPIRE_DAYS,
+        ),
+        NodeType::Give => format!(
+            "AND (n.is_ongoing = true OR \
+             datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D'))",
+            days = FRESHNESS_MAX_DAYS,
+        ),
+        NodeType::Tension => format!(
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
+            days = FRESHNESS_MAX_DAYS,
+        ),
+        NodeType::Evidence => String::new(),
+    }
+}
+
 /// Apply sensitivity-based coordinate fuzzing to a node.
 fn fuzz_node(mut node: Node) -> Node {
     if let Some(meta) = node_meta_mut(&mut node) {
@@ -285,9 +320,8 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
     }
 }
 
-/// Check if a node passes the display filter:
-/// - Sensitive nodes need corroboration_count >= 2
-/// - Freshness within threshold (unless ongoing)
+/// Safety-net display filter. Primary filtering happens in Cypher queries via `expiry_clause()`;
+/// this catches anything that slips through (e.g. direct ID lookups).
 fn passes_display_filter(node: &Node) -> bool {
     let Some(meta) = node.meta() else {
         return true;
@@ -300,13 +334,31 @@ fn passes_display_filter(node: &Node) -> bool {
         return false;
     }
 
-    // Freshness check
-    let age_days = (Utc::now() - meta.last_confirmed_active).num_days();
+    let now = Utc::now();
+
+    // Event-specific: hide past non-recurring events
+    if let Node::Event(e) = node {
+        if !e.is_recurring {
+            let event_end = e.ends_at.unwrap_or(e.starts_at);
+            if (now - event_end).num_hours() > EVENT_PAST_GRACE_HOURS {
+                return false;
+            }
+        }
+    }
+
+    // Ask-specific: expire after ASK_EXPIRE_DAYS
+    if matches!(node, Node::Ask(_)) {
+        if (now - meta.extracted_at).num_days() > ASK_EXPIRE_DAYS {
+            return false;
+        }
+    }
+
+    // General freshness check
+    let age_days = (now - meta.last_confirmed_active).num_days();
     if age_days > FRESHNESS_MAX_DAYS {
-        // For events/asks that aren't ongoing, hide stale signals
         match node {
-            Node::Give(g) if g.is_ongoing => {}    // ongoing gives are ok
-            Node::Event(e) if e.is_recurring => {}  // recurring events are ok
+            Node::Give(g) if g.is_ongoing => {}
+            Node::Event(e) if e.is_recurring => {}
             _ => return false,
         }
     }

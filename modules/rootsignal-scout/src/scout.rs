@@ -113,6 +113,23 @@ impl Scout {
 
     async fn run_inner(&self) -> Result<ScoutStats> {
         let mut stats = ScoutStats::default();
+
+        // Reap expired signals before scraping new ones
+        info!("Reaping expired signals...");
+        match self.writer.reap_expired().await {
+            Ok(reap) => {
+                if reap.events + reap.asks + reap.stale > 0 {
+                    info!(
+                        events = reap.events,
+                        asks = reap.asks,
+                        stale = reap.stale,
+                        "Expired signals removed"
+                    );
+                }
+            }
+            Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
+        }
+
         let mut all_urls: Vec<(String, f32)> = Vec::new();
 
         // 1. Tavily searches (parallel, 5 at a time)
