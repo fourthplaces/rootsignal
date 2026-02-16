@@ -438,10 +438,7 @@ impl Source {
         pool: &PgPool,
     ) -> Result<(Self, bool)> {
         let classified = normalize_and_classify(url);
-        let normalized = classified
-            .normalized_url
-            .as_deref()
-            .unwrap_or(url);
+        let normalized = classified.normalized_url.as_deref().unwrap_or(url);
 
         // Check if a source with this normalized URL already exists
         let existing = sqlx::query_as::<_, Self>("SELECT * FROM sources WHERE url = $1")
@@ -459,15 +456,7 @@ impl Source {
             config["discovered_from"] = serde_json::json!(parent_id.to_string());
         }
 
-        let source = Self::create(
-            name,
-            Some(normalized),
-            None,
-            None,
-            config,
-            pool,
-        )
-        .await?;
+        let source = Self::create(name, Some(normalized), None, None, config, pool).await?;
 
         Ok((source, true))
     }
@@ -580,7 +569,10 @@ mod tests {
     #[test]
     fn test_classify_website() {
         let c = normalize_and_classify("https://example.com/some/page");
-        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/some/page"));
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://example.com/some/page")
+        );
         assert_eq!(c.name, "example.com");
         assert!(c.handle.is_none());
     }
@@ -604,19 +596,28 @@ mod tests {
     #[test]
     fn test_classify_website_strips_trailing_slash() {
         let c = normalize_and_classify("https://example.com/page/");
-        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/page"));
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://example.com/page")
+        );
     }
 
     #[test]
     fn test_classify_website_forces_https() {
         let c = normalize_and_classify("http://example.com/page");
-        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/page"));
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://example.com/page")
+        );
     }
 
     #[test]
     fn test_classify_website_lowercase_domain() {
         let c = normalize_and_classify("https://EXAMPLE.COM/Page");
-        assert_eq!(c.normalized_url.as_deref(), Some("https://example.com/Page"));
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://example.com/Page")
+        );
         assert_eq!(c.name, "example.com");
     }
 
@@ -671,10 +672,7 @@ mod tests {
     #[test]
     fn test_classify_x() {
         let c = normalize_and_classify("https://x.com/someuser");
-        assert_eq!(
-            c.normalized_url.as_deref(),
-            Some("https://x.com/someuser")
-        );
+        assert_eq!(c.normalized_url.as_deref(), Some("https://x.com/someuser"));
         assert_eq!(c.name, "someuser");
         assert_eq!(c.handle.as_deref(), Some("someuser"));
     }
@@ -682,10 +680,7 @@ mod tests {
     #[test]
     fn test_classify_twitter_alias() {
         let c = normalize_and_classify("https://twitter.com/someuser");
-        assert_eq!(
-            c.normalized_url.as_deref(),
-            Some("https://x.com/someuser")
-        );
+        assert_eq!(c.normalized_url.as_deref(), Some("https://x.com/someuser"));
     }
 
     #[test]
@@ -734,7 +729,11 @@ mod tests {
     #[test]
     fn test_classify_gofundme_search_strips_www() {
         let c = normalize_and_classify("https://www.gofundme.com/s?q=fire+relief");
-        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://gofundme.com/s"));
+        assert!(c
+            .normalized_url
+            .as_deref()
+            .unwrap()
+            .starts_with("https://gofundme.com/s"));
     }
 
     #[test]
@@ -752,7 +751,11 @@ mod tests {
         let c = normalize_and_classify(
             "https://api.usaspending.gov/api/v2/search/spending_by_award/?recipient=GEO+Group",
         );
-        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://api.usaspending.gov"));
+        assert!(c
+            .normalized_url
+            .as_deref()
+            .unwrap()
+            .starts_with("https://api.usaspending.gov"));
         assert!(c.name.starts_with("USAspending:"));
     }
 
@@ -761,7 +764,11 @@ mod tests {
         let c = normalize_and_classify(
             "https://echodata.epa.gov/echo/dfr_rest_services.get_facility_info?p_name=Acme",
         );
-        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://echodata.epa.gov"));
+        assert!(c
+            .normalized_url
+            .as_deref()
+            .unwrap()
+            .starts_with("https://echodata.epa.gov"));
         assert!(c.name.starts_with("EPA ECHO:"));
     }
 
@@ -788,11 +795,23 @@ mod tests {
     #[test]
     fn test_source_type_from_url() {
         assert_eq!(source_type_from_url(None), "web_search");
-        assert_eq!(source_type_from_url(Some("https://instagram.com/user")), "instagram");
-        assert_eq!(source_type_from_url(Some("https://facebook.com/page")), "facebook");
+        assert_eq!(
+            source_type_from_url(Some("https://instagram.com/user")),
+            "instagram"
+        );
+        assert_eq!(
+            source_type_from_url(Some("https://facebook.com/page")),
+            "facebook"
+        );
         assert_eq!(source_type_from_url(Some("https://x.com/user")), "x");
-        assert_eq!(source_type_from_url(Some("https://tiktok.com/user")), "tiktok");
-        assert_eq!(source_type_from_url(Some("https://gofundme.com/f/slug")), "gofundme");
+        assert_eq!(
+            source_type_from_url(Some("https://tiktok.com/user")),
+            "tiktok"
+        );
+        assert_eq!(
+            source_type_from_url(Some("https://gofundme.com/f/slug")),
+            "gofundme"
+        );
         assert_eq!(
             source_type_from_url(Some("https://gofundme.com/s?q=minneapolis")),
             "gofundme_search"
@@ -812,12 +831,27 @@ mod tests {
 
     #[test]
     fn test_adapter_for_url() {
-        assert_eq!(adapter_for_url(Some("https://instagram.com/user")), "apify_instagram");
-        assert_eq!(adapter_for_url(Some("https://facebook.com/page")), "apify_facebook");
+        assert_eq!(
+            adapter_for_url(Some("https://instagram.com/user")),
+            "apify_instagram"
+        );
+        assert_eq!(
+            adapter_for_url(Some("https://facebook.com/page")),
+            "apify_facebook"
+        );
         assert_eq!(adapter_for_url(Some("https://x.com/user")), "apify_x");
-        assert_eq!(adapter_for_url(Some("https://tiktok.com/user")), "apify_tiktok");
-        assert_eq!(adapter_for_url(Some("https://gofundme.com/f/slug")), "apify_gofundme");
-        assert_eq!(adapter_for_url(Some("https://gofundme.com/s?q=minneapolis")), "apify_gofundme");
+        assert_eq!(
+            adapter_for_url(Some("https://tiktok.com/user")),
+            "apify_tiktok"
+        );
+        assert_eq!(
+            adapter_for_url(Some("https://gofundme.com/f/slug")),
+            "apify_gofundme"
+        );
+        assert_eq!(
+            adapter_for_url(Some("https://gofundme.com/s?q=minneapolis")),
+            "apify_gofundme"
+        );
         assert_eq!(adapter_for_url(Some("https://example.com")), "spider");
     }
 
@@ -832,9 +866,18 @@ mod tests {
         assert_eq!(compute_cadence(Some("https://x.com/u"), 0), 12);
         assert_eq!(compute_cadence(Some("https://tiktok.com/u"), 0), 12);
         assert_eq!(compute_cadence(Some("https://gofundme.com/f/s"), 0), 12);
-        assert_eq!(compute_cadence(Some("https://gofundme.com/s?q=mpls"), 0), 24); // gofundme_search = search cadence
-        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 0), 168);
-        assert_eq!(compute_cadence(Some("https://echodata.epa.gov/echo"), 0), 168);
+        assert_eq!(
+            compute_cadence(Some("https://gofundme.com/s?q=mpls"), 0),
+            24
+        ); // gofundme_search = search cadence
+        assert_eq!(
+            compute_cadence(Some("https://api.usaspending.gov/api"), 0),
+            168
+        );
+        assert_eq!(
+            compute_cadence(Some("https://echodata.epa.gov/echo"), 0),
+            168
+        );
     }
 
     #[test]
@@ -853,9 +896,18 @@ mod tests {
         assert_eq!(compute_cadence(Some("https://example.com"), 2), 360);
 
         // institutional: base=168, ceiling=720
-        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 1), 336);
-        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 2), 672);
-        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 3), 720);
+        assert_eq!(
+            compute_cadence(Some("https://api.usaspending.gov/api"), 1),
+            336
+        );
+        assert_eq!(
+            compute_cadence(Some("https://api.usaspending.gov/api"), 2),
+            672
+        );
+        assert_eq!(
+            compute_cadence(Some("https://api.usaspending.gov/api"), 3),
+            720
+        );
     }
 
     #[test]
@@ -863,7 +915,10 @@ mod tests {
         assert_eq!(compute_cadence(Some("https://instagram.com/u"), 10), 72);
         assert_eq!(compute_cadence(None, 10), 72);
         assert_eq!(compute_cadence(Some("https://example.com"), 10), 360);
-        assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 10), 720);
+        assert_eq!(
+            compute_cadence(Some("https://api.usaspending.gov/api"), 10),
+            720
+        );
     }
 
     // ── URL normalization dedup scenarios ────────────────────────────────

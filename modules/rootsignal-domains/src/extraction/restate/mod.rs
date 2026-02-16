@@ -63,9 +63,14 @@ impl ExtractWorkflow for ExtractWorkflowImpl {
             let signal_ids_json: String = ctx
                 .run(|| async move {
                     let ids =
-                        crate::signals::activities::extract_signals::extract_signals_from_snapshot(snapshot_id, &deps)
-                            .await
-                            .map_err(|e| TerminalError::new(format!("Signal extraction failed: {}", e)))?;
+                        crate::signals::activities::extract_signals::extract_signals_from_snapshot(
+                            snapshot_id,
+                            &deps,
+                        )
+                        .await
+                        .map_err(|e| {
+                            TerminalError::new(format!("Signal extraction failed: {}", e))
+                        })?;
                     serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
                         .map_err(|e| TerminalError::new(format!("Serialize failed: {}", e)).into())
                 })

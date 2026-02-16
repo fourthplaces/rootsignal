@@ -61,7 +61,9 @@ impl ClusterQuery {
             return Ok(None);
         };
 
-        let signals = Cluster::find_signals(id, 50, pool).await.unwrap_or_default();
+        let signals = Cluster::find_signals(id, 50, pool)
+            .await
+            .unwrap_or_default();
         let entities = Cluster::find_entities(id, pool).await.unwrap_or_default();
 
         Ok(Some(GqlClusterDetail {

@@ -49,10 +49,7 @@ pub enum InvestigationTrigger {
     /// A single signal flagged during extraction.
     FlaggedSignal { signal_id: Uuid },
     /// A cluster of signals detected by batch scan.
-    ClusterDetection {
-        signal_ids: Vec<Uuid>,
-        city: String,
-    },
+    ClusterDetection { signal_ids: Vec<Uuid>, city: String },
 }
 
 impl InvestigationTrigger {
@@ -97,7 +94,11 @@ pub async fn run_why_investigation(
     let signal = crate::signals::Signal::find_by_id(primary_signal_id, pool).await?;
 
     // 2. Check for existing Finding match via embedding similarity
-    let embed_text = format!("{} {}", signal.content, signal.about.as_deref().unwrap_or(""));
+    let embed_text = format!(
+        "{} {}",
+        signal.content,
+        signal.about.as_deref().unwrap_or("")
+    );
     if let Ok(raw_embedding) = deps.embedding_service.embed(&embed_text).await {
         let query_vec = Vector::from(raw_embedding);
         let similar = Embedding::search_similar(query_vec, "finding", 1, 0.15, pool).await?;
@@ -218,10 +219,7 @@ pub async fn run_why_investigation(
                 Some(output) => {
                     // 8. Run adversarial validation (Phase 4)
                     let validation = super::validate::validate_finding(&output, &text, deps).await;
-                    let rejected = validation
-                        .as_ref()
-                        .map(|v| v.rejected)
-                        .unwrap_or(false);
+                    let rejected = validation.as_ref().map(|v| v.rejected).unwrap_or(false);
 
                     if rejected {
                         let reasoning = validation
@@ -249,8 +247,7 @@ pub async fn run_why_investigation(
                     }
 
                     // 9. Dedup check before insert
-                    let finding_embed_text =
-                        format!("{} {}", output.title, output.summary);
+                    let finding_embed_text = format!("{} {}", output.title, output.summary);
                     let mut dedup_finding_id = None;
                     if let Ok(raw_emb) = deps.embedding_service.embed(&finding_embed_text).await {
                         let query_vec = Vector::from(raw_emb);
@@ -367,15 +364,8 @@ pub async fn run_why_investigation(
                         let mut hash_hasher = Sha256::new();
                         hash_hasher.update(finding_embed_text.as_bytes());
                         let hash = hex::encode(hash_hasher.finalize());
-                        let _ = Embedding::upsert(
-                            "finding",
-                            finding.id,
-                            "en",
-                            vector,
-                            &hash,
-                            pool,
-                        )
-                        .await;
+                        let _ = Embedding::upsert("finding", finding.id, "en", vector, &hash, pool)
+                            .await;
                     }
 
                     // 11. Sweep related pending signals
@@ -505,12 +495,10 @@ async fn sweep_related_signals(
                     pool,
                 )
                 .await?;
-                sqlx::query(
-                    "UPDATE signals SET investigation_status = 'linked' WHERE id = $1",
-                )
-                .bind(record.embeddable_id)
-                .execute(pool)
-                .await?;
+                sqlx::query("UPDATE signals SET investigation_status = 'linked' WHERE id = $1")
+                    .bind(record.embeddable_id)
+                    .execute(pool)
+                    .await?;
                 info!(
                     signal_id = %record.embeddable_id,
                     finding_id = %finding_id,
@@ -530,19 +518,18 @@ async fn process_source_recommendations(
 ) -> Result<()> {
     let pool = deps.pool();
 
-    let steps = crate::findings::InvestigationStep::find_by_investigation(investigation_id, pool)
-        .await?;
+    let steps =
+        crate::findings::InvestigationStep::find_by_investigation(investigation_id, pool).await?;
 
     for step in steps {
         if step.tool_name == "recommend_source" {
             if let Some(url) = step.input.get("url").and_then(|v| v.as_str()) {
                 // Create source if it doesn't already exist
-                let exists = sqlx::query_as::<_, (i64,)>(
-                    "SELECT COUNT(*) FROM sources WHERE url = $1",
-                )
-                .bind(url)
-                .fetch_one(pool)
-                .await?;
+                let exists =
+                    sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM sources WHERE url = $1")
+                        .bind(url)
+                        .fetch_one(pool)
+                        .await?;
 
                 if exists.0 == 0 {
                     let reason = step

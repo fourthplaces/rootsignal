@@ -12,6 +12,7 @@ pub struct HeatMapPoint {
     pub weight: f64,
     pub entity_type: String,
     pub entity_id: Uuid,
+    pub signal_type: Option<String>,
     pub generated_at: DateTime<Utc>,
 }
 
@@ -81,7 +82,7 @@ impl HeatMapPoint {
         // Enrich with tag metadata
         let result = sqlx::query(
             r#"
-            INSERT INTO heat_map_points (latitude, longitude, weight, entity_type, entity_id, signal_domain, category)
+            INSERT INTO heat_map_points (latitude, longitude, weight, entity_type, entity_id, signal_domain, category, signal_type)
             SELECT
                 loc.latitude,
                 loc.longitude,
@@ -95,13 +96,15 @@ impl HeatMapPoint {
                 la.locatable_type as entity_type,
                 la.locatable_id as entity_id,
                 MAX(CASE WHEN t.kind = 'signal_domain' THEN t.value END) as signal_domain,
-                MAX(CASE WHEN t.kind = 'category' THEN t.value END) as category
+                MAX(CASE WHEN t.kind = 'category' THEN t.value END) as category,
+                MAX(s.signal_type) as signal_type
             FROM locationables la
             JOIN locations loc ON loc.id = la.location_id
-            LEFT JOIN noteables na ON na.notable_type = la.locatable_type AND na.notable_id = la.locatable_id
+            LEFT JOIN noteables na ON na.noteable_type = la.locatable_type AND na.noteable_id = la.locatable_id
             LEFT JOIN notes n ON n.id = na.note_id
             LEFT JOIN taggables tg ON tg.taggable_type = la.locatable_type AND tg.taggable_id = la.locatable_id
             LEFT JOIN tags t ON t.id = tg.tag_id AND t.kind IN ('signal_domain', 'category')
+            LEFT JOIN signals s ON la.locatable_type = 'signal' AND s.id = la.locatable_id
             WHERE loc.latitude IS NOT NULL AND loc.longitude IS NOT NULL
             GROUP BY loc.latitude, loc.longitude, la.locatable_type, la.locatable_id
             "#,
@@ -111,6 +114,21 @@ impl HeatMapPoint {
 
         tx.commit().await?;
         Ok(result.rows_affected() as usize)
+    }
+
+    pub async fn find_by_signal_type(signal_type: &str, pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            SELECT id, latitude, longitude, weight, entity_type, entity_id, signal_type, generated_at
+            FROM heat_map_points
+            WHERE signal_type = $1
+              AND generated_at = (SELECT MAX(generated_at) FROM heat_map_points)
+            "#,
+        )
+        .bind(signal_type)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
     }
 
     /// Find heat map points by signal domain.

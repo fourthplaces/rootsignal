@@ -67,7 +67,8 @@ pub async fn cluster_signals(deps: &ServerDeps, cluster_type: &str) -> Result<Cl
         .await?;
 
     // Fetch unclustered signals with embeddings
-    let unclustered_ids = ClusterItem::unclustered_signals(cluster_type, batch_size, &mut *tx).await?;
+    let unclustered_ids =
+        ClusterItem::unclustered_signals(cluster_type, batch_size, &mut *tx).await?;
 
     if unclustered_ids.is_empty() {
         tx.commit().await?;
@@ -195,7 +196,8 @@ pub async fn cluster_signals(deps: &ServerDeps, cluster_type: &str) -> Result<Cl
 
             // Look up which cluster this neighbor belongs to
             let neighbor_cluster =
-                ClusterItem::find_cluster_for("signal", neighbor.id, cluster_type, &mut *tx).await?;
+                ClusterItem::find_cluster_for("signal", neighbor.id, cluster_type, &mut *tx)
+                    .await?;
 
             let cluster_id = neighbor_cluster.map(|ci| ci.cluster_id);
 
@@ -211,8 +213,15 @@ pub async fn cluster_signals(deps: &ServerDeps, cluster_type: &str) -> Result<Cl
         match best_match {
             Some((_neighbor_id, score, Some(cluster_id))) => {
                 // Assign to existing cluster
-                ClusterItem::create(cluster_id, item_id, "signal", cluster_type, Some(score as f32), pool)
-                    .await?;
+                ClusterItem::create(
+                    cluster_id,
+                    item_id,
+                    "signal",
+                    cluster_type,
+                    Some(score as f32),
+                    pool,
+                )
+                .await?;
                 assignments.insert(item_id, cluster_id);
                 stats.items_assigned += 1;
 
@@ -238,8 +247,15 @@ pub async fn cluster_signals(deps: &ServerDeps, cluster_type: &str) -> Result<Cl
                 } else {
                     // Create new cluster with the neighbor as initial representative
                     let cluster = Cluster::create(cluster_type, neighbor_id, pool).await?;
-                    ClusterItem::create(cluster.id, item_id, "signal", cluster_type, Some(score as f32), pool)
-                        .await?;
+                    ClusterItem::create(
+                        cluster.id,
+                        item_id,
+                        "signal",
+                        cluster_type,
+                        Some(score as f32),
+                        pool,
+                    )
+                    .await?;
                     assignments.insert(neighbor_id, cluster.id);
                     assignments.insert(item_id, cluster.id);
                     stats.clusters_created += 1;

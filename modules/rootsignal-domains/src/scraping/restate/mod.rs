@@ -105,7 +105,11 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let is_search = scrape["is_search"].as_bool().unwrap_or(false);
         let snapshot_ids: Vec<String> = scrape["snapshot_ids"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if is_search {
@@ -304,7 +308,11 @@ impl SchedulerService for SchedulerServiceImpl {
             total_snapshots += result.snapshot_ids.len() as u32;
         }
 
-        tracing::info!(sources_scraped = sources_count, total_snapshots, "SchedulerService.start_cycle.completed");
+        tracing::info!(
+            sources_scraped = sources_count,
+            total_snapshots,
+            "SchedulerService.start_cycle.completed"
+        );
         Ok(CycleResult {
             sources_scraped: sources_count,
             total_snapshots,

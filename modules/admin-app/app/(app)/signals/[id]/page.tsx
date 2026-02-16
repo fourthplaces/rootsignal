@@ -9,6 +9,7 @@ interface Signal {
   about: string | null;
   entityId: string | null;
   sourceUrl: string | null;
+  pageSnapshotId: string | null;
   sourceCitationUrl: string | null;
   confidence: number;
   inLanguage: string;
@@ -65,7 +66,7 @@ export default async function SignalDetailPage({
     `query Signal($id: ID!) {
       signal(id: $id) {
         id signalType content about entityId
-        sourceUrl sourceCitationUrl
+        sourceUrl pageSnapshotId sourceCitationUrl
         confidence inLanguage broadcastedAt createdAt updatedAt
         locations {
           id name streetAddress addressLocality addressRegion postalCode latitude longitude
@@ -156,13 +157,22 @@ export default async function SignalDetailPage({
                 {sch.validFrom && (
                   <>
                     <dt className="text-gray-500">Starts</dt>
-                    <dd>{new Date(sch.validFrom).toLocaleDateString()}</dd>
+                    <dd>{new Date(sch.validFrom).toLocaleDateString("en-US", { timeZone: "UTC" })}</dd>
                   </>
                 )}
                 {sch.validThrough && (
                   <>
                     <dt className="text-gray-500">Ends</dt>
-                    <dd>{new Date(sch.validThrough).toLocaleDateString()}</dd>
+                    <dd>{new Date(sch.validThrough).toLocaleDateString("en-US", { timeZone: "UTC" })}</dd>
+                  </>
+                )}
+                {sch.opensAt && (
+                  <>
+                    <dt className="text-gray-500">Hours</dt>
+                    <dd>
+                      {new Date(`1970-01-01T${sch.opensAt}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                      {sch.closesAt ? ` – ${new Date(`1970-01-01T${sch.closesAt}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+                    </dd>
                   </>
                 )}
                 {sch.repeatFrequency && (
@@ -175,12 +185,6 @@ export default async function SignalDetailPage({
                   <>
                     <dt className="text-gray-500">Details</dt>
                     <dd>{sch.description}</dd>
-                  </>
-                )}
-                {sch.opensAt && (
-                  <>
-                    <dt className="text-gray-500">Hours</dt>
-                    <dd>{sch.opensAt}{sch.closesAt ? ` – ${sch.closesAt}` : ""}</dd>
                   </>
                 )}
               </dl>
@@ -222,6 +226,19 @@ export default async function SignalDetailPage({
                   >
                     Government source
                   </a>
+                </dd>
+              </>
+            )}
+            {signal.pageSnapshotId && (
+              <>
+                <dt className="text-gray-500">Snapshot</dt>
+                <dd>
+                  <Link
+                    href={`/snapshots/${signal.pageSnapshotId}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    View Source Snapshot &rarr;
+                  </Link>
                 </dd>
               </>
             )}

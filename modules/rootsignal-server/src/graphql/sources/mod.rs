@@ -45,7 +45,19 @@ impl SourceQuery {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let rows = sqlx::query_as::<_, (Uuid, String, String, Vec<u8>, String, Option<String>, chrono::DateTime<chrono::Utc>, String)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                Vec<u8>,
+                String,
+                Option<String>,
+                chrono::DateTime<chrono::Utc>,
+                String,
+            ),
+        >(
             r#"
             SELECT ps.id, ds.page_url, ps.url, ps.content_hash, ps.fetched_via,
                    LEFT(ps.raw_content, 200) AS content_preview,
@@ -63,18 +75,29 @@ impl SourceQuery {
 
         Ok(rows
             .into_iter()
-            .map(|(id, page_url, url, content_hash, fetched_via, content_preview, crawled_at, scrape_status)| {
-                GqlPageSnapshot {
+            .map(
+                |(
                     id,
                     page_url,
                     url,
-                    content_hash: content_hash.iter().map(|b| format!("{b:02x}")).collect(),
+                    content_hash,
                     fetched_via,
                     content_preview,
                     crawled_at,
                     scrape_status,
-                }
-            })
+                )| {
+                    GqlPageSnapshot {
+                        id,
+                        page_url,
+                        url,
+                        content_hash: content_hash.iter().map(|b| format!("{b:02x}")).collect(),
+                        fetched_via,
+                        content_preview,
+                        crawled_at,
+                        scrape_status,
+                    }
+                },
+            )
             .collect())
     }
 
@@ -83,7 +106,23 @@ impl SourceQuery {
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
-        let row = sqlx::query_as::<_, (Uuid, String, String, Vec<u8>, String, Option<String>, Option<String>, serde_json::Value, chrono::DateTime<chrono::Utc>, String, Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                Vec<u8>,
+                String,
+                Option<String>,
+                Option<String>,
+                serde_json::Value,
+                chrono::DateTime<chrono::Utc>,
+                String,
+                Option<chrono::DateTime<chrono::Utc>>,
+                Option<Uuid>,
+            ),
+        >(
             r#"
             SELECT ps.id, ps.url, ps.canonical_url, ps.content_hash, ps.fetched_via,
                    ps.html, ps.raw_content, COALESCE(ps.metadata, '{}'::jsonb) AS metadata,

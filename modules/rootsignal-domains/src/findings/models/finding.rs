@@ -153,11 +153,10 @@ impl Finding {
     }
 
     pub async fn count_by_status(status: &str, pool: &PgPool) -> Result<i64> {
-        let row =
-            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM findings WHERE status = $1")
-                .bind(status)
-                .fetch_one(pool)
-                .await?;
+        let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM findings WHERE status = $1")
+            .bind(status)
+            .fetch_one(pool)
+            .await?;
         Ok(row.0)
     }
 

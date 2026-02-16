@@ -124,12 +124,11 @@ impl Entity {
 
     pub async fn archive(id: Uuid, pool: &PgPool) -> Result<Self> {
         // Check for active signals
-        let count = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM signals WHERE entity_id = $1",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+        let count =
+            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM signals WHERE entity_id = $1")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
 
         if count.0 > 0 {
             anyhow::bail!("Cannot archive entity with {} active signals", count.0);

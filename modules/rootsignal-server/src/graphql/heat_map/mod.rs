@@ -1,3 +1,4 @@
+pub mod mutations;
 pub mod types;
 
 use async_graphql::*;
@@ -15,13 +16,18 @@ impl HeatMapQuery {
         zip_code: Option<String>,
         radius_miles: Option<f64>,
         entity_type: Option<String>,
+        signal_type: Option<String>,
     ) -> Result<Vec<GqlHeatMapPoint>> {
-        tracing::info!(zip_code = ?zip_code, entity_type = ?entity_type, "graphql.heat_map_points");
+        tracing::info!(zip_code = ?zip_code, entity_type = ?entity_type, signal_type = ?signal_type, "graphql.heat_map_points");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
 
         let points = if let Some(zip) = zip_code {
             let radius = radius_miles.unwrap_or(25.0);
             rootsignal_domains::heat_map::HeatMapPoint::find_near_zip(&zip, radius, pool)
+                .await
+                .unwrap_or_default()
+        } else if let Some(st) = signal_type {
+            rootsignal_domains::heat_map::HeatMapPoint::find_by_signal_type(&st, pool)
                 .await
                 .unwrap_or_default()
         } else if let Some(et) = entity_type {

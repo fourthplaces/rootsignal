@@ -44,10 +44,7 @@ impl InvestigationStep {
         .map_err(Into::into)
     }
 
-    pub async fn find_by_investigation(
-        investigation_id: Uuid,
-        pool: &PgPool,
-    ) -> Result<Vec<Self>> {
+    pub async fn find_by_investigation(investigation_id: Uuid, pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as::<_, Self>(
             "SELECT * FROM investigation_steps WHERE investigation_id = $1 ORDER BY step_number ASC",
         )

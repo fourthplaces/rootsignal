@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::types::GqlSource;
 use crate::graphql::auth::middleware::require_admin;
-use crate::graphql::error;
 use crate::graphql::entities::types::GqlEntity;
+use crate::graphql::error;
 use crate::graphql::workflows::trigger_restate_workflow;
 use rootsignal_core::ServerDeps;
 
@@ -17,11 +17,7 @@ impl SourceMutation {
     /// Create a source from a URL or search query.
     /// The backend auto-detects source type, name, and handle from the input.
     /// Returns the existing source if the normalized URL already exists.
-    async fn add_source(
-        &self,
-        ctx: &Context<'_>,
-        input: String,
-    ) -> Result<GqlSource> {
+    async fn add_source(&self, ctx: &Context<'_>, input: String) -> Result<GqlSource> {
         tracing::info!(input = %input, "graphql.add_source");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
@@ -34,11 +30,7 @@ impl SourceMutation {
         Ok(GqlSource::from(source))
     }
 
-    async fn activate_sources(
-        &self,
-        ctx: &Context<'_>,
-        ids: Vec<Uuid>,
-    ) -> Result<i32> {
+    async fn activate_sources(&self, ctx: &Context<'_>, ids: Vec<Uuid>) -> Result<i32> {
         tracing::info!(count = ids.len(), "graphql.activate_sources");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
@@ -51,11 +43,7 @@ impl SourceMutation {
         Ok(updated as i32)
     }
 
-    async fn deactivate_sources(
-        &self,
-        ctx: &Context<'_>,
-        ids: Vec<Uuid>,
-    ) -> Result<i32> {
+    async fn deactivate_sources(&self, ctx: &Context<'_>, ids: Vec<Uuid>) -> Result<i32> {
         tracing::info!(count = ids.len(), "graphql.deactivate_sources");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
@@ -68,11 +56,7 @@ impl SourceMutation {
         Ok(updated as i32)
     }
 
-    async fn scrape_sources(
-        &self,
-        ctx: &Context<'_>,
-        ids: Vec<Uuid>,
-    ) -> Result<i32> {
+    async fn scrape_sources(&self, ctx: &Context<'_>, ids: Vec<Uuid>) -> Result<i32> {
         tracing::info!(count = ids.len(), "graphql.scrape_sources");
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?.clone();
@@ -98,11 +82,7 @@ impl SourceMutation {
         Ok(triggered)
     }
 
-    async fn delete_sources(
-        &self,
-        ctx: &Context<'_>,
-        ids: Vec<Uuid>,
-    ) -> Result<i32> {
+    async fn delete_sources(&self, ctx: &Context<'_>, ids: Vec<Uuid>) -> Result<i32> {
         tracing::info!(count = ids.len(), "graphql.delete_sources");
         require_admin(ctx)?;
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
@@ -117,21 +97,15 @@ impl SourceMutation {
 
     /// Use AI to detect the entity behind a source from its scraped pages,
     /// then find-or-create the entity and link it to the source.
-    async fn detect_source_entity(
-        &self,
-        ctx: &Context<'_>,
-        source_id: Uuid,
-    ) -> Result<GqlEntity> {
+    async fn detect_source_entity(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<GqlEntity> {
         tracing::info!(source_id = %source_id, "graphql.detect_source_entity");
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        let entity = rootsignal_domains::scraping::activities::detect_source_entity(
-            source_id,
-            deps,
-        )
-        .await
-        .map_err(|e| error::internal(e))?;
+        let entity =
+            rootsignal_domains::scraping::activities::detect_source_entity(source_id, deps)
+                .await
+                .map_err(|e| error::internal(e))?;
 
         Ok(GqlEntity::from(entity))
     }

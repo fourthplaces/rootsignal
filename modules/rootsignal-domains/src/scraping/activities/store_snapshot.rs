@@ -11,7 +11,11 @@ use crate::search::Embedding;
 
 /// Store a raw page as an immutable page_snapshot. Returns the snapshot ID.
 /// Deduplicates by (canonical_url, content_hash).
-pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerDeps) -> Result<Uuid> {
+pub async fn store_page_snapshot(
+    page: &RawPage,
+    source_id: Uuid,
+    deps: &ServerDeps,
+) -> Result<Uuid> {
     let pool = deps.pool();
     let content_hash = page.content_hash();
     let metadata = serde_json::to_value(&page.metadata)?;
@@ -111,9 +115,15 @@ pub async fn store_page_snapshot(page: &RawPage, source_id: Uuid, deps: &ServerD
             match deps.embedding_service.embed(embed_text).await {
                 Ok(raw_embedding) => {
                     let vector = Vector::from(raw_embedding);
-                    match Embedding::upsert("page_snapshot", snapshot_id, "en", vector, &hash, pool).await {
-                        Ok(_) => tracing::debug!(snapshot_id = %snapshot_id, chars = embed_text.len(), "Embedded page snapshot"),
-                        Err(e) => tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to store page embedding"),
+                    match Embedding::upsert("page_snapshot", snapshot_id, "en", vector, &hash, pool)
+                        .await
+                    {
+                        Ok(_) => {
+                            tracing::debug!(snapshot_id = %snapshot_id, chars = embed_text.len(), "Embedded page snapshot")
+                        }
+                        Err(e) => {
+                            tracing::warn!(snapshot_id = %snapshot_id, error = %e, "Failed to store page embedding")
+                        }
                     }
                 }
                 Err(e) => {

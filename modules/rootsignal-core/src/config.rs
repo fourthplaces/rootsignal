@@ -89,11 +89,20 @@ impl AppConfig {
 
         tracing::info!("Config loaded:");
         tracing::info!("  OPENAI_API_KEY: {}", preview(&self.openai_api_key));
-        tracing::info!("  ANTHROPIC_API_KEY: {}", preview_opt(&self.anthropic_api_key));
+        tracing::info!(
+            "  ANTHROPIC_API_KEY: {}",
+            preview_opt(&self.anthropic_api_key)
+        );
         tracing::info!("  TAVILY_API_KEY: {}", preview(&self.tavily_api_key));
         tracing::info!("  CHROME_URL: {}", preview_opt(&self.chrome_url));
-        tracing::info!("  FIRECRAWL_API_KEY: {}", preview_opt(&self.firecrawl_api_key));
+        tracing::info!(
+            "  FIRECRAWL_API_KEY: {}",
+            preview_opt(&self.firecrawl_api_key)
+        );
         tracing::info!("  APIFY_API_KEY: {}", preview_opt(&self.apify_api_key));
-        tracing::info!("  RESTATE_ADMIN_URL: {}", preview_opt(&self.restate_admin_url));
+        tracing::info!(
+            "  RESTATE_ADMIN_URL: {}",
+            preview_opt(&self.restate_admin_url)
+        );
     }
 }

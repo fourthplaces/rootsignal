@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDate, NaiveTime};
 use pgvector::Vector;
 use rootsignal_core::{ExtractedSignals, ServerDeps};
 use sha2::{Digest, Sha256};
@@ -77,18 +77,19 @@ pub async fn extract_signals_from_snapshot(
     .await?;
 
     // Resolve source_id and entity_id from the source chain
-    let (source_id, entity_id): (Option<Uuid>, Option<Uuid>) = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
-        r#"
+    let (source_id, entity_id): (Option<Uuid>, Option<Uuid>) =
+        sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
+            r#"
         SELECT ds.source_id, src.entity_id FROM domain_snapshots ds
         JOIN sources src ON src.id = ds.source_id
         WHERE ds.page_snapshot_id = $1
         LIMIT 1
         "#,
-    )
-    .bind(snapshot_id)
-    .fetch_optional(pool)
-    .await?
-    .unwrap_or((None, None));
+        )
+        .bind(snapshot_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or((None, None));
 
     let content = snapshot
         .content
@@ -244,29 +245,41 @@ pub async fn extract_signals_from_snapshot(
 
         // 2. Schedule → schedules (scheduleable_type = 'signal')
         if signal.start_date.is_some() || signal.is_recurring == Some(true) {
+            // Parse date-only portion to avoid timezone shift.
+            // The LLM may return "2026-02-19" or "2026-02-19T..." — take just the date.
             let valid_from = signal
                 .start_date
                 .as_deref()
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc));
+                .and_then(|s| NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok())
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc());
             let valid_through = signal
                 .end_date
                 .as_deref()
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc));
+                .and_then(|s| NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok())
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc());
+
+            // Parse local start/end times (HH:MM) into NaiveTime
+            let opens_at = signal
+                .start_time
+                .as_deref()
+                .and_then(|s| NaiveTime::parse_from_str(s, "%H:%M").ok());
+            let closes_at = signal
+                .end_time
+                .as_deref()
+                .and_then(|s| NaiveTime::parse_from_str(s, "%H:%M").ok());
 
             Schedule::create(
                 "signal",
                 signal_row.id,
                 signal.start_date.as_deref(), // dtstart
-                None,                          // repeat_frequency
-                None,                          // byday
-                None,                          // bymonthday
+                None,                         // repeat_frequency
+                None,                         // byday
+                None,                         // bymonthday
                 signal.recurrence_description.as_deref(),
                 valid_from,
                 valid_through,
-                None, // opens_at
-                None, // closes_at
+                opens_at,
+                closes_at,
                 pool,
             )
             .await?;
@@ -285,8 +298,15 @@ pub async fn extract_signals_from_snapshot(
         match deps.embedding_service.embed(&embed_text).await {
             Ok(raw_embedding) => {
                 let vector = Vector::from(raw_embedding);
-                Embedding::upsert("signal", signal_row.id, in_language, vector, &embed_hash, pool)
-                    .await?;
+                Embedding::upsert(
+                    "signal",
+                    signal_row.id,
+                    in_language,
+                    vector,
+                    &embed_hash,
+                    pool,
+                )
+                .await?;
             }
             Err(e) => {
                 tracing::warn!(signal_id = %signal_row.id, error = %e, "Failed to embed signal (non-fatal)");

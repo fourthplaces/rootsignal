@@ -95,12 +95,10 @@ pub async fn detect_signal_clusters(deps: &Arc<ServerDeps>) -> Result<Vec<Uuid>>
             "Signal cluster in {} with {} signals in the last 7 days",
             cluster.city, cluster.signal_count
         );
-        let already_covered = if let Ok(raw_emb) =
-            deps.embedding_service.embed(&cluster_text).await
+        let already_covered = if let Ok(raw_emb) = deps.embedding_service.embed(&cluster_text).await
         {
             let query_vec = Vector::from(raw_emb);
-            let similar =
-                Embedding::search_similar(query_vec, "finding", 1, 0.2, pool).await?;
+            let similar = Embedding::search_similar(query_vec, "finding", 1, 0.2, pool).await?;
             !similar.is_empty()
         } else {
             false

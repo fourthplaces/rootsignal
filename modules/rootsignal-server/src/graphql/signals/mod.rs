@@ -44,12 +44,11 @@ impl SignalQuery {
 
         // Source filter
         if let Some(source_id) = source_id {
-            let nodes: Vec<GqlSignal> =
-                Signal::find_by_source(source_id, limit, offset, pool)
-                    .await?
-                    .into_iter()
-                    .map(GqlSignal::from)
-                    .collect();
+            let nodes: Vec<GqlSignal> = Signal::find_by_source(source_id, limit, offset, pool)
+                .await?
+                .into_iter()
+                .map(GqlSignal::from)
+                .collect();
             let total = nodes.len() as i64;
             return Ok(GqlSignalConnection {
                 nodes,
@@ -89,12 +88,11 @@ impl SignalQuery {
 
         // Entity filter
         if let Some(entity_id) = entity_id {
-            let nodes: Vec<GqlSignal> =
-                Signal::find_by_entity(entity_id, limit, offset, pool)
-                    .await?
-                    .into_iter()
-                    .map(GqlSignal::from)
-                    .collect();
+            let nodes: Vec<GqlSignal> = Signal::find_by_entity(entity_id, limit, offset, pool)
+                .await?
+                .into_iter()
+                .map(GqlSignal::from)
+                .collect();
             let total = nodes.len() as i64;
             return Ok(GqlSignalConnection {
                 nodes,

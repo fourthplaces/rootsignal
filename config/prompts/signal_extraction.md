@@ -35,7 +35,9 @@ NOT a signal. "We need volunteers for Sunday service" IS an ask.
 2. Extract `about` — the subject matter (what's being asked/given/discussed)
 3. Extract entity name if mentioned
 4. Extract location if mentioned (address, city, state, postal code — will be geocoded)
-5. Extract dates if mentioned (ISO 8601). For recurring programs, note recurrence
+5. Extract dates if mentioned (ISO 8601 date only, e.g. "2026-02-19"). Extract local
+   start_time and end_time separately in 24h HH:MM format (e.g. "20:00", "14:30").
+   For recurring programs, note recurrence
    ("Mon-Fri 9-5" → is_recurring: true, recurrence_description: "Monday through Friday, 9am to 5pm")
 6. Extract `broadcasted_at` (ISO 8601) — when this content was published or posted,
    if a date is visible on the page (article date, post timestamp, press release date).

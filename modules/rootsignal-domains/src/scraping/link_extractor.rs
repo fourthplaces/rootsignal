@@ -1,4 +1,4 @@
-use scraper::{Html, Selector, ElementRef};
+use scraper::{ElementRef, Html, Selector};
 use std::collections::HashMap;
 use url::Url;
 
@@ -151,7 +151,16 @@ fn get_anchor_text(element: &ElementRef) -> Option<String> {
 /// Walks up to the nearest block-level parent and extracts its text content.
 fn get_surrounding_text(element: &ElementRef) -> Option<String> {
     let block_elements = [
-        "p", "div", "li", "td", "th", "dd", "dt", "blockquote", "section", "article",
+        "p",
+        "div",
+        "li",
+        "td",
+        "th",
+        "dd",
+        "dt",
+        "blockquote",
+        "section",
+        "article",
     ];
 
     // Walk up to find nearest block-level parent
@@ -280,11 +289,26 @@ mod tests {
         let by_url: HashMap<&str, &ExtractedLink> =
             links.iter().map(|l| (l.target_url.as_str(), l)).collect();
 
-        assert_eq!(by_url["https://example.com/nav"].section.as_deref(), Some("nav"));
-        assert_eq!(by_url["https://example.com/header"].section.as_deref(), Some("header"));
-        assert_eq!(by_url["https://example.com/main"].section.as_deref(), Some("body"));
-        assert_eq!(by_url["https://example.com/footer"].section.as_deref(), Some("footer"));
-        assert_eq!(by_url["https://example.com/aside"].section.as_deref(), Some("sidebar"));
+        assert_eq!(
+            by_url["https://example.com/nav"].section.as_deref(),
+            Some("nav")
+        );
+        assert_eq!(
+            by_url["https://example.com/header"].section.as_deref(),
+            Some("header")
+        );
+        assert_eq!(
+            by_url["https://example.com/main"].section.as_deref(),
+            Some("body")
+        );
+        assert_eq!(
+            by_url["https://example.com/footer"].section.as_deref(),
+            Some("footer")
+        );
+        assert_eq!(
+            by_url["https://example.com/aside"].section.as_deref(),
+            Some("sidebar")
+        );
     }
 
     #[test]
@@ -332,7 +356,9 @@ mod tests {
     fn test_caps_at_500_links() {
         let mut html = String::from("<html><body>");
         for i in 0..600 {
-            html.push_str(&format!(r#"<a href="https://example.com/page/{i}">Link {i}</a>"#));
+            html.push_str(&format!(
+                r#"<a href="https://example.com/page/{i}">Link {i}</a>"#
+            ));
         }
         html.push_str("</body></html>");
 

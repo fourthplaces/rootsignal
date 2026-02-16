@@ -22,10 +22,7 @@ impl EpaEchoAdapter {
     }
 
     /// Fetch facility violations from EPA ECHO.
-    pub async fn fetch_violations(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<Vec<RawPage>> {
+    pub async fn fetch_violations(&self, config: &serde_json::Value) -> Result<Vec<RawPage>> {
         let facility_name = config
             .get("facility_name")
             .or_else(|| config.get("query_value"))
@@ -58,7 +55,8 @@ impl EpaEchoAdapter {
 
     /// Step 1: Query for facilities by name, returns a QID for subsequent queries.
     async fn get_facility_qid(&self, facility_name: &str) -> Result<Option<String>> {
-        let encoded_name: String = form_urlencoded::byte_serialize(facility_name.as_bytes()).collect();
+        let encoded_name: String =
+            form_urlencoded::byte_serialize(facility_name.as_bytes()).collect();
         let url = format!(
             "https://echodata.epa.gov/echo/dfr_rest_services.get_facility_info?p_name={}&output=JSON",
             encoded_name
@@ -101,11 +99,7 @@ impl EpaEchoAdapter {
     }
 
     /// Step 2: Get detailed facility report using QID.
-    async fn get_facility_report(
-        &self,
-        qid: &str,
-        facility_name: &str,
-    ) -> Result<Vec<RawPage>> {
+    async fn get_facility_report(&self, qid: &str, facility_name: &str) -> Result<Vec<RawPage>> {
         let url = format!(
             "https://echodata.epa.gov/echo/dfr_rest_services.get_dfr?qid={}&output=JSON",
             qid
@@ -137,19 +131,10 @@ impl EpaEchoAdapter {
                 let content = serde_json::to_string_pretty(facility)?;
 
                 let page = RawPage::new(&url, &content)
-                    .with_title(format!(
-                        "EPA ECHO: {} (FRS {})",
-                        facility_name, frs_id
-                    ))
+                    .with_title(format!("EPA ECHO: {} (FRS {})", facility_name, frs_id))
                     .with_content_type("application/json")
-                    .with_metadata(
-                        "source",
-                        serde_json::Value::String("epa_echo".into()),
-                    )
-                    .with_metadata(
-                        "frs_id",
-                        serde_json::Value::String(frs_id.into()),
-                    );
+                    .with_metadata("source", serde_json::Value::String("epa_echo".into()))
+                    .with_metadata("frs_id", serde_json::Value::String(frs_id.into()));
 
                 pages.push(page);
             }

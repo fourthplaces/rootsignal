@@ -93,12 +93,7 @@ impl Connection {
     }
 
     /// Count connections created in the last N days for a target.
-    pub async fn count_recent(
-        to_type: &str,
-        to_id: Uuid,
-        days: i32,
-        pool: &PgPool,
-    ) -> Result<i64> {
+    pub async fn count_recent(to_type: &str, to_id: Uuid, days: i32, pool: &PgPool) -> Result<i64> {
         let row = sqlx::query_as::<_, (i64,)>(
             r#"
             SELECT COUNT(*) FROM connections

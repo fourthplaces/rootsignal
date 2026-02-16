@@ -233,7 +233,11 @@ impl Ingestor for FirecrawlIngestor {
             tracing::error!(url = %config.url, body = %&body[..body.len().min(500)], "Firecrawl: crawl request rejected");
             return Err(CrawlError::Http(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Firecrawl crawl rejected ({}): {}", status, &body[..body.len().min(200)]),
+                format!(
+                    "Firecrawl crawl rejected ({}): {}",
+                    status,
+                    &body[..body.len().min(200)]
+                ),
             ))));
         }
 

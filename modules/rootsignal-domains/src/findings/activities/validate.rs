@@ -42,10 +42,7 @@ pub async fn validate_finding<T: serde::Serialize>(
 
     let model = &deps.file_config.models.investigation;
 
-    let result: ValidationResult = deps
-        .ai
-        .extract(model, system_prompt, &user_prompt)
-        .await?;
+    let result: ValidationResult = deps.ai.extract(model, system_prompt, &user_prompt).await?;
 
     Ok(result)
 }

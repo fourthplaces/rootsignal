@@ -79,9 +79,15 @@ impl WorkflowMutation {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
         let key = format!("{}-{}", source_id, chrono::Utc::now().timestamp());
-        trigger_restate_workflow(deps, "ScrapeWorkflow", &key, serde_json::json!({
-            "source_id": source_id.to_string(),
-        })).await
+        trigger_restate_workflow(
+            deps,
+            "ScrapeWorkflow",
+            &key,
+            serde_json::json!({
+                "source_id": source_id.to_string(),
+            }),
+        )
+        .await
     }
 
     /// Trigger a full scrape cycle for all due sources.
@@ -140,9 +146,15 @@ impl WorkflowMutation {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
         let key = format!("{}-{}", snapshot_id, chrono::Utc::now().timestamp());
-        trigger_restate_workflow(deps, "ExtractWorkflow", &key, serde_json::json!({
-            "snapshot_ids": [snapshot_id.to_string()],
-        })).await
+        trigger_restate_workflow(
+            deps,
+            "ExtractWorkflow",
+            &key,
+            serde_json::json!({
+                "snapshot_ids": [snapshot_id.to_string()],
+            }),
+        )
+        .await
     }
 
     /// Trigger cluster detection scan for signal clusters that warrant investigation.
@@ -171,12 +183,23 @@ impl WorkflowMutation {
         tracing::info!(translatable_type = %translatable_type, translatable_id = %translatable_id, locale = %locale, "graphql.trigger_translation");
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
-        let key = format!("{}-{}-{}", translatable_type, translatable_id, chrono::Utc::now().timestamp());
-        trigger_restate_workflow(deps, "TranslateWorkflow", &key, serde_json::json!({
-            "translatable_type": translatable_type,
-            "translatable_id": translatable_id.to_string(),
-            "source_locale": locale,
-        })).await
+        let key = format!(
+            "{}-{}-{}",
+            translatable_type,
+            translatable_id,
+            chrono::Utc::now().timestamp()
+        );
+        trigger_restate_workflow(
+            deps,
+            "TranslateWorkflow",
+            &key,
+            serde_json::json!({
+                "translatable_type": translatable_type,
+                "translatable_id": translatable_id.to_string(),
+                "source_locale": locale,
+            }),
+        )
+        .await
     }
 }
 
@@ -269,11 +292,7 @@ impl WorkflowQuery {
                 let key = row["target_service_key"].as_str()?;
                 // Extract source_id from key format "{source_id}-{timestamp}"
                 // UUIDs are 36 chars (8-4-4-4-12)
-                let extracted_source_id = if key.len() > 36 {
-                    &key[..36]
-                } else {
-                    key
-                };
+                let extracted_source_id = if key.len() > 36 { &key[..36] } else { key };
 
                 // App-level stage from Restate KV state, strip JSON quotes
                 let stage = row["value_utf8"]

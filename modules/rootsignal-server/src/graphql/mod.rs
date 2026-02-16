@@ -56,6 +56,7 @@ pub struct MutationRoot(
     service_areas::mutations::ServiceAreaMutation,
     signals::mutations::SignalMutation,
     findings::mutations::FindingMutation,
+    heat_map::mutations::HeatMapMutation,
 );
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;

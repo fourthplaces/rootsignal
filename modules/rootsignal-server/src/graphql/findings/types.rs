@@ -46,7 +46,11 @@ impl GqlFinding {
         Ok(evidence.into_iter().map(GqlFindingEvidence::from).collect())
     }
 
-    async fn connections(&self, ctx: &Context<'_>, role: Option<String>) -> Result<Vec<GqlConnection>> {
+    async fn connections(
+        &self,
+        ctx: &Context<'_>,
+        role: Option<String>,
+    ) -> Result<Vec<GqlConnection>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let connections = if let Some(ref role) = role {
             Connection::find_to_by_role("finding", self.id, role, pool).await?

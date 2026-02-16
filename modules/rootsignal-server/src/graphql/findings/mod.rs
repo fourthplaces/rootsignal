@@ -37,12 +37,11 @@ impl FindingQuery {
 
         if let Some(ref query) = search {
             let status_str = status.map(|s| s.as_str());
-            let nodes: Vec<GqlFinding> =
-                Finding::search(query, status_str, limit, offset, pool)
-                    .await?
-                    .into_iter()
-                    .map(GqlFinding::from)
-                    .collect();
+            let nodes: Vec<GqlFinding> = Finding::search(query, status_str, limit, offset, pool)
+                .await?
+                .into_iter()
+                .map(GqlFinding::from)
+                .collect();
             let total = nodes.len() as i64;
             return Ok(GqlFindingConnection {
                 nodes,

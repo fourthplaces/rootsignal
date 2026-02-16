@@ -116,6 +116,10 @@ pub struct ExtractedSignal {
     /// Temporal (ISO 8601 — extraction activity creates Schedule record)
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    /// Local start time at the venue (HH:MM, 24h format), e.g. "20:00"
+    pub start_time: Option<String>,
+    /// Local end time at the venue (HH:MM, 24h format), e.g. "22:00"
+    pub end_time: Option<String>,
     pub is_recurring: Option<bool>,
     pub recurrence_description: Option<String>,
     /// When this signal was broadcast into the world (ISO 8601), if visible on the page

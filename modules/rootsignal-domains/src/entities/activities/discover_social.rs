@@ -38,9 +38,8 @@ static RE_FACEBOOK: LazyLock<Regex> = LazyLock::new(|| {
 static RE_TWITTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:https?://)?(?:www\.)?(?:twitter|x)\.com/([A-Za-z0-9_]+)").unwrap()
 });
-static RE_TIKTOK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:https?://)?(?:www\.)?tiktok\.com/@([A-Za-z0-9_.]+)").unwrap()
-});
+static RE_TIKTOK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:https?://)?(?:www\.)?tiktok\.com/@([A-Za-z0-9_.]+)").unwrap());
 static RE_LINKEDIN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:https?://)?(?:www\.)?linkedin\.com/company/([A-Za-z0-9_-]+)").unwrap()
 });
@@ -56,8 +55,17 @@ const INSTAGRAM_SKIP: &[&str] = &[
     "p", "reel", "reels", "stories", "explore", "accounts", "tv", "s", "share",
 ];
 const FACEBOOK_SKIP: &[&str] = &[
-    "photo", "photos", "sharer", "share", "events", "groups", "watch", "marketplace", "login",
-    "dialog", "plugins",
+    "photo",
+    "photos",
+    "sharer",
+    "share",
+    "events",
+    "groups",
+    "watch",
+    "marketplace",
+    "login",
+    "dialog",
+    "plugins",
 ];
 const TWITTER_SKIP: &[&str] = &["intent", "share", "hashtag", "search", "i", "home"];
 const TIKTOK_SKIP: &[&str] = &["discover", "tag", "music", "sound"];
@@ -147,10 +155,7 @@ pub fn scan_social_links(content: &str) -> Vec<ExtractedSocialLink> {
 /// 1. Load HTML/markdown from page_snapshots linked to the entity's sources
 /// 2. Scan for social media profile URLs
 /// 3. Create source + social_source records for each discovered profile
-pub async fn discover_social_for_entity(
-    entity_id: Uuid,
-    pool: &PgPool,
-) -> Result<Vec<Source>> {
+pub async fn discover_social_for_entity(entity_id: Uuid, pool: &PgPool) -> Result<Vec<Source>> {
     // Load all page content from snapshots linked to this entity's sources
     let rows = sqlx::query_as::<_, (String,)>(
         r#"

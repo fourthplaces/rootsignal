@@ -20,10 +20,7 @@ impl UsaSpendingAdapter {
     }
 
     /// Fetch awards for a recipient from USAspending.
-    pub async fn fetch_awards(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<Vec<RawPage>> {
+    pub async fn fetch_awards(&self, config: &serde_json::Value) -> Result<Vec<RawPage>> {
         let recipient_name = config
             .get("query_value")
             .or_else(|| config.get("recipient_name"))
@@ -86,14 +83,9 @@ impl UsaSpendingAdapter {
             if let Some(results) = results {
                 for award in results {
                     let award_id = award["Award ID"].as_str().unwrap_or("unknown");
-                    let internal_id = award["generated_internal_id"]
-                        .as_str()
-                        .unwrap_or(award_id);
+                    let internal_id = award["generated_internal_id"].as_str().unwrap_or(award_id);
 
-                    let url = format!(
-                        "https://www.usaspending.gov/award/{}",
-                        internal_id
-                    );
+                    let url = format!("https://www.usaspending.gov/award/{}", internal_id);
 
                     let content = serde_json::to_string_pretty(award)?;
 

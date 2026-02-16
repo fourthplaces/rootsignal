@@ -83,22 +83,19 @@ impl GqlEntity {
     /// Number of signals associated with this entity.
     async fn signal_count(&self, ctx: &Context<'_>) -> Result<i32> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let row = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM signals WHERE entity_id = $1",
-        )
-        .bind(self.id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
+        let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM signals WHERE entity_id = $1")
+            .bind(self.id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,));
         Ok(row.0 as i32)
     }
 
     async fn sources(&self, ctx: &Context<'_>) -> Result<Vec<GqlSource>> {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
-        let sources =
-            rootsignal_domains::scraping::Source::find_by_entity_id(self.id, pool)
-                .await
-                .unwrap_or_default();
+        let sources = rootsignal_domains::scraping::Source::find_by_entity_id(self.id, pool)
+            .await
+            .unwrap_or_default();
         Ok(sources.into_iter().map(GqlSource::from).collect())
     }
 

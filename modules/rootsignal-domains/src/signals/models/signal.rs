@@ -306,15 +306,19 @@ impl Signal {
         }
 
         // Clean up polymorphic associations
-        sqlx::query("DELETE FROM locationables WHERE locatable_type = 'signal' AND locatable_id = ANY($1)")
-            .bind(&signal_ids)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM locationables WHERE locatable_type = 'signal' AND locatable_id = ANY($1)",
+        )
+        .bind(&signal_ids)
+        .execute(pool)
+        .await?;
 
-        sqlx::query("DELETE FROM taggables WHERE taggable_type = 'signal' AND taggable_id = ANY($1)")
-            .bind(&signal_ids)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM taggables WHERE taggable_type = 'signal' AND taggable_id = ANY($1)",
+        )
+        .bind(&signal_ids)
+        .execute(pool)
+        .await?;
 
         sqlx::query("DELETE FROM schedules WHERE scheduleable_type = 'signal' AND scheduleable_id = ANY($1)")
             .bind(&signal_ids)

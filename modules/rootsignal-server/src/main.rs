@@ -5,16 +5,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-
 use rootsignal_server::routes;
 
 // Import Restate traits to bring `.serve()` into scope
 use rootsignal_domains::clustering::ClusteringJob;
 use rootsignal_domains::extraction::restate::ExtractWorkflow;
 use rootsignal_domains::investigations::restate::InvestigateWorkflow;
-use rootsignal_domains::scraping::restate::{
-    SchedulerService, ScrapeWorkflow, SourceObject,
-};
+use rootsignal_domains::scraping::restate::{SchedulerService, ScrapeWorkflow, SourceObject};
 use rootsignal_domains::taxonomy::restate::tags::TagsService;
 use rootsignal_domains::translation::restate::TranslateWorkflow;
 

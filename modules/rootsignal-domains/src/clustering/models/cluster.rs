@@ -267,9 +267,7 @@ impl Cluster {
                     WHERE zc.zip_code = ",
             );
             qb.push_bind(zip);
-            qb.push(
-                " AND loc.latitude BETWEEN zc.latitude - ",
-            );
+            qb.push(" AND loc.latitude BETWEEN zc.latitude - ");
             qb.push_bind(lat_delta);
             qb.push(" AND zc.latitude + ");
             qb.push_bind(lat_delta);
@@ -316,7 +314,11 @@ impl Cluster {
     }
 
     /// Fetch signals belonging to a cluster.
-    pub async fn find_signals(cluster_id: Uuid, limit: i64, pool: &PgPool) -> Result<Vec<ClusterSignal>> {
+    pub async fn find_signals(
+        cluster_id: Uuid,
+        limit: i64,
+        pool: &PgPool,
+    ) -> Result<Vec<ClusterSignal>> {
         sqlx::query_as::<_, ClusterSignal>(
             r#"
             SELECT

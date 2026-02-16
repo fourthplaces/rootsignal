@@ -2,9 +2,9 @@ use async_graphql::*;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::graphql::loaders::*;
 use super::super::locations::types::GqlLocation;
 use super::super::schedules::types::GqlSchedule;
+use crate::graphql::loaders::*;
 use rootsignal_domains::signals::Signal;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -54,6 +54,7 @@ pub struct GqlSignal {
     pub about: Option<String>,
     pub entity_id: Option<Uuid>,
     pub source_url: Option<String>,
+    pub page_snapshot_id: Option<Uuid>,
     pub source_citation_url: Option<String>,
     pub confidence: f32,
     pub in_language: String,
@@ -71,6 +72,7 @@ impl From<Signal> for GqlSignal {
             about: s.about,
             entity_id: s.entity_id,
             source_url: s.source_url,
+            page_snapshot_id: s.page_snapshot_id,
             source_citation_url: s.source_citation_url,
             confidence: s.confidence,
             in_language: s.in_language,

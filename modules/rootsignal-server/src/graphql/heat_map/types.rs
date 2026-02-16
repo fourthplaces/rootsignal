@@ -10,6 +10,7 @@ pub struct GqlHeatMapPoint {
     pub weight: f64,
     pub entity_type: String,
     pub entity_id: Uuid,
+    pub signal_type: Option<String>,
     pub generated_at: DateTime<Utc>,
 }
 
@@ -22,6 +23,7 @@ impl From<rootsignal_domains::heat_map::HeatMapPoint> for GqlHeatMapPoint {
             weight: h.weight,
             entity_type: h.entity_type,
             entity_id: h.entity_id,
+            signal_type: h.signal_type,
             generated_at: h.generated_at,
         }
     }

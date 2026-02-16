@@ -65,7 +65,12 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
         } else {
             content
         };
-        user_prompt.push_str(&format!("--- Page {} ---\nURL: {}\n{}\n\n", i + 1, url, truncated));
+        user_prompt.push_str(&format!(
+            "--- Page {} ---\nURL: {}\n{}\n\n",
+            i + 1,
+            url,
+            truncated
+        ));
     }
 
     let model = &deps.file_config.models.extraction;
@@ -121,7 +126,6 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
             "Social discovery failed (non-fatal)"
         );
     }
-
 
     Ok(entity)
 }
