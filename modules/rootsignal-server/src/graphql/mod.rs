@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod clusters;
 pub mod contacts;
 pub mod context;
 pub mod entities;
@@ -34,6 +35,7 @@ pub struct QueryRoot(
     tags::TagQuery,
     observations::ObservationQuery,
     heat_map::HeatMapQuery,
+    clusters::ClusterQuery,
     stats::StatsQuery,
     search::SearchQuery,
     workflows::WorkflowQuery,
