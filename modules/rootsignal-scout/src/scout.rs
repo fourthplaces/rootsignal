@@ -4,6 +4,7 @@ use futures::stream::{self, StreamExt};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use apify_client::ApifyClient;
 use rootsignal_common::{EvidenceNode, Node, NodeType};
 use rootsignal_graph::{GraphWriter, GraphClient};
 
@@ -26,6 +27,7 @@ pub struct ScoutStats {
     pub fresh_7d: u32,
     pub fresh_30d: u32,
     pub fresh_90d: u32,
+    pub social_media_posts: u32,
     pub audience_roles: std::collections::HashMap<String, u32>,
 }
 
@@ -34,6 +36,7 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "\n=== Scout Run Complete ===")?;
         writeln!(f, "URLs scraped:       {}", self.urls_scraped)?;
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
+        writeln!(f, "Social media posts: {}", self.social_media_posts)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
         writeln!(f, "Signals rejected:   {} (PII)", self.signals_rejected_pii)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
@@ -64,6 +67,7 @@ pub struct Scout {
     embedder: Embedder,
     scraper: Box<dyn PageScraper>,
     tavily: TavilySearcher,
+    apify: Option<ApifyClient>,
 }
 
 impl Scout {
@@ -73,13 +77,21 @@ impl Scout {
         voyage_api_key: &str,
         firecrawl_api_key: &str,
         tavily_api_key: &str,
+        apify_api_key: &str,
     ) -> Result<Self> {
+        let apify = if apify_api_key.is_empty() {
+            warn!("APIFY_API_KEY not set, skipping social media scraping");
+            None
+        } else {
+            Some(ApifyClient::new(apify_api_key.to_string()))
+        };
         Ok(Self {
             writer: GraphWriter::new(graph_client),
             extractor: Extractor::new(anthropic_api_key),
             embedder: Embedder::new(voyage_api_key),
             scraper: scraper::build_scraper(firecrawl_api_key)?,
             tavily: TavilySearcher::new(tavily_api_key),
+            apify,
         })
     }
 
@@ -170,7 +182,7 @@ impl Scout {
         .await;
 
         // Process extracted nodes sequentially (batch embed + dedup + graph writes)
-        for (url, source_trust, result) in pipeline_results {
+        for (url, _source_trust, result) in pipeline_results {
             match result {
                 Some((content, nodes)) => {
                     match self.store_signals(&url, &content, nodes, &mut stats).await {
@@ -185,8 +197,100 @@ impl Scout {
             }
         }
 
+        // 4. Social media via Apify (Instagram + Facebook)
+        if let Some(ref apify) = self.apify {
+            self.scrape_social_media(apify, &mut stats).await;
+        }
+
         info!("{stats}");
         Ok(stats)
+    }
+
+    /// Scrape Instagram and Facebook accounts via Apify, feed posts through LLM extraction.
+    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats) {
+        // Instagram accounts
+        let ig_accounts = sources::instagram_accounts();
+        info!(count = ig_accounts.len(), "Scraping Instagram accounts via Apify...");
+
+        for (username, trust) in &ig_accounts {
+            match apify.scrape_instagram_posts(username, 10).await {
+                Ok(posts) => {
+                    let post_count = posts.len();
+                    stats.social_media_posts += post_count as u32;
+
+                    // Concatenate recent post captions into a single text block for extraction
+                    let combined_text: String = posts
+                        .iter()
+                        .filter_map(|p| p.caption.as_deref())
+                        .enumerate()
+                        .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    if combined_text.is_empty() {
+                        continue;
+                    }
+
+                    let source_url = format!("https://www.instagram.com/{username}/");
+                    match self.extractor.extract(&combined_text, &source_url, *trust).await {
+                        Ok(nodes) => {
+                            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats).await {
+                                warn!(username, error = %e, "Failed to store Instagram signals");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(username, error = %e, "Instagram extraction failed");
+                        }
+                    }
+
+                    info!(username, posts = post_count, "Instagram scrape complete");
+                }
+                Err(e) => {
+                    warn!(username, error = %e, "Instagram Apify scrape failed");
+                }
+            }
+        }
+
+        // Facebook pages
+        let fb_pages = sources::facebook_pages();
+        info!(count = fb_pages.len(), "Scraping Facebook pages via Apify...");
+
+        for (page_url, trust) in &fb_pages {
+            match apify.scrape_facebook_posts(page_url, 10).await {
+                Ok(posts) => {
+                    let post_count = posts.len();
+                    stats.social_media_posts += post_count as u32;
+
+                    let combined_text: String = posts
+                        .iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .enumerate()
+                        .map(|(i, text)| format!("--- Post {} ---\n{}", i + 1, text))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    if combined_text.is_empty() {
+                        continue;
+                    }
+
+                    match self.extractor.extract(&combined_text, page_url, *trust).await {
+                        Ok(nodes) => {
+                            if let Err(e) = self.store_signals(page_url, &combined_text, nodes, stats).await {
+                                warn!(page_url, error = %e, "Failed to store Facebook signals");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(page_url, error = %e, "Facebook extraction failed");
+                        }
+                    }
+
+                    info!(page_url, posts = post_count, "Facebook scrape complete");
+                }
+                Err(e) => {
+                    warn!(page_url, error = %e, "Facebook Apify scrape failed");
+                }
+            }
+        }
     }
 
     async fn store_signals(

@@ -15,6 +15,7 @@ pub struct Config {
     // Scraping
     pub firecrawl_api_key: String,
     pub tavily_api_key: String,
+    pub apify_api_key: String,
 
     // Web server
     pub web_host: String,
@@ -37,6 +38,7 @@ impl Config {
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
+            apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             web_port: env::var("WEB_PORT")
                 .unwrap_or_else(|_| "3000".to_string())
@@ -57,6 +59,7 @@ impl Config {
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
+            apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: String::new(),
             web_port: 0,
             admin_username: String::new(),
@@ -74,6 +77,7 @@ impl Config {
             voyage_api_key: String::new(),
             firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
+            apify_api_key: String::new(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             web_port: env::var("WEB_PORT")
                 .unwrap_or_else(|_| "3000".to_string())
@@ -96,6 +100,7 @@ impl Config {
             ("VOYAGE_API_KEY", &self.voyage_api_key),
             ("FIRECRAWL_API_KEY", &self.firecrawl_api_key),
             ("TAVILY_API_KEY", &self.tavily_api_key),
+            ("APIFY_API_KEY", &self.apify_api_key),
         ];
         for (name, value) in vars {
             if value.is_empty() {

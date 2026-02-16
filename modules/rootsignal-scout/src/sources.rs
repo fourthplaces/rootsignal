@@ -18,8 +18,12 @@ pub fn source_trust(url: &str) -> f32 {
         // Public-first social platforms
         d if d.contains("reddit.com") => 0.4,
         d if d.contains("bsky.app") => 0.4,
-        // Walled social media
+        // Walled social media (scraped via Apify)
         d if d.contains("facebook.com") || d.contains("instagram.com") || d.contains("twitter.com") || d.contains("x.com") => 0.3,
+        // Volunteer platforms
+        d if d.contains("volunteermatch.org") => 0.75,
+        d if d.contains("idealist.org") => 0.7,
+        d if d.contains("justserve.org") => 0.7,
         // Local news aggregator
         d if d.contains("patch.com") => 0.65,
         // Default
@@ -102,5 +106,51 @@ pub fn curated_sources() -> Vec<(&'static str, f32)> {
         ("https://bsky.app/search?q=minneapolis+community", 0.4),
         ("https://bsky.app/search?q=twin+cities+volunteer", 0.4),
         ("https://bsky.app/search?q=minneapolis+ICE+immigration", 0.4),
+        // Volunteer platforms
+        ("https://www.volunteermatch.org/search?l=Minneapolis%2C+MN&k=&v=true", 0.75),
+        ("https://www.volunteermatch.org/search?l=St+Paul%2C+MN&k=&v=true", 0.75),
+        ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Minneapolis%2C+MN&lat=44.9778&lng=-93.2650&radius=25", 0.7),
+        ("https://www.justserve.org/projects?city=Minneapolis&state=MN", 0.7),
+    ]
+}
+
+/// Instagram accounts to scrape via Apify.
+/// These are Twin Cities orgs that post volunteer needs, events, and community updates.
+/// Returns (username, trust_score).
+pub fn instagram_accounts() -> Vec<(&'static str, f32)> {
+    vec![
+        // Volunteer / community orgs
+        ("handsontwincities", 0.7),
+        ("unitedwaytwincities", 0.7),
+        ("gtcuw", 0.7), // Greater Twin Cities United Way
+        // Food shelves / mutual aid
+        ("secondharvestheartland", 0.7),
+        ("loaborealforest", 0.6),
+        ("pillsburyunited", 0.7),
+        // Ecological / parks
+        ("maborealforest", 0.6),
+        ("friendsofthemsriver", 0.6),
+        ("mplsparks", 0.7),
+        // Civic / advocacy
+        ("acabortionfund", 0.5),
+        ("navigatormn", 0.6),
+        ("mnimmigrantrights", 0.5),
+        // Community centers
+        ("eastsidefreedomlibrary", 0.6),
+        ("midaborecenter", 0.6),
+    ]
+}
+
+/// Facebook pages to scrape via Apify.
+/// Returns (page_url, trust_score).
+pub fn facebook_pages() -> Vec<(&'static str, f32)> {
+    vec![
+        ("https://www.facebook.com/handsontwincities", 0.7),
+        ("https://www.facebook.com/MinneapolisParks", 0.7),
+        ("https://www.facebook.com/SecondHarvestHeartland", 0.7),
+        ("https://www.facebook.com/UnitedWayTwinCities", 0.7),
+        ("https://www.facebook.com/PillsburyUnited", 0.7),
+        ("https://www.facebook.com/OpenArmsMinnesota", 0.7),
+        ("https://www.facebook.com/simpsonhousing", 0.6),
     ]
 }
