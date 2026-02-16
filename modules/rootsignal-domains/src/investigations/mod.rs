@@ -19,6 +19,14 @@ use ai_client::traits::{Agent, PromptBuilder};
 use crate::entities::Entity;
 use tools::{InternalSignalHistoryTool, TavilyEntitySearchTool, WhoisLookupTool};
 
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+struct InvestigationSummary {
+    /// Confidence score from 0.0 to 1.0
+    confidence: f32,
+    /// Summary of the investigation findings
+    summary: String,
+}
+
 pub async fn run_investigation(
     subject_type: &str,
     subject_id: Uuid,
@@ -79,8 +87,14 @@ pub async fn run_investigation(
 
     match response {
         Ok(text) => {
-            // Parse the agent's final response for confidence + summary
-            let (confidence, summary) = parse_agent_response(&text);
+            // Extract structured summary from agent response
+            let model = &deps.file_config.models.investigation;
+            let extraction_prompt = "Extract the investigation confidence score and summary from the following agent transcript.";
+            let parsed = deps.ai.extract::<InvestigationSummary>(model, extraction_prompt, &text).await;
+            let (confidence, summary) = match parsed {
+                Ok(s) => (s.confidence.clamp(0.0, 1.0), s.summary),
+                Err(_) => (0.5, text.clone()),
+            };
 
             // Store the final assessment as an observation
             Observation::create(
@@ -129,24 +143,3 @@ pub async fn run_investigation(
     }
 }
 
-fn parse_agent_response(text: &str) -> (f32, String) {
-    let mut confidence = 0.5_f32;
-    let mut summary = text.to_string();
-
-    for line in text.lines() {
-        let line_upper = line.trim().to_uppercase();
-        if line_upper.starts_with("CONFIDENCE:") {
-            if let Some(val) = line.trim().split(':').nth(1) {
-                if let Ok(c) = val.trim().parse::<f32>() {
-                    confidence = c.clamp(0.0, 1.0);
-                }
-            }
-        } else if line_upper.starts_with("SUMMARY:") {
-            if let Some(val) = line.splitn(2, ':').nth(1) {
-                summary = val.trim().to_string();
-            }
-        }
-    }
-
-    (confidence, summary)
-}

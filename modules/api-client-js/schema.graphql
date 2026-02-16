@@ -662,7 +662,7 @@ type QueryRoot {
 	"""
 	List investigations with optional status filter and pagination.
 	"""
-	investigations(status: String, limit: Int! = 50, offset: Int! = 0): [GqlInvestigation!]!
+	investigations(status: String, subjectId: UUID, limit: Int! = 50, offset: Int! = 0): [GqlInvestigation!]!
 	"""
 	Count investigations, optionally by status.
 	"""

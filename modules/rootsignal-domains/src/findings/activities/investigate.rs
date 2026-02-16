@@ -16,7 +16,7 @@ use crate::investigations::Investigation;
 use crate::search::Embedding;
 
 /// Structured output from the investigation agent.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct InvestigationOutput {
     title: String,
     summary: String,
@@ -27,7 +27,7 @@ struct InvestigationOutput {
     parent_causal_quote: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct EvidenceItem {
     evidence_type: String,
     quote: String,
@@ -35,7 +35,7 @@ struct EvidenceItem {
     url: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct ConnectionItem {
     from_type: String,
     from_id: String,
@@ -212,11 +212,25 @@ pub async fn run_why_investigation(
 
     match response {
         Ok(text) => {
-            // 7. Parse structured output
-            let parsed = parse_investigation_output(&text);
+            // 7. Extract structured output via LLM
+            let extraction_prompt = "Extract the investigation findings from the following agent transcript into the required structured format. Include all evidence and connections found.";
+            let model = &deps.file_config.models.investigation;
+            let output: InvestigationOutput = match deps.ai.extract(model, extraction_prompt, &text).await {
+                Ok(output) => output,
+                Err(e) => {
+                    let summary = format!("Extraction failed: {}", e);
+                    Investigation::complete(investigation.id, &summary, 0.3, pool).await?;
+                    sqlx::query(
+                        "UPDATE signals SET investigation_status = 'completed' WHERE id = $1",
+                    )
+                    .bind(primary_signal_id)
+                    .execute(pool)
+                    .await?;
+                    return Ok(None);
+                }
+            };
 
-            match parsed {
-                Some(output) => {
+            {
                     // 8. Run adversarial validation (Phase 4)
                     let validation = super::validate::validate_finding(&output, &text, deps).await;
                     let rejected = validation.as_ref().map(|v| v.rejected).unwrap_or(false);
@@ -392,24 +406,6 @@ pub async fn run_why_investigation(
                     );
 
                     Ok(Some(finding))
-                }
-                None => {
-                    // Could not parse structured output
-                    Investigation::complete(
-                        investigation.id,
-                        &format!("Unstructured response: {}", &text[..text.len().min(500)]),
-                        0.3,
-                        pool,
-                    )
-                    .await?;
-                    sqlx::query(
-                        "UPDATE signals SET investigation_status = 'completed' WHERE id = $1",
-                    )
-                    .bind(primary_signal_id)
-                    .execute(pool)
-                    .await?;
-                    Ok(None)
-                }
             }
         }
         Err(e) => {
@@ -422,38 +418,6 @@ pub async fn run_why_investigation(
             Err(anyhow::anyhow!(error_msg))
         }
     }
-}
-
-/// Parse the agent's response, extracting JSON from the text.
-fn parse_investigation_output(text: &str) -> Option<InvestigationOutput> {
-    // Try to find JSON in the response (between ```json and ``` or raw JSON object)
-    let json_str = if let Some(start) = text.find("```json") {
-        let start = start + 7;
-        let end = text[start..].find("```").map(|e| start + e)?;
-        &text[start..end]
-    } else if let Some(start) = text.find('{') {
-        // Find the matching closing brace
-        let mut depth = 0;
-        let mut end = start;
-        for (i, ch) in text[start..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = start + i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        &text[start..end]
-    } else {
-        return None;
-    };
-
-    serde_json::from_str(json_str.trim()).ok()
 }
 
 /// Find pending signals near the new finding and link them.

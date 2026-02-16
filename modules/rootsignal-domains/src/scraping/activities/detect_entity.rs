@@ -61,7 +61,11 @@ pub async fn detect_source_entity(source_id: Uuid, deps: &ServerDeps) -> Result<
     for (i, (url, content, html)) in snapshot_rows.iter().enumerate() {
         let content = content.as_deref().or(html.as_deref()).unwrap_or("[empty]");
         let truncated = if content.len() > 8000 {
-            &content[..8000]
+            let mut end = 8000;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
         } else {
             content
         };

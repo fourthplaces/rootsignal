@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800",
@@ -20,9 +21,11 @@ const STATUS_LABELS: Record<string, string> = {
 export function InvestigateButton({
   signalId,
   investigationStatus,
+  investigationId,
 }: {
   signalId: string;
   investigationStatus: string | null;
+  investigationId: string | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +83,14 @@ export function InvestigateButton({
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
           In progress
         </span>
+      )}
+      {investigationId && (
+        <Link
+          href={`/investigations/${investigationId}`}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          View Investigation &rarr;
+        </Link>
       )}
       {error && <span className="text-sm text-red-600">{error}</span>}
     </div>

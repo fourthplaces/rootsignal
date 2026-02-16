@@ -103,7 +103,11 @@ pub async fn store_page_snapshot(
         {
             // Truncate to ~8K chars for embedding model token limit
             let embed_text = if page.content.len() > 8000 {
-                &page.content[..8000]
+                let mut end = 8000;
+                while !page.content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &page.content[..end]
             } else {
                 page.content.as_str()
             };

@@ -66,7 +66,10 @@ export default async function SignalDetailPage({
   const headerStore = await headers();
   const api = authedClient(headerStore.get("cookie") ?? undefined);
 
-  const { signal } = await api.query<{ signal: Signal }>(
+  const { signal, investigations } = await api.query<{
+    signal: Signal;
+    investigations: { id: string }[];
+  }>(
     `query Signal($id: ID!) {
       signal(id: $id) {
         id signalType content about entityId
@@ -81,9 +84,14 @@ export default async function SignalDetailPage({
           id validFrom validThrough dtstart repeatFrequency byday description opensAt closesAt
         }
       }
+      investigations(subjectId: $id, limit: 1, offset: 0) {
+        id
+      }
     }`,
     { id },
   );
+
+  const latestInvestigationId = investigations[0]?.id ?? null;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -111,19 +119,19 @@ export default async function SignalDetailPage({
               Broadcasted {new Date(signal.broadcastedAt).toLocaleDateString()}
             </span>
           )}
+          <span className="ml-auto">
+            <InvestigateButton
+              signalId={signal.id}
+              investigationStatus={signal.investigationStatus}
+              investigationId={latestInvestigationId}
+            />
+          </span>
         </div>
-
-        <div className="mb-4">
-          <InvestigateButton
-            signalId={signal.id}
-            investigationStatus={signal.investigationStatus}
-          />
-          {signal.investigationReason && (
-            <p className="mt-1 text-xs text-gray-400">
-              Reason: {signal.investigationReason}
-            </p>
-          )}
-        </div>
+        {signal.investigationReason && (
+          <p className="mb-4 text-xs text-gray-400">
+            Reason: {signal.investigationReason}
+          </p>
+        )}
 
         <p className="mb-4 text-lg">{signal.content}</p>
 
