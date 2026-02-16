@@ -20,7 +20,7 @@ interface ZipDensity {
   addressLocality: string;
   latitude: number;
   longitude: number;
-  listingCount: number;
+  signalCount: number;
   signalDomainCounts: Record<string, number>;
 }
 
@@ -40,14 +40,13 @@ interface ParsedQuery {
   filters: {
     signalDomain: string | null;
     category: string | null;
-    listingType: string | null;
     urgency: string | null;
   };
   intent: "IN_SCOPE" | "OUT_OF_SCOPE" | "NEEDS_CLARIFICATION" | "KNOWLEDGE_QUESTION";
   reasoning: string;
 }
 
-type LayerMode = "density" | "gaps" | "entities";
+type LayerMode = "density" | "gaps" | "entities" | "clusters";
 
 async function gqlFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/graphql", {
@@ -77,7 +76,7 @@ function zipToGeoJSON(zips: ZipDensity[]): GeoJSON.FeatureCollection {
     features: zips.map((z) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [z.longitude, z.latitude] },
-      properties: { listingCount: z.listingCount, zipCode: z.zipCode, city: z.addressLocality },
+      properties: { signalCount: z.signalCount, zipCode: z.zipCode, city: z.addressLocality },
     })),
   };
 }
@@ -93,8 +92,25 @@ function searchToGeoJSON(results: SearchResult[]): GeoJSON.FeatureCollection {
           type: "Point",
           coordinates: [r.locations[0].longitude!, r.locations[0].latitude!],
         },
-        properties: { id: r.id, title: r.title, entityType: r.entityType || "listing" },
+        properties: { id: r.id, title: r.title, entityType: r.entityType || "signal" },
       })),
+  };
+}
+
+function clusterToGeoJSON(clusters: MapCluster[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: clusters.map((c) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [c.longitude, c.latitude] },
+      properties: {
+        clusterId: c.id,
+        memberCount: c.memberCount,
+        dominantSignalType: c.dominantSignalType,
+        representativeContent: c.representativeContent,
+        representativeAbout: c.representativeAbout,
+      },
+    })),
   };
 }
 
@@ -103,9 +119,28 @@ const ENTITY_COLORS: Record<string, string> = {
   government: "#22c55e",
   business: "#f97316",
   faith_organization: "#a855f7",
-  listing: "#ef4444",
+  signal: "#ef4444",
   entity: "#3b82f6",
 };
+
+const SIGNAL_TYPE_COLORS: Record<string, string> = {
+  ask: "#ef4444",
+  give: "#22c55e",
+  event: "#a855f7",
+  informative: "#3b82f6",
+};
+
+interface MapCluster {
+  id: string;
+  latitude: number;
+  longitude: number;
+  memberCount: number;
+  dominantSignalType: string;
+  representativeContent: string;
+  representativeAbout: string | null;
+  signalCounts: { ask: number; give: number; event: number; informative: number };
+  entityNames: string[];
+}
 
 const EMPTY_GEOJSON: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -131,10 +166,10 @@ function fitBoundsToData(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollection) 
 
 function addHeatSources(map: mapboxgl.Map, data: GeoJSON.FeatureCollection, mode: LayerMode, maxGapCount: number) {
   // Remove old layers/sources
-  for (const id of ["heatmap-layer", "clusters", "cluster-count", "unclustered-point", "gaps-circles", "gaps-labels", "search-pins"]) {
+  for (const id of ["heatmap-layer", "clusters", "cluster-count", "unclustered-point", "gaps-circles", "gaps-labels", "search-pins", "signal-clusters-circles", "signal-clusters-labels"]) {
     if (map.getLayer(id)) map.removeLayer(id);
   }
-  for (const id of ["heat-source", "gaps-source", "search-source"]) {
+  for (const id of ["heat-source", "gaps-source", "search-source", "signal-clusters-source"]) {
     if (map.getSource(id)) map.removeSource(id);
   }
 
@@ -217,7 +252,7 @@ function addHeatSources(map: mapboxgl.Map, data: GeoJSON.FeatureCollection, mode
                 "government", ENTITY_COLORS.government,
                 "business", ENTITY_COLORS.business,
                 "faith_organization", ENTITY_COLORS.faith_organization,
-                "listing", ENTITY_COLORS.listing,
+                "signal", ENTITY_COLORS.signal,
                 "#6b7280",
               ]
             : "#11b4da",
@@ -237,14 +272,14 @@ function addHeatSources(map: mapboxgl.Map, data: GeoJSON.FeatureCollection, mode
         "circle-color": [
           "interpolate",
           ["linear"],
-          ["get", "listingCount"],
+          ["get", "signalCount"],
           0, "#dc2626",
           maxGapCount, "#fca5a5",
         ],
         "circle-radius": [
           "interpolate",
           ["linear"],
-          ["get", "listingCount"],
+          ["get", "signalCount"],
           0, 20,
           maxGapCount, 6,
         ],
@@ -259,7 +294,7 @@ function addHeatSources(map: mapboxgl.Map, data: GeoJSON.FeatureCollection, mode
       type: "symbol",
       source: "gaps-source",
       layout: {
-        "text-field": ["concat", ["get", "city"], "\n", ["to-string", ["get", "listingCount"]]],
+        "text-field": ["concat", ["get", "city"], "\n", ["to-string", ["get", "signalCount"]]],
         "text-size": 10,
         "text-offset": [0, 2.5] as [number, number],
       },
@@ -287,6 +322,86 @@ function addSearchLayer(map: mapboxgl.Map, data: GeoJSON.FeatureCollection) {
   });
 }
 
+function addClusterLayers(map: mapboxgl.Map, data: GeoJSON.FeatureCollection) {
+  // Clean up existing cluster layers
+  for (const id of ["signal-clusters-circles", "signal-clusters-labels"]) {
+    if (map.getLayer(id)) map.removeLayer(id);
+  }
+  if (map.getSource("signal-clusters-source")) map.removeSource("signal-clusters-source");
+  // Also clean up base layers so they don't overlap
+  for (const id of ["heatmap-layer", "clusters", "cluster-count", "unclustered-point", "gaps-circles", "gaps-labels"]) {
+    if (map.getLayer(id)) map.removeLayer(id);
+  }
+  for (const id of ["heat-source", "gaps-source"]) {
+    if (map.getSource(id)) map.removeSource(id);
+  }
+
+  if (data.features.length === 0) return;
+
+  map.addSource("signal-clusters-source", {
+    type: "geojson",
+    data,
+    cluster: true,
+    clusterMaxZoom: 12,
+    clusterRadius: 50,
+  });
+
+  // Mapbox visual clusters (grouping nearby semantic clusters at low zoom)
+  map.addLayer({
+    id: "signal-clusters-circles",
+    type: "circle",
+    source: "signal-clusters-source",
+    paint: {
+      "circle-color": [
+        "case",
+        ["has", "point_count"],
+        "#94a3b8", // gray for Mapbox visual clusters
+        [
+          "match",
+          ["get", "dominantSignalType"],
+          "ask", SIGNAL_TYPE_COLORS.ask,
+          "give", SIGNAL_TYPE_COLORS.give,
+          "event", SIGNAL_TYPE_COLORS.event,
+          "informative", SIGNAL_TYPE_COLORS.informative,
+          "#6b7280",
+        ],
+      ],
+      "circle-radius": [
+        "case",
+        ["has", "point_count"],
+        ["step", ["get", "point_count"], 20, 10, 25, 50, 35],
+        ["interpolate", ["linear"], ["get", "memberCount"], 2, 7, 10, 12, 50, 18],
+      ],
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#fff",
+      "circle-opacity": 0.85,
+    },
+  });
+
+  map.addLayer({
+    id: "signal-clusters-labels",
+    type: "symbol",
+    source: "signal-clusters-source",
+    layout: {
+      "text-field": [
+        "case",
+        ["has", "point_count"],
+        ["get", "point_count_abbreviated"],
+        ["to-string", ["get", "memberCount"]],
+      ],
+      "text-size": 11,
+    },
+    paint: {
+      "text-color": [
+        "case",
+        ["has", "point_count"],
+        "#fff",
+        "#fff",
+      ],
+    },
+  });
+}
+
 export default function MapView() {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -305,6 +420,10 @@ export default function MapView() {
     entityType: searchParams.get("entityType") || "",
     zipCode: searchParams.get("zip") || "",
     radiusMiles: searchParams.get("radius") || "",
+    signalType: searchParams.get("signalType") || "",
+    since: searchParams.get("since") || "",
+    minConfidence: searchParams.get("confidence") || "",
+    about: searchParams.get("about") || "",
   });
   const [selectedPin, setSelectedPin] = useState<{
     entityType: string;
@@ -326,6 +445,10 @@ export default function MapView() {
       if (f.entityType) params.set("entityType", f.entityType);
       if (f.zipCode) params.set("zip", f.zipCode);
       if (f.radiusMiles) params.set("radius", f.radiusMiles);
+      if (f.signalType) params.set("signalType", f.signalType);
+      if (f.since) params.set("since", f.since);
+      if (f.minConfidence) params.set("confidence", f.minConfidence);
+      if (f.about) params.set("about", f.about);
       if (l !== "density") params.set("layer", l);
       const qs = params.toString();
       router.replace(`/map${qs ? `?${qs}` : ""}`, { scroll: false });
@@ -373,17 +496,54 @@ export default function MapView() {
       const data = await gqlFetch<{ signalGaps: ZipDensity[] }>(
         `query($signalDomain: String, $category: String, $limit: Int) {
           signalGaps(signalDomain: $signalDomain, category: $category, limit: $limit) {
-            zipCode addressLocality latitude longitude listingCount signalDomainCounts
+            zipCode addressLocality latitude longitude signalCount signalDomainCounts
           }
         }`,
         vars,
       );
       const geojson = zipToGeoJSON(data.signalGaps);
-      const maxCount = Math.max(...data.signalGaps.map((z) => z.listingCount), 1);
+      const maxCount = Math.max(...data.signalGaps.map((z) => z.signalCount), 1);
       addHeatSources(map, geojson, "gaps", maxCount);
       fitBoundsToData(map, geojson);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load gaps data");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadClusters = useCallback(async (map: mapboxgl.Map) => {
+    setLoading(true);
+    setError("");
+    try {
+      const f = filtersRef.current;
+      const vars: Record<string, unknown> = {};
+      if (f.signalType) vars.signalType = f.signalType;
+      if (f.since) vars.since = f.since;
+      if (f.minConfidence) vars.minConfidence = parseFloat(f.minConfidence);
+      if (f.zipCode) vars.zipCode = f.zipCode;
+      if (f.radiusMiles) vars.radiusMiles = parseFloat(f.radiusMiles);
+      if (f.about) vars.about = f.about;
+
+      const data = await gqlFetch<{ signalClusters: MapCluster[] }>(
+        `query($signalType: String, $since: String, $minConfidence: Float, $zipCode: String, $radiusMiles: Float, $about: String) {
+          signalClusters(signalType: $signalType, since: $since, minConfidence: $minConfidence, zipCode: $zipCode, radiusMiles: $radiusMiles, about: $about) {
+            id latitude longitude memberCount dominantSignalType
+            representativeContent representativeAbout
+            signalCounts { ask give event informative }
+            entityNames
+          }
+        }`,
+        vars,
+      );
+      const geojson = clusterToGeoJSON(data.signalClusters);
+      addClusterLayers(map, geojson);
+      fitBoundsToData(map, geojson);
+      if (data.signalClusters.length === 0) {
+        setMessage("No clusters match the current filters.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load cluster data");
     } finally {
       setLoading(false);
     }
@@ -399,9 +559,12 @@ export default function MapView() {
         case "gaps":
           loadGaps(map);
           break;
+        case "clusters":
+          loadClusters(map);
+          break;
       }
     },
-    [loadDensity, loadGaps],
+    [loadDensity, loadGaps, loadClusters],
   );
 
   // Initialize map
@@ -433,14 +596,15 @@ export default function MapView() {
       );
     });
 
-    map.on("click", ["clusters", "unclustered-point", "search-pins"], (e) => {
+    map.on("click", ["clusters", "unclustered-point", "search-pins", "signal-clusters-circles"], (e) => {
       const features = e.features;
       if (!features?.length) return;
       const f = features[0];
 
-      // Cluster click — zoom in
+      // Mapbox visual cluster click — zoom in
       if (f.properties?.cluster_id) {
-        const source = map.getSource("heat-source") as mapboxgl.GeoJSONSource;
+        const sourceId = f.source as string;
+        const source = map.getSource(sourceId) as mapboxgl.GeoJSONSource;
         if (!source) return;
         source.getClusterExpansionZoom(f.properties.cluster_id, (err, zoom) => {
           if (err) return;
@@ -449,15 +613,24 @@ export default function MapView() {
         return;
       }
 
+      // Semantic cluster click — open cluster sidebar
+      if (f.properties?.clusterId) {
+        setSelectedPin({
+          entityType: "cluster",
+          entityId: f.properties.clusterId as string,
+        });
+        return;
+      }
+
       // Individual point — open sidebar
       if (f.properties?.entityId) {
         setSelectedPin({
-          entityType: f.properties.entityType || "listing",
+          entityType: f.properties.entityType || "signal",
           entityId: f.properties.entityId,
         });
       } else if (f.properties?.id) {
         setSelectedPin({
-          entityType: f.properties.entityType || "listing",
+          entityType: f.properties.entityType || "signal",
           entityId: f.properties.id as string,
         });
       }
@@ -488,7 +661,7 @@ export default function MapView() {
             parseQuery(q: $q, autoSearch: true) {
               parsed {
                 searchText
-                filters { signalDomain category listingType urgency }
+                filters { signalDomain category urgency }
                 intent
                 reasoning
               }
@@ -577,9 +750,11 @@ export default function MapView() {
   };
 
   const isFilterDisabled = (key: string) => {
-    if (layer === "gaps") return ["entityType", "zipCode", "radiusMiles"].includes(key);
+    if (layer === "gaps") return ["entityType", "zipCode", "radiusMiles", "signalType", "since", "minConfidence", "about"].includes(key);
     if (layer === "density" || layer === "entities")
-      return ["signalDomain", "category"].includes(key);
+      return ["signalDomain", "category", "signalType", "since", "minConfidence", "about"].includes(key);
+    if (layer === "clusters")
+      return ["signalDomain", "category", "entityType"].includes(key);
     return false;
   };
 
@@ -651,11 +826,52 @@ export default function MapView() {
           disabled={isFilterDisabled("radiusMiles")}
           className="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
         />
+        <select
+          value={filters.signalType}
+          onChange={(e) => { handleFilterChange("signalType", e.target.value); handleFilterBlur(); }}
+          disabled={isFilterDisabled("signalType")}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+        >
+          <option value="">Signal type</option>
+          <option value="ask">Ask</option>
+          <option value="give">Give</option>
+          <option value="event">Event</option>
+          <option value="informative">Informative</option>
+        </select>
+        <select
+          value={filters.since}
+          onChange={(e) => { handleFilterChange("since", e.target.value); handleFilterBlur(); }}
+          disabled={isFilterDisabled("since")}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+        >
+          <option value="">Recency</option>
+          <option value="24h">Last 24h</option>
+          <option value="week">Last week</option>
+          <option value="month">Last month</option>
+        </select>
+        <input
+          type="text"
+          value={filters.minConfidence}
+          onChange={(e) => handleFilterChange("minConfidence", e.target.value)}
+          onBlur={handleFilterBlur}
+          placeholder="Min confidence"
+          disabled={isFilterDisabled("minConfidence")}
+          className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+        />
+        <input
+          type="text"
+          value={filters.about}
+          onChange={(e) => handleFilterChange("about", e.target.value)}
+          onBlur={handleFilterBlur}
+          placeholder="About/topic"
+          disabled={isFilterDisabled("about")}
+          className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+        />
 
         <div className="mx-1 h-6 w-px bg-gray-200" />
 
         <div className="flex gap-1 rounded bg-gray-100 p-0.5">
-          {(["density", "gaps", "entities"] as LayerMode[]).map((mode) => (
+          {(["density", "gaps", "entities", "clusters"] as LayerMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => handleLayerChange(mode)}
@@ -675,7 +891,7 @@ export default function MapView() {
             <div className="mx-1 h-6 w-px bg-gray-200" />
             <div className="flex gap-2 text-xs text-gray-500">
               {Object.entries(ENTITY_COLORS)
-                .filter(([k]) => !["listing", "entity"].includes(k))
+                .filter(([k]) => !["signal", "entity"].includes(k))
                 .map(([type, color]) => (
                   <span key={type} className="flex items-center gap-1">
                     <span
@@ -685,6 +901,23 @@ export default function MapView() {
                     {type.replace("_", " ")}
                   </span>
                 ))}
+            </div>
+          </>
+        )}
+
+        {layer === "clusters" && (
+          <>
+            <div className="mx-1 h-6 w-px bg-gray-200" />
+            <div className="flex gap-2 text-xs text-gray-500">
+              {Object.entries(SIGNAL_TYPE_COLORS).map(([type, color]) => (
+                <span key={type} className="flex items-center gap-1">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  {type}
+                </span>
+              ))}
             </div>
           </>
         )}

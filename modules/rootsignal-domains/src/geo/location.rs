@@ -161,6 +161,22 @@ impl Locationable {
         .map_err(Into::into)
     }
 
+    /// Delete all locationables for a given resource (used when refreshing signal data).
+    pub async fn delete_for(
+        locatable_type: &str,
+        locatable_id: Uuid,
+        pool: &PgPool,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM locationables WHERE locatable_type = $1 AND locatable_id = $2",
+        )
+        .bind(locatable_type)
+        .bind(locatable_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn find_for(
         locatable_type: &str,
         locatable_id: Uuid,

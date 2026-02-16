@@ -78,16 +78,16 @@ For polymorphic records (location, schedule, embedding): **delete and recreate**
 
 ## Acceptance Criteria
 
-- [ ] Existing signals for known entities are included in the LLM extraction prompt
-- [ ] LLM can return an alias to indicate "this updates an existing signal"
-- [ ] Valid aliases trigger UPDATE; invalid/missing aliases trigger INSERT
-- [ ] Fingerprint hashing logic removed from extraction activity
-- [ ] `Signal::create` replaced with explicit INSERT and UPDATE paths
-- [ ] `fingerprint` column made nullable, unique constraint dropped (migration)
-- [ ] `ExtractedSignal` struct has new `existing_signal_alias: Option<String>` field
-- [ ] Extraction prompt updated with existing signals context and matching instructions
-- [ ] Polymorphic records (location, schedule, embedding) are refreshed on UPDATE
-- [ ] First-time extractions (no prior signals for URL) still work correctly (all INSERTs)
+- [x] Existing signals for known entities are included in the LLM extraction prompt
+- [x] LLM can return an alias to indicate "this updates an existing signal"
+- [x] Valid aliases trigger UPDATE; invalid/missing aliases trigger INSERT
+- [x] Fingerprint hashing logic removed from extraction activity
+- [x] `Signal::create` replaced with explicit INSERT and UPDATE paths
+- [x] `fingerprint` column made nullable, unique constraint dropped (migration)
+- [x] `ExtractedSignal` struct has new `existing_signal_alias: Option<String>` field
+- [x] Extraction prompt updated with existing signals context and matching instructions
+- [x] Polymorphic records (location, schedule, embedding) are refreshed on UPDATE
+- [x] First-time extractions (no prior signals for URL) still work correctly (all INSERTs)
 
 ## MVP
 

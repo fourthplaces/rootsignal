@@ -1,3 +1,3 @@
-pub mod cluster_listings;
+pub mod cluster_signals;
 
-pub use cluster_listings::{cluster_listings, ClusterStats};
+pub use cluster_signals::{cluster_signals, ClusterStats};

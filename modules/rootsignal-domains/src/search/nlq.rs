@@ -7,7 +7,7 @@ use crate::taxonomy::build_tag_instructions;
 /// Parse a natural language query into structured filters + search text using AI.
 pub async fn parse_natural_language_query(query: &str, deps: &ServerDeps) -> Result<ParsedQuery> {
     let pool = deps.pool();
-    let tag_instructions = build_tag_instructions("listing", pool).await?;
+    let tag_instructions = build_tag_instructions("signal", pool).await?;
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let system_prompt = deps.prompts.nlq_prompt(&tag_instructions, &today);

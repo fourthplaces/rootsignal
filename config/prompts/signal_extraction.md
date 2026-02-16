@@ -71,3 +71,24 @@ Examples:
   needs_investigation: true, investigation_reason: "Causal framing references factory closure as driving cause"
 
 Keep investigation_reason to ONE sentence. Most signals will NOT need investigation.
+
+## Matching Previously Known Signals
+
+You may be given a list of previously extracted signals for entities on this page.
+Each is labeled with an alias like `signal_1`, `signal_2`, etc.
+
+For each signal you extract, decide: does it update a previously known signal, or
+is it genuinely new?
+
+**Set `existing_signal_alias`** to the alias (e.g. "signal_3") when:
+- It describes the same real-world fact, even if worded differently
+- Hours changed, dates shifted, details updated — same underlying thing
+- Same event with updated details
+
+**Leave `existing_signal_alias` null** when:
+- It describes a different fact (different event, different offer, different need)
+- It's about a different entity than any existing signal
+- No previously known signals were provided
+
+If no previously known signals section appears in the input, leave
+`existing_signal_alias` null for all signals.

@@ -17,7 +17,7 @@ const WORKFLOW_LABELS: Record<string, string> = {
 
 const STAGE_LABELS: Record<string, string> = {
   scraping: "Scraping pages",
-  extracting: "Extracting listings",
+  extracting: "Extracting signals",
   discovering: "Discovering sources",
   completed: "Completed",
 };
@@ -179,6 +179,7 @@ export function SourceMoreMenu({ sourceId }: { sourceId: string }) {
       </button>
       {open && (
         <div className="absolute right-0 z-10 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+          <DeleteSignalsItem sourceId={sourceId} onDone={() => setOpen(false)} />
           <DeleteSourceItem sourceId={sourceId} />
         </div>
       )}
@@ -226,6 +227,44 @@ function MutationItem({
       className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
     >
       {loading ? loadingLabel : label}
+    </button>
+  );
+}
+
+function DeleteSignalsItem({ sourceId, onDone }: { sourceId: string; onDone: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+
+  async function handleClick() {
+    if (!confirm("Delete all signals for this source? This cannot be undone.")) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch("/api/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `mutation($sourceId: UUID!) { deleteSignalsBySource(sourceId: $sourceId) }`,
+          variables: { sourceId },
+        }),
+      });
+      const data = await res.json();
+      if (data.errors) throw new Error(data.errors[0].message);
+      onDone();
+      router.refresh();
+    } catch (err) {
+      console.error("Delete signals failed:", err);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+    >
+      {loading ? "Deleting signals..." : "Delete signals"}
     </button>
   );
 }

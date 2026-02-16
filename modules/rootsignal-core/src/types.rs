@@ -87,69 +87,6 @@ pub struct ExtractionResult {
     pub fingerprint: Vec<u8>,
 }
 
-/// What the AI extracts from a page — structured listing data.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ExtractedListing {
-    pub title: String,
-    pub description: Option<String>,
-    pub listing_type: String,
-    pub categories: Vec<String>,
-    pub audience_roles: Vec<String>,
-
-    // Entity
-    pub organization_name: Option<String>,
-    pub organization_type: Option<String>,
-
-    // Location
-    pub location_text: Option<String>,
-    pub address: Option<String>,
-    pub city: Option<String>,
-    pub state: Option<String>,
-    pub postal_code: Option<String>,
-
-    // Timing
-    pub start_time: Option<String>,
-    pub end_time: Option<String>,
-    pub is_recurring: Option<bool>,
-    pub recurrence_description: Option<String>,
-
-    // Contact
-    pub contact_name: Option<String>,
-    pub contact_email: Option<String>,
-    pub contact_phone: Option<String>,
-
-    // Service
-    pub service_name: Option<String>,
-    pub eligibility: Option<String>,
-    pub fees: Option<String>,
-
-    // Source
-    pub source_url: Option<String>,
-
-    // Urgency / capacity signals
-    pub urgency: Option<String>,
-    pub capacity_note: Option<String>,
-
-    // Taxonomy dimensions (tag-based)
-    pub signal_domain: Option<String>,
-    pub capacity_status: Option<String>,
-    pub confidence_hint: Option<String>,
-    pub radius_relevant: Option<String>,
-    pub populations: Option<Vec<String>>,
-
-    // Temporal
-    pub expires_at: Option<String>,
-
-    /// Detected language of the source content (ISO 639-1: en, es, so, ht)
-    pub source_locale: Option<String>,
-}
-
-/// Wrapper for batch extraction response.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ExtractedListings {
-    pub listings: Vec<ExtractedListing>,
-}
-
 /// What the AI extracts from content — a semantic signal.
 ///
 /// schema.org alignment:
@@ -169,10 +106,6 @@ pub struct ExtractedSignal {
     pub content: String,
     /// schema.org: about — what's being asked/given/discussed
     pub about: Option<String>,
-    /// Entity name (organization, company, agency)
-    pub entity_name: Option<String>,
-    /// Entity type (organization, government_entity, business_entity)
-    pub entity_type: Option<String>,
     /// Location mention (raw text — extraction activity geocodes into locationables)
     pub location_text: Option<String>,
     /// Address components (extraction activity creates Location record)
@@ -212,7 +145,6 @@ pub struct ExtractedSignals {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceType {
-    Listing,
     Entity,
     Service,
     Signal,
@@ -222,7 +154,6 @@ pub enum ResourceType {
 impl ResourceType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Listing => "listing",
             Self::Entity => "entity",
             Self::Service => "service",
             Self::Signal => "signal",
@@ -241,7 +172,6 @@ impl std::str::FromStr for ResourceType {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "listing" => Ok(Self::Listing),
             "entity" => Ok(Self::Entity),
             "service" => Ok(Self::Service),
             "signal" => Ok(Self::Signal),

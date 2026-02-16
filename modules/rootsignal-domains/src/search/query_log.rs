@@ -13,7 +13,7 @@ pub struct QueryLog {
     pub query_type: String,
     pub filters: Value,
     pub result_count: Option<i32>,
-    pub clicked_listing_id: Option<Uuid>,
+    pub clicked_signal_id: Option<Uuid>,
     pub session_id: Option<Uuid>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
@@ -52,11 +52,11 @@ impl QueryLog {
         .map_err(Into::into)
     }
 
-    pub async fn record_click(id: Uuid, listing_id: Uuid, pool: &PgPool) -> Result<Self> {
+    pub async fn record_click(id: Uuid, signal_id: Uuid, pool: &PgPool) -> Result<Self> {
         sqlx::query_as::<_, Self>(
-            "UPDATE query_logs SET clicked_listing_id = $1 WHERE id = $2 RETURNING *",
+            "UPDATE query_logs SET clicked_signal_id = $1 WHERE id = $2 RETURNING *",
         )
-        .bind(listing_id)
+        .bind(signal_id)
         .bind(id)
         .fetch_one(pool)
         .await

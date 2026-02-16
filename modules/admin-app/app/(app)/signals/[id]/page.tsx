@@ -10,7 +10,6 @@ interface Signal {
   entityId: string | null;
   sourceUrl: string | null;
   sourceCitationUrl: string | null;
-  institutionalSource: string | null;
   confidence: number;
   inLanguage: string;
   broadcastedAt: string | null;
@@ -66,7 +65,7 @@ export default async function SignalDetailPage({
     `query Signal($id: ID!) {
       signal(id: $id) {
         id signalType content about entityId
-        sourceUrl sourceCitationUrl institutionalSource
+        sourceUrl sourceCitationUrl
         confidence inLanguage broadcastedAt createdAt updatedAt
         locations {
           id name streetAddress addressLocality addressRegion postalCode latitude longitude
@@ -194,12 +193,6 @@ export default async function SignalDetailPage({
             Provenance
           </h3>
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            {signal.institutionalSource && (
-              <>
-                <dt className="text-gray-500">Source</dt>
-                <dd>{signal.institutionalSource}</dd>
-              </>
-            )}
             {signal.sourceUrl && (
               <>
                 <dt className="text-gray-500">URL</dt>

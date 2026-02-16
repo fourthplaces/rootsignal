@@ -7,7 +7,6 @@ use rootsignal_core::{ExtractedSignals, ServerDeps};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::entities::Entity;
 use crate::geo::{Location, Locationable};
 use crate::search::Embedding;
 use crate::shared::Schedule;
@@ -77,10 +76,11 @@ pub async fn extract_signals_from_snapshot(
     .fetch_one(pool)
     .await?;
 
-    // Resolve source_id from the source chain: snapshot → domain_snapshot → source
-    let source_id: Option<Uuid> = sqlx::query_as::<_, (Option<Uuid>,)>(
+    // Resolve source_id and entity_id from the source chain
+    let (source_id, entity_id): (Option<Uuid>, Option<Uuid>) = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
         r#"
-        SELECT ds.source_id FROM domain_snapshots ds
+        SELECT ds.source_id, src.entity_id FROM domain_snapshots ds
+        JOIN sources src ON src.id = ds.source_id
         WHERE ds.page_snapshot_id = $1
         LIMIT 1
         "#,
@@ -88,7 +88,7 @@ pub async fn extract_signals_from_snapshot(
     .bind(snapshot_id)
     .fetch_optional(pool)
     .await?
-    .and_then(|row| row.0);
+    .unwrap_or((None, None));
 
     let content = snapshot
         .content
@@ -142,33 +142,7 @@ pub async fn extract_signals_from_snapshot(
     let mut signal_ids = Vec::new();
 
     for signal in &extracted.signals {
-        // Fingerprint for dedup: hash of normalized key fields
-        let fingerprint_input = format!(
-            "{}:{}:{}:{}",
-            signal.signal_type.to_lowercase().trim(),
-            signal.content.to_lowercase().trim(),
-            signal
-                .entity_name
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase()
-                .trim(),
-            signal.about.as_deref().unwrap_or("").to_lowercase().trim(),
-        );
-        let mut hasher = Sha256::new();
-        hasher.update(fingerprint_input.as_bytes());
-        let fingerprint = hasher.finalize().to_vec();
-
         let in_language = signal.source_locale.as_deref().unwrap_or("en");
-
-        // Resolve entity if mentioned
-        let entity_id = if let Some(ref entity_name) = signal.entity_name {
-            let entity_type = signal.entity_type.as_deref().unwrap_or("organization");
-            let entity = Entity::find_or_create(entity_name, entity_type, None, None, pool).await?;
-            Some(entity.id)
-        } else {
-            None
-        };
 
         // Create extraction record (provenance)
         let data = serde_json::to_value(signal)?;
@@ -179,14 +153,12 @@ pub async fn extract_signals_from_snapshot(
 
         let extraction = sqlx::query_as::<_, ExtractionRow>(
             r#"
-            INSERT INTO extractions (page_snapshot_id, fingerprint, schema_version, data, confidence_overall, confidence_ai, origin)
-            VALUES ($1, $2, 1, $3, 0.7, 0.7, $4)
-            ON CONFLICT (fingerprint, schema_version) DO UPDATE SET fingerprint = EXCLUDED.fingerprint
+            INSERT INTO extractions (page_snapshot_id, schema_version, data, confidence_overall, confidence_ai, origin)
+            VALUES ($1, 1, $2, 0.7, 0.7, $3)
             RETURNING id
             "#,
         )
         .bind(snapshot_id)
-        .bind(&fingerprint)
         .bind(&data)
         .bind(&origin)
         .fetch_one(pool)
@@ -207,42 +179,12 @@ pub async fn extract_signals_from_snapshot(
 
         let signal_row = if let Some(&existing_id) = is_update {
             // UPDATE: refresh existing signal with new extraction data
-            tracing::info!(existing_id = %existing_id, "Updating existing signal via LLM match");
+            // First, clean up polymorphic records that will be recreated
+            Locationable::delete_for("signal", existing_id, pool).await?;
+            Schedule::delete_for("signal", existing_id, pool).await?;
 
-            sqlx::query_as::<_, Signal>(
-                r#"
-                UPDATE signals SET
-                    signal_type = $2,
-                    content = $3,
-                    about = $4,
-                    entity_id = $5,
-                    source_url = $6,
-                    page_snapshot_id = $7,
-                    extraction_id = $8,
-                    confidence = $9,
-                    fingerprint = $10,
-                    broadcasted_at = COALESCE($11, signals.broadcasted_at),
-                    updated_at = NOW()
-                WHERE id = $1
-                RETURNING *
-                "#,
-            )
-            .bind(existing_id)
-            .bind(&signal.signal_type)
-            .bind(&signal.content)
-            .bind(signal.about.as_deref())
-            .bind(entity_id)
-            .bind(signal.source_url.as_deref().or(Some(snapshot.url.as_str())))
-            .bind(snapshot_id)
-            .bind(extraction.id)
-            .bind(0.7_f32)
-            .bind(&fingerprint)
-            .bind(broadcasted_at)
-            .fetch_one(pool)
-            .await?
-        } else {
-            // INSERT: new signal (fingerprint ON CONFLICT handles exact dupes)
-            Signal::create(
+            Signal::update_from_extraction(
+                existing_id,
                 &signal.signal_type,
                 &signal.content,
                 signal.about.as_deref(),
@@ -250,11 +192,23 @@ pub async fn extract_signals_from_snapshot(
                 signal.source_url.as_deref().or(Some(&snapshot.url)),
                 Some(snapshot_id),
                 Some(extraction.id),
-                None, // institutional_source
-                None, // institutional_record_id
+                0.7,
+                broadcasted_at,
+                pool,
+            )
+            .await?
+        } else {
+            // INSERT: new signal
+            Signal::insert(
+                &signal.signal_type,
+                &signal.content,
+                signal.about.as_deref(),
+                entity_id,
+                signal.source_url.as_deref().or(Some(&snapshot.url)),
+                Some(snapshot_id),
+                Some(extraction.id),
                 None, // source_citation_url
                 0.7,
-                &fingerprint,
                 in_language,
                 broadcasted_at,
                 pool,

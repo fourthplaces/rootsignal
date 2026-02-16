@@ -8,7 +8,6 @@ interface Signal {
   content: string;
   about: string | null;
   entityId: string | null;
-  institutionalSource: string | null;
   confidence: number;
   inLanguage: string;
   createdAt: string;
@@ -53,7 +52,7 @@ export default async function SignalsPage({
       signals(limit: $limit, offset: $offset, type: $type) {
         nodes {
           id signalType content about entityId
-          institutionalSource confidence inLanguage createdAt
+          confidence inLanguage createdAt
         }
         totalCount
       }
@@ -112,9 +111,6 @@ export default async function SignalsPage({
                 About
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
-                Source
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
                 Date
               </th>
             </tr>
@@ -143,9 +139,6 @@ export default async function SignalsPage({
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-500">
                   {signal.about || "-"}
-                </td>
-                <td className="px-4 py-3 text-xs text-gray-500">
-                  {signal.institutionalSource || "community"}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
                   {new Date(signal.createdAt).toLocaleDateString()}

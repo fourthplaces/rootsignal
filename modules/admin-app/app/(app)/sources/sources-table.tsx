@@ -57,7 +57,7 @@ const WORKFLOW_LABELS: Record<string, string> = {
 
 const STAGE_LABELS: Record<string, string> = {
   scraping: "Scraping pages",
-  extracting: "Extracting listings",
+  extracting: "Extracting signals",
   discovering: "Discovering sources",
 };
 

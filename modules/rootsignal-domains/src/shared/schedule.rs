@@ -60,6 +60,22 @@ impl Schedule {
         .map_err(Into::into)
     }
 
+    /// Delete all schedules for a given resource (used when refreshing signal data).
+    pub async fn delete_for(
+        scheduleable_type: &str,
+        scheduleable_id: Uuid,
+        pool: &PgPool,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM schedules WHERE scheduleable_type = $1 AND scheduleable_id = $2",
+        )
+        .bind(scheduleable_type)
+        .bind(scheduleable_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn find_for(
         scheduleable_type: &str,
         scheduleable_id: Uuid,

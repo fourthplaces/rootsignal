@@ -8,7 +8,7 @@ pub struct TagQuery;
 
 #[Object]
 impl TagQuery {
-    /// List tags, optionally filtered by kind (e.g., "listing_type", "category").
+    /// List tags, optionally filtered by kind (e.g., "signal_domain", "category").
     async fn tags(&self, ctx: &Context<'_>, kind: Option<String>) -> Result<Vec<GqlTag>> {
         tracing::info!(kind = ?kind, "graphql.tags");
         let pool = ctx.data_unchecked::<sqlx::PgPool>();

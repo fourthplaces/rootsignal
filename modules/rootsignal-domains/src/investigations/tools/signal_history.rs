@@ -14,7 +14,7 @@ pub struct SignalHistoryArgs {
 pub struct SignalHistoryOutput {
     pub entity_id: String,
     pub first_seen: Option<String>,
-    pub listing_count: i64,
+    pub signal_count: i64,
     pub source_count: i64,
     pub days_active: Option<i64>,
 }
@@ -54,7 +54,7 @@ impl Tool for InternalSignalHistoryTool {
     async fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Query Root Signal's internal database for signal history about an entity — how long we've tracked it, how many listings and sources reference it.".to_string(),
+            description: "Query Root Signal's internal database for signal history about an entity — how long we've tracked it, how many signals and sources reference it.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -76,9 +76,9 @@ impl Tool for InternalSignalHistoryTool {
 
         let row = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, i64)>(
             r#"
-            SELECT MIN(l.created_at) as first_seen, COUNT(DISTINCT l.id) as listing_count
-            FROM listings l
-            WHERE l.entity_id = $1
+            SELECT MIN(s.created_at) as first_seen, COUNT(DISTINCT s.id) as signal_count
+            FROM signals s
+            WHERE s.entity_id = $1
             "#,
         )
         .bind(entity_id)
@@ -99,13 +99,13 @@ impl Tool for InternalSignalHistoryTool {
         .map_err(|e| SignalHistoryError(e.into()))?;
 
         let first_seen = row.0;
-        let listing_count = row.1;
+        let signal_count = row.1;
         let days_active = first_seen.map(|fs| (chrono::Utc::now() - fs).num_days());
 
         Ok(SignalHistoryOutput {
             entity_id: entity_id.to_string(),
             first_seen: first_seen.map(|dt| dt.to_rfc3339()),
-            listing_count,
+            signal_count,
             source_count: source_count.0,
             days_active,
         })

@@ -14,11 +14,9 @@ pub struct Signal {
     pub source_url: Option<String>,
     pub page_snapshot_id: Option<Uuid>,
     pub extraction_id: Option<Uuid>,
-    pub institutional_source: Option<String>,
-    pub institutional_record_id: Option<String>,
     pub source_citation_url: Option<String>,
     pub confidence: f32,
-    pub fingerprint: Vec<u8>,
+    pub fingerprint: Option<Vec<u8>>,
     pub schema_version: i32,
     pub in_language: String,
     pub broadcasted_at: Option<DateTime<Utc>>,
@@ -35,7 +33,8 @@ pub struct SignalWithDistance {
 }
 
 impl Signal {
-    pub async fn create(
+    /// Insert a new signal (no fingerprint-based dedup).
+    pub async fn insert(
         signal_type: &str,
         content: &str,
         about: Option<&str>,
@@ -43,11 +42,8 @@ impl Signal {
         source_url: Option<&str>,
         page_snapshot_id: Option<Uuid>,
         extraction_id: Option<Uuid>,
-        institutional_source: Option<&str>,
-        institutional_record_id: Option<&str>,
         source_citation_url: Option<&str>,
         confidence: f32,
-        fingerprint: &[u8],
         in_language: &str,
         broadcasted_at: Option<DateTime<Utc>>,
         pool: &PgPool,
@@ -56,18 +52,10 @@ impl Signal {
             r#"
             INSERT INTO signals (
                 signal_type, content, about, entity_id, source_url,
-                page_snapshot_id, extraction_id,
-                institutional_source, institutional_record_id, source_citation_url,
-                confidence, fingerprint, in_language, broadcasted_at
+                page_snapshot_id, extraction_id, source_citation_url,
+                confidence, in_language, broadcasted_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT (fingerprint, schema_version) DO UPDATE SET
-                content = EXCLUDED.content,
-                about = EXCLUDED.about,
-                entity_id = EXCLUDED.entity_id,
-                confidence = EXCLUDED.confidence,
-                broadcasted_at = COALESCE(EXCLUDED.broadcasted_at, signals.broadcasted_at),
-                updated_at = NOW()
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *
             "#,
         )
@@ -78,14 +66,75 @@ impl Signal {
         .bind(source_url)
         .bind(page_snapshot_id)
         .bind(extraction_id)
-        .bind(institutional_source)
-        .bind(institutional_record_id)
         .bind(source_citation_url)
         .bind(confidence)
-        .bind(fingerprint)
         .bind(in_language)
         .bind(broadcasted_at)
         .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Update an existing signal with fresh extraction data.
+    pub async fn update_from_extraction(
+        id: Uuid,
+        signal_type: &str,
+        content: &str,
+        about: Option<&str>,
+        entity_id: Option<Uuid>,
+        source_url: Option<&str>,
+        page_snapshot_id: Option<Uuid>,
+        extraction_id: Option<Uuid>,
+        confidence: f32,
+        broadcasted_at: Option<DateTime<Utc>>,
+        pool: &PgPool,
+    ) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            UPDATE signals SET
+                signal_type = $2,
+                content = $3,
+                about = $4,
+                entity_id = $5,
+                source_url = $6,
+                page_snapshot_id = $7,
+                extraction_id = $8,
+                confidence = $9,
+                broadcasted_at = COALESCE($10, signals.broadcasted_at),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(signal_type)
+        .bind(content)
+        .bind(about)
+        .bind(entity_id)
+        .bind(source_url)
+        .bind(page_snapshot_id)
+        .bind(extraction_id)
+        .bind(confidence)
+        .bind(broadcasted_at)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Fetch signals previously extracted from the same URL.
+    pub async fn find_by_url(url: &str, limit: i64, pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            SELECT s.* FROM signals s
+            JOIN page_snapshots ps ON ps.id = s.page_snapshot_id
+            WHERE ps.canonical_url = $1 OR ps.url = $1
+            ORDER BY s.broadcasted_at DESC NULLS LAST, s.created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(url)
+        .bind(limit)
+        .fetch_all(pool)
         .await
         .map_err(Into::into)
     }
@@ -232,6 +281,58 @@ impl Signal {
         .fetch_all(pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Delete all signals associated with a source (via domain_snapshots → page_snapshots).
+    /// Also cleans up polymorphic associations (locationables, taggables, schedules).
+    pub async fn delete_by_source(source_id: Uuid, pool: &PgPool) -> Result<u64> {
+        let signal_ids: Vec<Uuid> = sqlx::query_as::<_, (Uuid,)>(
+            r#"
+            SELECT s.id FROM signals s
+            JOIN page_snapshots ps ON ps.id = s.page_snapshot_id
+            JOIN domain_snapshots ds ON ds.page_snapshot_id = ps.id
+            WHERE ds.source_id = $1
+            "#,
+        )
+        .bind(source_id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.0)
+        .collect();
+
+        if signal_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Clean up polymorphic associations
+        sqlx::query("DELETE FROM locationables WHERE locatable_type = 'signal' AND locatable_id = ANY($1)")
+            .bind(&signal_ids)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM taggables WHERE taggable_type = 'signal' AND taggable_id = ANY($1)")
+            .bind(&signal_ids)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM schedules WHERE scheduleable_type = 'signal' AND scheduleable_id = ANY($1)")
+            .bind(&signal_ids)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM cluster_items WHERE item_type = 'signal' AND item_id = ANY($1)")
+            .bind(&signal_ids)
+            .execute(pool)
+            .await?;
+
+        // Delete signals (cascades to signal_flags, sets NULL on findings.trigger_signal_id)
+        let result = sqlx::query("DELETE FROM signals WHERE id = ANY($1)")
+            .bind(&signal_ids)
+            .execute(pool)
+            .await?;
+
+        Ok(result.rows_affected())
     }
 
     pub async fn count(pool: &PgPool) -> Result<i64> {

@@ -68,7 +68,7 @@ impl Taggable {
         Ok(())
     }
 
-    /// Tag an entity/listing with a kind+value pair (find-or-create the tag).
+    /// Tag an entity/signal with a kind+value pair (find-or-create the tag).
     pub async fn tag(
         taggable_type: &str,
         taggable_id: Uuid,

@@ -22,7 +22,8 @@ impl Ingestor for GoFundMeIngestor {
     async fn discover(&self, config: &DiscoverConfig) -> CrawlResult<Vec<RawPage>> {
         let search_term = config
             .options
-            .get("handle")
+            .get("search_query")
+            .or_else(|| config.options.get("handle"))
             .map(|s| s.as_str())
             .unwrap_or(&config.url);
 

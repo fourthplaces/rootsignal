@@ -135,7 +135,23 @@ pub fn normalize_and_classify(input: &str) -> ClassifiedSource {
         };
     }
 
-    // GoFundMe: preserve /f/{slug} path, strip query params
+    // GoFundMe search: /s?q={query}
+    if domain == "gofundme.com" && path_segment == "s" {
+        let query = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "q")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        let normalized = format!("https://gofundme.com/s?q={}", query);
+        return ClassifiedSource {
+            normalized_url: Some(normalized),
+            name: format!("GoFundMe: {}", query),
+            handle: None,
+            config: serde_json::json!({ "search_query": query }),
+        };
+    }
+
+    // GoFundMe campaign: preserve /f/{slug} path, strip query params
     if domain == "gofundme.com" {
         let name = if path_segment.is_empty() || path_segment == "f" {
             parsed
@@ -245,7 +261,13 @@ pub fn source_type_from_url(url: Option<&str>) -> &'static str {
         "facebook.com" => "facebook",
         "x.com" => "x",
         "tiktok.com" => "tiktok",
-        "gofundme.com" => "gofundme",
+        "gofundme.com" => {
+            if url.contains("/s?q=") {
+                "gofundme_search"
+            } else {
+                "gofundme"
+            }
+        }
         "api.usaspending.gov" => "usaspending",
         "echodata.epa.gov" => "epa_echo",
         _ => "website",
@@ -256,7 +278,7 @@ pub fn source_type_from_url(url: Option<&str>) -> &'static str {
 pub fn source_category_from_url(url: Option<&str>) -> &'static str {
     match source_type_from_url(url) {
         "instagram" | "facebook" | "x" | "tiktok" | "gofundme" => "social",
-        "web_search" => "search",
+        "gofundme_search" | "web_search" => "search",
         "usaspending" | "epa_echo" => "institutional",
         _ => "website",
     }
@@ -269,7 +291,7 @@ pub fn adapter_for_url(url: Option<&str>) -> &'static str {
         "facebook" => "apify_facebook",
         "x" => "apify_x",
         "tiktok" => "apify_tiktok",
-        "gofundme" => "apify_gofundme",
+        "gofundme" | "gofundme_search" => "apify_gofundme",
         _ => "spider",
     }
 }
@@ -678,13 +700,51 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_gofundme() {
+    fn test_classify_gofundme_campaign() {
         let c = normalize_and_classify("https://www.gofundme.com/f/help-rebuild-community-center");
         assert_eq!(
             c.normalized_url.as_deref(),
             Some("https://gofundme.com/f/help-rebuild-community-center")
         );
         assert_eq!(c.name, "help rebuild community center");
+        assert!(c.config.get("search_query").is_none());
+    }
+
+    #[test]
+    fn test_classify_gofundme_search() {
+        let c = normalize_and_classify("https://www.gofundme.com/s?q=minneapolis");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://gofundme.com/s?q=minneapolis")
+        );
+        assert_eq!(c.name, "GoFundMe: minneapolis");
+        assert_eq!(c.config["search_query"], "minneapolis");
+    }
+
+    #[test]
+    fn test_classify_gofundme_search_with_extra_params() {
+        let c = normalize_and_classify("https://www.gofundme.com/s?q=community+garden&page=2");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://gofundme.com/s?q=community garden")
+        );
+        assert_eq!(c.config["search_query"], "community garden");
+    }
+
+    #[test]
+    fn test_classify_gofundme_search_strips_www() {
+        let c = normalize_and_classify("https://www.gofundme.com/s?q=fire+relief");
+        assert!(c.normalized_url.as_deref().unwrap().starts_with("https://gofundme.com/s"));
+    }
+
+    #[test]
+    fn test_classify_gofundme_search_empty_query() {
+        let c = normalize_and_classify("https://www.gofundme.com/s?q=");
+        assert_eq!(
+            c.normalized_url.as_deref(),
+            Some("https://gofundme.com/s?q=")
+        );
+        assert_eq!(c.name, "GoFundMe: ");
     }
 
     #[test]
@@ -734,6 +794,10 @@ mod tests {
         assert_eq!(source_type_from_url(Some("https://tiktok.com/user")), "tiktok");
         assert_eq!(source_type_from_url(Some("https://gofundme.com/f/slug")), "gofundme");
         assert_eq!(
+            source_type_from_url(Some("https://gofundme.com/s?q=minneapolis")),
+            "gofundme_search"
+        );
+        assert_eq!(
             source_type_from_url(Some("https://api.usaspending.gov/api/v2")),
             "usaspending"
         );
@@ -752,7 +816,8 @@ mod tests {
         assert_eq!(adapter_for_url(Some("https://facebook.com/page")), "apify_facebook");
         assert_eq!(adapter_for_url(Some("https://x.com/user")), "apify_x");
         assert_eq!(adapter_for_url(Some("https://tiktok.com/user")), "apify_tiktok");
-        assert_eq!(adapter_for_url(Some("https://gofundme.com/f/s")), "apify_gofundme");
+        assert_eq!(adapter_for_url(Some("https://gofundme.com/f/slug")), "apify_gofundme");
+        assert_eq!(adapter_for_url(Some("https://gofundme.com/s?q=minneapolis")), "apify_gofundme");
         assert_eq!(adapter_for_url(Some("https://example.com")), "spider");
     }
 
@@ -767,6 +832,7 @@ mod tests {
         assert_eq!(compute_cadence(Some("https://x.com/u"), 0), 12);
         assert_eq!(compute_cadence(Some("https://tiktok.com/u"), 0), 12);
         assert_eq!(compute_cadence(Some("https://gofundme.com/f/s"), 0), 12);
+        assert_eq!(compute_cadence(Some("https://gofundme.com/s?q=mpls"), 0), 24); // gofundme_search = search cadence
         assert_eq!(compute_cadence(Some("https://api.usaspending.gov/api"), 0), 168);
         assert_eq!(compute_cadence(Some("https://echodata.epa.gov/echo"), 0), 168);
     }
@@ -832,5 +898,39 @@ mod tests {
         let a = normalize_and_classify("https://example.com/page?utm_source=google&real=yes");
         let b = normalize_and_classify("https://example.com/page?real=yes");
         assert_eq!(a.normalized_url, b.normalized_url);
+    }
+
+    #[test]
+    fn test_normalization_dedup_gofundme_search_variants() {
+        let a = normalize_and_classify("https://www.gofundme.com/s?q=minneapolis");
+        let b = normalize_and_classify("https://gofundme.com/s?q=minneapolis");
+        assert_eq!(a.normalized_url, b.normalized_url);
+    }
+
+    #[test]
+    fn test_gofundme_search_vs_campaign_different_types() {
+        let search = normalize_and_classify("https://gofundme.com/s?q=minneapolis");
+        let campaign = normalize_and_classify("https://gofundme.com/f/help-minneapolis");
+        assert_ne!(search.normalized_url, campaign.normalized_url);
+        assert_eq!(
+            source_type_from_url(search.normalized_url.as_deref()),
+            "gofundme_search"
+        );
+        assert_eq!(
+            source_type_from_url(campaign.normalized_url.as_deref()),
+            "gofundme"
+        );
+    }
+
+    #[test]
+    fn test_gofundme_search_category_is_search() {
+        assert_eq!(
+            source_category_from_url(Some("https://gofundme.com/s?q=minneapolis")),
+            "search"
+        );
+        assert_eq!(
+            source_category_from_url(Some("https://gofundme.com/f/some-campaign")),
+            "social"
+        );
     }
 }

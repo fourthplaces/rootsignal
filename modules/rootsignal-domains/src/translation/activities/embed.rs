@@ -20,19 +20,6 @@ async fn compose_embedding_text(
     if source_locale == "en" {
         // Fetch directly from source fields
         match record_type {
-            "listing" => {
-                let row = sqlx::query_as::<_, (String, Option<String>)>(
-                    "SELECT title, description FROM listings WHERE id = $1",
-                )
-                .bind(record_id)
-                .fetch_one(pool)
-                .await?;
-                let text = match row.1 {
-                    Some(desc) => format!("{} {}", row.0, desc),
-                    None => row.0,
-                };
-                Ok(Some(text))
-            }
             "entity" => {
                 let row = sqlx::query_as::<_, (String, Option<String>)>(
                     "SELECT name, description FROM entities WHERE id = $1",
@@ -66,7 +53,6 @@ async fn compose_embedding_text(
         let translations = Translation::find_for(record_type, record_id, "en", pool).await?;
 
         let (title_fields, desc_fields) = match record_type {
-            "listing" => ("title", "description"),
             "entity" => ("name", "description"),
             "service" => ("name", "description"),
             _ => return Ok(None),

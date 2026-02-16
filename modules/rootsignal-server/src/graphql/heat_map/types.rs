@@ -33,7 +33,7 @@ pub struct GqlZipDensity {
     pub address_locality: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub listing_count: i32,
+    pub signal_count: i32,
     pub signal_domain_counts: serde_json::Value,
 }
 
@@ -44,7 +44,7 @@ impl From<rootsignal_domains::heat_map::ZipDensity> for GqlZipDensity {
             address_locality: z.address_locality,
             latitude: z.latitude,
             longitude: z.longitude,
-            listing_count: z.listing_count as i32,
+            signal_count: z.signal_count as i32,
             signal_domain_counts: z.signal_domain_counts,
         }
     }
