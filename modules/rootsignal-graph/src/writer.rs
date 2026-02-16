@@ -201,7 +201,7 @@ impl GraphWriter {
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param(
             "urgency",
-            format!("{:?}", n.urgency).to_lowercase(),
+            urgency_str(n.urgency),
         )
         .param("what_needed", n.what_needed.as_str())
         .param(
@@ -260,7 +260,7 @@ impl GraphWriter {
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param(
             "severity",
-            format!("{:?}", n.severity).to_lowercase(),
+            severity_str(n.severity),
         )
         .param("embedding", embedding_to_f64(embedding));
 
@@ -399,6 +399,7 @@ impl GraphWriter {
 
     /// Acquire a scout lock. Returns false if another scout is running.
     /// Cleans up stale locks (>30 min) from killed containers.
+    /// Uses a single atomic query to avoid TOCTOU race between check and create.
     pub async fn acquire_scout_lock(&self) -> Result<bool, neo4rs::Error> {
         // Delete stale locks older than 30 minutes
         self.client
@@ -408,25 +409,22 @@ impl GraphWriter {
             ))
             .await?;
 
-        // Check if a recent lock exists
-        let mut result = self.client.graph.execute(
-            query("MATCH (lock:ScoutLock) RETURN count(lock) AS cnt")
-        ).await?;
+        // Atomic check-and-create: only creates if no lock exists
+        let q = query(
+            "OPTIONAL MATCH (existing:ScoutLock)
+             WITH existing WHERE existing IS NULL
+             CREATE (lock:ScoutLock {started_at: datetime()})
+             RETURN lock IS NOT NULL AS acquired"
+        );
 
+        let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
-            let cnt: i64 = row.get("cnt").unwrap_or(0);
-            if cnt > 0 {
-                return Ok(false);
-            }
+            let acquired: bool = row.get("acquired").unwrap_or(false);
+            return Ok(acquired);
         }
 
-        // Create lock
-        self.client
-            .graph
-            .run(query("CREATE (:ScoutLock {started_at: datetime()})"))
-            .await?;
-
-        Ok(true)
+        // No row returned means the WHERE filtered it out (lock exists)
+        Ok(false)
     }
 
     /// Release the scout lock.
@@ -440,11 +438,31 @@ impl GraphWriter {
 }
 
 /// Add lat/lng params to a query from node metadata.
-/// Uses 0.0 for nodes without a location (filtered by reader).
+/// Uses null for nodes without a location.
 fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
     match &meta.location {
         Some(loc) => q.param("lat", loc.lat).param("lng", loc.lng),
-        None => q.param("lat", 0.0_f64).param("lng", 0.0_f64),
+        None => q.param::<Option<f64>>("lat", None).param::<Option<f64>>("lng", None),
+    }
+}
+
+fn urgency_str(u: rootsignal_common::Urgency) -> &'static str {
+    use rootsignal_common::Urgency;
+    match u {
+        Urgency::Low => "low",
+        Urgency::Medium => "medium",
+        Urgency::High => "high",
+        Urgency::Critical => "critical",
+    }
+}
+
+fn severity_str(s: rootsignal_common::Severity) -> &'static str {
+    use rootsignal_common::Severity;
+    match s {
+        Severity::Low => "low",
+        Severity::Medium => "medium",
+        Severity::High => "high",
+        Severity::Critical => "critical",
     }
 }
 
@@ -457,7 +475,23 @@ fn sensitivity_str(s: SensitivityLevel) -> &'static str {
 }
 
 fn roles_to_strings(roles: &[rootsignal_common::AudienceRole]) -> Vec<String> {
-    roles.iter().map(|r| format!("{:?}", r).to_lowercase()).collect()
+    roles.iter().map(|r| audience_role_str(r).to_string()).collect()
+}
+
+fn audience_role_str(role: &rootsignal_common::AudienceRole) -> &'static str {
+    use rootsignal_common::AudienceRole;
+    match role {
+        AudienceRole::Volunteer => "volunteer",
+        AudienceRole::Donor => "donor",
+        AudienceRole::Neighbor => "neighbor",
+        AudienceRole::Parent => "parent",
+        AudienceRole::Youth => "youth",
+        AudienceRole::Senior => "senior",
+        AudienceRole::Immigrant => "immigrant",
+        AudienceRole::Steward => "steward",
+        AudienceRole::CivicParticipant => "civic_participant",
+        AudienceRole::SkillProvider => "skill_provider",
+    }
 }
 
 fn embedding_to_f64(embedding: &[f32]) -> Vec<f64> {

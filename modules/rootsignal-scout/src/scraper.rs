@@ -1,5 +1,10 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use spider_transformations::transformation::content::{
+    transform_content_input, ReturnFormat, TransformConfig, TransformInput,
+};
 use tracing::{info, warn};
 
 // --- PageScraper trait ---
@@ -10,19 +15,16 @@ pub trait PageScraper: Send + Sync {
     fn name(&self) -> &str;
 }
 
-// --- Spider (default, no API key) ---
+// --- Chrome + Readability scraper ---
 
-/// Scraper that uses Chromium's --dump-dom for full JS rendering.
-/// Bypasses Spider's broken chromiumoxide CDP layer entirely.
+/// Scraper that uses headless Chromium --dump-dom for JS rendering, then
+/// spider_transformations Readability extraction for clean main content.
 pub struct ChromeScraper;
 
 impl ChromeScraper {
     pub fn new() -> Self {
+        info!("Using ChromeScraper (dump-dom + Readability extraction)");
         Self
-    }
-
-    fn html_to_text(html: &str) -> String {
-        html2text::from_read(html.as_bytes(), 120).unwrap_or_default()
     }
 }
 
@@ -32,19 +34,25 @@ impl PageScraper for ChromeScraper {
         info!(url, scraper = "chrome", "Scraping URL");
 
         let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
+        let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
 
-        let output = tokio::process::Command::new(&chrome_bin)
-            .args([
-                "--headless",
-                "--no-sandbox",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-                "--dump-dom",
-                url,
-            ])
-            .output()
-            .await
-            .context(format!("Failed to run Chrome for {url}"))?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new(&chrome_bin)
+                .args([
+                    "--headless",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    &format!("--user-data-dir={}", tmp_dir.path().display()),
+                    "--dump-dom",
+                    url,
+                ])
+                .output(),
+        )
+        .await
+        .context(format!("Chrome timed out after 30s for {url}"))?
+        .context(format!("Failed to run Chrome for {url}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -52,14 +60,38 @@ impl PageScraper for ChromeScraper {
             return Ok(String::new());
         }
 
-        let html = String::from_utf8_lossy(&output.stdout).to_string();
+        let html = &output.stdout;
 
-        if html.trim().is_empty() {
+        if html.is_empty() {
             warn!(url, scraper = "chrome", "Empty DOM output");
             return Ok(String::new());
         }
 
-        let text = Self::html_to_text(&html);
+        let parsed_url = url::Url::parse(url).ok();
+        let config = TransformConfig {
+            readability: true,
+            main_content: true,
+            return_format: ReturnFormat::Markdown,
+            filter_images: true,
+            filter_svg: true,
+            clean_html: true,
+        };
+        let input = TransformInput {
+            url: parsed_url.as_ref(),
+            content: html,
+            screenshot_bytes: None,
+            encoding: None,
+            selector_config: None,
+            ignore_tags: None,
+        };
+
+        let text = transform_content_input(input, &config);
+
+        if text.trim().is_empty() {
+            warn!(url, scraper = "chrome", "Empty content after Readability extraction");
+            return Ok(String::new());
+        }
+
         info!(url, scraper = "chrome", bytes = text.len(), "Scraped successfully");
         Ok(text)
     }
@@ -67,99 +99,6 @@ impl PageScraper for ChromeScraper {
     fn name(&self) -> &str {
         "chrome"
     }
-}
-
-// --- Firecrawl (API-based fallback) ---
-
-pub struct FirecrawlScraper {
-    app: firecrawl::FirecrawlApp,
-}
-
-impl FirecrawlScraper {
-    pub fn new(api_key: &str) -> Result<Self> {
-        let app = firecrawl::FirecrawlApp::new(api_key)
-            .context("Failed to create Firecrawl client")?;
-        Ok(Self { app })
-    }
-}
-
-#[async_trait]
-impl PageScraper for FirecrawlScraper {
-    async fn scrape(&self, url: &str) -> Result<String> {
-        info!(url, scraper = "firecrawl", "Scraping URL");
-
-        let result = self
-            .app
-            .scrape_url(url, None)
-            .await
-            .context(format!("Failed to scrape {url}"))?;
-
-        let markdown = result.markdown.unwrap_or_default();
-
-        if markdown.is_empty() {
-            warn!(url, scraper = "firecrawl", "Scrape returned empty content");
-        } else {
-            info!(url, scraper = "firecrawl", bytes = markdown.len(), "Scraped successfully");
-        }
-
-        Ok(markdown)
-    }
-
-    fn name(&self) -> &str {
-        "firecrawl"
-    }
-}
-
-// --- Fallback: tries Spider first, then Firecrawl ---
-
-pub struct FallbackScraper {
-    primary: Box<dyn PageScraper>,
-    fallback: Box<dyn PageScraper>,
-}
-
-impl FallbackScraper {
-    pub fn new(primary: Box<dyn PageScraper>, fallback: Box<dyn PageScraper>) -> Self {
-        Self { primary, fallback }
-    }
-}
-
-#[async_trait]
-impl PageScraper for FallbackScraper {
-    async fn scrape(&self, url: &str) -> Result<String> {
-        match self.primary.scrape(url).await {
-            Ok(content) if !content.is_empty() => Ok(content),
-            Ok(_) => {
-                warn!(
-                    url,
-                    primary = self.primary.name(),
-                    fallback = self.fallback.name(),
-                    "Primary scraper returned empty, trying fallback"
-                );
-                self.fallback.scrape(url).await
-            }
-            Err(e) => {
-                warn!(
-                    url,
-                    primary = self.primary.name(),
-                    fallback = self.fallback.name(),
-                    error = %e,
-                    "Primary scraper failed, trying fallback"
-                );
-                self.fallback.scrape(url).await
-            }
-        }
-    }
-
-    fn name(&self) -> &str {
-        "fallback"
-    }
-}
-
-// --- Builder helper ---
-
-pub fn build_scraper(firecrawl_api_key: &str) -> Result<Box<dyn PageScraper>> {
-    info!("Using Chrome scraper (headless Chromium --dump-dom)");
-    Ok(Box::new(ChromeScraper::new()))
 }
 
 // --- Tavily (unchanged) ---
@@ -176,11 +115,29 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct TavilyResponse {
+    #[serde(default)]
+    results: Vec<TavilyResult>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TavilyResult {
+    url: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    content: String,
+}
+
 impl TavilySearcher {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client"),
         }
     }
 
@@ -204,21 +161,17 @@ impl TavilySearcher {
             .await
             .context("Tavily API request failed")?;
 
-        let data: serde_json::Value = resp.json().await.context("Failed to parse Tavily response")?;
+        let data: TavilyResponse = resp.json().await.context("Failed to parse Tavily response")?;
 
-        let results = data["results"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|r| {
-                        let url = r["url"].as_str()?.to_string();
-                        let title = r["title"].as_str().unwrap_or("").to_string();
-                        let snippet = r["content"].as_str().unwrap_or("").to_string();
-                        Some(SearchResult { url, title, snippet })
-                    })
-                    .collect::<Vec<_>>()
+        let results: Vec<SearchResult> = data
+            .results
+            .into_iter()
+            .map(|r| SearchResult {
+                url: r.url,
+                title: r.title,
+                snippet: r.content,
             })
-            .unwrap_or_default();
+            .collect();
 
         info!(query, count = results.len(), "Tavily search complete");
         Ok(results)

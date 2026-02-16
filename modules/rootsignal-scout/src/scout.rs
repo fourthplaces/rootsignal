@@ -75,7 +75,6 @@ impl Scout {
         graph_client: GraphClient,
         anthropic_api_key: &str,
         voyage_api_key: &str,
-        firecrawl_api_key: &str,
         tavily_api_key: &str,
         apify_api_key: &str,
     ) -> Result<Self> {
@@ -89,7 +88,7 @@ impl Scout {
             writer: GraphWriter::new(graph_client),
             extractor: Extractor::new(anthropic_api_key),
             embedder: Embedder::new(voyage_api_key),
-            scraper: scraper::build_scraper(firecrawl_api_key)?,
+            scraper: Box::new(scraper::ChromeScraper::new()),
             tavily: TavilySearcher::new(tavily_api_key),
             apify,
         })
@@ -177,7 +176,7 @@ impl Scout {
                 }
             }
         }))
-        .buffer_unordered(5)
+        .buffer_unordered(10)
         .collect()
         .await;
 
@@ -208,87 +207,101 @@ impl Scout {
 
     /// Scrape Instagram and Facebook accounts via Apify, feed posts through LLM extraction.
     async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats) {
-        // Instagram accounts
+        use std::pin::Pin;
+        use std::future::Future;
+
+        type SocialResult = Option<(String, String, Vec<Node>, usize)>;
+
         let ig_accounts = sources::instagram_accounts();
-        info!(count = ig_accounts.len(), "Scraping Instagram accounts via Apify...");
+        let fb_pages = sources::facebook_pages();
+        info!(
+            ig = ig_accounts.len(),
+            fb = fb_pages.len(),
+            "Scraping social media via Apify..."
+        );
+
+        // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
+        let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
 
         for (username, trust) in &ig_accounts {
-            match apify.scrape_instagram_posts(username, 10).await {
-                Ok(posts) => {
-                    let post_count = posts.len();
-                    stats.social_media_posts += post_count as u32;
-
-                    // Concatenate recent post captions into a single text block for extraction
-                    let combined_text: String = posts
-                        .iter()
-                        .filter_map(|p| p.caption.as_deref())
-                        .enumerate()
-                        .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-
-                    if combined_text.is_empty() {
-                        continue;
+            let source_url = format!("https://www.instagram.com/{username}/");
+            let username = username.to_string();
+            let trust = *trust;
+            futures.push(Box::pin(async move {
+                let posts = match apify.scrape_instagram_posts(&username, 10).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(username, error = %e, "Instagram Apify scrape failed");
+                        return None;
                     }
-
-                    let source_url = format!("https://www.instagram.com/{username}/");
-                    match self.extractor.extract(&combined_text, &source_url, *trust).await {
-                        Ok(nodes) => {
-                            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats).await {
-                                warn!(username, error = %e, "Failed to store Instagram signals");
-                            }
-                        }
-                        Err(e) => {
-                            warn!(username, error = %e, "Instagram extraction failed");
-                        }
+                };
+                let post_count = posts.len();
+                let combined_text: String = posts
+                    .iter()
+                    .filter_map(|p| p.caption.as_deref())
+                    .enumerate()
+                    .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if combined_text.is_empty() {
+                    return None;
+                }
+                let nodes = match self.extractor.extract(&combined_text, &source_url, trust).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!(username, error = %e, "Instagram extraction failed");
+                        return None;
                     }
-
-                    info!(username, posts = post_count, "Instagram scrape complete");
-                }
-                Err(e) => {
-                    warn!(username, error = %e, "Instagram Apify scrape failed");
-                }
-            }
+                };
+                info!(username, posts = post_count, "Instagram scrape complete");
+                Some((source_url, combined_text, nodes, post_count))
+            }));
         }
 
-        // Facebook pages
-        let fb_pages = sources::facebook_pages();
-        info!(count = fb_pages.len(), "Scraping Facebook pages via Apify...");
-
         for (page_url, trust) in &fb_pages {
-            match apify.scrape_facebook_posts(page_url, 10).await {
-                Ok(posts) => {
-                    let post_count = posts.len();
-                    stats.social_media_posts += post_count as u32;
-
-                    let combined_text: String = posts
-                        .iter()
-                        .filter_map(|p| p.text.as_deref())
-                        .enumerate()
-                        .map(|(i, text)| format!("--- Post {} ---\n{}", i + 1, text))
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-
-                    if combined_text.is_empty() {
-                        continue;
+            let page_url = page_url.to_string();
+            let trust = *trust;
+            futures.push(Box::pin(async move {
+                let posts = match apify.scrape_facebook_posts(&page_url, 10).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(page_url, error = %e, "Facebook Apify scrape failed");
+                        return None;
                     }
-
-                    match self.extractor.extract(&combined_text, page_url, *trust).await {
-                        Ok(nodes) => {
-                            if let Err(e) = self.store_signals(page_url, &combined_text, nodes, stats).await {
-                                warn!(page_url, error = %e, "Failed to store Facebook signals");
-                            }
-                        }
-                        Err(e) => {
-                            warn!(page_url, error = %e, "Facebook extraction failed");
-                        }
+                };
+                let post_count = posts.len();
+                let combined_text: String = posts
+                    .iter()
+                    .filter_map(|p| p.text.as_deref())
+                    .enumerate()
+                    .map(|(i, text)| format!("--- Post {} ---\n{}", i + 1, text))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if combined_text.is_empty() {
+                    return None;
+                }
+                let nodes = match self.extractor.extract(&combined_text, &page_url, trust).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!(page_url, error = %e, "Facebook extraction failed");
+                        return None;
                     }
+                };
+                info!(page_url, posts = post_count, "Facebook scrape complete");
+                Some((page_url, combined_text, nodes, post_count))
+            }));
+        }
 
-                    info!(page_url, posts = post_count, "Facebook scrape complete");
-                }
-                Err(e) => {
-                    warn!(page_url, error = %e, "Facebook Apify scrape failed");
-                }
+        let results: Vec<_> = stream::iter(futures)
+            .buffer_unordered(10)
+            .collect()
+            .await;
+
+        for result in results.into_iter().flatten() {
+            let (source_url, combined_text, nodes, post_count) = result;
+            stats.social_media_posts += post_count as u32;
+            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats).await {
+                warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
             }
         }
     }
@@ -342,7 +355,7 @@ impl Scout {
 
         // Process each signal with its pre-computed embedding
         let now = Utc::now();
-        let content_hash = format!("{:x}", md5_hash(content));
+        let content_hash = format!("{:x}", content_hash(content));
 
         for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
             let node_type = node.node_type();
@@ -413,7 +426,7 @@ impl Scout {
                 for role in &meta.audience_roles {
                     *stats
                         .audience_roles
-                        .entry(format!("{role}"))
+                        .entry(role.to_string())
                         .or_insert(0) += 1;
                 }
             }
@@ -433,8 +446,8 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     }
 }
 
-/// Simple hash for content dedup. Not cryptographic.
-fn md5_hash(content: &str) -> u64 {
+/// Fast hash for content dedup. Not cryptographic.
+fn content_hash(content: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     content.hash(&mut hasher);

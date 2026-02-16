@@ -32,7 +32,6 @@ async fn main() -> Result<()> {
         client,
         &config.anthropic_api_key,
         &config.voyage_api_key,
-        &config.firecrawl_api_key,
         &config.tavily_api_key,
         &config.apify_api_key,
     )?;
