@@ -12,11 +12,11 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 **Question: Does enough actionable, fresh signal exist in the Twin Cities to make this viable?**
 
 ### What to Build
-- Scrapers for 4-5 high-value Tier 1 sources (GoFundMe, Eventbrite API, Tavily discovery queries, 5-10 org websites via Firecrawl, VolunteerMatch)
-- Claude extraction pipeline that takes raw content and outputs structured signal records
-- PostgreSQL storage with core schema (signals + signal_sources tables)
-- A simple output — could be a JSON dump, a markdown file, a bare HTML page — anything that lets you look at the signal and assess it quickly
-- An automated quality check that scores each signal for actionability, freshness, geo-accuracy, and completeness
+- Automated discovery across 4-5 high-value source types
+- AI extraction that turns raw content into structured civic knowledge
+- Persistent storage of the civic graph
+- A simple output — anything that lets you look at the results and assess quality quickly
+- An automated quality check that scores each result for actionability, freshness, geo-accuracy, and completeness
 
 ### What to Assess
 - **Volume:** How many unique, actionable signals did the pipeline produce for the Twin Cities? Is it 30? 100? 300?
@@ -38,21 +38,21 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 **Question: Can the pipeline produce a feed that's clean, deduplicated, and meaningfully better than Googling?**
 
 ### What to Build
-- Deduplication pipeline (URL matching, fuzzy title+org, vector similarity via pgvector)
-- Signal expiration logic (events expire after date, fundraisers expire when funded, configurable defaults)
-- Tier 2 enrichment for a handful of sources (Instagram/Facebook for 5-10 key orgs) — freshness flags and capacity status only
-- Confidence scoring that combines source credibility, freshness, cross-source verification, and completeness
-- Side-by-side comparison tool — take 10 common queries ("volunteer Minneapolis," "donate Twin Cities," "community events this weekend") and compare Root Signal results vs Google results
+- Deduplication so the same opportunity doesn't appear multiple times
+- Expiration logic so stale results don't linger (events expire after date, fundraisers when funded)
+- Enrichment from social media sources — freshness flags and capacity status, never displayed directly
+- Confidence scoring that reflects source credibility, freshness, and cross-source verification
+- Side-by-side comparison against Google — take 10 common queries and honestly assess whether the system is better
 
 ### What to Assess
 - **Dedup effectiveness:** What percentage of duplicates are caught? Manually verify on 50 signals.
-- **Freshness after enrichment:** Did Tier 2 signals flag any stale Tier 1 listings? Did any capacity flags fire correctly?
+- **Freshness via cross-source checking:** Did social media signals flag any stale listings? Did any capacity flags fire correctly?
 - **Side-by-side verdict:** For those 10 queries, is Root Signal noticeably better? Be brutally honest. If it's a toss-up, the value proposition isn't landing yet.
 - **Confidence scoring accuracy:** Do high-confidence signals actually feel more trustworthy than low-confidence ones?
-- **Tier 2 boundary:** Confirm that zero Tier 2 content appears in any output. Structural check, not just spot check.
+- **Privacy boundary:** Confirm that zero private content appears in any output. Structural check, not just spot check.
 
 ### Gate
-**Go:** Feed is clean, deduped, demonstrably better than Google for at least 7 of 10 test queries, and Tier 2 enrichment adds visible value without leaking.
+**Go:** Feed is clean, deduped, demonstrably better than Google for at least 7 of 10 test queries, and cross-source verification adds visible quality.
 
 **Adjust:** Feed is cleaner but not yet clearly better than Google. Identify the specific gaps — is it freshness? Specificity? Volume? Fix those before moving on.
 
@@ -96,7 +96,7 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 **Question: Does the signal work as infrastructure — can something else be built on it?**
 
 ### What to Build
-- Formalize the read API (the endpoints from the architecture doc — geographic filter, audience role, categories, urgency, confidence threshold)
+- Formalize the read API — geographic filter, audience role, categories, urgency, confidence threshold
 - Build a second consumer of the API. Pick whichever is fastest to prove the point:
   - A weekly email digest (filtered by location and role preferences)
   - A Slack bot that posts daily signal to a community Slack
@@ -125,14 +125,14 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 ### What to Build
 - Add ecological signal sources (5-10 environmental orgs, iNaturalist, state DNR)
 - Add civic/economic signal sources (boycott signal, advocacy actions, policy engagement)
-- Add Tier 3 direct intake via one channel (simplest option: web form, or email intake)
+- Add direct intake via one channel (simplest option: web form, or email intake)
 - Expand to a second hotspot (another city, or a broader Minnesota geography) to test the scaling model
-- Stress test dedup, extraction, and geo-localization at higher volume
+- Stress test the system at higher volume — does quality hold as scope expands?
 
 ### What to Assess
 - **Ecological signal quality:** Does habitat restoration signal sit naturally alongside food shelf volunteer calls? Or does it feel forced — like two different products jammed together?
 - **Civic signal sensitivity:** Surface some boycott or advocacy signal. Show it to 5 people from Milestone 3. Does it feel appropriate? Does anyone object to Root Signal carrying this? Does it undermine trust?
-- **Direct intake quality:** How does Tier 3 signal compare to scraped signal? Is it higher quality as hypothesized? Or is it noisy and unmoderated?
+- **Direct intake quality:** How does human-reported signal compare to scraped signal? Is it higher quality as hypothesized? Or is it noisy and unmoderated?
 - **Second hotspot viability:** How long does bootstrapping take? Is the signal quality comparable to the Twin Cities, or does it depend on local knowledge to configure well?
 - **System stability:** As source count and signal volume increase, does the pipeline stay reliable? Or are you drowning in broken scrapers?
 

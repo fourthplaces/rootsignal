@@ -4,9 +4,9 @@ Extracted from the previous architecture docs as reference material for the gree
 
 ---
 
-## Signal Sources — Tier 1 (Public, Displayable)
+## Signal Sources — Public Web
 
-Content freely available on the open web. Can be scraped, stored, summarized, and surfaced with attribution and links back to the source.
+All public content is first-class signal regardless of platform. The boundary is public vs. private, not which platform it came from. Everything is surfaced with attribution and links back to the source.
 
 ### Fundraising & Mutual Aid
 | Source | Signal Type | Ingestion Method | Geo-Filterable | Notes |
@@ -87,31 +87,24 @@ Content freely available on the open web. Can be scraped, stored, summarized, an
 
 ---
 
-## Signal Sources — Tier 2 (Enrichment Only, Never Served)
+## Signal Sources — Social Media (Public Posts Only)
 
-Scraped via Apify. Processed for metadata extraction only. No consumer-facing output ever contains this content directly.
+Scraped via Apify. Public posts are first-class signal — extracted, surfaced, and attributed like any other source. Private content, friends-only posts, and closed groups are never touched.
 
-| Source | Enrichment Purpose | Notes |
-|--------|-------------------|-------|
-| **Instagram** (org accounts) | Freshness signals, capacity updates, event changes | "We're full," "event cancelled," "still need volunteers" |
-| **Facebook Groups** | Emerging needs, sentiment, local chatter | Neighborhood groups, mutual aid groups, buy-nothing groups |
-| **Facebook Pages** (org pages) | Org activity level, recent updates | Detects if an org is active vs. dormant |
-| **X / Twitter** | Real-time updates, emergency signals | Fast-moving signal, good for crisis detection |
-| **TikTok** | Community campaigns, viral fundraisers | Growing as grassroots fundraising/awareness channel |
-| **Reddit** | Community discussion, emerging needs | Subreddit-specific signal about local issues |
+| Source | Signal Value | Notes |
+|--------|-------------|-------|
+| **Instagram** (org accounts) | Volunteer calls, capacity updates, event announcements, community needs | "We need volunteers," "event cancelled," "we're full" — direct from orgs |
+| **Facebook Pages** (org pages) | Org broadcasts, events, donation needs | Public page posts only. Detects active vs. dormant orgs |
+| **Facebook Events** (public) | Community events, gatherings | Massive volume, scraping can be fragile |
+| **X / Twitter** | Real-time community signal, emergency needs, organizing | Fast-moving, good for crisis detection and advocacy |
+| **TikTok** | Community campaigns, viral fundraisers, grassroots organizing | Growing as grassroots fundraising/awareness channel |
+| **Reddit** | Community discussion, emerging needs, local organizing | Subreddit-specific signal about local issues (public posts only) |
 
-### Tier 2 Computed Enrichment Flags
-- **Freshness score** — Is this org/listing actively posting?
-- **Capacity flag** — At capacity, paused, or actively seeking help?
-- **Urgency signal** — Sudden spike in posts, emergency language, crisis indicators
-- **Sentiment shift** — Tone change indicating a problem or surge in need
-- **Event status** — Cancelled, postponed, moved, sold out
-- **Verification boost** — Multiple platforms confirm the same information
-- **Activity level** — Is this org alive or dormant?
+**Not touched:** Facebook Groups (closed/private), DMs, friends-only posts, login-walled content not intended to be public.
 
 ---
 
-## Signal Sources — Tier 3 (Direct Intake)
+## Signal Sources — Direct Intake (Human-Reported)
 
 | Channel | Method | Use Case |
 |---------|--------|----------|

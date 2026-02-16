@@ -17,7 +17,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Only captures organizations that actively post there. Heavily skewed toward larger, established nonprofits. Small grassroots groups, mutual aid networks, and informal community efforts are absent. Listings go stale — orgs post once and forget. No urgency signaling. No ecological stewardship signal. No connection to the broader landscape of need (fundraisers, events, boycotts, etc.).
 
-**Root Signal's relationship:** VolunteerMatch is a Tier 1 source. Root Signal scrapes its public listings and integrates them alongside signal from dozens of other sources. VolunteerMatch serves one audience role (volunteer) from one type of source (orgs that self-list). Root Signal serves all roles from all sources.
+**Root Signal's relationship:** VolunteerMatch is a public source. Root Signal scrapes its public listings and integrates them alongside signal from dozens of other sources. VolunteerMatch serves one audience role (volunteer) from one type of source (orgs that self-list). Root Signal serves all roles from all sources.
 
 ### Idealist.org
 **What it does:** Lists volunteer opportunities, nonprofit jobs, internships, and organizations. Internationally focused.
@@ -26,7 +26,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Same limitations as VolunteerMatch — only orgs that self-post. Stale listings. No real-time signal. No mutual aid, no grassroots, no ecological stewardship. The job board focus dilutes the volunteer signal.
 
-**Root Signal's relationship:** Tier 1 source. Complementary to VolunteerMatch for broader coverage, especially internationally.
+**Root Signal's relationship:** Public source. Complementary to VolunteerMatch for broader coverage, especially internationally.
 
 ### Catchafire
 **What it does:** Matches skilled professionals with nonprofits for pro bono projects. Focuses on marketing, IT, HR, and strategy.
@@ -35,7 +35,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Very narrow focus — skilled professionals only. No general volunteering, no ecological, no civic action. Requires account creation and profile building. Closed ecosystem.
 
-**Root Signal's relationship:** Tier 1 source for the `skilled_professional` audience role specifically. Root Signal makes these opportunities discoverable alongside everything else.
+**Root Signal's relationship:** Public source for the `skilled_professional` audience role specifically. Root Signal makes these opportunities discoverable alongside everything else.
 
 ### Root Signal Foundation
 **What it does:** Connects nonprofits with skilled volunteers for pro bono service. Focus on marketing, strategy, HR, IT.
@@ -44,7 +44,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Narrow scope (skills-based only). Closed platform. Name overlap — worth noting for brand awareness and clarity.
 
-**Root Signal's relationship:** Potential Tier 1 source. The name overlap is coincidental but worth addressing in communications. The Root Signal Foundation serves one slice of one audience role; Root Signal (the signal service) serves the entire spectrum.
+**Root Signal's relationship:** Potential public source. The name overlap is coincidental but worth addressing in communications. The Root Signal Foundation serves one slice of one audience role; Root Signal (the signal service) serves the entire spectrum.
 
 ---
 
@@ -57,7 +57,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** GoFundMe is a fundraising tool, not a discovery tool. Finding relevant campaigns requires knowing to look. The platform optimizes for viral campaigns, not for systematic coverage of community need. Small campaigns for local needs get buried. No connection to other forms of action (volunteering, advocacy, stewardship).
 
-**Root Signal's relationship:** GoFundMe is one of the most important Tier 1 sources. It carries high-quality, geo-localized, naturally-expiring signal about community needs. Root Signal makes GoFundMe campaigns discoverable within the broader landscape of action.
+**Root Signal's relationship:** GoFundMe is one of the most important public sources. It carries high-quality, geo-localized, naturally-expiring signal about community needs. Root Signal makes GoFundMe campaigns discoverable within the broader landscape of action.
 
 ### GiveSendGo
 **What it does:** Faith-based crowdfunding platform. Alternative to GoFundMe with fewer content restrictions.
@@ -66,7 +66,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Smaller platform, less structured data. Has become associated with politically controversial campaigns, which adds noise.
 
-**Root Signal's relationship:** Tier 1 source. Signal is filtered through the same quality and relevance pipeline as everything else.
+**Root Signal's relationship:** Public source. Signal is filtered through the same quality and relevance pipeline as everything else.
 
 ### Open Collective
 **What it does:** Transparent fundraising for communities and open-source projects. Organizations manage finances openly.
@@ -75,7 +75,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Niche audience. More popular with tech and open-source communities than with general community organizations.
 
-**Root Signal's relationship:** Tier 1 source, particularly valuable for the transparency of financial data.
+**Root Signal's relationship:** Public source, particularly valuable for the transparency of financial data.
 
 ---
 
@@ -88,7 +88,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Optimized for commercial events. Community events exist but are mixed in with concerts, conferences, and workshops. No distinction between "come to our marketing webinar" and "come help clean up the river." No connection to broader community need.
 
-**Root Signal's relationship:** Tier 1 source via API. Root Signal filters for community-relevant events and categorizes them by audience role and signal domain.
+**Root Signal's relationship:** Public source via API. Root Signal filters for community-relevant events and categorizes them by audience role and signal domain.
 
 ### Meetup
 **What it does:** Group-based recurring event platform. People form interest-based groups and schedule regular meetups.
@@ -97,7 +97,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Interest-based, not values-based. Meetup groups are organized around hobbies, careers, and social activities — not around community need. The signal is about "come hang out" not "come help." Limited API access.
 
-**Root Signal's relationship:** Selective Tier 1 source. Some Meetup groups (volunteer groups, environmental groups, civic groups) carry relevant signal. Most don't. Root Signal needs to filter carefully.
+**Root Signal's relationship:** Selectively scraped public source. Some Meetup groups (volunteer groups, environmental groups, civic groups) carry relevant signal. Most don't. Root Signal needs to filter carefully.
 
 ### Facebook Events
 **What it does:** Event creation and discovery within the Facebook ecosystem.
@@ -106,7 +106,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Walled garden. Events are trapped inside Facebook's ecosystem. Fragmented across groups, pages, and personal profiles. Difficult to scrape at scale. Many events are private or semi-private.
 
-**Root Signal's relationship:** Public Facebook Events are Tier 1 (scrape with care). Events inside closed groups are Tier 2 (enrichment only). Facebook carries signal that exists nowhere else — particularly from small, informal community groups — making it important despite the access challenges.
+**Root Signal's relationship:** Public Facebook Events are scraped as first-class signal. Events inside closed groups are private and not touched. Facebook carries signal that exists nowhere else — particularly from small, informal community groups — making it important despite the access challenges.
 
 ---
 
@@ -119,7 +119,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Chronically outdated. Information is entered manually by regional staff and rarely verified. Organizations change their hours, capacity, and offerings faster than 211 can track. No real-time signal. No volunteer opportunities. No events. No ecological signal. No grassroots or mutual aid coverage. The interface is often dated and difficult to use.
 
-**Root Signal's relationship:** Tier 1 source for established service listings, but Root Signal's Tier 2 enrichment (checking org social media for activity and updates) directly addresses 211's staleness problem. Where 211 is a static directory, Root Signal is a living signal system.
+**Root Signal's relationship:** Public source for established service listings. Root Signal's cross-source verification — checking org social media for activity and updates — directly addresses 211's staleness problem. Where 211 is a static directory, Root Signal is a living signal system.
 
 ### Nextdoor
 **What it does:** Neighborhood-based social network. Residents post to their local community — help requests, recommendations, lost pets, complaints, events.
@@ -128,7 +128,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Massive noise-to-signal ratio. Dominated by complaints, lost pet posts, and heated neighborhood arguments. Community help signal exists but is buried. Walled garden — requires account creation and address verification. Algorithmically sorted feed buries time-sensitive signal. Corporate-owned with ad-driven revenue model.
 
-**Root Signal's relationship:** Very limited scraping potential (mostly behind login). Some public-facing pages may be Tier 1. If accessible, the community help and event signal would be valuable, but the noise filtering required is substantial.
+**Root Signal's relationship:** Very limited scraping potential (mostly behind login). Some public-facing pages carry useful signal. If accessible, the community help and event signal would be valuable, but the noise filtering required is substantial.
 
 ### Patch.com
 **What it does:** Hyperlocal news and events coverage for suburban and small-town communities across the US.
@@ -137,7 +137,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Quality varies dramatically by region. Some Patch outlets are active and well-maintained; others are ghost towns. Limited to areas where Patch has coverage. Ad-heavy experience.
 
-**Root Signal's relationship:** Tier 1 source for events and community news where active. Useful for suburban and small-town signal that doesn't appear on bigger platforms.
+**Root Signal's relationship:** Public source for events and community news where active. Useful for suburban and small-town signal that doesn't appear on bigger platforms.
 
 ---
 
@@ -150,7 +150,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Observation-only. No action signal — it tells you what's there but not what to do about it. Not designed for discovering volunteer opportunities or stewardship events.
 
-**Root Signal's relationship:** Tier 1 source via API. iNaturalist data can enrich ecological hotspots with biodiversity context. An invasive species observation near a restoration site connects the "what's happening" (iNaturalist) with the "what can I do" (Root Signal).
+**Root Signal's relationship:** Public source via API. iNaturalist data can enrich ecological hotspots with biodiversity context. An invasive species observation near a restoration site connects the "what's happening" (iNaturalist) with the "what can I do" (Root Signal).
 
 ### Zooniverse
 **What it does:** The world's largest platform for people-powered research. Users contribute to real scientific research by classifying images, transcribing data, and more.
@@ -159,7 +159,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Not geo-localized for the most part. Many projects are remote-participation only. No connection to local community action.
 
-**Root Signal's relationship:** Tier 1 source for the `citizen_scientist` audience role. Zooniverse projects that have local geographic relevance get surfaced alongside field-based opportunities.
+**Root Signal's relationship:** Public source for the `citizen_scientist` audience role. Zooniverse projects that have local geographic relevance get surfaced alongside field-based opportunities.
 
 ### Surfrider Foundation / Ocean Conservancy / River Keeper Networks
 **What they do:** Environmental organizations focused on coastline, ocean, and waterway protection. Run volunteer programs, cleanups, monitoring, and advocacy.
@@ -168,7 +168,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Each operates its own website and event system. Signal is fragmented across dozens of chapter sites. No unified discovery experience.
 
-**Root Signal's relationship:** Tier 1 sources — each chapter site scraped individually. Root Signal unifies their signal into a single searchable landscape alongside all other ecological stewardship opportunities.
+**Root Signal's relationship:** Public sources — each chapter site scraped individually. Root Signal unifies their signal into a single searchable landscape alongside all other ecological stewardship opportunities.
 
 ### EPA Environmental Justice Screening (EJScreen) / State Environmental Agencies
 **What they do:** Government environmental data, monitoring, and program administration.
@@ -177,7 +177,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Dense, technical, and difficult for non-specialists to parse. Action opportunities are buried in bureaucratic processes. Volunteer programs exist but are poorly publicized.
 
-**Root Signal's relationship:** Tier 1 data source for ecological hotspot identification and enrichment. EPA data helps identify where environmental signal should be concentrated. Volunteer programs and public comment periods are actionable signal that gets extracted and served.
+**Root Signal's relationship:** Public data source for ecological hotspot identification and enrichment. EPA data helps identify where environmental signal should be concentrated. Volunteer programs and public comment periods are actionable signal that gets extracted and served.
 
 ---
 
@@ -199,7 +199,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Only covers certified companies (self-selected). Many ethical businesses aren't B Corp certified. Doesn't cover boycotts, active campaigns, or corporate accountability investigations.
 
-**Root Signal's relationship:** Tier 1 source for positive ethical consumption signal. "Buy from these" alongside "stop buying from those."
+**Root Signal's relationship:** Public source for positive ethical consumption signal. "Buy from these" alongside "stop buying from those."
 
 ### Buycott / Ethical Consumer
 **What they do:** Apps and publications that track boycotts and ethical consumption campaigns.
@@ -252,7 +252,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Directory-level only. Doesn't track what individual networks currently need. Static listings. Many listed networks have become dormant since the 2020 surge.
 
-**Root Signal's relationship:** Tier 1 source for discovering mutual aid networks. Root Signal's Tier 2 enrichment (checking network social media activity) can flag which networks are actually active.
+**Root Signal's relationship:** Public source for discovering mutual aid networks. Cross-source verification — checking network social media activity — can flag which networks are actually active.
 
 ### Buy Nothing Groups
 **What they do:** Hyperlocal gift economy groups where neighbors give and receive items for free.
@@ -261,7 +261,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Primarily on Facebook (walled garden). Each group operates independently. No aggregation across groups. No searchability from outside.
 
-**Root Signal's relationship:** Tier 2 enrichment source (Facebook Groups). Demonstrates the kind of hyperlocal, neighbor-to-neighbor signal that the Commons would eventually serve natively.
+**Root Signal's relationship:** Mostly private (Facebook Groups are closed). Demonstrates the kind of hyperlocal, neighbor-to-neighbor signal that the Commons would eventually serve natively. Public-facing Buy Nothing content is fair game; closed group content is not touched.
 
 ### Community Fridges / Little Free Pantries / Mutual Aid Infrastructure
 **What they do:** Physical infrastructure for community sharing — public fridges, pantries, libraries, tool libraries.
@@ -270,7 +270,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where they fall short:** Information is scattered across individual Instagram accounts, Google Maps pins, and word of mouth. No unified tracking of what's stocked, what's needed, or when.
 
-**Root Signal's relationship:** High-value Tier 1 and Tier 2 signal. Root Signal could become the first unified map of community sharing infrastructure with real-time status via social media enrichment.
+**Root Signal's relationship:** High-value public signal from multiple sources — org websites, social media accounts, map listings. Root Signal could become the first unified map of community sharing infrastructure with real-time status via cross-source verification.
 
 ---
 
@@ -299,7 +299,7 @@ Root Signal occupies territory that no existing system covers:
 
 **No system spans human and ecological signal.** Volunteer platforms don't include environmental stewardship. Environmental platforms don't include mutual aid. Root Signal treats both as first-class.
 
-**No system provides real-time signal freshness.** Most directories go stale. Root Signal's Tier 2 enrichment and continuous re-scraping keeps signal alive.
+**No system provides real-time signal freshness.** Most directories go stale. Root Signal's cross-source verification and continuous re-scraping keeps signal alive.
 
 **No system is designed as open infrastructure.** Every existing platform is a closed product. Root Signal is an API — a utility that any application can build on.
 

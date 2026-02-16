@@ -1,0 +1,27 @@
+[package]
+name = "rootsignal-scout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scout"
+path = "src/main.rs"
+
+[dependencies]
+rootsignal-common = { workspace = true }
+rootsignal-graph = { workspace = true }
+ai-client = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+firecrawl = { workspace = true }
+regex = { workspace = true }

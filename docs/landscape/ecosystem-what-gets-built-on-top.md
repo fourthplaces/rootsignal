@@ -36,7 +36,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 **What it is:** A gathering place for people with shared values — not organized around interests (like Reddit or Discord) but around commitment to place and to each other. Think of it as a fourth place — not home, not work, not the coffee shop, but the digital space where you go to be a citizen of where you live.
 
-**What makes it distinct:** The Commons is bidirectional with Root Signal. It consumes signal (surfacing relevant needs and opportunities within the community conversation) and produces signal (direct posts from members become Tier 3 signal that flows back into Root Signal). It's also where trust gets built — the relationships and reputation that make direct intake signal credible.
+**What makes it distinct:** The Commons is bidirectional with Root Signal. It consumes signal (surfacing relevant needs and opportunities within the community conversation) and produces signal (direct posts from members become direct human-reported signal that flows back into Root Signal). It's also where trust gets built — the relationships and reputation that make direct intake signal credible.
 
 **Who it's for:** People who don't just want to help once — they want to be part of something ongoing. Community organizers, mutual aid networks, neighborhood leaders, anyone who sees themselves as a steward of where they live.
 
@@ -52,7 +52,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 **Who it's for:** Community organizers who are already running active groups and want their signal to reach beyond their existing membership.
 
-**Relationship to Root Signal:** These communities become Tier 3 signal sources. Root Signal ingests their public-facing signal, normalizes it, and serves it alongside everything else. The community gets discovered by new people; Root Signal gets high-quality direct signal.
+**Relationship to Root Signal:** These communities become direct signal sources. Root Signal ingests their public-facing signal, normalizes it, and serves it alongside everything else. The community gets discovered by new people; Root Signal gets high-quality direct signal.
 
 ---
 
@@ -84,7 +84,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 **What it is:** When a crisis hits — tornado, flood, ice storm, industrial accident — the normal signal landscape gets overwhelmed. Emergency Response Hub is a purpose-built lens that activates on a Root Signal hotspot and surfaces only crisis-relevant signal: where to donate, where to volunteer, what's needed right now, which shelters are open, which roads are passable, where to get food and water.
 
-**What makes it distinct:** During crises, information fragments even faster than usual. Official channels are slow. Social media is noise. People are desperate to help but can't figure out how. The Emergency Response Hub cuts through all of that by pulling from the same Root Signal substrate but filtering aggressively for urgency and crisis relevance. The scraping cadence accelerates. Tier 2 social signals get weighted more heavily for real-time updates.
+**What makes it distinct:** During crises, information fragments even faster than usual. Official channels are slow. Social media is noise. People are desperate to help but can't figure out how. The Emergency Response Hub cuts through all of that by pulling from the same Root Signal substrate but filtering aggressively for urgency and crisis relevance. The scraping cadence accelerates. Social media signals get weighted more heavily for real-time updates.
 
 **Who it's for:** Affected residents, spontaneous volunteers, emergency responders, disaster relief organizations, donors who want to help immediately.
 
@@ -106,7 +106,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 ## 9. Org Dashboard — Root Signal for Nonprofits and Community Orgs
 
-**What it is:** An interface for organizations to manage their presence in the Root Signal ecosystem. They claim their organization, verify their listings, post needs directly (Tier 3 signal), see how many people are discovering them through Root Signal, and understand what other signal exists in their area that they might coordinate around.
+**What it is:** An interface for organizations to manage their presence in the Root Signal ecosystem. They claim their organization, verify their listings, post needs directly, see how many people are discovering them through Root Signal, and understand what other signal exists in their area that they might coordinate around.
 
 **What makes it distinct:** Right now, organizations broadcast into the void. They post on their website, share on social media, list on VolunteerMatch, and hope people find them. Root Signal already scrapes their content — the Org Dashboard gives them a way to enrich it, correct it, and post fresh signal directly. It also shows them the broader landscape of need in their area, which helps with coordination and reduces duplication.
 

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Signals{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 style="margin-bottom: 16px;">Recent Civic Signals</h2>
+    {% for node in nodes %}
+    <div class="node-card">
+        <div>
+            <span class="badge badge-{{ node.type_class }}">{{ node.type_label }}</span>
+            {% if node.confidence < 0.6 %}
+            <span style="font-size:11px;color:#795548;margin-left:8px;">Limited verification</span>
+            {% endif %}
+        </div>
+        <h3><a href="/nodes/{{ node.id }}">{{ node.title }}</a></h3>
+        <p class="summary">{{ node.summary }}</p>
+        <div class="meta-row">
+            <span>Verified {{ node.last_confirmed }}</span>
+            {% if node.corroboration_count > 0 %}
+            <span>{{ node.corroboration_count }} source{% if node.corroboration_count != 1 %}s{% endif %}</span>
+            {% endif %}
+            {% if !node.action_url.is_empty() %}
+            <a href="{{ node.action_url }}" class="action-btn" target="_blank" rel="noopener">Take Action</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% if nodes.is_empty() %}
+    <p style="color:#888;text-align:center;padding:40px;">No signals found yet. Run the scout to populate the graph.</p>
+    {% endif %}
+</div>
+{% endblock %}

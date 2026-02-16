@@ -3,6 +3,10 @@ members = [
     "modules/ai-client",
     "modules/apify-client",
     "modules/twilio-rs",
+    "modules/rootsignal-common",
+    "modules/rootsignal-graph",
+    "modules/rootsignal-scout",
+    "modules/rootsignal-web",
 ]
 resolver = "2"
 
@@ -37,7 +41,24 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
+# Neo4j
+neo4rs = "0.8"
+
+# Web framework
+axum = "0.8"
+askama = "0.15"
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-header", "cors"] }
+tower = "0.5"
+
+# Web scraping
+firecrawl = "1"
+
+# Regex (PII detection)
+regex = "1"
+
 # Local crates
 ai-client = { path = "modules/ai-client" }
 apify-client = { path = "modules/apify-client" }
 twilio = { path = "modules/twilio-rs" }
+rootsignal-common = { path = "modules/rootsignal-common" }
+rootsignal-graph = { path = "modules/rootsignal-graph" }

@@ -5,7 +5,6 @@
 # Environment
 .env
 .env.*
-!.env.example
 
 # Editor
 *.swp
@@ -33,9 +32,3 @@ Thumbs.db
 *.profdata
 lcov.info
 tarpaulin-report.html
-
-# Node / JS
-node_modules/
-.next/
-modules/*/gql/
-.pnpm-store/

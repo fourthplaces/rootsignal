@@ -1,6 +1,5 @@
 target/
-node_modules/
-.next/
+dev/cli/target/
 .git/
-*.md
 docs/
+*.md

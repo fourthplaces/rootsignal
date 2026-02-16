@@ -1,232 +1,165 @@
+//! Project-specific development CLI
+//!
+//! Customize this file to add your own commands and workflows.
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use devkit_core::AppContext;
+use std::process::ExitCode;
+
 mod cmd;
 
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use console::style;
-use std::process::Command;
-
-/// Root Signal developer CLI
 #[derive(Parser)]
-#[command(name = "dev", about = "Root Signal developer tools")]
+#[command(name = "dev")]
+#[command(about = "Development environment CLI")]
+#[command(version)]
 struct Cli {
-    /// Suppress interactive prompts
-    #[arg(long, global = true)]
+    /// Run in quiet mode (non-interactive)
+    #[arg(short, long, global = true)]
     quiet: bool,
 
     #[command(subcommand)]
-    command: Option<TopCmd>,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
-enum TopCmd {
-    /// Start all services (postgres -> migrations -> restate)
-    Up,
+enum Commands {
+    /// Start development environment (Docker services)
+    Up {
+        /// Start all services
+        #[arg(short, long)]
+        all: bool,
+
+        /// Include optional services (web)
+        #[arg(long)]
+        full: bool,
+    },
+
     /// Stop all services
     Down {
-        /// Remove volumes
+        /// Remove volumes (WARNING: deletes data)
         #[arg(short, long)]
         volumes: bool,
     },
-    /// Docker service management
-    Docker {
-        #[command(subcommand)]
-        cmd: cmd::docker::DockerCmd,
-    },
-    /// Database management
-    Db {
-        #[command(subcommand)]
-        cmd: cmd::db::DbCmd,
-    },
+
     /// Show environment status
     Status,
+
     /// Check system prerequisites
     Doctor,
+
+    /// Run scout to discover civic signals
+    Scout,
+
+    /// Docker service management
+    #[command(subcommand)]
+    Docker(cmd::docker::DockerCommand),
 }
 
-pub fn repo_root() -> String {
-    std::env::var("REPO_ROOT").unwrap_or_else(|_| ".".to_string())
+fn main() -> ExitCode {
+    // Load environment variables
+    let _ = dotenvy::dotenv();
+
+    if let Err(e) = run() {
+        eprintln!("Error: {:#}", e);
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
 }
 
-fn main() -> Result<()> {
-    // Load .env from repo root
-    let root = repo_root();
-    let _ = dotenvy::from_path(format!("{root}/.env"));
-
+fn run() -> Result<()> {
     let cli = Cli::parse();
+    let ctx = AppContext::new(cli.quiet)?;
 
     match cli.command {
-        Some(cmd) => run(cmd),
-        None => {
-            if cli.quiet {
-                Cli::parse_from(["dev", "--help"]);
-                Ok(())
-            } else {
-                interactive_menu()
-            }
-        }
+        Some(Commands::Up { all, full }) => cmd_up(&ctx, all, full),
+        Some(Commands::Down { volumes }) => cmd_down(&ctx, volumes),
+        Some(Commands::Scout) => cmd_scout(&ctx),
+        Some(Commands::Status) => cmd_status(&ctx),
+        Some(Commands::Doctor) => cmd_doctor(&ctx),
+        Some(Commands::Docker(cmd)) => cmd::docker::run(&ctx, cmd),
+        None => interactive_menu(&ctx),
     }
 }
 
-fn run(cmd: TopCmd) -> Result<()> {
-    match cmd {
-        TopCmd::Up => cmd_up(),
-        TopCmd::Down { volumes } => {
-            cmd::docker::exec(cmd::docker::DockerCmd::Down {
-                services: vec![],
-                volumes,
-            })
-        }
-        TopCmd::Docker { cmd } => cmd::docker::exec(cmd),
-        TopCmd::Db { cmd } => cmd::db::exec(cmd),
-        TopCmd::Status => cmd_status(),
-        TopCmd::Doctor => cmd_doctor(),
-    }
-}
+fn cmd_up(ctx: &AppContext, all: bool, full: bool) -> Result<()> {
+    ctx.print_header("Starting development environment");
 
-fn cmd_up() -> Result<()> {
-    let root = repo_root();
+    ctx.print_info("Starting services...");
+    cmd::docker::run(
+        ctx,
+        cmd::docker::DockerCommand::Up {
+            services: vec![],
+            all,
+            full,
+            detach: true,
+        },
+    )?;
 
-    // 1. Start postgres
-    println!("{}", style("Starting postgres...").cyan());
-    cmd::docker::exec(cmd::docker::DockerCmd::Up {
-        services: vec!["postgres".to_string()],
-    })?;
-
-    // 2. Wait for postgres to accept connections
-    println!("{}", style("Waiting for postgres...").dim());
-    let mut attempts = 0;
-    loop {
-        let status = Command::new("docker")
-            .args([
-                "compose",
-                "-f",
-                &format!("{root}/docker-compose.yml"),
-                "exec",
-                "postgres",
-                "pg_isready",
-                "-U",
-                "postgres",
-            ])
-            .output();
-        match status {
-            Ok(out) if out.status.success() => break,
-            _ if attempts >= 30 => anyhow::bail!("Postgres did not become ready in time"),
-            _ => {
-                attempts += 1;
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-        }
-    }
-    println!("{}", style("Postgres is ready.").green());
-
-    // 3. Run migrations
-    println!("{}", style("Running migrations...").cyan());
-    cmd::db::exec(cmd::db::DbCmd::Migrate)?;
-
-    // 4. Start restate
-    println!("{}", style("Starting restate...").cyan());
-    cmd::docker::exec(cmd::docker::DockerCmd::Up {
-        services: vec!["restate".to_string()],
-    })?;
-
-    println!("{}", style("All services are up!").green().bold());
-    Ok(())
-}
-
-fn cmd_status() -> Result<()> {
-    println!("{}", style("Docker services:").bold());
-    cmd::docker::exec(cmd::docker::DockerCmd::Status)?;
-
+    ctx.print_success("Development environment is ready!");
     println!();
-    println!("{}", style("Environment:").bold());
-    let vars = ["DATABASE_URL", "RESTATE_ADMIN_URL", "PORT"];
-    for var in vars {
-        let val = std::env::var(var).unwrap_or_else(|_| "(not set)".to_string());
-        // Mask secrets
-        let display = if var.contains("KEY") || var.contains("SECRET") {
-            if val.len() > 8 {
-                format!("{}...{}", &val[..4], &val[val.len() - 4..])
-            } else {
-                "(set)".to_string()
-            }
-        } else {
-            val
-        };
-        println!("  {}: {}", style(var).dim(), display);
-    }
+    ctx.print_info("Run 'dev docker status' to see service URLs");
+
     Ok(())
 }
 
-fn cmd_doctor() -> Result<()> {
-    let checks: &[(&str, &[&str])] = &[
-        ("docker", &["--version"]),
-        ("docker compose", &["compose", "version"]),
-        ("cargo", &["--version"]),
-        ("sqlx", &["--version"]),
-        ("psql", &["--version"]),
-        ("git", &["--version"]),
+fn cmd_down(ctx: &AppContext, volumes: bool) -> Result<()> {
+    ctx.print_header("Stopping development environment");
+
+    cmd::docker::run(
+        ctx,
+        cmd::docker::DockerCommand::Down {
+            services: vec![],
+            volumes,
+        },
+    )
+}
+
+fn cmd_status(ctx: &AppContext) -> Result<()> {
+    ctx.print_header("Development Environment Status");
+    println!();
+    println!("Repository: {}", ctx.repo.display());
+    println!("Project: {}", ctx.config.global.project.name);
+    println!();
+    cmd::docker::run(ctx, cmd::docker::DockerCommand::Status)?;
+    Ok(())
+}
+
+fn cmd_scout(ctx: &AppContext) -> Result<()> {
+    cmd::docker::run(ctx, cmd::docker::DockerCommand::Scout)
+}
+
+fn cmd_doctor(ctx: &AppContext) -> Result<()> {
+    ctx.print_header("System Health Check");
+    println!();
+
+    let tools = vec![
+        ("git", devkit_core::utils::cmd_exists("git")),
+        ("cargo", devkit_core::utils::cmd_exists("cargo")),
+        ("docker", devkit_core::utils::docker_available()),
     ];
 
-    let mut all_ok = true;
-    for (name, args) in checks {
-        let bin = if *name == "docker compose" {
-            "docker"
+    for (tool, available) in tools {
+        if available {
+            ctx.print_success(&format!("✓ {}", tool));
         } else {
-            name
-        };
-        let result = Command::new(bin).args(*args).output();
-        match result {
-            Ok(out) if out.status.success() => {
-                let ver = String::from_utf8_lossy(&out.stdout);
-                let ver = ver.lines().next().unwrap_or("").trim();
-                println!("  {} {}", style("✓").green(), format!("{name}: {ver}"));
-            }
-            _ => {
-                println!("  {} {}", style("✗").red(), format!("{name}: not found"));
-                all_ok = false;
-            }
+            ctx.print_warning(&format!("✗ {} (not found)", tool));
         }
     }
 
-    // Check .env
-    let root = repo_root();
-    let env_path = format!("{root}/.env");
-    if std::path::Path::new(&env_path).exists() {
-        println!("  {} .env file exists", style("✓").green());
-    } else {
-        println!(
-            "  {} .env file missing (copy from .env.example)",
-            style("!").yellow()
-        );
-    }
-
-    // Check docker-compose.yml
-    let dc_path = format!("{root}/docker-compose.yml");
-    if std::path::Path::new(&dc_path).exists() {
-        println!("  {} docker-compose.yml exists", style("✓").green());
-    } else {
-        println!("  {} docker-compose.yml missing", style("✗").red());
-        all_ok = false;
-    }
-
-    if all_ok {
-        println!("\n{}", style("All checks passed!").green().bold());
-    } else {
-        println!(
-            "\n{}",
-            style("Some checks failed. Install missing tools above.").yellow()
-        );
-    }
-
+    println!();
+    ctx.print_success("Health check complete");
     Ok(())
 }
 
-fn interactive_menu() -> Result<()> {
+fn interactive_menu(ctx: &AppContext) -> Result<()> {
+    use dialoguer::FuzzySelect;
+
     let items = vec![
         "🚀 Start environment (up)",
         "🛑 Stop environment (down)",
+        "🔍 Run scout (investigate)",
         "🐳 Docker services →",
-        "🗄️  Database →",
         "📊 Status",
         "🩺 Doctor",
         "❌ Exit",
@@ -234,23 +167,19 @@ fn interactive_menu() -> Result<()> {
 
     loop {
         println!();
-        let choice = dialoguer::FuzzySelect::new()
+        let choice = FuzzySelect::with_theme(&ctx.theme())
             .with_prompt("What would you like to do?")
             .items(&items)
             .default(0)
-            .interact()
-            .context("Cancelled")?;
+            .interact()?;
 
         match choice {
-            0 => cmd_up()?,
-            1 => cmd::docker::exec(cmd::docker::DockerCmd::Down {
-                services: vec![],
-                volumes: false,
-            })?,
-            2 => docker_submenu()?,
-            3 => db_submenu()?,
-            4 => cmd_status()?,
-            5 => cmd_doctor()?,
+            0 => cmd_up(ctx, false, false)?,
+            1 => cmd_down(ctx, false)?,
+            2 => cmd_scout(ctx)?,
+            3 => docker_submenu(ctx)?,
+            4 => cmd_status(ctx)?,
+            5 => cmd_doctor(ctx)?,
             _ => break,
         }
     }
@@ -258,7 +187,9 @@ fn interactive_menu() -> Result<()> {
     Ok(())
 }
 
-fn docker_submenu() -> Result<()> {
+fn docker_submenu(ctx: &AppContext) -> Result<()> {
+    use dialoguer::Select;
+
     let items = vec![
         "Start services",
         "Stop services",
@@ -267,64 +198,60 @@ fn docker_submenu() -> Result<()> {
         "Follow logs",
         "Status",
         "Shell into container",
-        "PostgreSQL shell",
+        "Neo4j cypher shell",
         "← Back",
     ];
 
-    let choice = dialoguer::Select::new()
+    let choice = Select::with_theme(&ctx.theme())
         .with_prompt("Docker")
         .items(&items)
         .default(0)
-        .interact()
-        .context("Cancelled")?;
+        .interact()?;
 
     match choice {
-        0 => cmd::docker::exec(cmd::docker::DockerCmd::Up {
-            services: vec![],
-        }),
-        1 => cmd::docker::exec(cmd::docker::DockerCmd::Down {
-            services: vec![],
-            volumes: false,
-        }),
-        2 => cmd::docker::exec(cmd::docker::DockerCmd::Restart {
-            services: vec![],
-        }),
-        3 => cmd::docker::exec(cmd::docker::DockerCmd::Build {
-            services: vec![],
-            no_cache: false,
-        }),
-        4 => cmd::docker::exec(cmd::docker::DockerCmd::Logs {
-            services: vec![],
-            tail: "100".to_string(),
-        }),
-        5 => cmd::docker::exec(cmd::docker::DockerCmd::Status),
-        6 => cmd::docker::exec(cmd::docker::DockerCmd::Shell { service: None }),
-        7 => cmd::docker::exec(cmd::docker::DockerCmd::Psql),
-        _ => Ok(()),
-    }
-}
-
-fn db_submenu() -> Result<()> {
-    let items = vec![
-        "Run migrations",
-        "Reset database (drop + migrate)",
-        "Migration status",
-        "PostgreSQL shell",
-        "← Back",
-    ];
-
-    let choice = dialoguer::Select::new()
-        .with_prompt("Database")
-        .items(&items)
-        .default(0)
-        .interact()
-        .context("Cancelled")?;
-
-    match choice {
-        0 => cmd::db::exec(cmd::db::DbCmd::Migrate),
-        1 => cmd::db::exec(cmd::db::DbCmd::Reset),
-        2 => cmd::db::exec(cmd::db::DbCmd::Status),
-        3 => cmd::db::exec(cmd::db::DbCmd::Psql),
+        0 => cmd::docker::run(
+            ctx,
+            cmd::docker::DockerCommand::Up {
+                services: vec![],
+                all: false,
+                full: false,
+                detach: true,
+            },
+        ),
+        1 => cmd::docker::run(
+            ctx,
+            cmd::docker::DockerCommand::Down {
+                services: vec![],
+                volumes: false,
+            },
+        ),
+        2 => cmd::docker::run(
+            ctx,
+            cmd::docker::DockerCommand::Restart {
+                services: vec![],
+                all: false,
+            },
+        ),
+        3 => cmd::docker::run(
+            ctx,
+            cmd::docker::DockerCommand::Build {
+                services: vec![],
+                all: false,
+                no_cache: false,
+            },
+        ),
+        4 => cmd::docker::run(
+            ctx,
+            cmd::docker::DockerCommand::Logs {
+                services: vec![],
+                all: false,
+                tail: "100".to_string(),
+                no_follow: false,
+            },
+        ),
+        5 => cmd::docker::run(ctx, cmd::docker::DockerCommand::Status),
+        6 => cmd::docker::run(ctx, cmd::docker::DockerCommand::Shell { service: None }),
+        7 => cmd::docker::run(ctx, cmd::docker::DockerCommand::Cypher),
         _ => Ok(()),
     }
 }
