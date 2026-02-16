@@ -237,6 +237,19 @@ export default async function FindingDetailPage({
             Provenance
           </h3>
           <dl className="grid grid-cols-2 gap-2 text-sm">
+            {finding.investigationId && (
+              <>
+                <dt className="text-gray-500">Investigation</dt>
+                <dd>
+                  <Link
+                    href={`/investigations/${finding.investigationId}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    View Investigation &rarr;
+                  </Link>
+                </dd>
+              </>
+            )}
             {finding.triggerSignalId && (
               <>
                 <dt className="text-gray-500">Trigger Signal</dt>

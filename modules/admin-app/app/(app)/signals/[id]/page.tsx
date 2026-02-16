@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { authedClient } from "@/lib/client";
 import Link from "next/link";
+import { InvestigateButton } from "./investigate-button";
 
 interface Signal {
   id: string;
@@ -14,6 +15,9 @@ interface Signal {
   confidence: number;
   inLanguage: string;
   broadcastedAt: string | null;
+  needsInvestigation: boolean;
+  investigationStatus: string | null;
+  investigationReason: string | null;
   createdAt: string;
   updatedAt: string;
   locations: {
@@ -67,7 +71,9 @@ export default async function SignalDetailPage({
       signal(id: $id) {
         id signalType content about entityId
         sourceUrl pageSnapshotId sourceCitationUrl
-        confidence inLanguage broadcastedAt createdAt updatedAt
+        confidence inLanguage broadcastedAt
+        needsInvestigation investigationStatus investigationReason
+        createdAt updatedAt
         locations {
           id name streetAddress addressLocality addressRegion postalCode latitude longitude
         }
@@ -104,6 +110,18 @@ export default async function SignalDetailPage({
             <span className="text-sm text-gray-400">
               Broadcasted {new Date(signal.broadcastedAt).toLocaleDateString()}
             </span>
+          )}
+        </div>
+
+        <div className="mb-4">
+          <InvestigateButton
+            signalId={signal.id}
+            investigationStatus={signal.investigationStatus}
+          />
+          {signal.investigationReason && (
+            <p className="mt-1 text-xs text-gray-400">
+              Reason: {signal.investigationReason}
+            </p>
           )}
         </div>
 

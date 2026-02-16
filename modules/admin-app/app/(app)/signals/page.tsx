@@ -10,8 +10,23 @@ interface Signal {
   entityId: string | null;
   confidence: number;
   inLanguage: string;
+  investigationStatus: string | null;
   createdAt: string;
 }
+
+const INV_STATUS_COLORS: Record<string, string> = {
+  pending: "bg-yellow-100 text-yellow-800",
+  in_progress: "bg-blue-100 text-blue-800",
+  completed: "bg-green-100 text-green-800",
+  linked: "bg-purple-100 text-purple-800",
+};
+
+const INV_STATUS_LABELS: Record<string, string> = {
+  pending: "Pending",
+  in_progress: "Investigating",
+  completed: "Complete",
+  linked: "Linked",
+};
 
 const TYPE_LABELS: Record<string, string> = {
   ask: "Ask",
@@ -52,7 +67,7 @@ export default async function SignalsPage({
       signals(limit: $limit, offset: $offset, type: $type) {
         nodes {
           id signalType content about entityId
-          confidence inLanguage createdAt
+          confidence inLanguage investigationStatus createdAt
         }
         totalCount
       }
@@ -111,6 +126,9 @@ export default async function SignalsPage({
                 About
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                Investigation
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
                 Date
               </th>
             </tr>
@@ -139,6 +157,17 @@ export default async function SignalsPage({
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-500">
                   {signal.about || "-"}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">
+                  {signal.investigationStatus && (
+                    <span
+                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                        INV_STATUS_COLORS[signal.investigationStatus] || "bg-gray-100"
+                      }`}
+                    >
+                      {INV_STATUS_LABELS[signal.investigationStatus] || signal.investigationStatus}
+                    </span>
+                  )}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
                   {new Date(signal.createdAt).toLocaleDateString()}
