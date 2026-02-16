@@ -306,14 +306,38 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Find a duplicate signal by vector similarity within the same node type.
-    /// Returns (node_id, similarity_score) if a match above threshold is found.
+    /// Find a duplicate signal by vector similarity. Checks same type first (fast path),
+    /// then other types if no match. Returns (node_id, node_type, source_url, similarity).
     pub async fn find_duplicate(
         &self,
         embedding: &[f32],
-        node_type: NodeType,
+        primary_type: NodeType,
         threshold: f64,
-    ) -> Result<Option<(Uuid, f64)>, neo4rs::Error> {
+    ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
+        // Fast path: check same type first
+        if let Some(m) = self.vector_search(primary_type, embedding, threshold).await? {
+            return Ok(Some(m));
+        }
+
+        // Slow path: check other types
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension] {
+            if *nt == primary_type {
+                continue;
+            }
+            if let Some(m) = self.vector_search(*nt, embedding, threshold).await? {
+                return Ok(Some(m));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn vector_search(
+        &self,
+        node_type: NodeType,
+        embedding: &[f32],
+        threshold: f64,
+    ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
         let index_name = match node_type {
             NodeType::Event => "event_embedding",
             NodeType::Give => "give_embedding",
@@ -322,28 +346,56 @@ impl GraphWriter {
             NodeType::Evidence => return Ok(None),
         };
 
-        let q = query(
-            &format!(
-                "CALL vector_search.search('{}', 1, $embedding)
-                 YIELD node, similarity
-                 RETURN node.id AS id, similarity",
-                index_name
-            ),
-        )
+        let q = query(&format!(
+            "CALL vector_search.search('{}', 1, $embedding)
+             YIELD node, similarity
+             RETURN node.id AS id, node.source_url AS source_url, similarity",
+            index_name
+        ))
         .param("embedding", embedding_to_f64(embedding));
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let similarity: f64 = row.get("similarity").unwrap_or(0.0);
+            let source_url: String = row.get("source_url").unwrap_or_default();
             if similarity >= threshold {
                 if let Ok(id) = Uuid::parse_str(&id_str) {
-                    return Ok(Some((id, similarity)));
+                    return Ok(Some(DuplicateMatch {
+                        id,
+                        node_type,
+                        source_url,
+                        similarity,
+                    }));
                 }
             }
         }
 
         Ok(None)
+    }
+
+    /// Return titles of existing signals from a given source URL.
+    /// Used for cheap pre-filtering before expensive embedding-based dedup.
+    pub async fn existing_titles_for_url(
+        &self,
+        source_url: &str,
+    ) -> Result<Vec<String>, neo4rs::Error> {
+        let q = query(
+            "MATCH (n)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Tension)
+               AND n.source_url = $url
+             RETURN n.title AS title",
+        )
+        .param("url", source_url);
+
+        let mut titles = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Ok(title) = row.get::<String>("title") {
+                titles.push(title);
+            }
+        }
+        Ok(titles)
     }
 
     /// Increment corroboration count and update freshness on an existing node.
@@ -520,6 +572,14 @@ pub struct ReapStats {
     pub events: u64,
     pub asks: u64,
     pub stale: u64,
+}
+
+#[derive(Debug)]
+pub struct DuplicateMatch {
+    pub id: Uuid,
+    pub node_type: NodeType,
+    pub source_url: String,
+    pub similarity: f64,
 }
 
 /// Add lat/lng params to a query from node metadata.

@@ -330,13 +330,15 @@ impl Scout {
         mut nodes: Vec<Node>,
         stats: &mut ScoutStats,
     ) -> Result<()> {
+        let url = sanitize_url(url);
         stats.signals_extracted += nodes.len() as u32;
 
-        // Score quality and set confidence
+        // Score quality, set confidence, and apply sanitized URL
         for node in &mut nodes {
             let q = quality::score(node);
             if let Some(meta) = node_meta_mut(node) {
                 meta.confidence = q.confidence;
+                meta.source_url = url.clone();
             }
         }
 
@@ -350,7 +352,39 @@ impl Scout {
             return Ok(());
         }
 
-        // Batch embed all signals at once (1 API call instead of N)
+        // --- Layer 1: Within-batch dedup by normalized title ---
+        let mut seen_titles = std::collections::HashSet::new();
+        let nodes: Vec<_> = nodes
+            .into_iter()
+            .filter(|n| seen_titles.insert(normalize_title(n.title())))
+            .collect();
+
+        // --- Layer 2: URL-based title dedup against existing database ---
+        let existing_titles: std::collections::HashSet<String> = self
+            .writer
+            .existing_titles_for_url(&url)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| normalize_title(&t))
+            .collect();
+
+        let before_url_dedup = nodes.len();
+        let nodes: Vec<_> = nodes
+            .into_iter()
+            .filter(|n| !existing_titles.contains(&normalize_title(n.title())))
+            .collect();
+        let url_deduped = before_url_dedup - nodes.len();
+        if url_deduped > 0 {
+            info!(url = url.as_str(), skipped = url_deduped, "URL-based title dedup");
+            stats.signals_deduplicated += url_deduped as u32;
+        }
+
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
+        // Batch embed remaining signals (1 API call instead of N)
         let embed_texts: Vec<String> = nodes
             .iter()
             .map(|n| {
@@ -365,12 +399,12 @@ impl Scout {
         let embeddings = match self.embedder.embed_batch(embed_texts).await {
             Ok(e) => e,
             Err(e) => {
-                warn!(url, error = %e, "Batch embedding failed, skipping all signals");
+                warn!(url = url.as_str(), error = %e, "Batch embedding failed, skipping all signals");
                 return Ok(());
             }
         };
 
-        // Process each signal with its pre-computed embedding
+        // --- Layer 3: Cross-type vector dedup with URL-aware threshold ---
         let now = Utc::now();
         let content_hash = format!("{:x}", content_hash(content));
 
@@ -384,28 +418,39 @@ impl Scout {
                 NodeType::Evidence => continue,
             };
 
-            // Dedup check
-            match self.writer.find_duplicate(&embedding, node_type, 0.92).await {
-                Ok(Some((existing_id, score))) => {
-                    info!(
-                        existing_id = %existing_id,
-                        score,
-                        title = node.title(),
-                        "Duplicate found, corroborating"
-                    );
-                    self.writer.corroborate(existing_id, node_type, now).await?;
+            // Use a lower threshold (0.85) — the URL-based pre-filter already caught
+            // exact title matches, so anything reaching here with high similarity
+            // is a near-duplicate worth catching.
+            match self.writer.find_duplicate(&embedding, node_type, 0.85).await {
+                Ok(Some(dup)) => {
+                    // Same-URL matches at 0.85+ are almost certainly dupes.
+                    // Different-URL matches need higher confidence (0.92+).
+                    let dominated_url = sanitize_url(&dup.source_url);
+                    let is_same_source = dominated_url == url;
+                    if is_same_source || dup.similarity >= 0.92 {
+                        let cross_type = dup.node_type != node_type;
+                        info!(
+                            existing_id = %dup.id,
+                            similarity = dup.similarity,
+                            title = node.title(),
+                            cross_type,
+                            "Duplicate found, corroborating"
+                        );
+                        self.writer.corroborate(dup.id, dup.node_type, now).await?;
 
-                    let evidence = EvidenceNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.to_string(),
-                        retrieved_at: now,
-                        content_hash: content_hash.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                    };
-                    self.writer.create_evidence(&evidence, existing_id).await?;
+                        let evidence = EvidenceNode {
+                            id: Uuid::new_v4(),
+                            source_url: url.clone(),
+                            retrieved_at: now,
+                            content_hash: content_hash.clone(),
+                            snippet: node.meta().map(|m| m.summary.clone()),
+                        };
+                        self.writer.create_evidence(&evidence, dup.id).await?;
 
-                    stats.signals_deduplicated += 1;
-                    continue;
+                        stats.signals_deduplicated += 1;
+                        continue;
+                    }
+                    // Below 0.92 from a different source — not confident enough, create new
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -418,7 +463,7 @@ impl Scout {
 
             let evidence = EvidenceNode {
                 id: Uuid::new_v4(),
-                source_url: url.to_string(),
+                source_url: url.clone(),
                 retrieved_at: now,
                 content_hash: content_hash.clone(),
                 snippet: node.meta().map(|m| m.summary.clone()),
@@ -429,7 +474,6 @@ impl Scout {
             stats.signals_stored += 1;
             stats.by_type[type_idx] += 1;
 
-            // Freshness bucketing based on extracted_at
             if let Some(meta) = node.meta() {
                 let age = now - meta.extracted_at;
                 if age.num_days() < 7 {
@@ -451,6 +495,42 @@ impl Scout {
 
         Ok(())
     }
+}
+
+/// Normalize a title for dedup comparison: lowercase and trim.
+fn normalize_title(title: &str) -> String {
+    title.trim().to_lowercase()
+}
+
+/// Strip tracking parameters from URLs that may contain PII or cause dedup mismatches.
+fn sanitize_url(url: &str) -> String {
+    const TRACKING_PARAMS: &[&str] = &[
+        "_dt", "fbclid", "gclid", "utm_source", "utm_medium", "utm_campaign",
+        "utm_term", "utm_content", "modal", "ref", "mc_cid", "mc_eid",
+    ];
+
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_string();
+    };
+
+    let had_query = parsed.query().is_some();
+    if !had_query {
+        return url.to_string();
+    }
+
+    let clean_pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .filter(|(key, _)| !TRACKING_PARAMS.contains(&key.as_ref()))
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+
+    if clean_pairs.is_empty() {
+        parsed.set_query(None);
+    } else {
+        parsed.query_pairs_mut().clear().extend_pairs(clean_pairs);
+    }
+
+    parsed.to_string()
 }
 
 fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
