@@ -2,6 +2,10 @@ use async_graphql::*;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::graphql::findings::types::GqlFinding;
+use crate::graphql::investigations::types::GqlInvestigationStep;
+use crate::graphql::signals::types::GqlSignal;
+
 #[derive(SimpleObject, Clone)]
 pub struct GqlObservation {
     pub id: Uuid,
@@ -74,5 +78,39 @@ impl GqlInvestigation {
                 .await
                 .unwrap_or_default();
         Ok(observations.into_iter().map(GqlObservation::from).collect())
+    }
+
+    /// Tool call steps from the investigation (ordered by step_number).
+    async fn steps(&self, ctx: &Context<'_>) -> Result<Vec<GqlInvestigationStep>> {
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+        let steps =
+            rootsignal_domains::findings::InvestigationStep::find_by_investigation(self.id, pool)
+                .await
+                .unwrap_or_default();
+        Ok(steps.into_iter().map(GqlInvestigationStep::from).collect())
+    }
+
+    /// The finding produced by this investigation (if any).
+    async fn finding(&self, ctx: &Context<'_>) -> Result<Option<GqlFinding>> {
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+        let finding = sqlx::query_as::<_, rootsignal_domains::findings::Finding>(
+            "SELECT * FROM findings WHERE investigation_id = $1 LIMIT 1",
+        )
+        .bind(self.id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(finding.map(GqlFinding::from))
+    }
+
+    /// The trigger signal that started this investigation.
+    async fn signal(&self, ctx: &Context<'_>) -> Result<Option<GqlSignal>> {
+        let pool = ctx.data_unchecked::<sqlx::PgPool>();
+        if self.subject_type != "signal" {
+            return Ok(None);
+        }
+        let signal = rootsignal_domains::signals::Signal::find_by_id(self.subject_id, pool)
+            .await
+            .ok();
+        Ok(signal.map(GqlSignal::from))
     }
 }

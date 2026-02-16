@@ -59,6 +59,9 @@ pub struct GqlSignal {
     pub confidence: f32,
     pub in_language: String,
     pub broadcasted_at: Option<DateTime<Utc>>,
+    pub needs_investigation: bool,
+    pub investigation_status: Option<String>,
+    pub investigation_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -77,6 +80,9 @@ impl From<Signal> for GqlSignal {
             confidence: s.confidence,
             in_language: s.in_language,
             broadcasted_at: s.broadcasted_at,
+            needs_investigation: s.needs_investigation.unwrap_or(false),
+            investigation_status: s.investigation_status,
+            investigation_reason: s.investigation_reason,
             created_at: s.created_at,
             updated_at: s.updated_at,
         }

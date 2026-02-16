@@ -31,6 +31,7 @@ impl SignalQuery {
         entity_id: Option<Uuid>,
         source_id: Option<Uuid>,
         search: Option<String>,
+        investigation_status: Option<String>,
         lat: Option<f64>,
         lng: Option<f64>,
         radius_km: Option<f64>,
@@ -41,6 +42,31 @@ impl SignalQuery {
         let pool = ctx.data_unchecked::<sqlx::PgPool>();
         let limit = limit.min(100) as i64;
         let offset = offset.max(0) as i64;
+
+        // Investigation status filter
+        if let Some(ref inv_status) = investigation_status {
+            let nodes: Vec<GqlSignal> = sqlx::query_as::<_, Signal>(
+                "SELECT * FROM signals WHERE investigation_status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(inv_status)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(GqlSignal::from)
+            .collect();
+            let total = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM signals WHERE investigation_status = $1",
+            )
+            .bind(inv_status)
+            .fetch_one(pool)
+            .await?;
+            return Ok(GqlSignalConnection {
+                nodes,
+                total_count: total,
+            });
+        }
 
         // Source filter
         if let Some(source_id) = source_id {

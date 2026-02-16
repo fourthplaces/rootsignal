@@ -7,6 +7,7 @@ pub mod error;
 pub mod findings;
 pub mod heat_map;
 pub mod hotspots;
+pub mod investigations;
 pub mod loaders;
 pub mod locations;
 pub mod notes;
@@ -34,6 +35,7 @@ pub struct QueryRoot(
     entities::EntityQuery,
     tags::TagQuery,
     observations::ObservationQuery,
+    investigations::InvestigationQuery,
     heat_map::HeatMapQuery,
     clusters::ClusterQuery,
     stats::StatsQuery,

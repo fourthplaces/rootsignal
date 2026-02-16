@@ -20,6 +20,9 @@ pub struct Signal {
     pub schema_version: i32,
     pub in_language: String,
     pub broadcasted_at: Option<DateTime<Utc>>,
+    pub needs_investigation: Option<bool>,
+    pub investigation_status: Option<String>,
+    pub investigation_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -23,8 +23,22 @@ impl FindingMutation {
         require_admin(ctx)?;
         let deps = ctx.data::<Arc<ServerDeps>>()?;
 
-        // Mark the signal for investigation
         let pool = deps.pool();
+
+        // Guard: prevent re-triggering while already in progress
+        let current_status = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT investigation_status FROM signals WHERE id = $1",
+        )
+        .bind(signal_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::new(format!("Signal not found: {e}")))?;
+
+        if current_status.as_deref() == Some("in_progress") {
+            return Err(Error::new("Investigation already in progress for this signal"));
+        }
+
+        // Mark the signal for investigation
         sqlx::query(
             "UPDATE signals SET needs_investigation = true, investigation_status = 'pending', investigation_reason = 'Manual trigger' WHERE id = $1",
         )

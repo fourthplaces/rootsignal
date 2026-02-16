@@ -1,3 +1,14 @@
+type ActiveWorkflow {
+	workflowType: String!
+	sourceId: String!
+	status: String!
+	"""
+	Application-level stage (e.g. "scraping", "extracting", "discovering")
+	"""
+	stage: String
+	createdAt: String
+}
+
 input CreateEntityInput {
 	name: String!
 	entityType: String!
@@ -5,12 +16,9 @@ input CreateEntityInput {
 	website: String
 }
 
-input CreateListingInput {
-	title: String!
-	description: String
-	inLanguage: String!
-	entityId: UUID
-	serviceId: UUID
+input CreateServiceAreaInput {
+	addressLocality: String!
+	addressRegion: String!
 }
 
 input CreateServiceInput {
@@ -25,6 +33,58 @@ Implement the DateTime<Utc> scalar
 The input/output is a string in RFC3339 format.
 """
 scalar DateTime
+
+enum FindingStatus {
+	EMERGING
+	ACTIVE
+	DECLINING
+	RESOLVED
+}
+
+enum FlagType {
+	WRONG_TYPE
+	WRONG_ENTITY
+	EXPIRED
+	SPAM
+}
+
+type GqlClusterDetail {
+	id: UUID!
+	clusterType: String!
+	representativeContent: String!
+	representativeAbout: String
+	representativeSignalType: String!
+	representativeConfidence: Float!
+	representativeBroadcastedAt: DateTime
+	signals: [GqlClusterSignal!]!
+	entities: [GqlClusterEntity!]!
+}
+
+type GqlClusterEntity {
+	id: UUID!
+	name: String!
+	entityType: String!
+}
+
+type GqlClusterSignal {
+	id: UUID!
+	signalType: String!
+	content: String!
+	confidence: Float!
+	broadcastedAt: DateTime
+}
+
+type GqlConnection {
+	id: UUID!
+	fromType: String!
+	fromId: UUID!
+	toType: String!
+	toId: UUID!
+	role: String!
+	causalQuote: String
+	confidence: Float
+	createdAt: DateTime!
+}
 
 type GqlContact {
 	id: UUID!
@@ -53,8 +113,13 @@ type GqlEntity {
 	contacts: [GqlContact!]!
 	schedules: [GqlSchedule!]!
 	notes: [GqlNote!]!
+	"""
+	Number of signals associated with this entity.
+	"""
+	signalCount: Int!
+	sources: [GqlSource!]!
 	services: [GqlService!]!
-	listings: [GqlListing!]!
+	signals: [GqlSignal!]!
 }
 
 type GqlEntityConnection {
@@ -86,6 +151,38 @@ type GqlEntityEdge {
 	cursor: String!
 }
 
+type GqlFinding {
+	id: UUID!
+	title: String!
+	summary: String!
+	status: String!
+	validationStatus: String
+	signalVelocity: Float
+	investigationId: UUID
+	triggerSignalId: UUID
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	evidence: [GqlFindingEvidence!]!
+	connections(role: String): [GqlConnection!]!
+	connectionCount: Int!
+}
+
+type GqlFindingConnection {
+	nodes: [GqlFinding!]!
+	totalCount: Int!
+}
+
+type GqlFindingEvidence {
+	id: UUID!
+	findingId: UUID!
+	evidenceType: String!
+	quote: String!
+	attribution: String
+	url: String
+	pageSnapshotId: UUID
+	createdAt: DateTime!
+}
+
 type GqlHeatMapPoint {
 	id: UUID!
 	latitude: Float!
@@ -93,6 +190,7 @@ type GqlHeatMapPoint {
 	weight: Float!
 	entityType: String!
 	entityId: UUID!
+	signalType: String
 	generatedAt: DateTime!
 }
 
@@ -108,91 +206,29 @@ type GqlInvestigation {
 	completedAt: DateTime
 	createdAt: DateTime!
 	observations: [GqlObservation!]!
+	"""
+	Tool call steps from the investigation (ordered by step_number).
+	"""
+	steps: [GqlInvestigationStep!]!
+	"""
+	The finding produced by this investigation (if any).
+	"""
+	finding: GqlFinding
+	"""
+	The trigger signal that started this investigation.
+	"""
+	signal: GqlSignal
 }
 
-"""
-GraphQL listing type wrapping the raw Listing DB model.
-"""
-type GqlListing {
+type GqlInvestigationStep {
 	id: UUID!
-	title: String!
-	description: String
-	status: String!
-	entityId: UUID
-	serviceId: UUID
-	sourceUrl: String
-	locationText: String
-	inLanguage: String!
-	expiresAt: DateTime
-	freshnessScore: Float!
-	relevanceScore: Int
+	investigationId: UUID!
+	stepNumber: Int!
+	toolName: String!
+	input: JSON!
+	output: JSON!
+	pageSnapshotId: UUID
 	createdAt: DateTime!
-	updatedAt: DateTime!
-	entity: GqlEntity
-	service: GqlService
-	tags: [GqlTag!]!
-	locations: [GqlLocation!]!
-	schedules: [GqlSchedule!]!
-	contacts: [GqlContact!]!
-	notes: [GqlNote!]!
-	clusterSiblings: [GqlListing!]!
-	"""
-	Translated title for the requested locale (with fallback chain).
-	"""
-	translatedTitle: String!
-	"""
-	Translated description for the requested locale (with fallback chain).
-	"""
-	translatedDescription: String
-}
-
-type GqlListingConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [GqlListingEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [GqlListing!]!
-}
-
-"""
-An edge in a connection.
-"""
-type GqlListingEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: GqlListing!
-	distanceMiles: Float
-	zipCode: String
-	locationCity: String
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-type GqlListingStats {
-	totalListings: Int!
-	activeListings: Int!
-	totalSources: Int!
-	totalSnapshots: Int!
-	totalExtractions: Int!
-	totalEntities: Int!
-	listingsByType: [GqlTagCount!]!
-	listingsByRole: [GqlTagCount!]!
-	listingsByCategory: [GqlTagCount!]!
-	listingsByDomain: [GqlTagCount!]!
-	listingsByUrgency: [GqlTagCount!]!
-	listingsByConfidence: [GqlTagCount!]!
-	listingsByCapacity: [GqlTagCount!]!
-	recent7D: Int!
 }
 
 type GqlLocation {
@@ -206,6 +242,18 @@ type GqlLocation {
 	longitude: Float
 	locationType: String
 	createdAt: DateTime!
+}
+
+type GqlMapCluster {
+	id: UUID!
+	latitude: Float!
+	longitude: Float!
+	memberCount: Int!
+	dominantSignalType: String!
+	representativeContent: String!
+	representativeAbout: String
+	signalCounts: GqlSignalTypeCounts!
+	entityNames: [String!]!
 }
 
 type GqlNlqSearchResponse {
@@ -238,11 +286,36 @@ type GqlObservation {
 	reviewStatus: String!
 }
 
+type GqlPageSnapshot {
+	id: UUID!
+	pageUrl: String!
+	url: String!
+	contentHash: String!
+	fetchedVia: String!
+	contentPreview: String
+	crawledAt: DateTime!
+	scrapeStatus: String!
+}
+
+type GqlPageSnapshotDetail {
+	id: UUID!
+	sourceId: UUID
+	url: String!
+	canonicalUrl: String!
+	contentHash: String!
+	fetchedVia: String!
+	html: String
+	content: String
+	metadata: JSON!
+	crawledAt: DateTime!
+	extractionStatus: String!
+	extractionCompletedAt: DateTime
+}
+
 type GqlParsedFilters {
 	signalDomain: String
 	audienceRole: String
 	category: String
-	listingType: String
 	urgency: String
 	capacityStatus: String
 	radiusRelevant: String
@@ -332,6 +405,81 @@ type GqlService {
 	updatedAt: DateTime!
 }
 
+type GqlServiceArea {
+	id: UUID!
+	addressLocality: String!
+	addressRegion: String!
+	isActive: Boolean!
+	createdAt: DateTime!
+}
+
+type GqlSignal {
+	id: UUID!
+	signalType: String!
+	content: String!
+	about: String
+	entityId: UUID
+	sourceUrl: String
+	pageSnapshotId: UUID
+	sourceCitationUrl: String
+	confidence: Float!
+	inLanguage: String!
+	broadcastedAt: DateTime
+	needsInvestigation: Boolean!
+	investigationStatus: String
+	investigationReason: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	locations: [GqlLocation!]!
+	schedules: [GqlSchedule!]!
+}
+
+type GqlSignalConnection {
+	nodes: [GqlSignal!]!
+	totalCount: Int!
+}
+
+type GqlSignalStats {
+	totalSignals: Int!
+	totalSources: Int!
+	totalSnapshots: Int!
+	totalExtractions: Int!
+	totalEntities: Int!
+	signalsByType: [GqlTagCount!]!
+	signalsByDomain: [GqlTagCount!]!
+	recent7D: Int!
+}
+
+type GqlSignalTypeCounts {
+	ask: Int!
+	give: Int!
+	event: Int!
+	informative: Int!
+}
+
+type GqlSource {
+	id: UUID!
+	entityId: UUID
+	name: String!
+	url: String
+	handle: String
+	nextRunAt: DateTime
+	consecutiveMisses: Int!
+	lastScrapedAt: DateTime
+	isActive: Boolean!
+	config: JSON!
+	contentSummary: String
+	createdAt: DateTime!
+	"""
+	Derived source type based on the URL domain.
+	"""
+	sourceType: String!
+	"""
+	Number of signals extracted from this source's snapshots.
+	"""
+	signalCount: Int!
+}
+
 type GqlTag {
 	id: UUID!
 	kind: String!
@@ -367,10 +515,10 @@ type GqlTemporalDelta {
 
 type GqlZipDensity {
 	zipCode: String!
-	city: String!
+	addressLocality: String!
 	latitude: Float!
 	longitude: Float!
-	listingCount: Int!
+	signalCount: Int!
 	signalDomainCounts: JSON!
 }
 
@@ -391,14 +539,12 @@ type MutationRoot {
 	Verify an OTP code and return a JWT token on success.
 	"""
 	verifyCode(phone: String!, code: String!): String!
-	createListing(input: CreateListingInput!): GqlListing!
-	updateListing(id: UUID!, input: UpdateListingInput!): GqlListing!
-	archiveListing(id: UUID!): GqlListing!
 	createEntity(input: CreateEntityInput!): GqlEntity!
 	updateEntity(id: UUID!, input: UpdateEntityInput!): GqlEntity!
 	archiveEntity(id: UUID!): GqlEntity!
 	createService(input: CreateServiceInput!): GqlService!
 	updateService(id: UUID!, input: UpdateServiceInput!): GqlService!
+	discoverSocialLinks(entityId: UUID!): [GqlSource!]!
 	reviewObservation(id: UUID!, decision: ReviewDecision!): GqlObservation!
 	"""
 	Trigger a scrape workflow for a specific source.
@@ -413,9 +559,54 @@ type MutationRoot {
 	"""
 	triggerExtraction(snapshotId: UUID!): WorkflowTriggerResult!
 	"""
+	Trigger cluster detection scan for signal clusters that warrant investigation.
+	"""
+	triggerClusterDetection: WorkflowTriggerResult!
+	"""
 	Trigger translation for a specific record.
 	"""
 	triggerTranslation(translatableType: String!, translatableId: UUID!, locale: String!): WorkflowTriggerResult!
+	"""
+	Create a source from a URL or search query.
+	The backend auto-detects source type, name, and handle from the input.
+	Returns the existing source if the normalized URL already exists.
+	"""
+	addSource(input: String!): GqlSource!
+	activateSources(ids: [UUID!]!): Int!
+	deactivateSources(ids: [UUID!]!): Int!
+	scrapeSources(ids: [UUID!]!): Int!
+	deleteSources(ids: [UUID!]!): Int!
+	"""
+	Use AI to detect the entity behind a source from its scraped pages,
+	then find-or-create the entity and link it to the source.
+	"""
+	detectSourceEntity(sourceId: UUID!): GqlEntity!
+	createServiceArea(input: CreateServiceAreaInput!): GqlServiceArea!
+	deleteServiceArea(id: UUID!): Boolean!
+	"""
+	Flag a signal for correction (wrong type, wrong entity, expired, spam).
+	"""
+	flagSignal(id: UUID!, flagType: FlagType!, suggestedType: SignalType, comment: String): Boolean!
+	"""
+	Delete all signals associated with a source.
+	"""
+	deleteSignalsBySource(sourceId: UUID!): Int!
+	"""
+	Manually trigger investigation for a signal.
+	"""
+	triggerInvestigation(signalId: UUID!): WorkflowTriggerResult!
+	"""
+	Admin override: update finding status.
+	"""
+	updateFindingStatus(id: UUID!, status: FindingStatus!): GqlFinding!
+	"""
+	Manually create a connection between nodes.
+	"""
+	createConnection(fromType: String!, fromId: UUID!, toType: String!, toId: UUID!, role: String!, causalQuote: String): GqlConnection!
+	"""
+	Recompute heat map points from current locationables, notes, and tags.
+	"""
+	recomputeHeatMap: Int!
 }
 
 """
@@ -455,20 +646,10 @@ type PageInfo {
 Merged query root composing all domain query modules.
 """
 type QueryRoot {
-	"""
-	Fetch a single listing by ID.
-	"""
-	listing(id: UUID!): GqlListing!
-	"""
-	Paginated listing connection with optional filters.
-	When `zipCode` and `radiusMiles` are provided, results are sorted by distance
-	and edge data includes `distanceMiles`, `zipCode`, and `locationCity`.
-	"""
-	listings(after: String, first: Int, signalDomain: String, audienceRole: String, category: String, listingType: String, urgency: String, confidence: String, capacityStatus: String, zipCode: String, radiusMiles: Float, since: DateTime): GqlListingConnection!
 	entity(id: UUID!): GqlEntity!
 	entities(after: String, first: Int): GqlEntityConnection!
 	"""
-	List tags, optionally filtered by kind (e.g., "listing_type", "category").
+	List tags, optionally filtered by kind (e.g., "signal_domain", "category").
 	"""
 	tags(kind: String): [GqlTag!]!
 	"""
@@ -478,7 +659,15 @@ type QueryRoot {
 	observation(id: UUID!): GqlObservation!
 	pendingObservations(limit: Int! = 50): [GqlObservation!]!
 	investigation(id: UUID!): GqlInvestigation!
-	heatMapPoints(zipCode: String, radiusMiles: Float, entityType: String): [GqlHeatMapPoint!]!
+	"""
+	List investigations with optional status filter and pagination.
+	"""
+	investigations(status: String, limit: Int! = 50, offset: Int! = 0): [GqlInvestigation!]!
+	"""
+	Count investigations, optionally by status.
+	"""
+	investigationCount(status: String): Int!
+	heatMapPoints(zipCode: String, radiusMiles: Float, entityType: String, signalType: String): [GqlHeatMapPoint!]!
 	"""
 	Signal density aggregated by zip code.
 	"""
@@ -491,27 +680,72 @@ type QueryRoot {
 	Temporal comparison: signal trends over time.
 	"""
 	signalTrends(period: String!, signalDomain: String): [GqlTemporalDelta!]!
-	listingStats: GqlListingStats!
+	"""
+	Fetch clusters with location data for map display.
+	"""
+	signalClusters(signalType: String, since: String, minConfidence: Float, zipCode: String, radiusMiles: Float, about: String, limit: Int): [GqlMapCluster!]!
+	"""
+	Fetch a single cluster's detail for sidebar display.
+	"""
+	signalCluster(id: UUID!): GqlClusterDetail
+	signalStats: GqlSignalStats!
 	"""
 	Hybrid search: combines semantic similarity (pgvector) with full-text search (tsvector).
 	When `q` is provided, embeds the query and runs RRF-ranked hybrid search.
 	When `q` is omitted, filters and sorts by relevance_score.
 	"""
-	search(q: String, signalDomain: String, audienceRole: String, category: String, listingType: String, urgency: String, confidence: String, capacityStatus: String, radiusRelevant: String, population: String, zipCode: String, radiusMiles: Float, lat: Float, lng: Float, radiusKm: Float, happeningOn: String, happeningBetween: String, dayOfWeek: String, limit: Int, offset: Int): GqlSearchResponse!
+	search(q: String, signalDomain: String, audienceRole: String, category: String, urgency: String, confidence: String, capacityStatus: String, radiusRelevant: String, population: String, zipCode: String, radiusMiles: Float, lat: Float, lng: Float, radiusKm: Float, happeningOn: String, happeningBetween: String, dayOfWeek: String, limit: Int, offset: Int): GqlSearchResponse!
 	"""
 	Parse a natural language query into structured filters + search text.
 	Optionally auto-executes the search when `auto_search` is true.
 	"""
 	parseQuery(q: String!, autoSearch: Boolean): GqlNlqSearchResponse!
 	"""
+	List active (non-completed) workflows, optionally filtered by source ID.
+	"""
+	activeWorkflows(sourceId: UUID): [ActiveWorkflow!]!
+	"""
 	Check the status of a running workflow.
 	"""
 	workflowStatus(workflowType: String!, workflowId: String!): String!
+	sources: [GqlSource!]!
+	source(id: UUID!): GqlSource!
+	sourcePageSnapshots(sourceId: UUID!): [GqlPageSnapshot!]!
+	pageSnapshot(id: UUID!): GqlPageSnapshotDetail!
+	searchSources(q: String!): [GqlSource!]!
+	serviceAreas: [GqlServiceArea!]!
+	"""
+	Fetch a single signal by ID.
+	"""
+	signal(id: UUID!): GqlSignal!
+	"""
+	Query signals with optional filters.
+	"""
+	signals(type: SignalType, entityId: UUID, sourceId: UUID, search: String, investigationStatus: String, lat: Float, lng: Float, radiusKm: Float, since: DateTime, limit: Int! = 50, offset: Int! = 0): GqlSignalConnection!
+	"""
+	Fetch a single finding by ID.
+	"""
+	finding(id: UUID!): GqlFinding!
+	"""
+	Query findings with optional filters.
+	"""
+	findings(status: FindingStatus, search: String, limit: Int! = 50, offset: Int! = 0): GqlFindingConnection!
+	"""
+	Query connections for a finding, optionally filtered by role.
+	"""
+	connections(findingId: UUID!, role: String): [GqlConnection!]!
 }
 
 enum ReviewDecision {
 	APPROVE
 	REJECT
+}
+
+enum SignalType {
+	ASK
+	GIVE
+	EVENT
+	INFORMATIVE
 }
 
 """
@@ -532,14 +766,6 @@ input UpdateEntityInput {
 	website: String
 	telephone: String
 	email: String
-}
-
-input UpdateListingInput {
-	title: String
-	description: String
-	inLanguage: String
-	entityId: UUID
-	serviceId: UUID
 }
 
 input UpdateServiceInput {

@@ -10,6 +10,7 @@ use rootsignal_server::routes;
 // Import Restate traits to bring `.serve()` into scope
 use rootsignal_domains::clustering::ClusteringJob;
 use rootsignal_domains::extraction::restate::ExtractWorkflow;
+use rootsignal_domains::findings::restate::{ClusterDetectionWorkflow, WhyInvestigationWorkflow};
 use rootsignal_domains::investigations::restate::InvestigateWorkflow;
 use rootsignal_domains::scraping::restate::{SchedulerService, ScrapeWorkflow, SourceObject};
 use rootsignal_domains::taxonomy::restate::tags::TagsService;
@@ -198,6 +199,18 @@ async fn main() -> Result<()> {
         .bind(
             rootsignal_domains::clustering::ClusteringJobImpl::with_deps(worker_deps.clone())
                 .serve(),
+        )
+        .bind(
+            rootsignal_domains::findings::WhyInvestigationWorkflowImpl::with_deps(
+                worker_deps.clone(),
+            )
+            .serve(),
+        )
+        .bind(
+            rootsignal_domains::findings::ClusterDetectionWorkflowImpl::with_deps(
+                worker_deps.clone(),
+            )
+            .serve(),
         )
         .build();
 

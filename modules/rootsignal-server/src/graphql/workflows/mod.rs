@@ -240,7 +240,7 @@ impl WorkflowQuery {
                  LEFT JOIN state s ON s.service_name = inv.target_service_name \
                  AND s.service_key = inv.target_service_key \
                  AND s.key = 'status' \
-                 WHERE inv.target_service_name IN ('ScrapeWorkflow') \
+                 WHERE inv.target_service_name IN ('ScrapeWorkflow', 'WhyInvestigationWorkflow', 'ClusterDetectionWorkflow') \
                  AND inv.target_service_key LIKE '{}-%%' \
                  AND inv.status NOT IN ('completed') \
                  ORDER BY inv.created_at DESC",
@@ -252,7 +252,7 @@ impl WorkflowQuery {
              LEFT JOIN state s ON s.service_name = inv.target_service_name \
              AND s.service_key = inv.target_service_key \
              AND s.key = 'status' \
-             WHERE inv.target_service_name IN ('ScrapeWorkflow') \
+             WHERE inv.target_service_name IN ('ScrapeWorkflow', 'WhyInvestigationWorkflow', 'ClusterDetectionWorkflow') \
              AND inv.status NOT IN ('completed') \
              ORDER BY inv.created_at DESC"
                 .to_string()
