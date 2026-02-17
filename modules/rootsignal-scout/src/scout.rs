@@ -511,6 +511,14 @@ impl Scout {
             }
         }
 
+        // 6. Investigation
+        info!("Starting investigation phase...");
+        let investigator = crate::investigator::Investigator::new(
+            &self.writer, &self.tavily, &self.anthropic_api_key, self.profile.name,
+        );
+        let investigation_stats = investigator.run().await;
+        info!("{investigation_stats}");
+
         info!("{stats}");
         Ok(stats)
     }

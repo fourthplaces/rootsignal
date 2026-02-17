@@ -9,4 +9,4 @@ pub use client::GraphClient;
 pub use cluster::Clusterer;
 pub use reader::PublicGraphReader;
 pub use similarity::SimilarityBuilder;
-pub use writer::{DuplicateMatch, GraphWriter, ReapStats, SourceStats};
+pub use writer::{DuplicateMatch, GraphWriter, InvestigationTarget, ReapStats, SourceStats};

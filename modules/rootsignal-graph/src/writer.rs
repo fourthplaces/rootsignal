@@ -1154,6 +1154,139 @@ impl GraphWriter {
         }
     }
 
+    // --- Investigation operations ---
+
+    /// Find signals that warrant investigation. Returns candidates across 3 priority
+    /// categories with per-source-domain dedup (max 1 per domain to prevent budget exhaustion).
+    pub async fn find_investigation_targets(&self) -> Result<Vec<InvestigationTarget>, neo4rs::Error> {
+        let mut targets = Vec::new();
+        let mut seen_domains = std::collections::HashSet::new();
+
+        // Priority 1: New tensions (last 24h, < 2 evidence nodes, not investigated in 7d)
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE datetime(t.extracted_at) > datetime() - duration('P1D')
+               AND (t.investigated_at IS NULL OR datetime(t.investigated_at) < datetime() - duration('P7D'))
+             OPTIONAL MATCH (t)-[:SOURCED_FROM]->(ev:Evidence)
+             WITH t, count(ev) AS ev_count
+             WHERE ev_count < 2
+             RETURN t.id AS id, 'Tension' AS label, t.title AS title, t.summary AS summary,
+                    t.source_url AS source_url, t.sensitivity AS sensitivity
+             LIMIT 10"
+        );
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+
+        // Priority 2: High-urgency asks (urgency high/critical, < 2 evidence nodes)
+        let q = query(
+            "MATCH (a:Ask)
+             WHERE a.urgency IN ['high', 'critical']
+               AND (a.investigated_at IS NULL OR datetime(a.investigated_at) < datetime() - duration('P7D'))
+             OPTIONAL MATCH (a)-[:SOURCED_FROM]->(ev:Evidence)
+             WITH a, count(ev) AS ev_count
+             WHERE ev_count < 2
+             RETURN a.id AS id, 'Ask' AS label, a.title AS title, a.summary AS summary,
+                    a.source_url AS source_url, a.sensitivity AS sensitivity
+             LIMIT 10"
+        );
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+
+        // Priority 3: Thin-story signals (from emerging stories, < 2 evidence nodes)
+        let q = query(
+            "MATCH (s:Story {status: 'emerging'})-[:CONTAINS]->(n)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+               AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             WITH n, count(ev) AS ev_count,
+                  CASE WHEN n:Event THEN 'Event'
+                       WHEN n:Give THEN 'Give'
+                       WHEN n:Ask THEN 'Ask'
+                       WHEN n:Notice THEN 'Notice'
+                       WHEN n:Tension THEN 'Tension'
+                  END AS label
+             WHERE ev_count < 2
+             RETURN n.id AS id, label, n.title AS title, n.summary AS summary,
+                    n.source_url AS source_url, n.sensitivity AS sensitivity
+             LIMIT 10"
+        );
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+
+        Ok(targets)
+    }
+
+    /// Helper to collect targets from a Cypher query, enforcing per-domain dedup.
+    async fn collect_investigation_targets(
+        &self,
+        targets: &mut Vec<InvestigationTarget>,
+        seen_domains: &mut std::collections::HashSet<String>,
+        q: neo4rs::Query,
+    ) -> Result<(), neo4rs::Error> {
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let label: String = row.get("label").unwrap_or_default();
+            let node_type = match label.as_str() {
+                "Event" => NodeType::Event,
+                "Give" => NodeType::Give,
+                "Ask" => NodeType::Ask,
+                "Notice" => NodeType::Notice,
+                "Tension" => NodeType::Tension,
+                _ => continue,
+            };
+
+            let source_url: String = row.get("source_url").unwrap_or_default();
+            let domain = url::Url::parse(&source_url)
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                .unwrap_or_default();
+
+            // Per-domain dedup: max 1 target per source domain
+            if !domain.is_empty() && !seen_domains.insert(domain) {
+                continue;
+            }
+
+            let sensitivity: String = row.get("sensitivity").unwrap_or_default();
+            let is_sensitive = sensitivity == "sensitive" || sensitivity == "elevated";
+
+            targets.push(InvestigationTarget {
+                signal_id: id,
+                node_type,
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                source_url,
+                is_sensitive,
+            });
+        }
+        Ok(())
+    }
+
+    /// Mark a signal as investigated (sets investigated_at, 7-day cooldown).
+    pub async fn mark_investigated(&self, signal_id: Uuid, node_type: NodeType) -> Result<(), neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(()),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             SET n.investigated_at = datetime($now)",
+            label
+        ))
+        .param("id", signal_id.to_string())
+        .param("now", memgraph_datetime(&Utc::now()));
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
     /// Get the snapshot entity count from 7 days ago for velocity calculation.
     /// Velocity is driven by entity diversity growth — a flood from one source doesn't move the needle.
     pub async fn get_snapshot_entity_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
@@ -1198,6 +1331,17 @@ pub struct DuplicateMatch {
     pub node_type: NodeType,
     pub source_url: String,
     pub similarity: f64,
+}
+
+/// A signal that warrants investigation.
+#[derive(Debug)]
+pub struct InvestigationTarget {
+    pub signal_id: Uuid,
+    pub node_type: NodeType,
+    pub title: String,
+    pub summary: String,
+    pub source_url: String,
+    pub is_sensitive: bool,
 }
 
 /// Add lat/lng params to a query from node metadata.

@@ -58,6 +58,9 @@ pub struct ExtractedSignal {
     pub effective_date: Option<String>,
     /// Source authority for Notice signals (e.g. "City of Minneapolis")
     pub source_authority: Option<String>,
+    /// Best-guess date when this content was published or last updated (ISO 8601).
+    /// Used for staleness filtering — signals older than 1 year are dropped.
+    pub content_date: Option<String>,
 }
 
 /// The full extraction response from the LLM.
