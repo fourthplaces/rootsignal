@@ -3,6 +3,7 @@ pub struct CityProfile {
     pub name: &'static str,
     pub default_lat: f64,
     pub default_lng: f64,
+    pub geo_terms: Vec<&'static str>,
     pub tavily_queries: Vec<&'static str>,
     pub curated_sources: Vec<(&'static str, f32)>,
     pub instagram_accounts: Vec<(&'static str, f32)>,
@@ -80,6 +81,10 @@ fn twincities_profile() -> CityProfile {
         name: "Twin Cities (Minneapolis-St. Paul, Minnesota)",
         default_lat: 44.9778,
         default_lng: -93.2650,
+        geo_terms: vec![
+            "Minneapolis", "St. Paul", "Saint Paul", "Twin Cities",
+            "Minnesota", "Hennepin", "Ramsey", "MN", "Mpls",
+        ],
         tavily_queries: vec![
             "Twin Cities volunteer opportunities 2026",
             "Minneapolis food shelf food bank hours",
@@ -355,6 +360,10 @@ fn nyc_profile() -> CityProfile {
         name: "New York City",
         default_lat: 40.7128,
         default_lng: -74.0060,
+        geo_terms: vec![
+            "New York", "NYC", "Brooklyn", "Manhattan", "Queens",
+            "Bronx", "Staten Island", "Harlem", "NY",
+        ],
         tavily_queries: vec![
             "NYC volunteer opportunities 2026",
             "New York City food bank pantry hours",
@@ -406,6 +415,10 @@ fn portland_profile() -> CityProfile {
         name: "Portland, Oregon",
         default_lat: 45.5152,
         default_lng: -122.6784,
+        geo_terms: vec![
+            "Portland", "Oregon", "Multnomah", "Clackamas",
+            "Washington County", "OR",
+        ],
         tavily_queries: vec![
             "Portland Oregon volunteer opportunities 2026",
             "Portland food bank pantry hours",
@@ -456,6 +469,10 @@ fn berlin_profile() -> CityProfile {
         name: "Berlin, Germany",
         default_lat: 52.5200,
         default_lng: 13.4050,
+        geo_terms: vec![
+            "Berlin", "Kreuzberg", "Neukölln", "Friedrichshain",
+            "Charlottenburg", "Mitte", "Prenzlauer Berg",
+        ],
         tavily_queries: vec![
             "Berlin volunteer opportunities 2026",
             "Berlin community events this week",

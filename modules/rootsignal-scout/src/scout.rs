@@ -29,6 +29,7 @@ pub struct ScoutStats {
     pub fresh_90d: u32,
     pub social_media_posts: u32,
     pub geo_stripped: u32,
+    pub geo_filtered: u32,
     pub audience_roles: std::collections::HashMap<String, u32>,
 }
 
@@ -40,6 +41,7 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
         writeln!(f, "Geo stripped:       {}", self.geo_stripped)?;
+        writeln!(f, "Geo filtered:       {}", self.geo_filtered)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
@@ -410,14 +412,21 @@ impl Scout {
         // Process results sequentially, with in-memory embedding cache for cross-batch dedup
         let now = Utc::now();
         let mut embed_cache = EmbeddingCache::new();
+        let mut source_signal_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         for (url, _source_trust, outcome) in pipeline_results {
             match outcome {
                 ScrapeOutcome::New { content, nodes } => {
+                    let signal_count_before = stats.signals_stored;
                     match self.store_signals(&url, &content, nodes, &mut stats, &mut embed_cache).await {
-                        Ok(_) => stats.urls_scraped += 1,
+                        Ok(_) => {
+                            stats.urls_scraped += 1;
+                            let produced = stats.signals_stored - signal_count_before;
+                            *source_signal_counts.entry(url).or_default() += produced;
+                        }
                         Err(e) => {
                             warn!(url, error = %e, "Failed to store signals");
                             stats.urls_failed += 1;
+                            source_signal_counts.entry(url).or_default();
                         }
                     }
                 }
@@ -429,16 +438,26 @@ impl Scout {
                         Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
                     }
                     stats.urls_unchanged += 1;
+                    // Unchanged still counts as a scrape (content was fetched, just didn't change)
+                    source_signal_counts.entry(url).or_default();
                 }
                 ScrapeOutcome::Failed => {
                     stats.urls_failed += 1;
+                    // Don't record failed scrapes — don't penalize for network errors
                 }
             }
         }
 
         // 4. Social media via Apify (Instagram + Facebook)
         if let Some(ref apify) = self.apify {
-            self.scrape_social_media(apify, &mut stats, &mut embed_cache).await;
+            self.scrape_social_media(apify, &mut stats, &mut embed_cache, &mut source_signal_counts).await;
+        }
+
+        // 4a. Update per-source metrics in the graph
+        for (url, signals_produced) in &source_signal_counts {
+            if let Err(e) = self.writer.record_source_scrape(url, *signals_produced, now).await {
+                warn!(url, error = %e, "Failed to record source scrape metrics");
+            }
         }
 
         // 4b. Deactivate dead sources (10+ consecutive empty runs, non-curated only)
@@ -497,7 +516,7 @@ impl Scout {
     }
 
     /// Scrape Instagram, Facebook, and Reddit accounts via Apify, feed posts through LLM extraction.
-    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats, embed_cache: &mut EmbeddingCache) {
+    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats, embed_cache: &mut EmbeddingCache, source_signal_counts: &mut std::collections::HashMap<String, u32>) {
         use std::pin::Pin;
         use std::future::Future;
 
@@ -639,9 +658,12 @@ impl Scout {
         for result in results.into_iter().flatten() {
             let (source_url, combined_text, nodes, post_count) = result;
             stats.social_media_posts += post_count as u32;
+            let signal_count_before = stats.signals_stored;
             if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache).await {
                 warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
             }
+            let produced = stats.signals_stored - signal_count_before;
+            *source_signal_counts.entry(source_url).or_default() += produced;
         }
     }
 
@@ -684,6 +706,28 @@ impl Scout {
                     stats.geo_stripped += 1;
                 }
             }
+        }
+
+        // Filter off-geography signals.
+        // If location_name is set and doesn't match any geo_term, drop it.
+        // Signals with no location pass through (benefit of the doubt).
+        let geo_terms = &self.profile.geo_terms;
+        let before_geo = nodes.len();
+        let nodes: Vec<_> = nodes
+            .into_iter()
+            .filter(|n| {
+                let loc = n.meta().and_then(|m| m.location_name.as_deref()).unwrap_or("");
+                if loc.is_empty() || loc == "<UNKNOWN>" {
+                    return true; // no location info, keep
+                }
+                let loc_lower = loc.to_lowercase();
+                geo_terms.iter().any(|term| loc_lower.contains(&term.to_lowercase()))
+            })
+            .collect();
+        let geo_filtered = before_geo - nodes.len();
+        if geo_filtered > 0 {
+            info!(url = url.as_str(), filtered = geo_filtered, "Off-geography signals dropped");
+            stats.geo_filtered += geo_filtered as u32;
         }
 
         // Filter to signal nodes only (skip Evidence)
