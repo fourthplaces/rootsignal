@@ -4,14 +4,16 @@ use futures::stream::{self, StreamExt};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use apify_client::ApifyClient;
 use rootsignal_common::{DiscoveryMethod, EvidenceNode, Node, NodeType, SourceNode, SourceType};
 use rootsignal_graph::{Clusterer, GraphWriter, GraphClient};
 
-use crate::embedder::Embedder;
-use crate::extractor::Extractor;
+use crate::embedder::{Embedder, TextEmbedder};
+use crate::extractor::{Extractor, SignalExtractor};
 use crate::quality;
-use crate::scraper::{self, PageScraper, TavilySearcher};
+use crate::scraper::{
+    self, NoopSocialScraper, PageScraper, SocialAccount, SocialPlatform,
+    SocialPost, SocialScraper, TavilySearcher, WebSearcher,
+};
 use crate::sources::{self, CityProfile};
 
 /// Stats from a scout run.
@@ -127,11 +129,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 pub struct Scout {
     graph_client: GraphClient,
     writer: GraphWriter,
-    extractor: Extractor,
-    embedder: Embedder,
+    extractor: Box<dyn SignalExtractor>,
+    embedder: Box<dyn TextEmbedder>,
     scraper: Box<dyn PageScraper>,
-    tavily: TavilySearcher,
-    apify: Option<ApifyClient>,
+    searcher: Box<dyn WebSearcher>,
+    social: Box<dyn SocialScraper>,
     anthropic_api_key: String,
     profile: CityProfile,
 }
@@ -147,23 +149,48 @@ impl Scout {
     ) -> Result<Self> {
         let profile = sources::city_profile(city);
         info!(city = profile.name, "Initializing scout");
-        let apify = if apify_api_key.is_empty() {
+        let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
             warn!("APIFY_API_KEY not set, skipping social media scraping");
-            None
+            Box::new(NoopSocialScraper)
         } else {
-            Some(ApifyClient::new(apify_api_key.to_string()))
+            Box::new(apify_client::ApifyClient::new(apify_api_key.to_string()))
         };
         Ok(Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
-            extractor: Extractor::new(anthropic_api_key, profile.name, profile.default_lat, profile.default_lng),
-            embedder: Embedder::new(voyage_api_key),
+            extractor: Box::new(Extractor::new(anthropic_api_key, profile.name, profile.default_lat, profile.default_lng)),
+            embedder: Box::new(Embedder::new(voyage_api_key)),
             scraper: Box::new(scraper::ChromeScraper::new()),
-            tavily: TavilySearcher::new(tavily_api_key),
-            apify,
+            searcher: Box::new(TavilySearcher::new(tavily_api_key)),
+            social,
             anthropic_api_key: anthropic_api_key.to_string(),
             profile,
         })
+    }
+
+    /// Build a Scout with pre-built trait objects (for testing).
+    pub fn with_deps(
+        graph_client: GraphClient,
+        extractor: Box<dyn SignalExtractor>,
+        embedder: Box<dyn TextEmbedder>,
+        scraper: Box<dyn PageScraper>,
+        searcher: Box<dyn WebSearcher>,
+        social: Box<dyn SocialScraper>,
+        anthropic_api_key: &str,
+        city: &str,
+    ) -> Self {
+        let profile = sources::city_profile(city);
+        Self {
+            graph_client: graph_client.clone(),
+            writer: GraphWriter::new(graph_client),
+            extractor,
+            embedder,
+            scraper,
+            searcher,
+            social,
+            anthropic_api_key: anthropic_api_key.to_string(),
+            profile,
+        }
     }
 
     /// Run a full scout cycle.
@@ -317,12 +344,12 @@ impl Scout {
 
         let mut all_urls: Vec<String> = Vec::new();
 
-        // 1. Tavily searches (parallel, 5 at a time)
-        info!("Starting Tavily searches...");
+        // 1. Web searches (parallel, 5 at a time)
+        info!("Starting web searches...");
         let queries = &self.profile.tavily_queries;
         let search_results: Vec<_> = stream::iter(queries.iter().map(|query| {
             async move {
-                (*query, self.tavily.search(query, 5).await)
+                (*query, self.searcher.search(query, 5).await)
             }
         }))
         .buffer_unordered(5)
@@ -442,8 +469,8 @@ impl Scout {
             }
         }
 
-        // 4. Social media via Apify (Instagram + Facebook)
-        if let Some(ref apify) = self.apify {
+        // 4. Social media scraping
+        {
             // Collect discovered Instagram accounts from graph to scrape alongside curated
             let extra_ig: Vec<String> = discovered_sources
                 .iter()
@@ -459,10 +486,10 @@ impl Scout {
                 })
                 .collect();
 
-            self.scrape_social_media(apify, &mut stats, &mut embed_cache, &mut source_signal_counts, &extra_ig).await;
+            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &extra_ig).await;
 
             // 4.5. Topic discovery — search hashtags to find new accounts
-            self.discover_from_topics(apify, &mut stats, &mut embed_cache, &mut source_signal_counts).await;
+            self.discover_from_topics(&mut stats, &mut embed_cache, &mut source_signal_counts).await;
         }
 
         // 4a. Update per-source metrics in the graph
@@ -531,7 +558,7 @@ impl Scout {
         // 6. Investigation
         info!("Starting investigation phase...");
         let investigator = crate::investigator::Investigator::new(
-            &self.writer, &self.tavily, &self.anthropic_api_key, self.profile.name,
+            &self.writer, &*self.searcher, &self.anthropic_api_key, self.profile.name,
         );
         let investigation_stats = investigator.run().await;
         info!("{investigation_stats}");
@@ -540,11 +567,10 @@ impl Scout {
         Ok(stats)
     }
 
-    /// Scrape Instagram, Facebook, and Reddit accounts via Apify, feed posts through LLM extraction.
+    /// Scrape social media accounts, feed posts through LLM extraction.
     /// `extra_ig_accounts` are discovered Instagram account usernames from the graph.
     async fn scrape_social_media(
         &self,
-        apify: &ApifyClient,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
@@ -555,164 +581,124 @@ impl Scout {
 
         type SocialResult = Option<(String, String, Vec<Node>, usize)>;
 
-        let ig_accounts = &self.profile.instagram_accounts;
-        let fb_pages = &self.profile.facebook_pages;
-        let reddit_subs = &self.profile.reddit_subreddits;
+        // Build uniform list of SocialAccounts
+        let mut accounts: Vec<(String, SocialAccount)> = Vec::new();
+
+        for username in &self.profile.instagram_accounts {
+            accounts.push((
+                format!("https://www.instagram.com/{username}/"),
+                SocialAccount {
+                    platform: SocialPlatform::Instagram,
+                    identifier: username.to_string(),
+                },
+            ));
+        }
+
+        for username in extra_ig_accounts {
+            accounts.push((
+                format!("https://www.instagram.com/{username}/"),
+                SocialAccount {
+                    platform: SocialPlatform::Instagram,
+                    identifier: username.clone(),
+                },
+            ));
+        }
+
+        for page_url in &self.profile.facebook_pages {
+            accounts.push((
+                page_url.to_string(),
+                SocialAccount {
+                    platform: SocialPlatform::Facebook,
+                    identifier: page_url.to_string(),
+                },
+            ));
+        }
+
+        for sub_url in &self.profile.reddit_subreddits {
+            accounts.push((
+                sub_url.to_string(),
+                SocialAccount {
+                    platform: SocialPlatform::Reddit,
+                    identifier: sub_url.to_string(),
+                },
+            ));
+        }
+
+        let ig_count = self.profile.instagram_accounts.len() + extra_ig_accounts.len();
         info!(
-            ig = ig_accounts.len(),
-            ig_discovered = extra_ig_accounts.len(),
-            fb = fb_pages.len(),
-            reddit = reddit_subs.len(),
-            "Scraping social media via Apify..."
+            ig = ig_count,
+            fb = self.profile.facebook_pages.len(),
+            reddit = self.profile.reddit_subreddits.len(),
+            "Scraping social media..."
         );
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
 
-        for username in ig_accounts {
-            let source_url = format!("https://www.instagram.com/{username}/");
-            let username = username.to_string();
-            futures.push(Box::pin(async move {
-                let posts = match apify.scrape_instagram_posts(&username, 10).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(username, error = %e, "Instagram Apify scrape failed");
-                        return None;
-                    }
-                };
-                let post_count = posts.len();
-                let combined_text: String = posts
-                    .iter()
-                    .filter_map(|p| p.caption.as_deref())
-                    .enumerate()
-                    .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                if combined_text.is_empty() {
-                    return None;
-                }
-                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        warn!(username, error = %e, "Instagram extraction failed");
-                        return None;
-                    }
-                };
-                info!(username, posts = post_count, "Instagram scrape complete");
-                Some((source_url, combined_text, nodes, post_count))
-            }));
-        }
+        for (source_url, account) in &accounts {
+            let source_url = source_url.clone();
+            let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
+            let limit: u32 = if is_reddit { 20 } else { 10 };
 
-        // Discovered Instagram accounts from graph (same scrape pattern)
-        for username in extra_ig_accounts {
-            let source_url = format!("https://www.instagram.com/{username}/");
-            let username = username.clone();
             futures.push(Box::pin(async move {
-                let posts = match apify.scrape_instagram_posts(&username, 10).await {
+                let posts = match self.social.search_posts(account, limit).await {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!(username, error = %e, "Discovered Instagram scrape failed");
+                        warn!(source_url, error = %e, "Social media scrape failed");
                         return None;
                     }
                 };
                 let post_count = posts.len();
-                let combined_text: String = posts
-                    .iter()
-                    .filter_map(|p| p.caption.as_deref())
-                    .enumerate()
-                    .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                if combined_text.is_empty() {
-                    return None;
-                }
-                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        warn!(username, error = %e, "Discovered Instagram extraction failed");
-                        return None;
-                    }
-                };
-                info!(username, posts = post_count, "Discovered Instagram scrape complete");
-                Some((source_url, combined_text, nodes, post_count))
-            }));
-        }
 
-        for page_url in fb_pages {
-            let page_url = page_url.to_string();
-            futures.push(Box::pin(async move {
-                let posts = match apify.scrape_facebook_posts(&page_url, 10).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(page_url, error = %e, "Facebook Apify scrape failed");
+                if is_reddit {
+                    // Reddit: batch posts 10 at a time for extraction
+                    let batches: Vec<_> = posts.chunks(10).collect();
+                    let mut all_nodes = Vec::new();
+                    let mut combined_all = String::new();
+                    for batch in batches {
+                        let combined_text: String = batch
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        if combined_text.is_empty() {
+                            continue;
+                        }
+                        combined_all.push_str(&combined_text);
+                        match self.extractor.extract(&combined_text, &source_url).await {
+                            Ok(n) => all_nodes.extend(n),
+                            Err(e) => {
+                                warn!(source_url, error = %e, "Reddit extraction failed");
+                            }
+                        }
+                    }
+                    if all_nodes.is_empty() {
                         return None;
                     }
-                };
-                let post_count = posts.len();
-                let combined_text: String = posts
-                    .iter()
-                    .filter_map(|p| p.text.as_deref())
-                    .enumerate()
-                    .map(|(i, text)| format!("--- Post {} ---\n{}", i + 1, text))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                if combined_text.is_empty() {
-                    return None;
-                }
-                let nodes = match self.extractor.extract(&combined_text, &page_url).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        warn!(page_url, error = %e, "Facebook extraction failed");
-                        return None;
-                    }
-                };
-                info!(page_url, posts = post_count, "Facebook scrape complete");
-                Some((page_url, combined_text, nodes, post_count))
-            }));
-        }
-
-        for subreddit_url in reddit_subs {
-            let subreddit_url = subreddit_url.to_string();
-            futures.push(Box::pin(async move {
-                let posts = match apify.scrape_reddit_posts(&subreddit_url, 20).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(subreddit_url, error = %e, "Reddit Apify scrape failed");
-                        return None;
-                    }
-                };
-                let post_count = posts.len();
-                // Batch posts: combine title + body per post, 10 at a time
-                let batches: Vec<_> = posts.chunks(10).collect();
-                let mut all_nodes = Vec::new();
-                let mut combined_all = String::new();
-                for batch in batches {
-                    let combined_text: String = batch
+                    info!(source_url, posts = post_count, "Reddit scrape complete");
+                    Some((source_url, combined_all, all_nodes, post_count))
+                } else {
+                    // Instagram/Facebook: combine all posts then extract
+                    let combined_text: String = posts
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| {
-                            let title = p.title.as_deref().unwrap_or("");
-                            let body = p.body.as_deref().unwrap_or("");
-                            format!("--- Post {} ---\n{}\n\n{}", i + 1, title, body)
-                        })
+                        .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     if combined_text.is_empty() {
-                        continue;
+                        return None;
                     }
-                    combined_all.push_str(&combined_text);
-                    match self.extractor.extract(&combined_text, &subreddit_url).await {
-                        Ok(n) => all_nodes.extend(n),
+                    let nodes = match self.extractor.extract(&combined_text, &source_url).await {
+                        Ok(n) => n,
                         Err(e) => {
-                            warn!(subreddit_url, error = %e, "Reddit extraction failed");
+                            warn!(source_url, error = %e, "Social extraction failed");
+                            return None;
                         }
-                    }
+                    };
+                    info!(source_url, posts = post_count, "Social scrape complete");
+                    Some((source_url, combined_text, nodes, post_count))
                 }
-                if all_nodes.is_empty() {
-                    return None;
-                }
-                info!(subreddit_url, posts = post_count, "Reddit scrape complete");
-                Some((subreddit_url, combined_all, all_nodes, post_count))
             }));
         }
 
@@ -734,10 +720,8 @@ impl Scout {
     }
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords).
-    /// Instagram is the first adapter. Others (X, Bluesky, TikTok) follow the same pattern.
     async fn discover_from_topics(
         &self,
-        apify: &ApifyClient,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
@@ -753,14 +737,14 @@ impl Scout {
 
         info!(topics = ?topics, "Starting topic discovery...");
 
-        // Search topics across platforms (Instagram first)
+        // Search topics across platforms
         let search_topics: Vec<_> = topics.iter().take(MAX_HASHTAG_SEARCHES).collect();
         let hashtags: Vec<&str> = search_topics.iter().map(|t| **t).collect();
 
-        let discovered_posts = match apify.search_instagram_hashtags(&hashtags, POSTS_PER_SEARCH).await {
+        let discovered_posts = match self.social.search_hashtags(&hashtags, POSTS_PER_SEARCH).await {
             Ok(posts) => posts,
             Err(e) => {
-                warn!(error = %e, "Instagram hashtag discovery failed");
+                warn!(error = %e, "Hashtag discovery failed");
                 return;
             }
         };
@@ -772,13 +756,15 @@ impl Scout {
         }
 
         // Group posts by author
-        let mut by_author: std::collections::HashMap<String, Vec<&apify_client::DiscoveredPost>> =
+        let mut by_author: std::collections::HashMap<String, Vec<&SocialPost>> =
             std::collections::HashMap::new();
         for post in &discovered_posts {
-            by_author
-                .entry(post.author_username.clone())
-                .or_default()
-                .push(post);
+            if let Some(ref author) = post.author {
+                by_author
+                    .entry(author.clone())
+                    .or_default()
+                    .push(post);
+            }
         }
 
         info!(

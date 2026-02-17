@@ -101,7 +101,58 @@ impl PageScraper for ChromeScraper {
     }
 }
 
-// --- Tavily (unchanged) ---
+// --- Social media types ---
+
+#[derive(Debug, Clone)]
+pub enum SocialPlatform {
+    Instagram,
+    Facebook,
+    Reddit,
+}
+
+#[derive(Debug, Clone)]
+pub struct SocialAccount {
+    pub platform: SocialPlatform,
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SocialPost {
+    pub content: String,
+    pub author: Option<String>,
+    pub url: Option<String>,
+}
+
+// --- WebSearcher trait ---
+
+#[async_trait]
+pub trait WebSearcher: Send + Sync {
+    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>>;
+}
+
+// --- SocialScraper trait ---
+
+#[async_trait]
+pub trait SocialScraper: Send + Sync {
+    async fn search_posts(&self, account: &SocialAccount, limit: u32) -> Result<Vec<SocialPost>>;
+    async fn search_hashtags(&self, hashtags: &[&str], limit: u32) -> Result<Vec<SocialPost>>;
+}
+
+/// No-op social scraper for when no API key is configured.
+pub struct NoopSocialScraper;
+
+#[async_trait]
+impl SocialScraper for NoopSocialScraper {
+    async fn search_posts(&self, _account: &SocialAccount, _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(Vec::new())
+    }
+
+    async fn search_hashtags(&self, _hashtags: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(Vec::new())
+    }
+}
+
+// --- Tavily ---
 
 pub struct TavilySearcher {
     api_key: String,
@@ -140,8 +191,11 @@ impl TavilySearcher {
                 .expect("Failed to build HTTP client"),
         }
     }
+}
 
-    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
+#[async_trait]
+impl WebSearcher for TavilySearcher {
+    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
         info!(query, max_results, "Tavily search");
 
         let body = serde_json::json!({
@@ -175,5 +229,82 @@ impl TavilySearcher {
 
         info!(query, count = results.len(), "Tavily search complete");
         Ok(results)
+    }
+}
+
+// --- SocialScraper impl for ApifyClient ---
+
+use apify_client::ApifyClient;
+
+#[async_trait]
+impl SocialScraper for ApifyClient {
+    async fn search_posts(&self, account: &SocialAccount, limit: u32) -> Result<Vec<SocialPost>> {
+        match account.platform {
+            SocialPlatform::Instagram => {
+                let posts = self.scrape_instagram_posts(&account.identifier, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        let content = p.caption?;
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: p.owner_username,
+                            url: Some(p.url),
+                        })
+                    })
+                    .collect())
+            }
+            SocialPlatform::Facebook => {
+                let posts = self.scrape_facebook_posts(&account.identifier, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        let content = p.text?;
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: p.page_name,
+                            url: p.url,
+                        })
+                    })
+                    .collect())
+            }
+            SocialPlatform::Reddit => {
+                let posts = self.scrape_reddit_posts(&account.identifier, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        let title = p.title.unwrap_or_default();
+                        let body = p.body.unwrap_or_default();
+                        let content = format!("{}\n\n{}", title, body).trim().to_string();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: None,
+                            url: p.url,
+                        })
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    async fn search_hashtags(&self, hashtags: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
+        let posts = self.search_instagram_hashtags(hashtags, limit).await?;
+        Ok(posts
+            .into_iter()
+            .map(|p| SocialPost {
+                content: p.content,
+                author: Some(p.author_username),
+                url: Some(p.post_url),
+            })
+            .collect())
     }
 }

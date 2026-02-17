@@ -5,6 +5,8 @@ pub mod reader;
 pub mod response;
 pub mod similarity;
 pub mod synthesizer;
+#[cfg(feature = "test-utils")]
+pub mod testutil;
 pub mod writer;
 pub mod migrate;
 

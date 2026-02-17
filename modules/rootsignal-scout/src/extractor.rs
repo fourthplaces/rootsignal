@@ -93,6 +93,13 @@ where
 
 // StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
 
+// --- SignalExtractor trait ---
+
+#[async_trait::async_trait]
+pub trait SignalExtractor: Send + Sync {
+    async fn extract(&self, content: &str, source_url: &str) -> Result<Vec<Node>>;
+}
+
 pub struct Extractor {
     claude: Claude,
     system_prompt: String,
@@ -105,8 +112,8 @@ impl Extractor {
         Self { claude, system_prompt }
     }
 
-    /// Extract civic signals from page content.
-    pub async fn extract(
+    /// Extract civic signals from page content (internal implementation).
+    async fn extract_impl(
         &self,
         content: &str,
         source_url: &str,
@@ -299,6 +306,13 @@ impl Extractor {
             "Extracted civic signals"
         );
         Ok(nodes)
+    }
+}
+
+#[async_trait::async_trait]
+impl SignalExtractor for Extractor {
+    async fn extract(&self, content: &str, source_url: &str) -> Result<Vec<Node>> {
+        self.extract_impl(content, source_url).await
     }
 }
 

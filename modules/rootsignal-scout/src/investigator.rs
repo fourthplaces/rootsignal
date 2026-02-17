@@ -9,7 +9,7 @@ use uuid::Uuid;
 use rootsignal_common::EvidenceNode;
 use rootsignal_graph::{GraphWriter, InvestigationTarget};
 
-use crate::scraper::TavilySearcher;
+use crate::scraper::WebSearcher;
 
 const MAX_TAVILY_QUERIES_PER_RUN: usize = 10;
 const MAX_SIGNALS_INVESTIGATED: usize = 5;
@@ -17,7 +17,7 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
-    tavily: &'a TavilySearcher,
+    searcher: &'a dyn WebSearcher,
     claude: Claude,
     city: String,
 }
@@ -107,13 +107,13 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        tavily: &'a TavilySearcher,
+        searcher: &'a dyn WebSearcher,
         anthropic_api_key: &str,
         city: &str,
     ) -> Self {
         Self {
             writer,
-            tavily,
+            searcher,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             city: city.to_string(),
         }
@@ -217,7 +217,7 @@ impl<'a> Investigator<'a> {
             }
             stats.tavily_queries_used += 1;
 
-            match self.tavily.search(query, 5).await {
+            match self.searcher.search(query, 5).await {
                 Ok(results) => {
                     // Filter out same-domain results
                     for r in results {

@@ -58,6 +58,9 @@ firecrawl = "1"
 # Regex (PII detection)
 regex = "1"
 
+# Testing
+testcontainers = "0.23"
+
 # Local crates
 ai-client = { path = "modules/ai-client" }
 apify-client = { path = "modules/apify-client" }
