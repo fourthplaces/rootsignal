@@ -259,35 +259,43 @@ async fn api_story_detail(
 
     match state.reader.get_story_with_signals(uuid).await {
         Ok(Some((story, signals))) => {
-            let mut signal_views: Vec<serde_json::Value> = Vec::new();
-            for n in &signals {
-                let Some(meta) = n.meta() else { continue };
-                let evidence = state
-                    .reader
-                    .get_signal_evidence(meta.id)
-                    .await
-                    .unwrap_or_default();
-                let ev_json: Vec<serde_json::Value> = evidence
-                    .iter()
-                    .map(|e| {
-                        serde_json::json!({
-                            "source_url": e.source_url,
-                            "snippet": e.snippet,
-                            "relevance": e.relevance,
+            let all_evidence = state
+                .reader
+                .get_story_signal_evidence(uuid)
+                .await
+                .unwrap_or_default();
+            let signal_views: Vec<serde_json::Value> = signals
+                .iter()
+                .filter_map(|n| {
+                    let meta = n.meta()?;
+                    let evidence: &Vec<EvidenceNode> = &all_evidence
+                        .iter()
+                        .find(|(id, _)| *id == meta.id)
+                        .map(|(_, ev)| ev.clone())
+                        .unwrap_or_default();
+                    let ev_json: Vec<serde_json::Value> = evidence
+                        .iter()
+                        .map(|e| {
+                            serde_json::json!({
+                                "source_url": e.source_url,
+                                "snippet": e.snippet,
+                                "relevance": e.relevance,
+                                "evidence_confidence": e.evidence_confidence,
+                            })
                         })
-                    })
-                    .collect();
-                signal_views.push(serde_json::json!({
-                    "id": meta.id.to_string(),
-                    "title": meta.title,
-                    "summary": meta.summary,
-                    "node_type": format!("{}", n.node_type()),
-                    "confidence": meta.confidence,
-                    "source_url": meta.source_url,
-                    "evidence_count": evidence.len(),
-                    "evidence": ev_json,
-                }));
-            }
+                        .collect();
+                    Some(serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "title": meta.title,
+                        "summary": meta.summary,
+                        "node_type": format!("{}", n.node_type()),
+                        "confidence": meta.confidence,
+                        "source_url": meta.source_url,
+                        "evidence_count": evidence.len(),
+                        "evidence": ev_json,
+                    }))
+                })
+                .collect();
             Json(serde_json::json!({
                 "story": story,
                 "signals": signal_views,
@@ -382,6 +390,7 @@ async fn api_signal_detail(
                         "source_url": e.source_url,
                         "snippet": e.snippet,
                         "relevance": e.relevance,
+                        "evidence_confidence": e.evidence_confidence,
                         "retrieved_at": e.retrieved_at.to_rfc3339(),
                         "content_hash": e.content_hash,
                     })
@@ -403,6 +412,8 @@ async fn api_signal_detail(
                     "node_type": format!("{}", node.node_type()),
                     "confidence": meta.map(|m| m.confidence),
                     "corroboration_count": meta.map(|m| m.corroboration_count),
+                    "source_diversity": meta.map(|m| m.source_diversity),
+                    "external_ratio": meta.map(|m| m.external_ratio),
                     "source_url": meta.map(|m| &m.source_url),
                     "action_url": action_url,
                     "audience_roles": meta.map(|m| m.audience_roles.iter().map(|r| format!("{r}")).collect::<Vec<_>>()),
@@ -738,6 +749,8 @@ pub struct NodeView {
     pub type_class: String,
     pub confidence: f32,
     pub corroboration_count: u32,
+    pub source_diversity: u32,
+    pub external_ratio: f32,
     pub last_confirmed: String,
     pub action_url: String,
     pub audience_roles: Vec<String>,
@@ -804,6 +817,8 @@ fn node_to_view(node: &Node) -> NodeView {
         type_class: type_class.to_string(),
         confidence,
         corroboration_count: meta.map(|m| m.corroboration_count).unwrap_or(0),
+        source_diversity: meta.map(|m| m.source_diversity).unwrap_or(1),
+        external_ratio: meta.map(|m| m.external_ratio).unwrap_or(0.0),
         last_confirmed,
         action_url,
         audience_roles: meta
@@ -841,6 +856,7 @@ fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
                     "node_type": format!("{}", node.node_type()),
                     "confidence": meta.confidence,
                     "corroboration_count": meta.corroboration_count,
+                    "source_diversity": meta.source_diversity,
                 }
             }))
         })

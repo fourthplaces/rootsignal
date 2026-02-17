@@ -5,7 +5,7 @@ use neo4rs::query;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ClusterSnapshot, StoryNode};
+use rootsignal_common::{ClusterSnapshot, EntityMappingOwned, StoryNode};
 
 use crate::{GraphClient, SimilarityBuilder};
 use crate::synthesizer::{Synthesizer, SynthesisInput};
@@ -29,17 +29,9 @@ pub struct Clusterer {
     client: GraphClient,
     writer: GraphWriter,
     anthropic_api_key: String,
-    entity_mappings: Vec<EntityMappingRef>,
+    entity_mappings: Vec<EntityMappingOwned>,
 }
 
-/// Lightweight entity mapping reference for clustering.
-pub struct EntityMappingRef {
-    pub entity_id: String,
-    pub domains: Vec<String>,
-    pub instagram: Vec<String>,
-    pub facebook: Vec<String>,
-    pub reddit: Vec<String>,
-}
 
 /// A community detected by Leiden.
 struct Community {
@@ -51,7 +43,7 @@ impl Clusterer {
     pub fn new(
         client: GraphClient,
         anthropic_api_key: &str,
-        entity_mappings: Vec<EntityMappingRef>,
+        entity_mappings: Vec<EntityMappingOwned>,
     ) -> Self {
         Self {
             writer: GraphWriter::new(client.clone()),
@@ -128,7 +120,7 @@ impl Clusterer {
             let source_urls: Vec<&str> = signal_meta.iter().map(|s| s.source_url.as_str()).collect();
             let source_domains: Vec<String> = source_urls
                 .iter()
-                .map(|u| extract_domain(u))
+                .map(|u| rootsignal_common::extract_domain(u))
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
@@ -387,43 +379,10 @@ Respond in this exact JSON format:
     fn count_distinct_entities(&self, source_urls: &[&str]) -> u32 {
         let mut entities = HashSet::new();
         for url in source_urls {
-            let entity = self.resolve_entity(url);
+            let entity = rootsignal_common::resolve_entity(url, &self.entity_mappings);
             entities.insert(entity);
         }
         entities.len() as u32
-    }
-
-    /// Resolve a URL to its entity ID using entity mappings.
-    fn resolve_entity(&self, url: &str) -> String {
-        let domain = extract_domain(url);
-
-        for mapping in &self.entity_mappings {
-            for d in &mapping.domains {
-                let d: &str = d.as_str();
-                if domain.contains(d) {
-                    return mapping.entity_id.clone();
-                }
-            }
-            for ig in &mapping.instagram {
-                if url.contains(&format!("instagram.com/{ig}")) {
-                    return mapping.entity_id.clone();
-                }
-            }
-            for fb in &mapping.facebook {
-                let fb: &str = fb.as_str();
-                if url.contains(fb) {
-                    return mapping.entity_id.clone();
-                }
-            }
-            for r in &mapping.reddit {
-                if url.contains(&format!("reddit.com/user/{r}")) || url.contains(&format!("reddit.com/u/{r}")) {
-                    return mapping.entity_id.clone();
-                }
-            }
-        }
-
-        // Fallback: domain itself
-        domain
     }
 
     /// Fetch metadata for a set of signal IDs.
@@ -761,12 +720,3 @@ fn parse_recency(datetime_str: &str, now: &chrono::DateTime<Utc>) -> f64 {
     (1.0_f64 - age_days / 14.0_f64).clamp(0.0_f64, 1.0_f64)
 }
 
-fn extract_domain(url: &str) -> String {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_lowercase()
-}

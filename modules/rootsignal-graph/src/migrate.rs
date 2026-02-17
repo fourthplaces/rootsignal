@@ -89,6 +89,20 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Location backfill complete");
 
+    // --- Source diversity indexes ---
+    let diversity_indexes = [
+        "CREATE INDEX ON :Event(source_diversity)",
+        "CREATE INDEX ON :Give(source_diversity)",
+        "CREATE INDEX ON :Ask(source_diversity)",
+        "CREATE INDEX ON :Notice(source_diversity)",
+        "CREATE INDEX ON :Tension(source_diversity)",
+    ];
+
+    for idx in &diversity_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Source diversity indexes created");
+
     // --- Full-text indexes ---
     let fulltext = [
         "CREATE TEXT INDEX event_text ON :Event(title, summary)",
@@ -214,7 +228,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let source_indexes = [
         "CREATE INDEX ON :Source(city)",
         "CREATE INDEX ON :Source(active)",
-        "CREATE INDEX ON :Source(trust)",
     ];
 
     for idx in &source_indexes {
@@ -227,6 +240,72 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     info!("BlockedSource constraint created");
 
     info!("Schema migration complete");
+    Ok(())
+}
+
+/// Backfill source_diversity and external_ratio for all existing signal nodes.
+/// Traverses SOURCED_FROM edges to count unique entity sources per signal.
+pub async fn backfill_source_diversity(
+    client: &GraphClient,
+    entity_mappings: &[rootsignal_common::EntityMappingOwned],
+) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling source diversity...");
+
+    let mut total = 0u32;
+    let mut updated = 0u32;
+
+    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        let q = query(&format!(
+            "MATCH (n:{label})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             RETURN n.id AS id, n.source_url AS self_url,
+                    collect(ev.source_url) AS evidence_urls"
+        ));
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            total += 1;
+            let id: String = row.get("id").unwrap_or_default();
+            let self_url: String = row.get("self_url").unwrap_or_default();
+            let evidence_urls: Vec<String> = row.get("evidence_urls").unwrap_or_default();
+
+            let self_entity = rootsignal_common::resolve_entity(&self_url, entity_mappings);
+
+            let mut entities = std::collections::HashSet::new();
+            let mut external_count = 0u32;
+            let evidence_total = evidence_urls.len() as u32;
+
+            for url in &evidence_urls {
+                let entity = rootsignal_common::resolve_entity(url, entity_mappings);
+                entities.insert(entity.clone());
+                if entity != self_entity {
+                    external_count += 1;
+                }
+            }
+
+            let diversity = entities.len().max(1) as u32;
+            let external_ratio = if evidence_total > 0 {
+                external_count as f64 / evidence_total as f64
+            } else {
+                0.0
+            };
+
+            let update = query(&format!(
+                "MATCH (n:{label} {{id: $id}})
+                 SET n.source_diversity = $diversity, n.external_ratio = $ratio"
+            ))
+            .param("id", id)
+            .param("diversity", diversity as i64)
+            .param("ratio", external_ratio);
+
+            g.run(update).await?;
+            updated += 1;
+        }
+    }
+
+    info!(total, updated, "Source diversity backfill complete");
     Ok(())
 }
 

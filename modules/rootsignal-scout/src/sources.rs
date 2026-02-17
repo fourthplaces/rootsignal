@@ -5,10 +5,10 @@ pub struct CityProfile {
     pub default_lng: f64,
     pub geo_terms: Vec<&'static str>,
     pub tavily_queries: Vec<&'static str>,
-    pub curated_sources: Vec<(&'static str, f32)>,
-    pub instagram_accounts: Vec<(&'static str, f32)>,
-    pub facebook_pages: Vec<(&'static str, f32)>,
-    pub reddit_subreddits: Vec<(&'static str, f32)>,
+    pub curated_sources: Vec<&'static str>,
+    pub instagram_accounts: Vec<&'static str>,
+    pub facebook_pages: Vec<&'static str>,
+    pub reddit_subreddits: Vec<&'static str>,
     /// Platform-agnostic civic topics for hashtag/keyword discovery.
     /// Searched across all platforms with discovery adapters (Instagram first).
     pub discovery_topics: Vec<&'static str>,
@@ -27,10 +27,23 @@ pub struct EntityMapping {
     pub reddit: Vec<&'static str>,
 }
 
+impl EntityMapping {
+    /// Convert to the shared owned type used across crates.
+    pub fn to_owned(&self) -> rootsignal_common::EntityMappingOwned {
+        rootsignal_common::EntityMappingOwned {
+            entity_id: self.entity_id.to_string(),
+            domains: self.domains.iter().map(|s| s.to_string()).collect(),
+            instagram: self.instagram.iter().map(|s| s.to_string()).collect(),
+            facebook: self.facebook.iter().map(|s| s.to_string()).collect(),
+            reddit: self.reddit.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
 /// Resolve a source URL to its parent entity ID using entity mappings.
 /// Returns the entity_id if matched, otherwise extracts the domain as a fallback entity.
 pub fn resolve_entity(url: &str, mappings: &[EntityMapping]) -> String {
-    let domain = extract_domain(url);
+    let domain = rootsignal_common::extract_domain(url);
 
     for mapping in mappings {
         // Check domain match
@@ -124,102 +137,104 @@ fn twincities_profile() -> CityProfile {
             "Minnesota watershed district meetings volunteer",
         ],
         curated_sources: vec![
-            ("https://www.handsontwincities.org/opportunities", 0.85),
-            ("https://www.minneapolisparks.org/activities-events/events/", 0.9),
-            ("https://www.stpaul.gov/departments/parks-and-recreation/events", 0.9),
-            ("https://www.minneapolismn.gov/government/city-council/meetings-agendas-minutes/", 0.9),
-            ("https://www.stpaul.gov/departments/city-council/city-council-meetings", 0.9),
-            ("https://www.gofundme.com/discover/search?q=minneapolis&location=Minneapolis%2C+MN", 0.5),
-            ("https://www.gofundme.com/discover/search?q=st+paul&location=St%20Paul%2C+MN", 0.5),
-            ("https://www.eventbrite.com/d/mn--minneapolis/community/", 0.75),
-            ("https://www.eventbrite.com/d/mn--minneapolis/volunteer/", 0.75),
-            ("https://www.eventbrite.com/d/mn--st-paul/community/", 0.75),
-            ("https://www.meetup.com/find/?location=us--mn--Minneapolis&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://www.meetup.com/find/?location=us--mn--St%20Paul&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://patch.com/minnesota/minneapolis", 0.65),
-            ("https://patch.com/minnesota/st-paul", 0.65),
-            ("https://bsky.app/search?q=minneapolis+community", 0.4),
-            ("https://bsky.app/search?q=twin+cities+volunteer", 0.4),
-            ("https://bsky.app/search?q=minneapolis+ICE+immigration", 0.4),
-            ("https://www.volunteermatch.org/search?l=Minneapolis%2C+MN&k=&v=true", 0.75),
-            ("https://www.volunteermatch.org/search?l=St+Paul%2C+MN&k=&v=true", 0.75),
-            ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Minneapolis%2C+MN&lat=44.9778&lng=-93.2650&radius=25", 0.7),
-            ("https://www.justserve.org/projects?city=Minneapolis&state=MN", 0.7),
-            ("https://www.youthlinkmn.org/", 0.75),
-            ("https://thelinkmn.org/what-we-do/", 0.75),
-            ("https://www.achievetwincities.org/what-we-do", 0.75),
-            ("https://www.ywcampls.org/what-we-do", 0.8),
-            ("https://seniorcommunity.org/our-services/", 0.75),
-            ("https://www.neseniors.org/", 0.65),
-            ("https://trellisconnects.org/get-help/", 0.75),
-            ("https://www.hjcmn.org/our-work/", 0.75),
-            ("https://homesforallmn.org/ways-to-be-involved/", 0.7),
-            ("https://agatemn.org/programs/", 0.75),
-            ("https://mphaonline.org/housing/programs/", 0.8),
-            ("https://www.canmn.org/", 0.65),
-            ("https://nhn-tc.org/", 0.65),
-            ("https://www.gtcuw.org/volunteer/", 0.8),
-            ("https://www.gtcuw.org/get-assistance/", 0.8),
+            "https://www.handsontwincities.org/opportunities",
+            "https://www.minneapolisparks.org/activities-events/events/",
+            "https://www.stpaul.gov/departments/parks-and-recreation/events",
+            "https://www.minneapolismn.gov/government/city-council/meetings-agendas-minutes/",
+            "https://www.stpaul.gov/departments/city-council/city-council-meetings",
+            "https://www.gofundme.com/discover/search?q=minneapolis&location=Minneapolis%2C+MN",
+            "https://www.gofundme.com/discover/search?q=st+paul&location=St%20Paul%2C+MN",
+            "https://www.eventbrite.com/d/mn--minneapolis/community/",
+            "https://www.eventbrite.com/d/mn--minneapolis/volunteer/",
+            "https://www.eventbrite.com/d/mn--st-paul/community/",
+            "https://www.meetup.com/find/?location=us--mn--Minneapolis&source=EVENTS&categoryId=&distance=tenMiles",
+            "https://www.meetup.com/find/?location=us--mn--St%20Paul&source=EVENTS&categoryId=&distance=tenMiles",
+            "https://patch.com/minnesota/minneapolis",
+            "https://patch.com/minnesota/st-paul",
+            "https://bsky.app/search?q=minneapolis+community",
+            "https://bsky.app/search?q=twin+cities+volunteer",
+            "https://bsky.app/search?q=minneapolis+ICE+immigration",
+            "https://www.volunteermatch.org/search?l=Minneapolis%2C+MN&k=&v=true",
+            "https://www.volunteermatch.org/search?l=St+Paul%2C+MN&k=&v=true",
+            "https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Minneapolis%2C+MN&lat=44.9778&lng=-93.2650&radius=25",
+            "https://www.justserve.org/projects?city=Minneapolis&state=MN",
+            "https://www.youthlinkmn.org/",
+            "https://thelinkmn.org/what-we-do/",
+            "https://www.achievetwincities.org/what-we-do",
+            "https://www.ywcampls.org/what-we-do",
+            "https://seniorcommunity.org/our-services/",
+            "https://www.neseniors.org/",
+            "https://trellisconnects.org/get-help/",
+            "https://www.hjcmn.org/our-work/",
+            "https://homesforallmn.org/ways-to-be-involved/",
+            "https://agatemn.org/programs/",
+            "https://mphaonline.org/housing/programs/",
+            "https://www.canmn.org/",
+            "https://nhn-tc.org/",
+            "https://www.gtcuw.org/volunteer/",
+            "https://www.gtcuw.org/get-assistance/",
             // Community news
-            ("https://sahanjournal.com/", 0.8),
-            ("https://www.minnpost.com/community-voices/", 0.75),
+            "https://sahanjournal.com/",
+            "https://www.minnpost.com/community-voices/",
             // Library systems — events and programs
-            ("https://www.hclib.org/events", 0.85),
-            ("https://sppl.org/events/", 0.85),
+            "https://www.hclib.org/events",
+            "https://sppl.org/events/",
             // School districts
-            ("https://www.mpls.k12.mn.us/community", 0.85),
-            ("https://www.spps.org/community", 0.85),
+            "https://www.mpls.k12.mn.us/community",
+            "https://www.spps.org/community",
             // MPR News — community/events coverage
-            ("https://www.mprnews.org/topic/community", 0.85),
+            "https://www.mprnews.org/topic/community",
             // Watershed districts (ecological stewardship)
-            ("https://www.minnehahacreek.org/events", 0.8),
-            ("https://www.capitolregionwd.org/events/", 0.8),
+            "https://www.minnehahacreek.org/events",
+            "https://www.capitolregionwd.org/events/",
         ],
         instagram_accounts: vec![
-            ("handsontwincities", 0.7),
-            ("unitedwaytc", 0.7),
-            ("tchabitat", 0.7),
-            ("secondharvestheartland", 0.7),
-            ("everymealorg", 0.7),
-            ("loavesandfishesmn", 0.6),
-            ("openarmsmn", 0.7),
-            ("communityaidnetworkmn", 0.6),
-            ("peopleservingpeople", 0.6),
-            ("pillsburyunited", 0.7),
-            ("minneapolisparks", 0.7),
-            ("friendsmissriv", 0.6),
-            ("parkconnection", 0.6),
-            ("miracmn", 0.5),
-            ("unidosmn", 0.5),
-            ("immigrantlawcentermn", 0.6),
-            ("cluesofficial", 0.6),
-            ("voices4rj", 0.5),
-            ("hclib", 0.7),
-            ("stpaulpubliclibrary", 0.7),
-            ("youthlinkmn", 0.7),
-            ("achievetwincities", 0.7),
-            ("ywcampls", 0.7),
-            ("agateservicesmn", 0.7),
-            ("communityaidnetworkmn", 0.6),
-            ("nhn_tc", 0.6),
+            "handsontwincities",
+            "unitedwaytc",
+            "tchabitat",
+            "secondharvestheartland",
+            "everymealorg",
+            "loavesandfishesmn",
+            "openarmsmn",
+            "communityaidnetworkmn",
+            "peopleservingpeople",
+            "pillsburyunited",
+            "minneapolisparks",
+            "friendsmissriv",
+            "parkconnection",
+            "miracmn",
+            "unidosmn",
+            "immigrantlawcentermn",
+            "cluesofficial",
+            "voices4rj",
+            "hclib",
+            "stpaulpubliclibrary",
+            "youthlinkmn",
+            "achievetwincities",
+            "ywcampls",
+            "agateservicesmn",
+            "communityaidnetworkmn",
+            "nhn_tc",
+            "sadeinthecities",
+            "sj_tapp",
         ],
         facebook_pages: vec![
-            ("https://www.facebook.com/HandsOnTC", 0.7),
-            ("https://www.facebook.com/unitedwaytwincities", 0.7),
-            ("https://www.facebook.com/2harvest", 0.7),
-            ("https://www.facebook.com/EveryMealOrg", 0.7),
-            ("https://www.facebook.com/openarmsmn", 0.7),
-            ("https://www.facebook.com/tchabitat", 0.7),
-            ("https://www.facebook.com/FriendsMissRiv", 0.6),
-            ("https://www.facebook.com/miracmn", 0.5),
-            ("https://www.facebook.com/unidosmn", 0.5),
-            ("https://www.facebook.com/immigrantlawcenterMN", 0.6),
-            ("https://www.facebook.com/CLUESPage", 0.6),
+            "https://www.facebook.com/HandsOnTC",
+            "https://www.facebook.com/unitedwaytwincities",
+            "https://www.facebook.com/2harvest",
+            "https://www.facebook.com/EveryMealOrg",
+            "https://www.facebook.com/openarmsmn",
+            "https://www.facebook.com/tchabitat",
+            "https://www.facebook.com/FriendsMissRiv",
+            "https://www.facebook.com/miracmn",
+            "https://www.facebook.com/unidosmn",
+            "https://www.facebook.com/immigrantlawcenterMN",
+            "https://www.facebook.com/CLUESPage",
         ],
         reddit_subreddits: vec![
-            ("https://www.reddit.com/r/Minneapolis", 0.4),
-            ("https://www.reddit.com/r/TwinCities", 0.4),
-            ("https://www.reddit.com/r/SaintPaul", 0.4),
+            "https://www.reddit.com/r/Minneapolis",
+            "https://www.reddit.com/r/TwinCities",
+            "https://www.reddit.com/r/SaintPaul",
         ],
         discovery_topics: vec![
             "MutualAidMPLS", "MutualAidMN", "VolunteerMN",
@@ -396,19 +411,19 @@ fn nyc_profile() -> CityProfile {
             "NYC mutual aid network community support 2026",
         ],
         curated_sources: vec![
-            ("https://www.nyc.gov/events", 0.9),
-            ("https://www.eventbrite.com/d/ny--new-york/community/", 0.75),
-            ("https://www.eventbrite.com/d/ny--new-york/volunteer/", 0.75),
-            ("https://www.meetup.com/find/?location=us--ny--New+York&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://patch.com/new-york/new-york-city", 0.65),
-            ("https://www.volunteermatch.org/search?l=New+York%2C+NY&k=&v=true", 0.75),
-            ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=New+York%2C+NY&lat=40.7128&lng=-74.0060&radius=25", 0.7),
-            ("https://www.gofundme.com/discover/search?q=nyc&location=New+York%2C+NY", 0.5),
+            "https://www.nyc.gov/events",
+            "https://www.eventbrite.com/d/ny--new-york/community/",
+            "https://www.eventbrite.com/d/ny--new-york/volunteer/",
+            "https://www.meetup.com/find/?location=us--ny--New+York&source=EVENTS&categoryId=&distance=tenMiles",
+            "https://patch.com/new-york/new-york-city",
+            "https://www.volunteermatch.org/search?l=New+York%2C+NY&k=&v=true",
+            "https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=New+York%2C+NY&lat=40.7128&lng=-74.0060&radius=25",
+            "https://www.gofundme.com/discover/search?q=nyc&location=New+York%2C+NY",
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
         reddit_subreddits: vec![
-            ("https://www.reddit.com/r/nyc", 0.4),
+            "https://www.reddit.com/r/nyc",
         ],
         discovery_topics: vec![],
         entity_mappings: vec![],
@@ -451,19 +466,19 @@ fn portland_profile() -> CityProfile {
             "Portland mutual aid network community support 2026",
         ],
         curated_sources: vec![
-            ("https://www.portland.gov/events", 0.9),
-            ("https://www.eventbrite.com/d/or--portland/community/", 0.75),
-            ("https://www.eventbrite.com/d/or--portland/volunteer/", 0.75),
-            ("https://www.meetup.com/find/?location=us--or--Portland&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://patch.com/oregon/portland", 0.65),
-            ("https://www.volunteermatch.org/search?l=Portland%2C+OR&k=&v=true", 0.75),
-            ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Portland%2C+OR&lat=45.5152&lng=-122.6784&radius=25", 0.7),
-            ("https://www.gofundme.com/discover/search?q=portland&location=Portland%2C+OR", 0.5),
+            "https://www.portland.gov/events",
+            "https://www.eventbrite.com/d/or--portland/community/",
+            "https://www.eventbrite.com/d/or--portland/volunteer/",
+            "https://www.meetup.com/find/?location=us--or--Portland&source=EVENTS&categoryId=&distance=tenMiles",
+            "https://patch.com/oregon/portland",
+            "https://www.volunteermatch.org/search?l=Portland%2C+OR&k=&v=true",
+            "https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Portland%2C+OR&lat=45.5152&lng=-122.6784&radius=25",
+            "https://www.gofundme.com/discover/search?q=portland&location=Portland%2C+OR",
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
         reddit_subreddits: vec![
-            ("https://www.reddit.com/r/Portland", 0.4),
+            "https://www.reddit.com/r/Portland",
         ],
         discovery_topics: vec![],
         entity_mappings: vec![],
@@ -504,82 +519,21 @@ fn berlin_profile() -> CityProfile {
             "Berlin mutual aid network 2026",
         ],
         curated_sources: vec![
-            ("https://www.berlin.de/en/events/", 0.9),
-            ("https://www.eventbrite.de/d/germany--berlin/community/", 0.75),
-            ("https://www.eventbrite.de/d/germany--berlin/volunteer/", 0.75),
-            ("https://www.meetup.com/find/?location=de--berlin&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://www.nebenan.de/berlin", 0.65),
-            ("https://www.gofundme.com/discover/search?q=berlin&location=Berlin%2C+Germany", 0.5),
+            "https://www.berlin.de/en/events/",
+            "https://www.eventbrite.de/d/germany--berlin/community/",
+            "https://www.eventbrite.de/d/germany--berlin/volunteer/",
+            "https://www.meetup.com/find/?location=de--berlin&source=EVENTS&categoryId=&distance=tenMiles",
+            "https://www.nebenan.de/berlin",
+            "https://www.gofundme.com/discover/search?q=berlin&location=Berlin%2C+Germany",
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
         reddit_subreddits: vec![
-            ("https://www.reddit.com/r/berlin", 0.4),
+            "https://www.reddit.com/r/berlin",
         ],
         discovery_topics: vec![],
         entity_mappings: vec![],
     }
 }
 
-// ---------------------------------------------------------------------------
-// Source trust (domain-based, city-agnostic with city-specific entries)
-// ---------------------------------------------------------------------------
 
-/// Source trust scores — baseline trust for different source types.
-pub fn source_trust(url: &str) -> f32 {
-    let domain = extract_domain(url);
-    match domain {
-        // Government (.gov) — highest trust
-        d if d.ends_with(".gov") => 0.9,
-        // Established city/county sites — Twin Cities
-        d if d.contains("minneapolismn.gov") || d.contains("stpaul.gov") || d.contains("hennepin.us") || d.contains("ramseycounty.us") => 0.9,
-        // NYC government
-        d if d.contains("nyc.gov") => 0.9,
-        // Portland government
-        d if d.contains("portland.gov") => 0.9,
-        // Berlin government
-        d if d.contains("berlin.de") => 0.9,
-        // Established nonprofits and org sites
-        d if d.ends_with(".org") => 0.8,
-        // Event platforms
-        d if d.contains("eventbrite.com") || d.contains("eventbrite.de") => 0.75,
-        d if d.contains("meetup.com") => 0.7,
-        // News outlets — Twin Cities
-        d if d.contains("startribune.com") || d.contains("mprnews.org") || d.contains("swtimes.com") || d.contains("minnpost.com") || d.contains("sahanjournal.com") => 0.85,
-        // Libraries
-        d if d.contains("hclib.org") || d.contains("sppl.org") => 0.85,
-        // School districts
-        d if d.contains("mpls.k12.mn.us") || d.contains("spps.org") => 0.85,
-        // Watershed districts
-        d if d.contains("minnehahacreek.org") || d.contains("capitolregionwd.org") => 0.8,
-        // News outlets — Portland
-        d if d.contains("oregonlive.com") => 0.85,
-        // German neighborhood platform
-        d if d.contains("nebenan.de") => 0.65,
-        // Fundraising
-        d if d.contains("gofundme.com") => 0.5,
-        // Public-first social platforms
-        d if d.contains("reddit.com") => 0.4,
-        d if d.contains("bsky.app") => 0.4,
-        // Walled social media (scraped via Apify)
-        d if d.contains("facebook.com") || d.contains("instagram.com") || d.contains("twitter.com") || d.contains("x.com") => 0.3,
-        // Volunteer platforms
-        d if d.contains("volunteermatch.org") => 0.75,
-        d if d.contains("idealist.org") => 0.7,
-        d if d.contains("justserve.org") => 0.7,
-        // Local news aggregator
-        d if d.contains("patch.com") => 0.65,
-        // Default
-        _ => 0.5,
-    }
-}
-
-fn extract_domain(url: &str) -> String {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_lowercase()
-}

@@ -302,6 +302,31 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Batch-fetch evidence for all signals in a story. Returns (signal_id, Vec<EvidenceNode>) pairs.
+    pub async fn get_story_signal_evidence(
+        &self,
+        story_id: Uuid,
+    ) -> Result<Vec<(Uuid, Vec<EvidenceNode>)>, neo4rs::Error> {
+        let cypher =
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence)
+             WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+             RETURN n.id AS signal_id, collect(ev) AS evidence";
+
+        let q = query(cypher).param("id", story_id.to_string());
+        let mut stream = self.client.graph.execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let evidence = extract_evidence(&row);
+                results.push((id, evidence));
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Get a single signal by ID.
     pub async fn get_signal_by_id(
         &self,
@@ -923,6 +948,9 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         .filter_map(|s| parse_audience_role(s))
         .collect();
 
+    let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
+    let external_ratio: f64 = n.get("external_ratio").unwrap_or(0.0);
+
     let meta = NodeMeta {
         id,
         title,
@@ -940,6 +968,8 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         extracted_at,
         last_confirmed_active,
         audience_roles,
+        source_diversity: source_diversity as u32,
+        external_ratio: external_ratio as f32,
         mentioned_actors: Vec::new(),
     };
 

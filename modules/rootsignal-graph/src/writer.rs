@@ -56,6 +56,8 @@ impl GraphWriter {
                 confidence: $confidence,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
+                source_diversity: $source_diversity,
+                external_ratio: $external_ratio,
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
@@ -78,6 +80,8 @@ impl GraphWriter {
         .param("confidence", n.meta.confidence as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_diversity", n.meta.source_diversity as i64)
+        .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
         .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
@@ -124,6 +128,8 @@ impl GraphWriter {
                 confidence: $confidence,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
+                source_diversity: $source_diversity,
+                external_ratio: $external_ratio,
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
@@ -144,6 +150,8 @@ impl GraphWriter {
         .param("confidence", n.meta.confidence as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_diversity", n.meta.source_diversity as i64)
+        .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
         .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
@@ -178,6 +186,8 @@ impl GraphWriter {
                 confidence: $confidence,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
+                source_diversity: $source_diversity,
+                external_ratio: $external_ratio,
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
@@ -199,6 +209,8 @@ impl GraphWriter {
         .param("confidence", n.meta.confidence as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_diversity", n.meta.source_diversity as i64)
+        .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
         .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
@@ -240,6 +252,8 @@ impl GraphWriter {
                 confidence: $confidence,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
+                source_diversity: $source_diversity,
+                external_ratio: $external_ratio,
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
@@ -261,6 +275,8 @@ impl GraphWriter {
         .param("confidence", n.meta.confidence as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_diversity", n.meta.source_diversity as i64)
+        .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
         .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
@@ -301,6 +317,8 @@ impl GraphWriter {
                 confidence: $confidence,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
+                source_diversity: $source_diversity,
+                external_ratio: $external_ratio,
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
@@ -319,6 +337,8 @@ impl GraphWriter {
         .param("confidence", n.meta.confidence as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_diversity", n.meta.source_diversity as i64)
+        .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
         .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
         .param(
@@ -564,12 +584,13 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Increment corroboration count and update freshness on an existing node.
+    /// Increment corroboration count, update freshness, and recompute source diversity.
     pub async fn corroborate(
         &self,
         node_id: Uuid,
         node_type: NodeType,
         now: DateTime<Utc>,
+        entity_mappings: &[rootsignal_common::EntityMappingOwned],
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
             NodeType::Event => "Event",
@@ -580,6 +601,7 @@ impl GraphWriter {
             NodeType::Evidence => return Ok(()),
         };
 
+        // Increment corroboration count
         let q = query(&format!(
             "MATCH (n:{} {{id: $id}})
              SET n.corroboration_count = n.corroboration_count + 1,
@@ -590,8 +612,79 @@ impl GraphWriter {
         .param("now", memgraph_datetime(&now));
 
         self.client.graph.run(q).await?;
-        info!(%node_id, %label, "Corroborated existing signal");
+
+        // Recompute source diversity from all evidence nodes
+        let (diversity, external_ratio) = self.compute_source_diversity(node_id, node_type, entity_mappings).await?;
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             SET n.source_diversity = $diversity, n.external_ratio = $ratio",
+            label
+        ))
+        .param("id", node_id.to_string())
+        .param("diversity", diversity as i64)
+        .param("ratio", external_ratio as f64);
+
+        self.client.graph.run(q).await?;
+
+        info!(%node_id, %label, diversity, external_ratio, "Corroborated existing signal");
         Ok(())
+    }
+
+    /// Compute source diversity and external ratio for a signal from its evidence nodes.
+    pub async fn compute_source_diversity(
+        &self,
+        node_id: Uuid,
+        node_type: NodeType,
+        entity_mappings: &[rootsignal_common::EntityMappingOwned],
+    ) -> Result<(u32, f32), neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok((1, 0.0)),
+        };
+
+        // Get the signal's own source_url and all evidence source_urls
+        let q = query(&format!(
+            "MATCH (n:{label} {{id: $id}})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             RETURN n.source_url AS self_url, collect(ev.source_url) AS evidence_urls"
+        ))
+        .param("id", node_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let self_url: String = row.get("self_url").unwrap_or_default();
+            let evidence_urls: Vec<String> = row.get("evidence_urls").unwrap_or_default();
+
+            let self_entity = rootsignal_common::resolve_entity(&self_url, entity_mappings);
+
+            let mut entities = std::collections::HashSet::new();
+            let mut external_count = 0u32;
+            let total = evidence_urls.len() as u32;
+
+            for url in &evidence_urls {
+                let entity = rootsignal_common::resolve_entity(url, entity_mappings);
+                entities.insert(entity.clone());
+                if entity != self_entity {
+                    external_count += 1;
+                }
+            }
+
+            let diversity = entities.len().max(1) as u32;
+            let external_ratio = if total > 0 {
+                external_count as f32 / total as f32
+            } else {
+                0.0
+            };
+
+            Ok((diversity, external_ratio))
+        } else {
+            Ok((1, 0.0))
+        }
     }
 
     /// Reap expired signals from the graph. Runs at the start of each scout cycle.
@@ -1010,8 +1103,6 @@ impl GraphWriter {
                 s.source_type = $source_type,
                 s.discovery_method = $discovery_method,
                 s.city = $city,
-                s.trust = $trust,
-                s.initial_trust = $initial_trust,
                 s.created_at = datetime($created_at),
                 s.signals_produced = $signals_produced,
                 s.signals_corroborated = $signals_corroborated,
@@ -1026,8 +1117,6 @@ impl GraphWriter {
         .param("source_type", source.source_type.to_string())
         .param("discovery_method", source.discovery_method.to_string())
         .param("city", source.city.as_str())
-        .param("trust", source.trust as f64)
-        .param("initial_trust", source.initial_trust as f64)
         .param("created_at", memgraph_datetime(&source.created_at))
         .param("signals_produced", source.signals_produced as i64)
         .param("signals_corroborated", source.signals_corroborated as i64)
@@ -1045,7 +1134,6 @@ impl GraphWriter {
             "MATCH (s:Source {city: $city, active: true})
              RETURN s.id AS id, s.url AS url, s.source_type AS source_type,
                     s.discovery_method AS discovery_method, s.city AS city,
-                    s.trust AS trust, s.initial_trust AS initial_trust,
                     s.created_at AS created_at, s.last_scraped AS last_scraped,
                     s.last_produced_signal AS last_produced_signal,
                     s.signals_produced AS signals_produced,
@@ -1093,8 +1181,6 @@ impl GraphWriter {
                 source_type,
                 discovery_method,
                 city: row.get("city").unwrap_or_default(),
-                trust: row.get::<f64>("trust").unwrap_or(0.5) as f32,
-                initial_trust: row.get::<f64>("initial_trust").unwrap_or(0.5) as f32,
                 created_at,
                 last_scraped: None, // TODO: parse if needed
                 last_produced_signal: None,

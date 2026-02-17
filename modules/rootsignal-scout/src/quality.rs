@@ -112,6 +112,8 @@ mod tests {
             extracted_at: Utc::now(),
             last_confirmed_active: Utc::now(),
             audience_roles: vec![AudienceRole::Neighbor],
+            source_diversity: 1,
+            external_ratio: 0.0,
             mentioned_actors: vec![],
         }
     }

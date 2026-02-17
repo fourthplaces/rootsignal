@@ -192,15 +192,13 @@ impl Scout {
         let mut sources: Vec<SourceNode> = Vec::new();
 
         // Web sources
-        for (url, trust) in &self.profile.curated_sources {
+        for url in &self.profile.curated_sources {
             sources.push(SourceNode {
                 id: Uuid::new_v4(),
                 url: url.to_string(),
                 source_type: SourceType::Web,
                 discovery_method: DiscoveryMethod::Curated,
                 city: city.clone(),
-                trust: *trust,
-                initial_trust: *trust,
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -213,15 +211,13 @@ impl Scout {
         }
 
         // Instagram
-        for (username, trust) in &self.profile.instagram_accounts {
+        for username in &self.profile.instagram_accounts {
             sources.push(SourceNode {
                 id: Uuid::new_v4(),
                 url: format!("https://www.instagram.com/{username}/"),
                 source_type: SourceType::Instagram,
                 discovery_method: DiscoveryMethod::Curated,
                 city: city.clone(),
-                trust: *trust,
-                initial_trust: *trust,
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -234,15 +230,13 @@ impl Scout {
         }
 
         // Facebook
-        for (page_url, trust) in &self.profile.facebook_pages {
+        for page_url in &self.profile.facebook_pages {
             sources.push(SourceNode {
                 id: Uuid::new_v4(),
                 url: page_url.to_string(),
                 source_type: SourceType::Facebook,
                 discovery_method: DiscoveryMethod::Curated,
                 city: city.clone(),
-                trust: *trust,
-                initial_trust: *trust,
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -255,15 +249,13 @@ impl Scout {
         }
 
         // Reddit
-        for (sub_url, trust) in &self.profile.reddit_subreddits {
+        for sub_url in &self.profile.reddit_subreddits {
             sources.push(SourceNode {
                 id: Uuid::new_v4(),
                 url: sub_url.to_string(),
                 source_type: SourceType::Reddit,
                 discovery_method: DiscoveryMethod::Curated,
                 city: city.clone(),
-                trust: *trust,
-                initial_trust: *trust,
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -323,7 +315,7 @@ impl Scout {
             }
         };
 
-        let mut all_urls: Vec<(String, f32)> = Vec::new();
+        let mut all_urls: Vec<String> = Vec::new();
 
         // 1. Tavily searches (parallel, 5 at a time)
         info!("Starting Tavily searches...");
@@ -341,8 +333,7 @@ impl Scout {
             match result {
                 Ok(results) => {
                     for r in results {
-                        let trust = sources::source_trust(&r.url);
-                        all_urls.push((r.url, trust));
+                        all_urls.push(r.url);
                     }
                 }
                 Err(e) => {
@@ -353,36 +344,35 @@ impl Scout {
 
         // 2. Curated sources
         info!("Adding curated sources...");
-        for (url, trust) in &self.profile.curated_sources {
-            all_urls.push((url.to_string(), *trust));
+        for url in &self.profile.curated_sources {
+            all_urls.push(url.to_string());
         }
 
         // 2b. Discovered web sources from graph
         for source in &discovered_sources {
             if source.source_type == SourceType::Web && source.discovery_method != DiscoveryMethod::Curated {
-                all_urls.push((source.url.clone(), source.trust));
+                all_urls.push(source.url.clone());
             }
         }
 
         // Deduplicate URLs
-        all_urls.sort_by(|a, b| a.0.cmp(&b.0));
-        all_urls.dedup_by(|a, b| a.0 == b.0);
+        all_urls.sort();
+        all_urls.dedup();
         info!(total_urls = all_urls.len(), "Unique URLs to scrape");
 
         // 3. Scrape + check content hash + extract in parallel, then write sequentially
-        let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|(url, source_trust)| {
+        let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|url| {
             let url = url.clone();
-            let source_trust = *source_trust;
             async move {
                 let clean_url = sanitize_url(&url);
 
                 // Scrape
                 let content = match self.scraper.scrape(&url).await {
                     Ok(c) if !c.is_empty() => c,
-                    Ok(_) => return (clean_url, source_trust, ScrapeOutcome::Failed),
+                    Ok(_) => return (clean_url, ScrapeOutcome::Failed),
                     Err(e) => {
                         warn!(url, error = %e, "Scrape failed");
-                        return (clean_url, source_trust, ScrapeOutcome::Failed);
+                        return (clean_url, ScrapeOutcome::Failed);
                     }
                 };
 
@@ -391,7 +381,7 @@ impl Scout {
                 match self.writer.content_already_processed(&hash, &clean_url).await {
                     Ok(true) => {
                         info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
-                        return (clean_url, source_trust, ScrapeOutcome::Unchanged);
+                        return (clean_url, ScrapeOutcome::Unchanged);
                     }
                     Ok(false) => {} // New content, proceed
                     Err(e) => {
@@ -401,10 +391,10 @@ impl Scout {
 
                 // Extract (LLM call) — only reached for new/changed content
                 match self.extractor.extract(&content, &clean_url).await {
-                    Ok(nodes) => (clean_url, source_trust, ScrapeOutcome::New { content, nodes }),
+                    Ok(nodes) => (clean_url, ScrapeOutcome::New { content, nodes }),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
-                        (clean_url, source_trust, ScrapeOutcome::Failed)
+                        (clean_url, ScrapeOutcome::Failed)
                     }
                 }
             }
@@ -417,7 +407,7 @@ impl Scout {
         let now = Utc::now();
         let mut embed_cache = EmbeddingCache::new();
         let mut source_signal_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-        for (url, _source_trust, outcome) in pipeline_results {
+        for (url, outcome) in pipeline_results {
             match outcome {
                 ScrapeOutcome::New { content, nodes } => {
                     let signal_count_before = stats.signals_stored;
@@ -455,7 +445,7 @@ impl Scout {
         // 4. Social media via Apify (Instagram + Facebook)
         if let Some(ref apify) = self.apify {
             // Collect discovered Instagram accounts from graph to scrape alongside curated
-            let extra_ig: Vec<(String, f32)> = discovered_sources
+            let extra_ig: Vec<String> = discovered_sources
                 .iter()
                 .filter(|s| s.source_type == SourceType::Instagram && s.discovery_method != DiscoveryMethod::Curated)
                 .filter_map(|s| {
@@ -465,7 +455,7 @@ impl Scout {
                         .rsplit('/')
                         .next()?;
                     if username.is_empty() { return None; }
-                    Some((username.to_string(), s.trust))
+                    Some(username.to_string())
                 })
                 .collect();
 
@@ -505,17 +495,11 @@ impl Scout {
 
         // 5. Clustering — build similarity edges, run Leiden, create/update stories
         info!("Starting clustering...");
-        let entity_mappings: Vec<rootsignal_graph::cluster::EntityMappingRef> = self
+        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = self
             .profile
             .entity_mappings
             .iter()
-            .map(|m| rootsignal_graph::cluster::EntityMappingRef {
-                entity_id: m.entity_id.to_string(),
-                domains: m.domains.iter().map(|s| s.to_string()).collect(),
-                instagram: m.instagram.iter().map(|s| s.to_string()).collect(),
-                facebook: m.facebook.iter().map(|s| s.to_string()).collect(),
-                reddit: m.reddit.iter().map(|s| s.to_string()).collect(),
-            })
+            .map(|m| m.to_owned())
             .collect();
 
         let clusterer = Clusterer::new(
@@ -533,6 +517,17 @@ impl Scout {
             }
         }
 
+        // 5b. Response mapping — match Give/Event to Tensions/Asks (non-fatal)
+        info!("Starting response mapping...");
+        let response_mapper = rootsignal_graph::response::ResponseMapper::new(
+            self.graph_client.clone(),
+            &self.anthropic_api_key,
+        );
+        match response_mapper.map_responses().await {
+            Ok(rm_stats) => info!("{rm_stats}"),
+            Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
+        }
+
         // 6. Investigation
         info!("Starting investigation phase...");
         let investigator = crate::investigator::Investigator::new(
@@ -546,14 +541,14 @@ impl Scout {
     }
 
     /// Scrape Instagram, Facebook, and Reddit accounts via Apify, feed posts through LLM extraction.
-    /// `extra_ig_accounts` are discovered Instagram accounts from the graph (username, trust).
+    /// `extra_ig_accounts` are discovered Instagram account usernames from the graph.
     async fn scrape_social_media(
         &self,
         apify: &ApifyClient,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
-        extra_ig_accounts: &[(String, f32)],
+        extra_ig_accounts: &[String],
     ) {
         use std::pin::Pin;
         use std::future::Future;
@@ -574,10 +569,9 @@ impl Scout {
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
 
-        for (username, trust) in ig_accounts {
+        for username in ig_accounts {
             let source_url = format!("https://www.instagram.com/{username}/");
             let username = username.to_string();
-            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_instagram_posts(&username, 10).await {
                     Ok(p) => p,
@@ -610,10 +604,9 @@ impl Scout {
         }
 
         // Discovered Instagram accounts from graph (same scrape pattern)
-        for (username, trust) in extra_ig_accounts {
+        for username in extra_ig_accounts {
             let source_url = format!("https://www.instagram.com/{username}/");
             let username = username.clone();
-            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_instagram_posts(&username, 10).await {
                     Ok(p) => p,
@@ -645,9 +638,8 @@ impl Scout {
             }));
         }
 
-        for (page_url, trust) in fb_pages {
+        for page_url in fb_pages {
             let page_url = page_url.to_string();
-            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_facebook_posts(&page_url, 10).await {
                     Ok(p) => p,
@@ -679,9 +671,8 @@ impl Scout {
             }));
         }
 
-        for (subreddit_url, trust) in reddit_subs {
+        for subreddit_url in reddit_subs {
             let subreddit_url = subreddit_url.to_string();
-            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_reddit_posts(&subreddit_url, 20).await {
                     Ok(p) => p,
@@ -811,7 +802,7 @@ impl Scout {
             .profile
             .instagram_accounts
             .iter()
-            .map(|(u, _)| format!("https://www.instagram.com/{u}/"))
+            .map(|u| format!("https://www.instagram.com/{u}/"))
             .collect();
 
         let mut new_accounts = 0u32;
@@ -870,8 +861,6 @@ impl Scout {
                 source_type: SourceType::Instagram,
                 discovery_method: DiscoveryMethod::HashtagDiscovery,
                 city: self.profile.name.to_string(),
-                trust: 0.3,
-                initial_trust: 0.3,
                 created_at: Utc::now(),
                 last_scraped: Some(Utc::now()),
                 last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
@@ -915,6 +904,14 @@ impl Scout {
     ) -> Result<()> {
         let url = sanitize_url(url);
         stats.signals_extracted += nodes.len() as u32;
+
+        // Build owned entity mappings for source diversity computation
+        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = self
+            .profile
+            .entity_mappings
+            .iter()
+            .map(|m| m.to_owned())
+            .collect();
 
         // Score quality, set confidence, and apply sanitized URL
         for node in &mut nodes {
@@ -1037,7 +1034,7 @@ impl Scout {
                         new_source = url.as_str(),
                         "Global title+type match, corroborating"
                     );
-                    self.writer.corroborate(*existing_id, node.node_type(), now).await?;
+                    self.writer.corroborate(*existing_id, node.node_type(), now, &entity_mappings).await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
@@ -1113,7 +1110,7 @@ impl Scout {
                         source = "cache",
                         "Duplicate found in embedding cache, corroborating"
                     );
-                    self.writer.corroborate(cached_id, cached_type, now).await?;
+                    self.writer.corroborate(cached_id, cached_type, now, &entity_mappings).await?;
 
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1146,7 +1143,7 @@ impl Scout {
                             source = "graph",
                             "Duplicate found, corroborating"
                         );
-                        self.writer.corroborate(dup.id, dup.node_type, now).await?;
+                        self.writer.corroborate(dup.id, dup.node_type, now, &entity_mappings).await?;
 
                         let evidence = EvidenceNode {
                             id: Uuid::new_v4(),
@@ -1155,6 +1152,7 @@ impl Scout {
                             content_hash: content_hash_str.clone(),
                             snippet: node.meta().map(|m| m.summary.clone()),
                             relevance: None,
+                            evidence_confidence: None,
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1188,6 +1186,43 @@ impl Scout {
                 evidence_confidence: None,
             };
             self.writer.create_evidence(&evidence, node_id).await?;
+
+            // Resolve mentioned actors → Actor nodes + ACTED_IN edges
+            if let Some(meta) = node.meta() {
+                for actor_name in &meta.mentioned_actors {
+                    let actor_id = match self.writer.find_actor_by_name(actor_name).await {
+                        Ok(Some(id)) => id,
+                        Ok(None) => {
+                            let actor = rootsignal_common::ActorNode {
+                                id: Uuid::new_v4(),
+                                name: actor_name.clone(),
+                                actor_type: rootsignal_common::ActorType::Organization,
+                                entity_id: actor_name.to_lowercase().replace(' ', "-"),
+                                domains: vec![],
+                                social_urls: vec![],
+                                city: self.profile.name.to_string(),
+                                description: String::new(),
+                                signal_count: 0,
+                                first_seen: Utc::now(),
+                                last_active: Utc::now(),
+                                typical_roles: vec![],
+                            };
+                            if let Err(e) = self.writer.upsert_actor(&actor).await {
+                                warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
+                                continue;
+                            }
+                            actor.id
+                        }
+                        Err(e) => {
+                            warn!(error = %e, actor = actor_name, "Actor lookup failed (non-fatal)");
+                            continue;
+                        }
+                    };
+                    if let Err(e) = self.writer.link_actor_to_signal(actor_id, node_id, "mentioned").await {
+                        warn!(error = %e, actor = actor_name, "Failed to link actor to signal (non-fatal)");
+                    }
+                }
+            }
 
             // Update stats
             stats.signals_stored += 1;

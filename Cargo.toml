@@ -7,6 +7,7 @@ members = [
     "modules/rootsignal-graph",
     "modules/rootsignal-scout",
     "modules/rootsignal-web",
+    "modules/rootsignal-editions",
 ]
 resolver = "2"
 

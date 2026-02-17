@@ -201,6 +201,8 @@ impl Extractor {
                 extracted_at: now,
                 last_confirmed_active: now,
                 audience_roles,
+                source_diversity: 1,
+                external_ratio: 0.0,
                 mentioned_actors,
             };
 

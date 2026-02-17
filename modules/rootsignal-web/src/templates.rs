@@ -72,9 +72,11 @@ pub fn render_nodes(nodes: &[NodeView]) -> String {
             String::new()
         };
 
-        let corr = if node.corroboration_count > 0 {
-            let s = if node.corroboration_count != 1 { "s" } else { "" };
-            format!("<span>{} source{s}</span>", node.corroboration_count)
+        let corr = if node.source_diversity > 1 {
+            let s = if node.source_diversity != 2 { "s" } else { "" };
+            format!("<span>{} independent source{s}</span>", node.source_diversity)
+        } else if node.corroboration_count > 0 {
+            "<span>1 source</span>".to_string()
         } else {
             String::new()
         };
@@ -119,7 +121,14 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         r#"<p style="font-size:13px;color:#888;margin:12px 0;padding:8px;background:#f5f5f5;border-radius:4px;">This is context — here's what's happening in your community.</p>"#.to_string()
     };
 
-    let s = if node.corroboration_count != 1 { "s" } else { "" };
+    let corr_label = if node.source_diversity > 1 {
+        let s = if node.source_diversity != 2 { "s" } else { "" };
+        format!("Confirmed by {} independent source{s}", node.source_diversity)
+    } else if node.corroboration_count > 0 {
+        format!("Seen {} time(s) from 1 source", node.corroboration_count)
+    } else {
+        "Not yet corroborated".to_string()
+    };
     let roles_html = if !node.audience_roles.is_empty() {
         let tags: String = node
             .audience_roles
@@ -181,7 +190,7 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         {action_section}
         <dl class="detail-meta">
             <dt>Last verified</dt><dd>{last}</dd>
-            <dt>Corroboration</dt><dd>Confirmed by {corr} source{s}</dd>
+            <dt>Corroboration</dt><dd>{corr_label}</dd>
             <dt>Completeness</dt><dd>{comp}</dd>
         </dl>
         {roles_html}
@@ -193,7 +202,6 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         title = html_escape(&node.title),
         summary = html_escape(&node.summary),
         last = html_escape(&node.last_confirmed),
-        corr = node.corroboration_count,
         comp = html_escape(&node.completeness_label),
     );
 

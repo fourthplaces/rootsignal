@@ -3,8 +3,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::Config;
-use rootsignal_graph::{migrate::migrate, GraphClient};
-use rootsignal_scout::scout::Scout;
+use rootsignal_graph::{migrate::{migrate, backfill_source_diversity}, GraphClient};
+use rootsignal_scout::{scout::Scout, sources};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,6 +26,11 @@ async fn main() -> Result<()> {
 
     // Run migrations
     migrate(&client).await?;
+
+    // Backfill source diversity for existing signals
+    let profile = sources::city_profile(&config.city);
+    let entity_mappings: Vec<_> = profile.entity_mappings.iter().map(|m| m.to_owned()).collect();
+    backfill_source_diversity(&client, &entity_mappings).await?;
 
     // Create and run scout
     let scout = Scout::new(

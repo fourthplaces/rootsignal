@@ -244,6 +244,10 @@ pub struct NodeMeta {
     pub extracted_at: DateTime<Utc>,
     pub last_confirmed_active: DateTime<Utc>,
     pub audience_roles: Vec<AudienceRole>,
+    /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
+    pub source_diversity: u32,
+    /// Fraction of evidence from sources other than the signal's originating entity (0.0-1.0).
+    pub external_ratio: f32,
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
@@ -460,8 +464,6 @@ pub struct SourceNode {
     pub source_type: SourceType,
     pub discovery_method: DiscoveryMethod,
     pub city: String,
-    pub trust: f32,
-    pub initial_trust: f32,
     pub created_at: DateTime<Utc>,
     pub last_scraped: Option<DateTime<Utc>>,
     pub last_produced_signal: Option<DateTime<Utc>>,
@@ -478,6 +480,64 @@ pub struct BlockedSource {
     pub url_pattern: String,
     pub blocked_at: DateTime<Utc>,
     pub reason: String,
+}
+
+// --- Entity Resolution ---
+
+/// Owned entity mapping for resolving source URLs to parent entities.
+/// Used across scout (corroboration) and graph (clustering) crates.
+#[derive(Debug, Clone)]
+pub struct EntityMappingOwned {
+    pub entity_id: String,
+    pub domains: Vec<String>,
+    pub instagram: Vec<String>,
+    pub facebook: Vec<String>,
+    pub reddit: Vec<String>,
+}
+
+/// Resolve a source URL to its parent entity ID using entity mappings.
+/// Returns the entity_id if matched, otherwise extracts the domain as a fallback entity.
+pub fn resolve_entity(url: &str, mappings: &[EntityMappingOwned]) -> String {
+    let domain = extract_domain(url);
+
+    for mapping in mappings {
+        for d in &mapping.domains {
+            if domain.contains(d.as_str()) {
+                return mapping.entity_id.clone();
+            }
+        }
+        for ig in &mapping.instagram {
+            if url.contains(&format!("instagram.com/{ig}")) {
+                return mapping.entity_id.clone();
+            }
+        }
+        for fb in &mapping.facebook {
+            if url.contains(fb.as_str()) {
+                return mapping.entity_id.clone();
+            }
+        }
+        for r in &mapping.reddit {
+            if url.contains(&format!("reddit.com/user/{r}"))
+                || url.contains(&format!("reddit.com/u/{r}"))
+            {
+                return mapping.entity_id.clone();
+            }
+        }
+    }
+
+    // Fallback: use the domain itself as the entity
+    domain
+}
+
+/// Extract the domain from a URL (e.g., "https://www.example.com/path" -> "www.example.com").
+pub fn extract_domain(url: &str) -> String {
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
 }
 
 // --- Edge Types ---
