@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use apify_client::ApifyClient;
-use rootsignal_common::{EvidenceNode, Node, NodeType};
+use rootsignal_common::{DiscoveryMethod, EvidenceNode, Node, NodeType, SourceNode, SourceType};
 use rootsignal_graph::{Clusterer, GraphWriter, GraphClient};
 
 use crate::embedder::Embedder;
@@ -177,6 +177,109 @@ impl Scout {
         result
     }
 
+    /// Seed all curated sources from CityProfile as Source nodes in the graph.
+    /// Idempotent — uses MERGE on url, so safe to call every run.
+    async fn seed_curated_sources(&self) {
+        let now = Utc::now();
+        let city = self.profile.name.to_string();
+
+        let mut sources: Vec<SourceNode> = Vec::new();
+
+        // Web sources
+        for (url, trust) in &self.profile.curated_sources {
+            sources.push(SourceNode {
+                id: Uuid::new_v4(),
+                url: url.to_string(),
+                source_type: SourceType::Web,
+                discovery_method: DiscoveryMethod::Curated,
+                city: city.clone(),
+                trust: *trust,
+                initial_trust: *trust,
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+            });
+        }
+
+        // Instagram
+        for (username, trust) in &self.profile.instagram_accounts {
+            sources.push(SourceNode {
+                id: Uuid::new_v4(),
+                url: format!("https://www.instagram.com/{username}/"),
+                source_type: SourceType::Instagram,
+                discovery_method: DiscoveryMethod::Curated,
+                city: city.clone(),
+                trust: *trust,
+                initial_trust: *trust,
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+            });
+        }
+
+        // Facebook
+        for (page_url, trust) in &self.profile.facebook_pages {
+            sources.push(SourceNode {
+                id: Uuid::new_v4(),
+                url: page_url.to_string(),
+                source_type: SourceType::Facebook,
+                discovery_method: DiscoveryMethod::Curated,
+                city: city.clone(),
+                trust: *trust,
+                initial_trust: *trust,
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+            });
+        }
+
+        // Reddit
+        for (sub_url, trust) in &self.profile.reddit_subreddits {
+            sources.push(SourceNode {
+                id: Uuid::new_v4(),
+                url: sub_url.to_string(),
+                source_type: SourceType::Reddit,
+                discovery_method: DiscoveryMethod::Curated,
+                city: city.clone(),
+                trust: *trust,
+                initial_trust: *trust,
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+            });
+        }
+
+        let total = sources.len();
+        let mut seeded = 0u32;
+        for source in &sources {
+            match self.writer.upsert_source(source).await {
+                Ok(_) => seeded += 1,
+                Err(e) => warn!(url = source.url.as_str(), error = %e, "Failed to seed source"),
+            }
+        }
+        info!(seeded, total, "Curated sources seeded");
+    }
+
     async fn run_inner(&self) -> Result<ScoutStats> {
         let mut stats = ScoutStats::default();
 
@@ -195,6 +298,24 @@ impl Scout {
             }
             Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
         }
+
+        // Seed curated sources as Source nodes (idempotent — MERGE on url)
+        self.seed_curated_sources().await;
+
+        // Load discovered sources from graph
+        let discovered_sources = match self.writer.get_active_sources(&self.profile.name).await {
+            Ok(sources) => {
+                let discovered_count = sources.iter().filter(|s| s.discovery_method != DiscoveryMethod::Curated).count();
+                if discovered_count > 0 {
+                    info!(discovered = discovered_count, "Loaded discovered sources from graph");
+                }
+                sources
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load discovered sources, using curated only");
+                Vec::new()
+            }
+        };
 
         let mut all_urls: Vec<(String, f32)> = Vec::new();
 
@@ -228,6 +349,13 @@ impl Scout {
         info!("Adding curated sources...");
         for (url, trust) in &self.profile.curated_sources {
             all_urls.push((url.to_string(), *trust));
+        }
+
+        // 2b. Discovered web sources from graph
+        for source in &discovered_sources {
+            if source.source_type == SourceType::Web && source.discovery_method != DiscoveryMethod::Curated {
+                all_urls.push((source.url.clone(), source.trust));
+            }
         }
 
         // Deduplicate URLs
@@ -311,6 +439,27 @@ impl Scout {
         // 4. Social media via Apify (Instagram + Facebook)
         if let Some(ref apify) = self.apify {
             self.scrape_social_media(apify, &mut stats, &mut embed_cache).await;
+        }
+
+        // 4b. Deactivate dead sources (10+ consecutive empty runs, non-curated only)
+        match self.writer.deactivate_dead_sources(10).await {
+            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
+        }
+
+        // Source stats
+        match self.writer.get_source_stats(&self.profile.name).await {
+            Ok(ss) => {
+                info!(
+                    total = ss.total,
+                    active = ss.active,
+                    curated = ss.curated,
+                    discovered = ss.discovered,
+                    "Source registry stats"
+                );
+            }
+            Err(e) => warn!(error = %e, "Failed to get source stats"),
         }
 
         // 5. Clustering — build similarity edges, run Leiden, create/update stories

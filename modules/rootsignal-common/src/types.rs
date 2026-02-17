@@ -257,13 +257,86 @@ pub struct StoryNode {
     pub status: String,  // "emerging" or "confirmed"
 }
 
-/// A snapshot of a story's signal count at a point in time, used for velocity tracking.
+/// A snapshot of a story's signal and org counts at a point in time, used for velocity tracking.
+/// Velocity is driven by org_count growth (not raw signal count) to resist single-source flooding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
     pub id: Uuid,
     pub story_id: Uuid,
     pub signal_count: u32,
+    pub org_count: u32,
     pub run_at: DateTime<Utc>,
+}
+
+// --- Source Types (for emergent source discovery) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceType {
+    Web,
+    Instagram,
+    Facebook,
+    Reddit,
+}
+
+impl std::fmt::Display for SourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceType::Web => write!(f, "web"),
+            SourceType::Instagram => write!(f, "instagram"),
+            SourceType::Facebook => write!(f, "facebook"),
+            SourceType::Reddit => write!(f, "reddit"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryMethod {
+    /// From CityProfile seed list
+    Curated,
+    /// LLM gap analysis identified a gap and suggested this
+    GapAnalysis,
+    /// Extracted from signal content (org mentioned but not tracked)
+    SignalReference,
+}
+
+impl std::fmt::Display for DiscoveryMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiscoveryMethod::Curated => write!(f, "curated"),
+            DiscoveryMethod::GapAnalysis => write!(f, "gap_analysis"),
+            DiscoveryMethod::SignalReference => write!(f, "signal_reference"),
+        }
+    }
+}
+
+/// A tracked source in the graph — either curated (from seed list) or discovered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceNode {
+    pub id: Uuid,
+    pub url: String,
+    pub source_type: SourceType,
+    pub discovery_method: DiscoveryMethod,
+    pub city: String,
+    pub trust: f32,
+    pub initial_trust: f32,
+    pub created_at: DateTime<Utc>,
+    pub last_scraped: Option<DateTime<Utc>>,
+    pub last_produced_signal: Option<DateTime<Utc>>,
+    pub signals_produced: u32,
+    pub signals_corroborated: u32,
+    pub consecutive_empty_runs: u32,
+    pub active: bool,
+    pub gap_context: Option<String>,
+}
+
+/// A blocked source URL pattern that should never be re-discovered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockedSource {
+    pub url_pattern: String,
+    pub blocked_at: DateTime<Utc>,
+    pub reason: String,
 }
 
 // --- Edge Types ---

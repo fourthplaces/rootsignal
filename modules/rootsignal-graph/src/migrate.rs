@@ -151,6 +151,31 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Edge indexes created");
 
+    // --- Source node constraints and indexes ---
+    let source_constraints = [
+        "CREATE CONSTRAINT ON (s:Source) ASSERT s.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (s:Source) ASSERT s.url IS UNIQUE",
+    ];
+
+    for c in &source_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+
+    let source_indexes = [
+        "CREATE INDEX ON :Source(city)",
+        "CREATE INDEX ON :Source(active)",
+        "CREATE INDEX ON :Source(trust)",
+    ];
+
+    for idx in &source_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Source constraints and indexes created");
+
+    // --- BlockedSource constraint ---
+    run_ignoring_exists(g, "CREATE CONSTRAINT ON (b:BlockedSource) ASSERT b.url_pattern IS UNIQUE").await?;
+    info!("BlockedSource constraint created");
+
     info!("Schema migration complete");
     Ok(())
 }

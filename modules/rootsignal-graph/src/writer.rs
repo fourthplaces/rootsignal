@@ -4,9 +4,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, ClusterSnapshot, EvidenceNode, EventNode, GiveNode, Node, NodeMeta, NodeType,
-    NoticeNode, SensitivityLevel, StoryNode, TensionNode, ASK_EXPIRE_DAYS,
-    EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    AskNode, ClusterSnapshot, DiscoveryMethod, EvidenceNode, EventNode, GiveNode, Node, NodeMeta,
+    NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceType, StoryNode, TensionNode,
+    ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -892,12 +892,14 @@ impl GraphWriter {
                 id: $id,
                 story_id: $story_id,
                 signal_count: $signal_count,
+                org_count: $org_count,
                 run_at: datetime($run_at)
             })"
         )
         .param("id", snapshot.id.to_string())
         .param("story_id", snapshot.story_id.to_string())
         .param("signal_count", snapshot.signal_count as i64)
+        .param("org_count", snapshot.org_count as i64)
         .param("run_at", memgraph_datetime(&snapshot.run_at));
 
         self.client.graph.run(q).await?;
@@ -958,6 +960,227 @@ impl GraphWriter {
 
         Ok(None)
     }
+
+    // --- Source operations (emergent source discovery) ---
+
+    /// Create or update a Source node in the graph.
+    /// Uses MERGE on url to be idempotent (safe for seeding curated sources every run).
+    pub async fn upsert_source(&self, source: &SourceNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (s:Source {url: $url})
+             ON CREATE SET
+                s.id = $id,
+                s.source_type = $source_type,
+                s.discovery_method = $discovery_method,
+                s.city = $city,
+                s.trust = $trust,
+                s.initial_trust = $initial_trust,
+                s.created_at = datetime($created_at),
+                s.signals_produced = $signals_produced,
+                s.signals_corroborated = $signals_corroborated,
+                s.consecutive_empty_runs = $consecutive_empty_runs,
+                s.active = $active,
+                s.gap_context = $gap_context
+             ON MATCH SET
+                s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END"
+        )
+        .param("id", source.id.to_string())
+        .param("url", source.url.as_str())
+        .param("source_type", source.source_type.to_string())
+        .param("discovery_method", source.discovery_method.to_string())
+        .param("city", source.city.as_str())
+        .param("trust", source.trust as f64)
+        .param("initial_trust", source.initial_trust as f64)
+        .param("created_at", memgraph_datetime(&source.created_at))
+        .param("signals_produced", source.signals_produced as i64)
+        .param("signals_corroborated", source.signals_corroborated as i64)
+        .param("consecutive_empty_runs", source.consecutive_empty_runs as i64)
+        .param("active", source.active)
+        .param("gap_context", source.gap_context.clone().unwrap_or_default());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Get all active sources for a city.
+    pub async fn get_active_sources(&self, city: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city, active: true})
+             RETURN s.id AS id, s.url AS url, s.source_type AS source_type,
+                    s.discovery_method AS discovery_method, s.city AS city,
+                    s.trust AS trust, s.initial_trust AS initial_trust,
+                    s.created_at AS created_at, s.last_scraped AS last_scraped,
+                    s.last_produced_signal AS last_produced_signal,
+                    s.signals_produced AS signals_produced,
+                    s.signals_corroborated AS signals_corroborated,
+                    s.consecutive_empty_runs AS consecutive_empty_runs,
+                    s.active AS active, s.gap_context AS gap_context"
+        )
+        .param("city", city);
+
+        let mut sources = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let source_type_str: String = row.get("source_type").unwrap_or_default();
+            let source_type = match source_type_str.as_str() {
+                "instagram" => SourceType::Instagram,
+                "facebook" => SourceType::Facebook,
+                "reddit" => SourceType::Reddit,
+                _ => SourceType::Web,
+            };
+
+            let discovery_str: String = row.get("discovery_method").unwrap_or_default();
+            let discovery_method = match discovery_str.as_str() {
+                "gap_analysis" => DiscoveryMethod::GapAnalysis,
+                "signal_reference" => DiscoveryMethod::SignalReference,
+                _ => DiscoveryMethod::Curated,
+            };
+
+            let created_at_str: String = row.get("created_at").unwrap_or_default();
+            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+                .map(|ndt| ndt.and_utc())
+                .unwrap_or_else(|_| Utc::now());
+
+            let gap_context: String = row.get("gap_context").unwrap_or_default();
+
+            sources.push(SourceNode {
+                id,
+                url: row.get("url").unwrap_or_default(),
+                source_type,
+                discovery_method,
+                city: row.get("city").unwrap_or_default(),
+                trust: row.get::<f64>("trust").unwrap_or(0.5) as f32,
+                initial_trust: row.get::<f64>("initial_trust").unwrap_or(0.5) as f32,
+                created_at,
+                last_scraped: None, // TODO: parse if needed
+                last_produced_signal: None,
+                signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
+                signals_corroborated: row.get::<i64>("signals_corroborated").unwrap_or(0) as u32,
+                consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0) as u32,
+                active: row.get("active").unwrap_or(true),
+                gap_context: if gap_context.is_empty() { None } else { Some(gap_context) },
+            });
+        }
+
+        Ok(sources)
+    }
+
+    /// Record that a source produced signals this run.
+    /// Updates last_scraped, signals_produced, consecutive_empty_runs.
+    pub async fn record_source_scrape(
+        &self,
+        source_url: &str,
+        signals_produced: u32,
+        now: DateTime<Utc>,
+    ) -> Result<(), neo4rs::Error> {
+        if signals_produced > 0 {
+            let q = query(
+                "MATCH (s:Source {url: $url})
+                 SET s.last_scraped = datetime($now),
+                     s.last_produced_signal = datetime($now),
+                     s.signals_produced = s.signals_produced + $count,
+                     s.consecutive_empty_runs = 0"
+            )
+            .param("url", source_url)
+            .param("now", memgraph_datetime(&now))
+            .param("count", signals_produced as i64);
+            self.client.graph.run(q).await?;
+        } else {
+            let q = query(
+                "MATCH (s:Source {url: $url})
+                 SET s.last_scraped = datetime($now),
+                     s.consecutive_empty_runs = s.consecutive_empty_runs + 1"
+            )
+            .param("url", source_url)
+            .param("now", memgraph_datetime(&now));
+            self.client.graph.run(q).await?;
+        }
+        Ok(())
+    }
+
+    /// Deactivate sources that have had too many consecutive empty runs.
+    pub async fn deactivate_dead_sources(&self, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {active: true})
+             WHERE s.consecutive_empty_runs >= $max
+               AND s.discovery_method <> 'curated'
+             SET s.active = false
+             RETURN count(s) AS deactivated"
+        )
+        .param("max", max_empty_runs as i64);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Check if a URL matches a blocked source pattern.
+    pub async fn is_blocked(&self, url: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (b:BlockedSource)
+             WHERE $url CONTAINS b.url_pattern OR b.url_pattern = $url
+             RETURN b LIMIT 1"
+        )
+        .param("url", url);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        Ok(stream.next().await?.is_some())
+    }
+
+    /// Get source-level stats for reporting.
+    pub async fn get_source_stats(&self, city: &str) -> Result<SourceStats, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city})
+             RETURN count(s) AS total,
+                    count(CASE WHEN s.active THEN 1 END) AS active,
+                    count(CASE WHEN s.discovery_method = 'curated' THEN 1 END) AS curated,
+                    count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered"
+        )
+        .param("city", city);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(SourceStats {
+                total: row.get::<i64>("total").unwrap_or(0) as u32,
+                active: row.get::<i64>("active").unwrap_or(0) as u32,
+                curated: row.get::<i64>("curated").unwrap_or(0) as u32,
+                discovered: row.get::<i64>("discovered").unwrap_or(0) as u32,
+            })
+        } else {
+            Ok(SourceStats::default())
+        }
+    }
+
+    /// Get the snapshot org count from 7 days ago for velocity calculation.
+    /// Velocity is driven by org diversity growth — a flood from one source doesn't move the needle.
+    pub async fn get_snapshot_org_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
+        let q = query(
+            "MATCH (cs:ClusterSnapshot {story_id: $story_id})
+             WHERE datetime(cs.run_at) >= datetime() - duration('P8D')
+               AND datetime(cs.run_at) <= datetime() - duration('P6D')
+             RETURN cs.org_count AS cnt
+             ORDER BY cs.run_at ASC
+             LIMIT 1"
+        )
+        .param("story_id", story_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            return Ok(Some(cnt as u32));
+        }
+
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -965,6 +1188,14 @@ pub struct ReapStats {
     pub events: u64,
     pub asks: u64,
     pub stale: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct SourceStats {
+    pub total: u32,
+    pub active: u32,
+    pub curated: u32,
+    pub discovered: u32,
 }
 
 #[derive(Debug)]

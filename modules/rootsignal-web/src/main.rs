@@ -181,6 +181,187 @@ async fn api_nodes_near(
     }
 }
 
+// --- Stories & Signals API ---
+
+#[derive(Deserialize)]
+struct StoriesQuery {
+    limit: Option<u32>,
+    status: Option<String>,
+}
+
+async fn api_stories(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<StoriesQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(20).min(100);
+    match state
+        .reader
+        .top_stories_by_energy(limit, params.status.as_deref())
+        .await
+    {
+        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load stories");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_story_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.get_story_with_signals(uuid).await {
+        Ok(Some((story, signals))) => {
+            let signal_views: Vec<serde_json::Value> = signals
+                .iter()
+                .filter_map(|n| {
+                    let meta = n.meta()?;
+                    Some(serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "title": meta.title,
+                        "summary": meta.summary,
+                        "node_type": format!("{}", n.node_type()),
+                        "confidence": meta.confidence,
+                        "source_url": meta.source_url,
+                    }))
+                })
+                .collect();
+            Json(serde_json::json!({
+                "story": story,
+                "signals": signal_views,
+            }))
+            .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load story detail");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_story_signals(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.get_story_signals(uuid).await {
+        Ok(signals) => {
+            let geojson = nodes_to_geojson(&signals);
+            Json(geojson).into_response()
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load story signals");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SignalsQuery {
+    limit: Option<u32>,
+    types: Option<String>,
+}
+
+async fn api_signals(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SignalsQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(50).min(200);
+    let node_types: Option<Vec<NodeType>> = params.types.as_ref().map(|t| {
+        t.split(',')
+            .filter_map(|s| match s.trim() {
+                "Event" | "event" => Some(NodeType::Event),
+                "Give" | "give" => Some(NodeType::Give),
+                "Ask" | "ask" => Some(NodeType::Ask),
+                "Notice" | "notice" => Some(NodeType::Notice),
+                "Tension" | "tension" => Some(NodeType::Tension),
+                _ => None,
+            })
+            .collect()
+    });
+
+    match state
+        .reader
+        .list_recent(limit, node_types.as_deref())
+        .await
+    {
+        Ok(nodes) => {
+            let geojson = nodes_to_geojson(&nodes);
+            Json(geojson).into_response()
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load signals");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_signal_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.get_node_detail(uuid).await {
+        Ok(Some((node, evidence))) => {
+            let meta = node.meta();
+            let ev_views: Vec<serde_json::Value> = evidence
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "source_url": e.source_url,
+                        "retrieved_at": e.retrieved_at.to_rfc3339(),
+                        "content_hash": e.content_hash,
+                    })
+                })
+                .collect();
+
+            let action_url = match &node {
+                Node::Event(e) => Some(e.action_url.clone()),
+                Node::Give(g) => Some(g.action_url.clone()),
+                Node::Ask(a) => a.action_url.clone(),
+                _ => None,
+            };
+
+            Json(serde_json::json!({
+                "signal": {
+                    "id": meta.map(|m| m.id.to_string()),
+                    "title": meta.map(|m| &m.title),
+                    "summary": meta.map(|m| &m.summary),
+                    "node_type": format!("{}", node.node_type()),
+                    "confidence": meta.map(|m| m.confidence),
+                    "corroboration_count": meta.map(|m| m.corroboration_count),
+                    "source_url": meta.map(|m| &m.source_url),
+                    "action_url": action_url,
+                    "audience_roles": meta.map(|m| m.audience_roles.iter().map(|r| format!("{r}")).collect::<Vec<_>>()),
+                    "location": meta.and_then(|m| m.location).map(|l| serde_json::json!({"lat": l.lat, "lng": l.lng})),
+                },
+                "evidence": ev_views,
+            }))
+            .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load signal detail");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 async fn quality_dashboard(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,

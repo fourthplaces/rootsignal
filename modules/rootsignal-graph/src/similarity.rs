@@ -1,5 +1,5 @@
 use neo4rs::query;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::GraphClient;
 
@@ -16,11 +16,11 @@ pub struct SimilarityBuilder {
     client: GraphClient,
 }
 
-/// A signal with its embedding, fetched from the graph.
+/// A signal with its embedding and confidence, fetched from the graph.
 struct SignalEmbedding {
     id: String,
-    label: String,
     embedding: Vec<f64>,
+    confidence: f64,
 }
 
 impl SimilarityBuilder {
@@ -42,17 +42,21 @@ impl SimilarityBuilder {
             return Ok(0);
         }
 
-        // Compute pairwise cosine similarity and collect edges above threshold
+        // Compute pairwise cosine similarity, weighted by confidence.
+        // Weight = cosine_sim * geometric_mean(conf_a, conf_b)
+        // Low-confidence signals form weaker edges, resisting garbage clustering.
         let mut edges: Vec<(String, String, f64)> = Vec::new();
 
         for i in 0..count {
             for j in (i + 1)..count {
                 let sim = cosine_similarity(&signals[i].embedding, &signals[j].embedding);
                 if sim >= SIMILARITY_THRESHOLD {
+                    let conf_weight = (signals[i].confidence * signals[j].confidence).sqrt();
+                    let weight = sim * conf_weight;
                     edges.push((
                         signals[i].id.clone(),
                         signals[j].id.clone(),
-                        sim,
+                        weight,
                     ));
                 }
             }
@@ -81,18 +85,20 @@ impl SimilarityBuilder {
 
         for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
             let q = query(&format!(
-                "MATCH (n:{label}) WHERE n.embedding IS NOT NULL RETURN n.id AS id, n.embedding AS embedding"
+                "MATCH (n:{label}) WHERE n.embedding IS NOT NULL \
+                 RETURN n.id AS id, n.embedding AS embedding, n.confidence AS confidence"
             ));
 
             let mut stream = self.client.graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id: String = row.get("id").unwrap_or_default();
                 let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
+                let confidence: f64 = row.get("confidence").unwrap_or(0.5);
                 if !id.is_empty() && !embedding.is_empty() {
                     signals.push(SignalEmbedding {
                         id,
-                        label: label.to_string(),
                         embedding,
+                        confidence,
                     });
                 }
             }

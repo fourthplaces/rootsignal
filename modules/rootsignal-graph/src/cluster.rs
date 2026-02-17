@@ -5,7 +5,7 @@ use neo4rs::query;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ClusterSnapshot, NodeType, SensitivityLevel, StoryNode};
+use rootsignal_common::{ClusterSnapshot, StoryNode};
 
 use crate::{GraphClient, SimilarityBuilder};
 use crate::writer::GraphWriter;
@@ -28,7 +28,7 @@ pub struct Clusterer {
     client: GraphClient,
     writer: GraphWriter,
     anthropic_api_key: String,
-    org_mappings: Vec<crate::OrgMappingRef>,
+    org_mappings: Vec<OrgMappingRef>,
 }
 
 /// Lightweight org mapping reference for clustering.
@@ -353,7 +353,10 @@ Respond in this exact JSON format:
         use ai_client::claude::Claude;
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
-        let response = claude.message("claude-haiku-4-5-20251001", "You are a concise headline writer for a civic signal system. Respond only with valid JSON.", prompt).await?;
+        let response = claude.chat_completion(
+            "You are a concise headline writer for a civic signal system. Respond only with valid JSON.",
+            prompt,
+        ).await?;
 
         // Parse JSON response
         let parsed: serde_json::Value = serde_json::from_str(&response)?;
@@ -379,7 +382,8 @@ Respond in this exact JSON format:
 
         for mapping in &self.org_mappings {
             for d in &mapping.domains {
-                if domain.contains(d.as_str()) {
+                let d: &str = d.as_str();
+                if domain.contains(d) {
                     return mapping.org_id.clone();
                 }
             }
@@ -389,7 +393,8 @@ Respond in this exact JSON format:
                 }
             }
             for fb in &mapping.facebook {
-                if url.contains(fb.as_str()) {
+                let fb: &str = fb.as_str();
+                if url.contains(fb) {
                     return mapping.org_id.clone();
                 }
             }
@@ -491,45 +496,50 @@ Respond in this exact JSON format:
     async fn compute_velocity_and_energy(&self) -> Result<(), neo4rs::Error> {
         let now = Utc::now();
 
-        // Get all stories with current signal counts
+        // Get all stories with current signal counts and org counts
         let q = query(
             "MATCH (s:Story)
              OPTIONAL MATCH (s)-[:CONTAINS]->(n)
-             RETURN s.id AS id, s.source_count AS source_count, s.last_updated AS last_updated,
-                    count(n) AS signal_count"
+             RETURN s.id AS id, s.source_count AS source_count,
+                    s.org_count AS org_count, count(n) AS signal_count"
         );
 
-        let mut stories: Vec<(Uuid, u32, u32)> = Vec::new();
+        let mut stories: Vec<(Uuid, u32, u32, u32)> = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let source_count: i64 = row.get("source_count").unwrap_or(0);
+            let org_count: i64 = row.get("org_count").unwrap_or(0);
             let signal_count: i64 = row.get("signal_count").unwrap_or(0);
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                stories.push((id, signal_count as u32, source_count as u32));
+                stories.push((id, signal_count as u32, source_count as u32, org_count as u32));
             }
         }
 
-        for (story_id, current_count, source_count) in stories {
-            // Create snapshot
+        for (story_id, current_count, source_count, org_count) in stories {
+            // Create snapshot with org_count for velocity tracking
             let snapshot = ClusterSnapshot {
                 id: Uuid::new_v4(),
                 story_id,
                 signal_count: current_count,
+                org_count,
                 run_at: now,
             };
             self.writer.create_cluster_snapshot(&snapshot).await?;
 
-            // Get count from 7 days ago
-            let count_7d_ago = self.writer.get_snapshot_count_7d_ago(story_id).await?;
-            let velocity = match count_7d_ago {
-                Some(old_count) => (current_count as f64 - old_count as f64) / 7.0,
-                None => current_count as f64 / 7.0, // First run, assume all new
+            // Velocity driven by org diversity growth, not raw signal count.
+            // A flood from one source doesn't move the needle.
+            let org_count_7d_ago = self.writer.get_snapshot_org_count_7d_ago(story_id).await?;
+            let velocity = match org_count_7d_ago {
+                Some(old_orgs) => (org_count as f64 - old_orgs as f64) / 7.0,
+                None => org_count as f64 / 7.0, // First run, assume all new
             };
 
             // Recency score: 1.0 today -> 0.0 at 14 days
-            let last_updated_str = self.get_story_last_updated(story_id).await?;
-            let recency_score = 1.0_f64; // Default for just-updated stories
+            let recency_score = {
+                let last_updated_str = self.get_story_last_updated(story_id).await?;
+                parse_recency(&last_updated_str, &now)
+            };
 
             // Source diversity: min(unique_source_urls / 5.0, 1.0)
             let source_diversity = (source_count as f64 / 5.0).min(1.0);
@@ -594,6 +604,22 @@ impl std::fmt::Display for ClusterStats {
         writeln!(f, "Status:           {}", self.status)?;
         Ok(())
     }
+}
+
+/// Parse a datetime string and compute recency score: 1.0 today → 0.0 at 14+ days.
+fn parse_recency(datetime_str: &str, now: &chrono::DateTime<Utc>) -> f64 {
+    use chrono::NaiveDateTime;
+
+    let dt: chrono::DateTime<Utc> = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(datetime_str) {
+        dt.with_timezone(&Utc)
+    } else if let Ok(naive) = NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S%.f") {
+        naive.and_utc()
+    } else {
+        return 0.0_f64; // Can't parse → treat as stale
+    };
+
+    let age_days: f64 = (*now - dt).num_hours() as f64 / 24.0;
+    (1.0_f64 - age_days / 14.0_f64).clamp(0.0_f64, 1.0_f64)
 }
 
 fn extract_domain(url: &str) -> String {
