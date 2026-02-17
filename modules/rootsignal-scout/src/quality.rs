@@ -30,10 +30,8 @@ pub fn score(node: &Node) -> ExtractionQuality {
 
     let (has_action_url, has_timing) = match node {
         Node::Event(e) => {
-            // Extractor defaults: missing URL → source_url, missing time → now.
-            // Detect these defaults so quality score reflects actual extraction quality.
             let has_real_url = !e.action_url.is_empty() && e.action_url != meta.source_url;
-            let has_real_timing = (e.starts_at - meta.extracted_at).num_seconds().abs() > 60;
+            let has_real_timing = e.starts_at.is_some();
             (has_real_url, has_real_timing)
         }
         Node::Give(g) => (!g.action_url.is_empty(), g.is_ongoing),
@@ -83,5 +81,102 @@ pub fn score(node: &Node) -> ExtractionQuality {
         geo_accuracy,
         completeness,
         confidence: confidence.clamp(0.0, 1.0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use rootsignal_common::{
+        AudienceRole, EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel,
+    };
+    use uuid::Uuid;
+
+    fn test_meta() -> NodeMeta {
+        NodeMeta {
+            id: Uuid::new_v4(),
+            title: "Community Dinner".to_string(),
+            summary: "Free dinner at the park".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.0,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: Some(GeoPoint {
+                lat: 44.97,
+                lng: -93.26,
+                precision: GeoPrecision::Exact,
+            }),
+            location_name: Some("Powderhorn Park".to_string()),
+            source_url: "https://example.com/events".to_string(),
+            extracted_at: Utc::now(),
+            last_confirmed_active: Utc::now(),
+            audience_roles: vec![AudienceRole::Neighbor],
+            mentioned_actors: vec![],
+        }
+    }
+
+    #[test]
+    fn event_with_real_date_scores_higher_than_without() {
+        let meta = test_meta();
+
+        let with_date = Node::Event(EventNode {
+            meta: meta.clone(),
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com/rsvp".to_string(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let without_date = Node::Event(EventNode {
+            meta: meta.clone(),
+            starts_at: None,
+            ends_at: None,
+            action_url: "https://example.com/rsvp".to_string(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let q_with = score(&with_date);
+        let q_without = score(&without_date);
+
+        assert!(q_with.has_timing);
+        assert!(!q_without.has_timing);
+        assert!(q_with.completeness > q_without.completeness);
+        assert!(q_with.confidence > q_without.confidence);
+    }
+
+    #[test]
+    fn event_with_date_is_actionable() {
+        let meta = test_meta();
+        let event = Node::Event(EventNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com/rsvp".to_string(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let q = score(&event);
+        assert!(q.actionable);
+    }
+
+    #[test]
+    fn event_without_date_or_url_is_not_actionable() {
+        let mut meta = test_meta();
+        meta.source_url = "https://example.com".to_string();
+        let event = Node::Event(EventNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: "https://example.com".to_string(), // same as source_url
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let q = score(&event);
+        assert!(!q.actionable);
     }
 }

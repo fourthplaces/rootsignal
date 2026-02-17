@@ -1044,6 +1044,8 @@ impl Scout {
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
                     };
                     self.writer.create_evidence(&evidence, *existing_id).await?;
                     stats.signals_deduplicated += 1;
@@ -1119,6 +1121,8 @@ impl Scout {
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
                     };
                     self.writer.create_evidence(&evidence, cached_id).await?;
 
@@ -1150,6 +1154,7 @@ impl Scout {
                             retrieved_at: now,
                             content_hash: content_hash_str.clone(),
                             snippet: node.meta().map(|m| m.summary.clone()),
+                            relevance: None,
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1179,6 +1184,8 @@ impl Scout {
                 retrieved_at: now,
                 content_hash: content_hash_str.clone(),
                 snippet: node.meta().map(|m| m.summary.clone()),
+                relevance: None,
+                evidence_confidence: None,
             };
             self.writer.create_evidence(&evidence, node_id).await?;
 

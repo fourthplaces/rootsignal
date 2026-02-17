@@ -140,6 +140,56 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Story indexes created");
 
+    // --- Story synthesis indexes ---
+    let synthesis_indexes = [
+        "CREATE INDEX ON :Story(arc)",
+        "CREATE INDEX ON :Story(category)",
+    ];
+
+    for idx in &synthesis_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Story synthesis indexes created");
+
+    // --- Actor constraints and indexes ---
+    let actor_constraints = [
+        "CREATE CONSTRAINT ON (a:Actor) ASSERT a.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (a:Actor) ASSERT a.entity_id IS UNIQUE",
+    ];
+
+    for c in &actor_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+
+    let actor_indexes = [
+        "CREATE INDEX ON :Actor(name)",
+        "CREATE INDEX ON :Actor(city)",
+    ];
+
+    for idx in &actor_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Actor constraints and indexes created");
+
+    // --- Edition constraints and indexes ---
+    let edition_constraints = [
+        "CREATE CONSTRAINT ON (e:Edition) ASSERT e.id IS UNIQUE",
+    ];
+
+    for c in &edition_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+
+    let edition_indexes = [
+        "CREATE INDEX ON :Edition(city)",
+        "CREATE INDEX ON :Edition(period)",
+    ];
+
+    for idx in &edition_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Edition constraints and indexes created");
+
     // --- Edge index for SIMILAR_TO weight ---
     // Memgraph supports edge indexes on properties
     let edge_indexes = [

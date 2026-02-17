@@ -90,7 +90,7 @@ impl Config {
                 .expect("WEB_PORT must be a number"),
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
-            city: String::new(),
+            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
         }
     }
 }

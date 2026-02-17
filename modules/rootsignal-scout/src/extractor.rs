@@ -61,6 +61,8 @@ pub struct ExtractedSignal {
     /// Best-guess date when this content was published or last updated (ISO 8601).
     /// Used for staleness filtering — signals older than 1 year are dropped.
     pub content_date: Option<String>,
+    /// Organizations, groups, or individuals mentioned in the signal
+    pub mentioned_actors: Option<Vec<String>>,
 }
 
 /// The full extraction response from the LLM.
@@ -183,6 +185,8 @@ impl Extractor {
                 })
                 .collect();
 
+            let mentioned_actors = signal.mentioned_actors.unwrap_or_default();
+
             let meta = NodeMeta {
                 id: Uuid::new_v4(),
                 title: signal.title.clone(),
@@ -197,6 +201,7 @@ impl Extractor {
                 extracted_at: now,
                 last_confirmed_active: now,
                 audience_roles,
+                mentioned_actors,
             };
 
             let node = match signal.signal_type.as_str() {
@@ -205,8 +210,7 @@ impl Extractor {
                         .starts_at
                         .as_deref()
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or(now);
+                        .map(|dt| dt.with_timezone(&Utc));
                     let ends_at = signal
                         .ends_at
                         .as_deref()
@@ -297,6 +301,7 @@ impl Extractor {
 }
 
 fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
+    let today = Utc::now().format("%Y-%m-%d").to_string();
     format!(
         r#"You are a civic signal extractor for {city_name}.
 
@@ -336,7 +341,9 @@ Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant
 - geo_precision: "exact" for specific addresses/buildings, "neighborhood" for areas
 
 ## Timing
-- ISO 8601 datetime strings for start/end times
+- ISO 8601 datetime strings for start/end times (e.g. "2026-03-15T14:00:00Z")
+- Today's date is {today}. Resolve relative dates: "next Saturday" → the actual date, "March 15" → "2026-03-15T00:00:00Z"
+- If the page has NO parseable date for an event, omit starts_at entirely (null). Do NOT guess.
 - is_ongoing: true for ongoing services
 - is_recurring: true for recurring events
 
@@ -349,6 +356,11 @@ Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant
 ## Action URLs
 - Include the most relevant action URL (registration, donation, event page)
 - If none exists, use the source page URL
+
+## Mentioned Actors
+Extract the names of organizations, groups, government bodies, or notable individuals mentioned in each signal. These become Actor nodes in the graph for "who's involved" queries.
+- Include: nonprofits, city departments, coalitions, community groups, churches, businesses offering help
+- Exclude: generic references like "the city" or "local officials" unless a specific body is named
 
 ## Contact Information
 Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs)."#

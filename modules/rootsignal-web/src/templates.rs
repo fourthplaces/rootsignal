@@ -133,18 +133,39 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
     };
 
     let evidence_html = if !evidence.is_empty() {
-        let links: String = evidence
+        let items: String = evidence
             .iter()
             .map(|ev| {
+                let relevance_html = match &ev.relevance {
+                    Some(r) => {
+                        let color = match r.as_str() {
+                            "contradicting" => "#c62828",
+                            "direct" => "#2e7d32",
+                            _ => "#795548",
+                        };
+                        format!(
+                            r#"<span style="font-size:11px;font-weight:600;color:{color};margin-left:6px;">{}</span>"#,
+                            html_escape(r)
+                        )
+                    }
+                    None => String::new(),
+                };
+                let snippet_html = match &ev.snippet {
+                    Some(s) => format!(
+                        r#"<p style="font-size:12px;color:#666;margin:2px 0 8px 0;line-height:1.4;">{}</p>"#,
+                        html_escape(s)
+                    ),
+                    None => String::new(),
+                };
                 format!(
-                    r#"<a href="{}" target="_blank" rel="noopener">{}</a>"#,
-                    html_escape(&ev.source_url),
-                    html_escape(&ev.source_url)
+                    r#"<a href="{url}" target="_blank" rel="noopener">{url}</a>{relevance_html}
+                    {snippet_html}"#,
+                    url = html_escape(&ev.source_url),
                 )
             })
             .collect::<Vec<_>>()
             .join("");
-        format!(r#"<div class="evidence-list"><h4>Sources</h4>{links}</div>"#)
+        format!(r#"<div class="evidence-list"><h4>Sources</h4>{items}</div>"#)
     } else {
         String::new()
     };

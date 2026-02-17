@@ -4,9 +4,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, ClusterSnapshot, DiscoveryMethod, EvidenceNode, EventNode, GiveNode, Node, NodeMeta,
-    NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceType, StoryNode, TensionNode,
-    ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    ActorNode, AskNode, ClusterSnapshot, DiscoveryMethod, EditionNode, EvidenceNode,
+    EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode,
+    SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
+    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -60,7 +61,7 @@ impl GraphWriter {
                 last_confirmed_active: datetime($last_confirmed_active),
                 audience_roles: $audience_roles,
                 location_name: $location_name,
-                starts_at: datetime($starts_at),
+                starts_at: $starts_at,
                 ends_at: $ends_at,
                 action_url: $action_url,
                 organizer: $organizer,
@@ -85,7 +86,12 @@ impl GraphWriter {
         )
         .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
-        .param("starts_at", memgraph_datetime(&n.starts_at))
+        .param(
+            "starts_at",
+            n.starts_at
+                .map(|dt| memgraph_datetime(&dt))
+                .unwrap_or_default(),
+        )
         .param(
             "ends_at",
             n.ends_at
@@ -355,7 +361,9 @@ impl GraphWriter {
                 source_url: $source_url,
                 retrieved_at: datetime($retrieved_at),
                 content_hash: $content_hash,
-                snippet: $snippet
+                snippet: $snippet,
+                relevance: $relevance,
+                evidence_confidence: $evidence_confidence
             })
             CREATE (n)-[:SOURCED_FROM]->(ev)",
         )
@@ -364,6 +372,8 @@ impl GraphWriter {
         .param("retrieved_at", memgraph_datetime(&evidence.retrieved_at))
         .param("content_hash", evidence.content_hash.as_str())
         .param("snippet", evidence.snippet.clone().unwrap_or_default())
+        .param("relevance", evidence.relevance.clone().unwrap_or_default())
+        .param("evidence_confidence", evidence.evidence_confidence.unwrap_or(0.0) as f64)
         .param("signal_id", signal_node_id.to_string());
 
         self.client.graph.run(q).await?;
@@ -595,10 +605,11 @@ impl GraphWriter {
     pub async fn reap_expired(&self) -> Result<ReapStats, neo4rs::Error> {
         let mut stats = ReapStats::default();
 
-        // 1. Past non-recurring events
+        // 1. Past non-recurring events (only those with a known start date)
         let q = query(&format!(
             "MATCH (n:Event)
              WHERE n.is_recurring = false
+               AND n.starts_at IS NOT NULL AND n.starts_at <> ''
                AND CASE
                    WHEN n.ends_at IS NOT NULL AND n.ends_at <> ''
                    THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
@@ -922,6 +933,38 @@ impl GraphWriter {
         Ok(results)
     }
 
+    /// Update story synthesis fields (lede, narrative, arc, category, action_guidance).
+    pub async fn update_story_synthesis(
+        &self,
+        story_id: Uuid,
+        headline: &str,
+        lede: &str,
+        narrative: &str,
+        arc: &str,
+        category: &str,
+        action_guidance_json: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story {id: $id})
+             SET s.headline = $headline,
+                 s.lede = $lede,
+                 s.narrative = $narrative,
+                 s.arc = $arc,
+                 s.category = $category,
+                 s.action_guidance = $action_guidance"
+        )
+        .param("id", story_id.to_string())
+        .param("headline", headline)
+        .param("lede", lede)
+        .param("narrative", narrative)
+        .param("arc", arc)
+        .param("category", category)
+        .param("action_guidance", action_guidance_json);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
     /// Archive (delete) a story and its relationships.
     pub async fn archive_story(&self, story_id: Uuid) -> Result<(), neo4rs::Error> {
         let q = query(
@@ -1153,6 +1196,265 @@ impl GraphWriter {
         } else {
             Ok(SourceStats::default())
         }
+    }
+
+    // --- Actor operations ---
+
+    /// Create or update an Actor node. MERGE on entity_id for idempotency.
+    pub async fn upsert_actor(&self, actor: &ActorNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (a:Actor {entity_id: $entity_id})
+             ON CREATE SET
+                a.id = $id,
+                a.name = $name,
+                a.actor_type = $actor_type,
+                a.domains = $domains,
+                a.social_urls = $social_urls,
+                a.city = $city,
+                a.description = $description,
+                a.signal_count = $signal_count,
+                a.first_seen = datetime($first_seen),
+                a.last_active = datetime($last_active),
+                a.typical_roles = $typical_roles
+             ON MATCH SET
+                a.name = $name,
+                a.last_active = datetime($last_active),
+                a.signal_count = a.signal_count + 1"
+        )
+        .param("id", actor.id.to_string())
+        .param("entity_id", actor.entity_id.as_str())
+        .param("name", actor.name.as_str())
+        .param("actor_type", actor.actor_type.to_string())
+        .param("domains", actor.domains.clone())
+        .param("social_urls", actor.social_urls.clone())
+        .param("city", actor.city.as_str())
+        .param("description", actor.description.as_str())
+        .param("signal_count", actor.signal_count as i64)
+        .param("first_seen", memgraph_datetime(&actor.first_seen))
+        .param("last_active", memgraph_datetime(&actor.last_active))
+        .param("typical_roles", actor.typical_roles.clone());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Link an actor to a signal with a role.
+    pub async fn link_actor_to_signal(
+        &self,
+        actor_id: Uuid,
+        signal_id: Uuid,
+        role: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $actor_id})
+             MATCH (n) WHERE n.id = $signal_id AND (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+             MERGE (a)-[:ACTED_IN {role: $role}]->(n)"
+        )
+        .param("actor_id", actor_id.to_string())
+        .param("signal_id", signal_id.to_string())
+        .param("role", role);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Find an actor by name (case-insensitive).
+    pub async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor) WHERE toLower(a.name) = toLower($name)
+             RETURN a.id AS id LIMIT 1"
+        )
+        .param("name", name);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find an actor by entity_id.
+    pub async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {entity_id: $entity_id})
+             RETURN a.id AS id LIMIT 1"
+        )
+        .param("entity_id", entity_id);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find an actor by domain match.
+    pub async fn find_actor_by_domain(&self, domain: &str) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor)
+             WHERE any(d IN a.domains WHERE $domain CONTAINS d)
+             RETURN a.id AS id LIMIT 1"
+        )
+        .param("domain", domain);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Update actor signal count and last_active.
+    pub async fn update_actor_stats(
+        &self,
+        actor_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $id})
+             SET a.signal_count = a.signal_count + 1,
+                 a.last_active = datetime($now)"
+        )
+        .param("id", actor_id.to_string())
+        .param("now", memgraph_datetime(&now));
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    // --- Response mapping operations ---
+
+    /// Create a RESPONDS_TO edge between a Give/Event signal and a Tension.
+    pub async fn create_response_edge(
+        &self,
+        responder_id: Uuid,
+        tension_id: Uuid,
+        match_strength: f64,
+        explanation: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event)
+             MATCH (t:Tension {id: $tension_id})
+             MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
+        )
+        .param("resp_id", responder_id.to_string())
+        .param("tension_id", tension_id.to_string())
+        .param("strength", match_strength)
+        .param("explanation", explanation);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    // --- Edition operations ---
+
+    /// Create an Edition node.
+    pub async fn create_edition(&self, edition: &EditionNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "CREATE (e:Edition {
+                id: $id,
+                city: $city,
+                period: $period,
+                period_start: datetime($period_start),
+                period_end: datetime($period_end),
+                generated_at: datetime($generated_at),
+                story_count: $story_count,
+                new_signal_count: $new_signal_count,
+                editorial_summary: $editorial_summary
+            })"
+        )
+        .param("id", edition.id.to_string())
+        .param("city", edition.city.as_str())
+        .param("period", edition.period.as_str())
+        .param("period_start", memgraph_datetime(&edition.period_start))
+        .param("period_end", memgraph_datetime(&edition.period_end))
+        .param("generated_at", memgraph_datetime(&edition.generated_at))
+        .param("story_count", edition.story_count as i64)
+        .param("new_signal_count", edition.new_signal_count as i64)
+        .param("editorial_summary", edition.editorial_summary.as_str());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Link an edition to a featured story.
+    pub async fn link_edition_to_story(
+        &self,
+        edition_id: Uuid,
+        story_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (e:Edition {id: $edition_id})
+             MATCH (s:Story {id: $story_id})
+             MERGE (e)-[:FEATURES]->(s)"
+        )
+        .param("edition_id", edition_id.to_string())
+        .param("story_id", story_id.to_string());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Get active tensions for response mapping.
+    pub async fn get_active_tensions(&self) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
+             RETURN t.id AS id, t.embedding AS embedding"
+        );
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
+                if !embedding.is_empty() {
+                    results.push((id, embedding));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get stories active in a time period (for edition generation).
+    pub async fn get_stories_in_period(
+        &self,
+        start: &DateTime<Utc>,
+        end: &DateTime<Utc>,
+    ) -> Result<Vec<(Uuid, String, String, f64)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE datetime(s.last_updated) >= datetime($start)
+               AND datetime(s.last_updated) <= datetime($end)
+             RETURN s.id AS id, s.headline AS headline,
+                    s.category AS category, s.energy AS energy
+             ORDER BY s.energy DESC"
+        )
+        .param("start", memgraph_datetime(start))
+        .param("end", memgraph_datetime(end));
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let headline: String = row.get("headline").unwrap_or_default();
+                let category: String = row.get("category").unwrap_or_default();
+                let energy: f64 = row.get("energy").unwrap_or(0.0);
+                results.push((id, headline, category, energy));
+            }
+        }
+        Ok(results)
     }
 
     // --- Investigation operations ---

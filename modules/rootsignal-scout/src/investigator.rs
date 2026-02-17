@@ -251,12 +251,15 @@ impl<'a> Investigator<'a> {
             }
 
             let content_hash = format!("{:x}", content_hash(&item.source_url));
+            let relevance = item.relevance;
             let evidence = EvidenceNode {
                 id: Uuid::new_v4(),
                 source_url: item.source_url.clone(),
                 retrieved_at: now,
                 content_hash,
                 snippet: Some(item.snippet),
+                relevance: Some(relevance.clone()),
+                evidence_confidence: Some(item.confidence as f32),
             };
 
             match self.writer.create_evidence(&evidence, target.signal_id).await {
@@ -265,7 +268,7 @@ impl<'a> Investigator<'a> {
                     info!(
                         signal_id = %target.signal_id,
                         evidence_url = item.source_url.as_str(),
-                        relevance = item.relevance.as_str(),
+                        relevance = relevance.as_str(),
                         confidence = item.confidence,
                         "Evidence created"
                     );

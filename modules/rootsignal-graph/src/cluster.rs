@@ -8,6 +8,7 @@ use uuid::Uuid;
 use rootsignal_common::{ClusterSnapshot, StoryNode};
 
 use crate::{GraphClient, SimilarityBuilder};
+use crate::synthesizer::{Synthesizer, SynthesisInput};
 use crate::writer::GraphWriter;
 
 /// Minimum number of connected signals (with at least one SIMILAR_TO edge)
@@ -203,6 +204,11 @@ impl Clusterer {
                     source_domains,
                     corroboration_depth,
                     status: status.to_string(),
+                    arc: None,
+                    category: None,
+                    lede: None,
+                    narrative: None,
+                    action_guidance: None,
                 };
 
                 // Partial update (preserve headline/summary/first_seen)
@@ -242,6 +248,11 @@ impl Clusterer {
                     source_domains,
                     corroboration_depth,
                     status: status.to_string(),
+                    arc: None,
+                    category: None,
+                    lede: None,
+                    narrative: None,
+                    action_guidance: None,
                 };
 
                 self.writer.create_story(&story).await?;
@@ -255,7 +266,10 @@ impl Clusterer {
             }
         }
 
-        // 5. Create snapshots and compute velocity/energy for all active stories
+        // 5. Run story synthesis on created/updated stories (non-fatal)
+        self.synthesize_stories().await;
+
+        // 6. Create snapshots and compute velocity/energy for all active stories
         self.compute_velocity_and_energy().await?;
 
         stats.status = "complete".to_string();
@@ -565,6 +579,126 @@ Respond in this exact JSON format:
         }
 
         Ok(())
+    }
+
+    /// Run synthesis on all stories that don't yet have a lede.
+    /// Non-fatal: logs errors but doesn't fail the pipeline.
+    async fn synthesize_stories(&self) {
+        let synthesizer = Synthesizer::new(&self.anthropic_api_key);
+
+        // Find stories without synthesis
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.lede IS NULL OR s.lede = ''
+             RETURN s.id AS id, s.headline AS headline, s.velocity AS velocity,
+                    s.first_seen AS first_seen"
+        );
+
+        let stories_to_synth: Vec<(Uuid, String, f64, String)> = match self.client.graph.execute(q).await {
+            Ok(mut stream) => {
+                let mut results = Vec::new();
+                while let Ok(Some(row)) = stream.next().await {
+                    let id_str: String = row.get("id").unwrap_or_default();
+                    if let Ok(id) = Uuid::parse_str(&id_str) {
+                        let headline: String = row.get("headline").unwrap_or_default();
+                        let velocity: f64 = row.get("velocity").unwrap_or(0.0);
+                        let first_seen: String = row.get("first_seen").unwrap_or_default();
+                        results.push((id, headline, velocity, first_seen));
+                    }
+                }
+                results
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to find stories for synthesis");
+                return;
+            }
+        };
+
+        if stories_to_synth.is_empty() {
+            return;
+        }
+
+        info!(count = stories_to_synth.len(), "Running story synthesis");
+
+        for (story_id, headline, velocity, first_seen_str) in &stories_to_synth {
+            // Get constituent signals for this story
+            let signal_ids = match self.get_story_signal_ids(*story_id).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    warn!(story_id = %story_id, error = %e, "Failed to get story signals for synthesis");
+                    continue;
+                }
+            };
+
+            let signal_meta = match self.fetch_signal_metadata(&signal_ids).await {
+                Ok(meta) => meta,
+                Err(e) => {
+                    warn!(story_id = %story_id, error = %e, "Failed to fetch signal metadata for synthesis");
+                    continue;
+                }
+            };
+
+            let inputs: Vec<SynthesisInput> = signal_meta
+                .iter()
+                .map(|s| SynthesisInput {
+                    title: s.title.clone(),
+                    summary: s.summary.clone(),
+                    node_type: s.node_type.clone(),
+                    source_url: s.source_url.clone(),
+                    audience_roles: s.audience_roles.clone(),
+                    action_url: None,
+                })
+                .collect();
+
+            let age_days = {
+                use chrono::NaiveDateTime;
+                let dt = if let Ok(naive) = NaiveDateTime::parse_from_str(first_seen_str, "%Y-%m-%dT%H:%M:%S%.f") {
+                    naive.and_utc()
+                } else {
+                    Utc::now()
+                };
+                (Utc::now() - dt).num_hours() as f64 / 24.0
+            };
+
+            match synthesizer.synthesize(headline, &inputs, *velocity, age_days).await {
+                Ok(synthesis) => {
+                    let action_guidance_json = serde_json::to_string(&synthesis.action_guidance).unwrap_or_default();
+                    if let Err(e) = self.writer.update_story_synthesis(
+                        *story_id,
+                        &synthesis.headline,
+                        &synthesis.lede,
+                        &synthesis.narrative,
+                        &synthesis.arc.to_string(),
+                        &synthesis.category.to_string(),
+                        &action_guidance_json,
+                    ).await {
+                        warn!(story_id = %story_id, error = %e, "Failed to write story synthesis");
+                    }
+                }
+                Err(e) => {
+                    warn!(story_id = %story_id, error = %e, "Story synthesis LLM call failed");
+                }
+            }
+        }
+    }
+
+    /// Get signal IDs for a story.
+    async fn get_story_signal_ids(&self, story_id: Uuid) -> Result<Vec<String>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)
+             RETURN n.id AS id"
+        )
+        .param("id", story_id.to_string());
+
+        let mut ids = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            if !id.is_empty() {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
     }
 
     async fn get_story_last_updated(&self, story_id: Uuid) -> Result<String, neo4rs::Error> {

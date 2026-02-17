@@ -100,6 +100,133 @@ impl std::fmt::Display for AudienceRole {
     }
 }
 
+// --- Story Synthesis Types ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryArc {
+    Emerging,
+    Growing,
+    Stable,
+    Fading,
+}
+
+impl std::fmt::Display for StoryArc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoryArc::Emerging => write!(f, "emerging"),
+            StoryArc::Growing => write!(f, "growing"),
+            StoryArc::Stable => write!(f, "stable"),
+            StoryArc::Fading => write!(f, "fading"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryCategory {
+    Resource,
+    Gathering,
+    Crisis,
+    Governance,
+    Stewardship,
+    Community,
+}
+
+impl std::fmt::Display for StoryCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoryCategory::Resource => write!(f, "resource"),
+            StoryCategory::Gathering => write!(f, "gathering"),
+            StoryCategory::Crisis => write!(f, "crisis"),
+            StoryCategory::Governance => write!(f, "governance"),
+            StoryCategory::Stewardship => write!(f, "stewardship"),
+            StoryCategory::Community => write!(f, "community"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionGuidance {
+    pub role: AudienceRole,
+    pub guidance: String,
+    pub action_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorySynthesis {
+    pub headline: String,
+    pub lede: String,
+    pub narrative: String,
+    pub action_guidance: Vec<ActionGuidance>,
+    pub key_entities: Vec<String>,
+    pub category: StoryCategory,
+    pub arc: StoryArc,
+}
+
+// --- Actor Types ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorType {
+    Organization,
+    Individual,
+    GovernmentBody,
+    Coalition,
+}
+
+impl std::fmt::Display for ActorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActorType::Organization => write!(f, "organization"),
+            ActorType::Individual => write!(f, "individual"),
+            ActorType::GovernmentBody => write!(f, "government_body"),
+            ActorType::Coalition => write!(f, "coalition"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActorNode {
+    pub id: Uuid,
+    pub name: String,
+    pub actor_type: ActorType,
+    pub entity_id: String,
+    pub domains: Vec<String>,
+    pub social_urls: Vec<String>,
+    pub city: String,
+    pub description: String,
+    pub signal_count: u32,
+    pub first_seen: DateTime<Utc>,
+    pub last_active: DateTime<Utc>,
+    pub typical_roles: Vec<String>,
+}
+
+// --- Edition Types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditionNode {
+    pub id: Uuid,
+    pub city: String,
+    pub period: String,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub generated_at: DateTime<Utc>,
+    pub story_count: u32,
+    pub new_signal_count: u32,
+    pub editorial_summary: String,
+}
+
+// --- Response Mapping Types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleActionPlan {
+    pub role: AudienceRole,
+    pub urgent_asks: Vec<Node>,
+    pub opportunities: Vec<Node>,
+    pub active_tensions: Vec<(Node, Vec<Node>)>,
+}
+
 // --- Node Metadata (shared across all signal types) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +244,9 @@ pub struct NodeMeta {
     pub extracted_at: DateTime<Utc>,
     pub last_confirmed_active: DateTime<Utc>,
     pub audience_roles: Vec<AudienceRole>,
+    /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentioned_actors: Vec<String>,
 }
 
 // --- Signal Node Types ---
@@ -124,7 +254,7 @@ pub struct NodeMeta {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventNode {
     pub meta: NodeMeta,
-    pub starts_at: DateTime<Utc>,
+    pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
     pub action_url: String,
     pub organizer: Option<String>,
@@ -170,6 +300,8 @@ pub struct EvidenceNode {
     pub retrieved_at: DateTime<Utc>,
     pub content_hash: String,
     pub snippet: Option<String>,
+    pub relevance: Option<String>,
+    pub evidence_confidence: Option<f32>,
 }
 
 // --- Sum type ---
@@ -255,6 +387,12 @@ pub struct StoryNode {
     pub source_domains: Vec<String>,
     pub corroboration_depth: u32,
     pub status: String,  // "emerging" or "confirmed"
+    // M2: Story synthesis fields
+    pub arc: Option<String>,
+    pub category: Option<String>,
+    pub lede: Option<String>,
+    pub narrative: Option<String>,
+    pub action_guidance: Option<String>, // JSON string of Vec<ActionGuidance>
 }
 
 /// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.

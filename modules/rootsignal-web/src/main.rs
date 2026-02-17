@@ -26,6 +26,7 @@ struct AppState {
     reader: PublicGraphReader,
     admin_username: String,
     admin_password: String,
+    city: String,
 }
 
 // --- Main ---
@@ -46,6 +47,7 @@ async fn main() -> Result<()> {
         reader: PublicGraphReader::new(client),
         admin_username: config.admin_username,
         admin_password: config.admin_password,
+        city: config.city.clone(),
     });
 
     let app = Router::new()
@@ -58,8 +60,24 @@ async fn main() -> Result<()> {
         .route("/api/stories", get(api_stories))
         .route("/api/stories/{id}", get(api_story_detail))
         .route("/api/stories/{id}/signals", get(api_story_signals))
+        .route("/api/stories/{id}/actors", get(api_story_actors))
+        .route("/api/stories/category/{category}", get(api_stories_by_category))
+        .route("/api/stories/arc/{arc}", get(api_stories_by_arc))
+        .route("/api/stories/role/{role}", get(api_stories_by_role))
         .route("/api/signals", get(api_signals))
         .route("/api/signals/{id}", get(api_signal_detail))
+        // Actors API
+        .route("/api/actors", get(api_actors))
+        .route("/api/actors/{id}", get(api_actor_detail))
+        .route("/api/actors/{id}/stories", get(api_actor_stories))
+        // Action routing
+        .route("/api/actions/{role}", get(api_actions_for_role))
+        // Tension responses
+        .route("/api/tensions/{id}/responses", get(api_tension_responses))
+        // Editions API
+        .route("/api/editions", get(api_editions))
+        .route("/api/editions/latest", get(api_edition_latest))
+        .route("/api/editions/{id}", get(api_edition_detail))
         // Admin route (basic auth checked in handler)
         .route("/admin/quality", get(quality_dashboard))
         .with_state(state)
@@ -199,7 +217,30 @@ async fn api_stories(
         .top_stories_by_energy(limit, params.status.as_deref())
         .await
     {
-        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Ok(stories) => {
+            let story_ids: Vec<Uuid> = stories.iter().map(|s| s.id).collect();
+            let ev_counts = state
+                .reader
+                .story_evidence_counts(&story_ids)
+                .await
+                .unwrap_or_default();
+            let stories_json: Vec<serde_json::Value> = stories
+                .iter()
+                .map(|s| {
+                    let ec = ev_counts
+                        .iter()
+                        .find(|(id, _)| *id == s.id)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0);
+                    let mut val = serde_json::to_value(s).unwrap_or_default();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("evidence_count".to_string(), serde_json::json!(ec));
+                    }
+                    val
+                })
+                .collect();
+            Json(serde_json::json!({ "stories": stories_json })).into_response()
+        }
         Err(e) => {
             warn!(error = %e, "Failed to load stories");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -218,20 +259,35 @@ async fn api_story_detail(
 
     match state.reader.get_story_with_signals(uuid).await {
         Ok(Some((story, signals))) => {
-            let signal_views: Vec<serde_json::Value> = signals
-                .iter()
-                .filter_map(|n| {
-                    let meta = n.meta()?;
-                    Some(serde_json::json!({
-                        "id": meta.id.to_string(),
-                        "title": meta.title,
-                        "summary": meta.summary,
-                        "node_type": format!("{}", n.node_type()),
-                        "confidence": meta.confidence,
-                        "source_url": meta.source_url,
-                    }))
-                })
-                .collect();
+            let mut signal_views: Vec<serde_json::Value> = Vec::new();
+            for n in &signals {
+                let Some(meta) = n.meta() else { continue };
+                let evidence = state
+                    .reader
+                    .get_signal_evidence(meta.id)
+                    .await
+                    .unwrap_or_default();
+                let ev_json: Vec<serde_json::Value> = evidence
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "source_url": e.source_url,
+                            "snippet": e.snippet,
+                            "relevance": e.relevance,
+                        })
+                    })
+                    .collect();
+                signal_views.push(serde_json::json!({
+                    "id": meta.id.to_string(),
+                    "title": meta.title,
+                    "summary": meta.summary,
+                    "node_type": format!("{}", n.node_type()),
+                    "confidence": meta.confidence,
+                    "source_url": meta.source_url,
+                    "evidence_count": evidence.len(),
+                    "evidence": ev_json,
+                }));
+            }
             Json(serde_json::json!({
                 "story": story,
                 "signals": signal_views,
@@ -324,6 +380,8 @@ async fn api_signal_detail(
                 .map(|e| {
                     serde_json::json!({
                         "source_url": e.source_url,
+                        "snippet": e.snippet,
+                        "relevance": e.relevance,
                         "retrieved_at": e.retrieved_at.to_rfc3339(),
                         "content_hash": e.content_hash,
                     })
@@ -357,6 +415,254 @@ async fn api_signal_detail(
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
             warn!(error = %e, "Failed to load signal detail");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// --- Story filter endpoints ---
+
+async fn api_stories_by_category(
+    State(state): State<Arc<AppState>>,
+    Path(category): Path<String>,
+    Query(params): Query<StoriesQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(20).min(100);
+    match state.reader.stories_by_category(&category, limit).await {
+        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load stories by category");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_stories_by_arc(
+    State(state): State<Arc<AppState>>,
+    Path(arc): Path<String>,
+    Query(params): Query<StoriesQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(20).min(100);
+    match state.reader.stories_by_arc(&arc, limit).await {
+        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load stories by arc");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_stories_by_role(
+    State(state): State<Arc<AppState>>,
+    Path(role): Path<String>,
+    Query(params): Query<StoriesQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(20).min(100);
+    match state.reader.stories_by_role(&role, limit).await {
+        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load stories by role");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_story_actors(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.actors_for_story(uuid).await {
+        Ok(actors) => Json(serde_json::json!({ "actors": actors })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load story actors");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// --- Actors API ---
+
+#[derive(Deserialize)]
+struct ActorsQuery {
+    city: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn api_actors(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ActorsQuery>,
+) -> impl IntoResponse {
+    let city = params.city.as_deref().unwrap_or(&state.city);
+    let limit = params.limit.unwrap_or(50).min(200);
+    match state.reader.actors_active_in_area(city, limit).await {
+        Ok(actors) => Json(serde_json::json!({ "actors": actors })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load actors");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_actor_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.actor_detail(uuid).await {
+        Ok(Some(actor)) => Json(serde_json::json!({ "actor": actor })).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load actor detail");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_actor_stories(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.actor_stories(uuid, 20).await {
+        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load actor stories");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// --- Action routing ---
+
+#[derive(Deserialize)]
+struct ActionQuery {
+    lat: Option<f64>,
+    lng: Option<f64>,
+    radius: Option<f64>,
+}
+
+async fn api_actions_for_role(
+    State(state): State<Arc<AppState>>,
+    Path(role): Path<String>,
+    Query(_params): Query<ActionQuery>,
+) -> impl IntoResponse {
+    match state.reader.signals_for_role(&role, 20).await {
+        Ok(plan) => Json(serde_json::json!({
+            "role": format!("{}", plan.role),
+            "urgent_asks": plan.urgent_asks.iter().filter_map(|n| n.meta().map(|m| serde_json::json!({
+                "id": m.id.to_string(),
+                "title": m.title,
+                "summary": m.summary,
+                "source_url": m.source_url,
+            }))).collect::<Vec<_>>(),
+            "opportunities": plan.opportunities.iter().filter_map(|n| n.meta().map(|m| serde_json::json!({
+                "id": m.id.to_string(),
+                "title": m.title,
+                "summary": m.summary,
+                "node_type": format!("{}", n.node_type()),
+            }))).collect::<Vec<_>>(),
+            "active_tensions_count": plan.active_tensions.len(),
+        }))
+        .into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load actions for role");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// --- Tension responses ---
+
+async fn api_tension_responses(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.tension_responses(uuid).await {
+        Ok(responses) => {
+            let geojson = nodes_to_geojson(&responses);
+            Json(geojson).into_response()
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load tension responses");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// --- Editions API ---
+
+#[derive(Deserialize)]
+struct EditionsQuery {
+    city: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn api_editions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<EditionsQuery>,
+) -> impl IntoResponse {
+    let city = params.city.as_deref().unwrap_or(&state.city);
+    let limit = params.limit.unwrap_or(10).min(50);
+    match state.reader.list_editions(city, limit).await {
+        Ok(editions) => Json(serde_json::json!({ "editions": editions })).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load editions");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_edition_latest(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<EditionsQuery>,
+) -> impl IntoResponse {
+    let city = params.city.as_deref().unwrap_or(&state.city);
+    match state.reader.latest_edition(city).await {
+        Ok(Some(edition)) => Json(serde_json::json!({ "edition": edition })).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load latest edition");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn api_edition_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    match state.reader.edition_detail(uuid).await {
+        Ok(Some((edition, stories))) => Json(serde_json::json!({
+            "edition": edition,
+            "stories": stories,
+        }))
+        .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to load edition detail");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -440,6 +746,9 @@ pub struct NodeView {
 
 pub struct EvidenceView {
     pub source_url: String,
+    pub snippet: Option<String>,
+    pub relevance: Option<String>,
+    pub evidence_confidence: Option<f32>,
 }
 
 fn node_to_view(node: &Node) -> NodeView {
@@ -507,6 +816,9 @@ fn node_to_view(node: &Node) -> NodeView {
 fn evidence_to_view(ev: &EvidenceNode) -> EvidenceView {
     EvidenceView {
         source_url: ev.source_url.clone(),
+        snippet: ev.snippet.clone(),
+        relevance: ev.relevance.clone(),
+        evidence_confidence: ev.evidence_confidence,
     }
 }
 
