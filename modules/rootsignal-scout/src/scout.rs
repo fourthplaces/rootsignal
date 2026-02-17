@@ -194,9 +194,9 @@ impl Scout {
                     }
                 };
 
-                // Check content hash — skip extraction if content hasn't changed
+                // Check content hash — skip extraction if content hasn't changed for this URL
                 let hash = format!("{:x}", content_hash(&content));
-                match self.writer.content_already_processed(&hash).await {
+                match self.writer.content_already_processed(&hash, &clean_url).await {
                     Ok(true) => {
                         info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
                         return (clean_url, source_trust, ScrapeOutcome::Unchanged);
@@ -388,11 +388,11 @@ impl Scout {
             return Ok(());
         }
 
-        // --- Layer 1: Within-batch dedup by normalized title ---
-        let mut seen_titles = std::collections::HashSet::new();
+        // --- Layer 1: Within-batch dedup by (normalized_title, node_type) ---
+        let mut seen = std::collections::HashSet::new();
         let nodes: Vec<_> = nodes
             .into_iter()
-            .filter(|n| seen_titles.insert(normalize_title(n.title())))
+            .filter(|n| seen.insert((normalize_title(n.title()), n.node_type())))
             .collect();
 
         // --- Layer 2: URL-based title dedup against existing database ---

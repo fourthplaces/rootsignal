@@ -288,8 +288,7 @@ fn expiry_clause(nt: NodeType) -> String {
             days = ASK_EXPIRE_DAYS,
         ),
         NodeType::Give => format!(
-            "AND (n.is_ongoing = true OR \
-             datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D'))",
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
         NodeType::Tension => format!(
@@ -353,11 +352,10 @@ fn passes_display_filter(node: &Node) -> bool {
         }
     }
 
-    // General freshness check
+    // General freshness check (recurring events still exempt — they persist between occurrences)
     let age_days = (now - meta.last_confirmed_active).num_days();
     if age_days > FRESHNESS_MAX_DAYS {
         match node {
-            Node::Give(g) if g.is_ongoing => {}
             Node::Event(e) if e.is_recurring => {}
             _ => return false,
         }

@@ -8,13 +8,13 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     detect_pii, AskNode, AudienceRole, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
-    NodeMeta, SensitivityLevel, Severity, TensionNode, Urgency,
+    NodeMeta, SensitivityLevel, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedSignal {
-    /// Signal type: "event", "give", "ask", or "tension"
+    /// Signal type: "event", "give", or "ask"
     pub signal_type: String,
     pub title: String,
     pub summary: String,
@@ -82,18 +82,33 @@ where
 
 const EXTRACTION_SYSTEM_PROMPT: &str = r#"You are a civic signal extractor for the Twin Cities (Minneapolis-St. Paul, Minnesota).
 
-Your job: extract actionable civic signals from web page content. Each signal should be one of these types:
+Your job: extract ACTIONABLE civic signals from web page content. Each signal must be something a community member can act on. There are exactly three signal types:
 
-- **Event**: A time-bound gathering. "Show up at a time/place." Examples: park cleanup Saturday, city council hearing, community meeting.
-- **Give**: An ongoing resource or offering available to people. "This is available to you." Examples: food shelf hours, tool library, free tax prep, repair cafe.
-- **Ask**: A community need — someone needs something. "We need something from you." Examples: volunteers needed, GoFundMe, donation drive, sandbag volunteers.
-- **Tension**: Civic context or stress — not a call to action, but important to know. "This is happening." Examples: zoning fight, school closure debate, infrastructure dispute, policy change.
+- **Event**: A time-bound gathering or happening. "Show up at a time/place." Examples: park cleanup Saturday, city council hearing, community meeting, vigil, rally, workshop, public comment deadline.
+- **Give**: An ongoing resource, service, or offering available to people. "This is available to you." Examples: food shelf hours, tool library, free legal aid hotline, know-your-rights resources, shelter beds, repair cafe, mental health services.
+- **Ask**: A community need — someone needs something from you. "We need your help." Examples: volunteers needed, GoFundMe, donation drive, sign this petition, attend this hearing, call your representative.
 
 ## Classification Rules
 - If people show up at a specific time/place → Event
 - If something is available/offered to the community → Give
 - If the community is asked for help/support/resources → Ask
-- If it's civic context, conflict, or stress with no clear action → Tension
+- If none of the above apply — if there is no action a community member can take — do NOT extract it. Return an empty signals array for that content.
+
+## What NOT to Extract
+- Office/facility closures, holiday notices, weather closures (not actionable)
+- News articles or descriptions of problems with no community response attached
+- Wikipedia or encyclopedia content
+- Descriptions of organizational structure or governance
+- Grant awards or funding announcements (unless they create a new resource for the community)
+- General background information or historical context
+
+## Extracting from Civic Stress Content
+When a page describes civic conflict, enforcement actions, policy disputes, or community crises, extract the COMMUNITY RESPONSES — not the crisis itself:
+- A page about ICE enforcement → extract the legal aid hotlines (Give), know-your-rights workshops (Event), volunteer calls for sanctuary support (Ask)
+- A page about a housing crisis → extract the tenant rights clinic (Give), public hearing date (Event), petition to sign (Ask)
+- A page about environmental contamination → extract the cleanup event (Event), health screening resource (Give), call for citizen scientists (Ask)
+
+The tension itself is context. The responses are the signals. If a page describes only a problem with no community response or action pathway, return an empty signals array.
 
 ## Sensitivity Classification
 - **sensitive**: Mentions enforcement (ICE, police operations, raids), vulnerable populations, sanctuary networks
@@ -122,9 +137,8 @@ Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant
 ## Action URLs
 - Include the most relevant action URL (registration link, donation link, event page)
 - If no specific action URL exists, use the source page URL
-- Tension signals typically have no action_url
 
-Return ALL civic signals found on the page. Do not filter by quality — extract everything civic."#;
+Only return signals that a community member can ACT on. Quality over quantity."#;
 
 pub struct Extractor {
     claude: Claude,
@@ -296,21 +310,19 @@ impl Extractor {
                         goal: signal.goal,
                     })
                 }
+                // Tension signals are not extracted individually — they emerge from
+                // signal clustering in the graph (Phase 2). Skip if LLM produces one.
                 "tension" => {
-                    let severity = match signal.severity.as_deref() {
-                        Some("high") => Severity::High,
-                        Some("critical") => Severity::Critical,
-                        Some("low") => Severity::Low,
-                        _ => Severity::Medium,
-                    };
-                    Node::Tension(TensionNode { meta, severity })
+                    warn!(
+                        source_url,
+                        title = signal.title,
+                        "LLM produced tension signal, skipping (tensions emerge from clustering)"
+                    );
+                    continue;
                 }
                 other => {
-                    warn!(signal_type = other, "Unknown signal type, defaulting to Tension");
-                    Node::Tension(TensionNode {
-                        meta,
-                        severity: Severity::Medium,
-                    })
+                    warn!(signal_type = other, title = signal.title, "Unknown signal type, skipping");
+                    continue;
                 }
             };
 

@@ -66,8 +66,18 @@ async fn main() -> Result<()> {
             header::PRAGMA,
             HeaderValue::from_static("no-cache"),
         ))
-        // Logging layer: method + route + status + latency only (no query params, no IP)
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+        // Logging layer: method + path + status + latency only (no query params, no IP)
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    // Only log the path — strip query params to avoid logging lat/lng coordinates
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        path = %request.uri().path(),
+                    )
+                }),
+        );
 
     let addr = format!("{}:{}", config.web_host, config.web_port);
     info!("Root Signal web server starting on {addr}");

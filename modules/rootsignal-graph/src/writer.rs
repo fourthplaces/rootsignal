@@ -369,17 +369,19 @@ impl GraphWriter {
         Ok(None)
     }
 
-    /// Check if content with this hash has already been processed.
-    /// Used to skip re-extraction of unchanged pages.
+    /// Check if content with this hash has already been processed for this specific URL.
+    /// Scoped to (hash, source_url) so cross-source corroboration isn't suppressed.
     pub async fn content_already_processed(
         &self,
         content_hash: &str,
+        source_url: &str,
     ) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "MATCH (ev:Evidence {content_hash: $hash})
+            "MATCH (ev:Evidence {content_hash: $hash, source_url: $url})
              RETURN ev LIMIT 1",
         )
-        .param("hash", content_hash);
+        .param("hash", content_hash)
+        .param("url", source_url);
 
         let mut stream = self.client.graph.execute(q).await?;
         Ok(stream.next().await?.is_some())
@@ -505,23 +507,16 @@ impl GraphWriter {
             stats.asks = row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
-        // 3. Stale unconfirmed signals (excluding ongoing gives and recurring events)
+        // 3. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
         for label in &["Give", "Tension"] {
-            let extra = if *label == "Give" {
-                "AND n.is_ongoing = false"
-            } else {
-                ""
-            };
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
-                 {extra}
                  OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
                  DETACH DELETE n, ev
                  RETURN count(DISTINCT n) AS deleted",
                 label = label,
                 days = FRESHNESS_MAX_DAYS,
-                extra = extra,
             ));
             if let Some(row) = self.client.graph.execute(q).await?.next().await? {
                 stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;

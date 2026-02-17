@@ -29,7 +29,13 @@ pub fn score(node: &Node) -> ExtractionQuality {
     };
 
     let (has_action_url, has_timing) = match node {
-        Node::Event(_) => (true, true), // Events always have action_url and starts_at
+        Node::Event(e) => {
+            // Extractor defaults: missing URL → source_url, missing time → now.
+            // Detect these defaults so quality score reflects actual extraction quality.
+            let has_real_url = !e.action_url.is_empty() && e.action_url != meta.source_url;
+            let has_real_timing = (e.starts_at - meta.extracted_at).num_seconds().abs() > 60;
+            (has_real_url, has_real_timing)
+        }
         Node::Give(g) => (!g.action_url.is_empty(), g.is_ongoing),
         Node::Ask(a) => (a.action_url.is_some(), false),
         Node::Tension(_) => (false, false),
