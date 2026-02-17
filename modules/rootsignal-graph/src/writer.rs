@@ -436,6 +436,58 @@ impl GraphWriter {
         Ok(titles)
     }
 
+    /// Batch-find existing signals by exact title+type (case-insensitive).
+    /// Returns a map of lowercase title → (node_id, node_type, source_url).
+    /// Single Cypher query regardless of input size.
+    pub async fn find_by_titles_and_types(
+        &self,
+        titles_and_types: &[(String, NodeType)],
+    ) -> Result<std::collections::HashMap<(String, NodeType), (Uuid, String)>, neo4rs::Error> {
+        let mut results = std::collections::HashMap::new();
+        if titles_and_types.is_empty() {
+            return Ok(results);
+        }
+
+        // Query each label once with all titles for that type
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask] {
+            let label = match nt {
+                NodeType::Event => "Event",
+                NodeType::Give => "Give",
+                NodeType::Ask => "Ask",
+                _ => continue,
+            };
+
+            let titles_for_type: Vec<String> = titles_and_types
+                .iter()
+                .filter(|(_, t)| t == nt)
+                .map(|(title, _)| title.to_lowercase())
+                .collect();
+
+            if titles_for_type.is_empty() {
+                continue;
+            }
+
+            let q = query(&format!(
+                "MATCH (n:{label})
+                 WHERE toLower(n.title) IN $titles
+                 RETURN toLower(n.title) AS title, n.id AS id, n.source_url AS source_url"
+            ))
+            .param("titles", titles_for_type);
+
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let title: String = row.get("title").unwrap_or_default();
+                let id_str: String = row.get("id").unwrap_or_default();
+                let source_url: String = row.get("source_url").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    results.insert((title, *nt), (id, source_url));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Increment corroboration count and update freshness on an existing node.
     pub async fn corroborate(
         &self,

@@ -69,6 +69,54 @@ enum ScrapeOutcome {
     Failed,
 }
 
+/// In-memory embedding cache for the current scout run.
+/// Catches duplicates that haven't been indexed in the graph yet (e.g. Instagram
+/// and Facebook posts from the same org processed in the same batch).
+struct EmbeddingCache {
+    entries: Vec<CacheEntry>,
+}
+
+struct CacheEntry {
+    embedding: Vec<f32>,
+    node_id: Uuid,
+    node_type: NodeType,
+    source_url: String,
+}
+
+impl EmbeddingCache {
+    fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    /// Find the best match above threshold. Returns (node_id, node_type, source_url, similarity).
+    fn find_match(&self, embedding: &[f32], threshold: f64) -> Option<(Uuid, NodeType, &str, f64)> {
+        let mut best: Option<(Uuid, NodeType, &str, f64)> = None;
+        for entry in &self.entries {
+            let sim = cosine_similarity(embedding, &entry.embedding);
+            if sim >= threshold {
+                if best.as_ref().map_or(true, |b| sim > b.3) {
+                    best = Some((entry.node_id, entry.node_type, &entry.source_url, sim));
+                }
+            }
+        }
+        best
+    }
+
+    fn add(&mut self, embedding: Vec<f32>, node_id: Uuid, node_type: NodeType, source_url: String) {
+        self.entries.push(CacheEntry { embedding, node_id, node_type, source_url });
+    }
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    (dot / (norm_a * norm_b)) as f64
+}
+
 pub struct Scout {
     writer: GraphWriter,
     extractor: Extractor,
@@ -221,12 +269,13 @@ impl Scout {
         .collect()
         .await;
 
-        // Process results sequentially
+        // Process results sequentially, with in-memory embedding cache for cross-batch dedup
         let now = Utc::now();
+        let mut embed_cache = EmbeddingCache::new();
         for (url, _source_trust, outcome) in pipeline_results {
             match outcome {
                 ScrapeOutcome::New { content, nodes } => {
-                    match self.store_signals(&url, &content, nodes, &mut stats).await {
+                    match self.store_signals(&url, &content, nodes, &mut stats, &mut embed_cache).await {
                         Ok(_) => stats.urls_scraped += 1,
                         Err(e) => {
                             warn!(url, error = %e, "Failed to store signals");
@@ -251,7 +300,7 @@ impl Scout {
 
         // 4. Social media via Apify (Instagram + Facebook)
         if let Some(ref apify) = self.apify {
-            self.scrape_social_media(apify, &mut stats).await;
+            self.scrape_social_media(apify, &mut stats, &mut embed_cache).await;
         }
 
         info!("{stats}");
@@ -259,7 +308,7 @@ impl Scout {
     }
 
     /// Scrape Instagram and Facebook accounts via Apify, feed posts through LLM extraction.
-    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats) {
+    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats, embed_cache: &mut EmbeddingCache) {
         use std::pin::Pin;
         use std::future::Future;
 
@@ -353,7 +402,7 @@ impl Scout {
         for result in results.into_iter().flatten() {
             let (source_url, combined_text, nodes, post_count) = result;
             stats.social_media_posts += post_count as u32;
-            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats).await {
+            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache).await {
                 warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
             }
         }
@@ -365,6 +414,7 @@ impl Scout {
         content: &str,
         mut nodes: Vec<Node>,
         stats: &mut ScoutStats,
+        embed_cache: &mut EmbeddingCache,
     ) -> Result<()> {
         let url = sanitize_url(url);
         stats.signals_extracted += nodes.len() as u32;
@@ -420,6 +470,54 @@ impl Scout {
             return Ok(());
         }
 
+        // --- Layer 2.5: Global exact-title+type dedup (single batch query) ---
+        let now = Utc::now();
+        let content_hash_str = format!("{:x}", content_hash(content));
+
+        let title_type_pairs: Vec<(String, NodeType)> = nodes
+            .iter()
+            .map(|n| (normalize_title(n.title()), n.node_type()))
+            .collect();
+
+        let global_matches = self
+            .writer
+            .find_by_titles_and_types(&title_type_pairs)
+            .await
+            .unwrap_or_default();
+
+        let mut remaining_nodes = Vec::new();
+        for node in nodes {
+            let key = (normalize_title(node.title()), node.node_type());
+            if let Some((existing_id, existing_url)) = global_matches.get(&key) {
+                if *existing_url != url {
+                    info!(
+                        existing_id = %existing_id,
+                        title = node.title(),
+                        existing_source = existing_url.as_str(),
+                        new_source = url.as_str(),
+                        "Global title+type match, corroborating"
+                    );
+                    self.writer.corroborate(*existing_id, node.node_type(), now).await?;
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                    };
+                    self.writer.create_evidence(&evidence, *existing_id).await?;
+                    stats.signals_deduplicated += 1;
+                    continue;
+                }
+            }
+            remaining_nodes.push(node);
+        }
+        let nodes = remaining_nodes;
+
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
         // Batch embed remaining signals (1 API call instead of N)
         let embed_texts: Vec<String> = nodes
             .iter()
@@ -440,9 +538,7 @@ impl Scout {
             }
         };
 
-        // --- Layer 3: Cross-type vector dedup with URL-aware threshold ---
-        let now = Utc::now();
-        let content_hash = format!("{:x}", content_hash(content));
+        // --- Layer 3: Vector dedup (in-memory cache + graph) with URL-aware threshold ---
 
         for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
             let node_type = node.node_type();
@@ -454,13 +550,38 @@ impl Scout {
                 NodeType::Evidence => continue,
             };
 
-            // Use a lower threshold (0.85) — the URL-based pre-filter already caught
-            // exact title matches, so anything reaching here with high similarity
-            // is a near-duplicate worth catching.
+            // 3a: Check in-memory cache first (catches cross-batch dupes not yet indexed)
+            if let Some((cached_id, cached_type, cached_url, sim)) =
+                embed_cache.find_match(&embedding, 0.85)
+            {
+                let is_same_source = cached_url == url;
+                if is_same_source || sim >= 0.92 {
+                    info!(
+                        existing_id = %cached_id,
+                        similarity = sim,
+                        title = node.title(),
+                        source = "cache",
+                        "Duplicate found in embedding cache, corroborating"
+                    );
+                    self.writer.corroborate(cached_id, cached_type, now).await?;
+
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                    };
+                    self.writer.create_evidence(&evidence, cached_id).await?;
+
+                    stats.signals_deduplicated += 1;
+                    continue;
+                }
+            }
+
+            // 3b: Check graph index (catches dupes from previous runs)
             match self.writer.find_duplicate(&embedding, node_type, 0.85).await {
                 Ok(Some(dup)) => {
-                    // Same-URL matches at 0.85+ are almost certainly dupes.
-                    // Different-URL matches need higher confidence (0.92+).
                     let dominated_url = sanitize_url(&dup.source_url);
                     let is_same_source = dominated_url == url;
                     if is_same_source || dup.similarity >= 0.92 {
@@ -470,6 +591,7 @@ impl Scout {
                             similarity = dup.similarity,
                             title = node.title(),
                             cross_type,
+                            source = "graph",
                             "Duplicate found, corroborating"
                         );
                         self.writer.corroborate(dup.id, dup.node_type, now).await?;
@@ -478,10 +600,13 @@ impl Scout {
                             id: Uuid::new_v4(),
                             source_url: url.clone(),
                             retrieved_at: now,
-                            content_hash: content_hash.clone(),
+                            content_hash: content_hash_str.clone(),
                             snippet: node.meta().map(|m| m.summary.clone()),
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
+
+                        // Also add to cache so future batches can find this
+                        embed_cache.add(embedding, dup.id, dup.node_type, dominated_url);
 
                         stats.signals_deduplicated += 1;
                         continue;
@@ -497,11 +622,14 @@ impl Scout {
             // Create new node
             let node_id = self.writer.create_node(&node, &embedding).await?;
 
+            // Add to in-memory cache so subsequent batches can find it immediately
+            embed_cache.add(embedding, node_id, node_type, url.clone());
+
             let evidence = EvidenceNode {
                 id: Uuid::new_v4(),
                 source_url: url.clone(),
                 retrieved_at: now,
-                content_hash: content_hash.clone(),
+                content_hash: content_hash_str.clone(),
                 snippet: node.meta().map(|m| m.summary.clone()),
             };
             self.writer.create_evidence(&evidence, node_id).await?;
@@ -579,10 +707,13 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     }
 }
 
-/// Fast hash for content dedup. Not cryptographic.
+/// Deterministic content hash for change detection (FNV-1a).
+/// Must be stable across process restarts — DefaultHasher is NOT (HashDoS randomization).
 fn content_hash(content: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hasher);
-    hasher.finish()
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV offset basis
+    for byte in content.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3); // FNV prime
+    }
+    hash
 }
