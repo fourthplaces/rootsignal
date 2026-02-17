@@ -9,6 +9,9 @@ pub struct CityProfile {
     pub instagram_accounts: Vec<(&'static str, f32)>,
     pub facebook_pages: Vec<(&'static str, f32)>,
     pub reddit_subreddits: Vec<(&'static str, f32)>,
+    /// Platform-agnostic civic topics for hashtag/keyword discovery.
+    /// Searched across all platforms with discovery adapters (Instagram first).
+    pub discovery_topics: Vec<&'static str>,
     pub entity_mappings: Vec<EntityMapping>,
 }
 
@@ -218,6 +221,11 @@ fn twincities_profile() -> CityProfile {
             ("https://www.reddit.com/r/TwinCities", 0.4),
             ("https://www.reddit.com/r/SaintPaul", 0.4),
         ],
+        discovery_topics: vec![
+            "MutualAidMPLS", "MutualAidMN", "VolunteerMN",
+            "MinneapolisVolunteer", "TwinCitiesMutualAid",
+            "MplsMutualAid", "SaintPaulMutualAid",
+        ],
         entity_mappings: vec![
             EntityMapping {
                 entity_id: "handsontwincities.org",
@@ -402,6 +410,7 @@ fn nyc_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/nyc", 0.4),
         ],
+        discovery_topics: vec![],
         entity_mappings: vec![],
     }
 }
@@ -456,6 +465,7 @@ fn portland_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/Portland", 0.4),
         ],
+        discovery_topics: vec![],
         entity_mappings: vec![],
     }
 }
@@ -506,6 +516,7 @@ fn berlin_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/berlin", 0.4),
         ],
+        discovery_topics: vec![],
         entity_mappings: vec![],
     }
 }

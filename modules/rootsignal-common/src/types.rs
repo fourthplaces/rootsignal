@@ -299,6 +299,8 @@ pub enum DiscoveryMethod {
     GapAnalysis,
     /// Extracted from signal content (org mentioned but not tracked)
     SignalReference,
+    /// Discovered via topic/hashtag search on social platforms
+    HashtagDiscovery,
 }
 
 impl std::fmt::Display for DiscoveryMethod {
@@ -307,6 +309,7 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::Curated => write!(f, "curated"),
             DiscoveryMethod::GapAnalysis => write!(f, "gap_analysis"),
             DiscoveryMethod::SignalReference => write!(f, "signal_reference"),
+            DiscoveryMethod::HashtagDiscovery => write!(f, "hashtag_discovery"),
         }
     }
 }

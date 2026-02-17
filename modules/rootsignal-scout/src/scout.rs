@@ -30,6 +30,8 @@ pub struct ScoutStats {
     pub social_media_posts: u32,
     pub geo_stripped: u32,
     pub geo_filtered: u32,
+    pub discovery_posts_found: u32,
+    pub discovery_accounts_found: u32,
     pub audience_roles: std::collections::HashMap<String, u32>,
 }
 
@@ -42,6 +44,8 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
         writeln!(f, "Geo stripped:       {}", self.geo_stripped)?;
         writeln!(f, "Geo filtered:       {}", self.geo_filtered)?;
+        writeln!(f, "Discovery posts:    {}", self.discovery_posts_found)?;
+        writeln!(f, "Accounts discovered:{}", self.discovery_accounts_found)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
@@ -450,7 +454,25 @@ impl Scout {
 
         // 4. Social media via Apify (Instagram + Facebook)
         if let Some(ref apify) = self.apify {
-            self.scrape_social_media(apify, &mut stats, &mut embed_cache, &mut source_signal_counts).await;
+            // Collect discovered Instagram accounts from graph to scrape alongside curated
+            let extra_ig: Vec<(String, f32)> = discovered_sources
+                .iter()
+                .filter(|s| s.source_type == SourceType::Instagram && s.discovery_method != DiscoveryMethod::Curated)
+                .filter_map(|s| {
+                    // Parse username from URL: https://www.instagram.com/{username}/
+                    let username = s.url
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()?;
+                    if username.is_empty() { return None; }
+                    Some((username.to_string(), s.trust))
+                })
+                .collect();
+
+            self.scrape_social_media(apify, &mut stats, &mut embed_cache, &mut source_signal_counts, &extra_ig).await;
+
+            // 4.5. Topic discovery — search hashtags to find new accounts
+            self.discover_from_topics(apify, &mut stats, &mut embed_cache, &mut source_signal_counts).await;
         }
 
         // 4a. Update per-source metrics in the graph
@@ -524,7 +546,15 @@ impl Scout {
     }
 
     /// Scrape Instagram, Facebook, and Reddit accounts via Apify, feed posts through LLM extraction.
-    async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats, embed_cache: &mut EmbeddingCache, source_signal_counts: &mut std::collections::HashMap<String, u32>) {
+    /// `extra_ig_accounts` are discovered Instagram accounts from the graph (username, trust).
+    async fn scrape_social_media(
+        &self,
+        apify: &ApifyClient,
+        stats: &mut ScoutStats,
+        embed_cache: &mut EmbeddingCache,
+        source_signal_counts: &mut std::collections::HashMap<String, u32>,
+        extra_ig_accounts: &[(String, f32)],
+    ) {
         use std::pin::Pin;
         use std::future::Future;
 
@@ -535,6 +565,7 @@ impl Scout {
         let reddit_subs = &self.profile.reddit_subreddits;
         info!(
             ig = ig_accounts.len(),
+            ig_discovered = extra_ig_accounts.len(),
             fb = fb_pages.len(),
             reddit = reddit_subs.len(),
             "Scraping social media via Apify..."
@@ -574,6 +605,42 @@ impl Scout {
                     }
                 };
                 info!(username, posts = post_count, "Instagram scrape complete");
+                Some((source_url, combined_text, nodes, post_count))
+            }));
+        }
+
+        // Discovered Instagram accounts from graph (same scrape pattern)
+        for (username, trust) in extra_ig_accounts {
+            let source_url = format!("https://www.instagram.com/{username}/");
+            let username = username.clone();
+            let _trust = *trust;
+            futures.push(Box::pin(async move {
+                let posts = match apify.scrape_instagram_posts(&username, 10).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(username, error = %e, "Discovered Instagram scrape failed");
+                        return None;
+                    }
+                };
+                let post_count = posts.len();
+                let combined_text: String = posts
+                    .iter()
+                    .filter_map(|p| p.caption.as_deref())
+                    .enumerate()
+                    .map(|(i, caption)| format!("--- Post {} ---\n{}", i + 1, caption))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if combined_text.is_empty() {
+                    return None;
+                }
+                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!(username, error = %e, "Discovered Instagram extraction failed");
+                        return None;
+                    }
+                };
+                info!(username, posts = post_count, "Discovered Instagram scrape complete");
                 Some((source_url, combined_text, nodes, post_count))
             }));
         }
@@ -673,6 +740,169 @@ impl Scout {
             let produced = stats.signals_stored - signal_count_before;
             *source_signal_counts.entry(source_url).or_default() += produced;
         }
+    }
+
+    /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords).
+    /// Instagram is the first adapter. Others (X, Bluesky, TikTok) follow the same pattern.
+    async fn discover_from_topics(
+        &self,
+        apify: &ApifyClient,
+        stats: &mut ScoutStats,
+        embed_cache: &mut EmbeddingCache,
+        source_signal_counts: &mut std::collections::HashMap<String, u32>,
+    ) {
+        const MAX_HASHTAG_SEARCHES: usize = 3;
+        const MAX_NEW_ACCOUNTS: usize = 5;
+        const POSTS_PER_SEARCH: u32 = 20;
+
+        let topics = &self.profile.discovery_topics;
+        if topics.is_empty() {
+            return;
+        }
+
+        info!(topics = ?topics, "Starting topic discovery...");
+
+        // Search topics across platforms (Instagram first)
+        let search_topics: Vec<_> = topics.iter().take(MAX_HASHTAG_SEARCHES).collect();
+        let hashtags: Vec<&str> = search_topics.iter().map(|t| **t).collect();
+
+        let discovered_posts = match apify.search_instagram_hashtags(&hashtags, POSTS_PER_SEARCH).await {
+            Ok(posts) => posts,
+            Err(e) => {
+                warn!(error = %e, "Instagram hashtag discovery failed");
+                return;
+            }
+        };
+
+        stats.discovery_posts_found = discovered_posts.len() as u32;
+        if discovered_posts.is_empty() {
+            info!("No posts found from topic discovery");
+            return;
+        }
+
+        // Group posts by author
+        let mut by_author: std::collections::HashMap<String, Vec<&apify_client::DiscoveredPost>> =
+            std::collections::HashMap::new();
+        for post in &discovered_posts {
+            by_author
+                .entry(post.author_username.clone())
+                .or_default()
+                .push(post);
+        }
+
+        info!(
+            posts = discovered_posts.len(),
+            unique_authors = by_author.len(),
+            "Topic discovery posts grouped by author"
+        );
+
+        // Check which authors are already known sources (skip them)
+        let existing_sources = match self.writer.get_active_sources(self.profile.name).await {
+            Ok(s) => s,
+            Err(_) => Vec::new(),
+        };
+        let existing_urls: std::collections::HashSet<String> = existing_sources
+            .iter()
+            .map(|s| s.url.clone())
+            .collect();
+
+        // Also skip curated instagram accounts
+        let curated_ig: std::collections::HashSet<String> = self
+            .profile
+            .instagram_accounts
+            .iter()
+            .map(|(u, _)| format!("https://www.instagram.com/{u}/"))
+            .collect();
+
+        let mut new_accounts = 0u32;
+
+        for (username, posts) in &by_author {
+            if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
+                info!("Discovery account budget exhausted");
+                break;
+            }
+
+            let source_url = format!("https://www.instagram.com/{username}/");
+
+            // Skip already-known sources
+            if existing_urls.contains(&source_url) || curated_ig.contains(&source_url) {
+                continue;
+            }
+
+            // Concatenate post content for extraction
+            let combined_text: String = posts
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            if combined_text.is_empty() {
+                continue;
+            }
+
+            // Extract signals via LLM
+            let nodes = match self.extractor.extract(&combined_text, &source_url).await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(username, error = %e, "Discovery extraction failed");
+                    continue;
+                }
+            };
+
+            if nodes.is_empty() {
+                continue; // No civic signal found — don't follow this person
+            }
+
+            // Store signals through normal pipeline (dedup, quality, geo-filter)
+            let signal_count_before = stats.signals_stored;
+            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache).await {
+                warn!(username, error = %e, "Failed to store discovery signals");
+                continue;
+            }
+            let produced = stats.signals_stored - signal_count_before;
+            *source_signal_counts.entry(source_url.clone()).or_default() += produced;
+
+            // Create a Source node so this account gets scraped on future runs
+            let source = SourceNode {
+                id: Uuid::new_v4(),
+                url: source_url.clone(),
+                source_type: SourceType::Instagram,
+                discovery_method: DiscoveryMethod::HashtagDiscovery,
+                city: self.profile.name.to_string(),
+                trust: 0.3,
+                initial_trust: 0.3,
+                created_at: Utc::now(),
+                last_scraped: Some(Utc::now()),
+                last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
+                signals_produced: produced,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+            };
+
+            match self.writer.upsert_source(&source).await {
+                Ok(()) => {
+                    new_accounts += 1;
+                    info!(
+                        username,
+                        signals = produced,
+                        "Discovered new account via topic search"
+                    );
+                }
+                Err(e) => {
+                    warn!(username, error = %e, "Failed to create Source node for discovered account");
+                }
+            }
+        }
+
+        stats.discovery_accounts_found = new_accounts;
+        info!(
+            posts = discovered_posts.len(),
+            new_accounts,
+            "Topic discovery complete"
+        );
     }
 
     async fn store_signals(

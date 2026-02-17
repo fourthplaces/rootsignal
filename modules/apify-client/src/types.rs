@@ -1,6 +1,30 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// --- Platform-agnostic discovery types ---
+
+/// A normalized post from any social platform, used by the discovery pipeline.
+/// Platform-specific scrapers convert their native post types into this.
+#[derive(Debug, Clone)]
+pub struct DiscoveredPost {
+    pub content: String,
+    pub author_username: String,
+    pub author_display_name: Option<String>,
+    pub post_url: String,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub platform: String, // "instagram", "x", "tiktok", etc.
+}
+
+// --- Instagram hashtag scraper types ---
+
+/// Input for the apify/instagram-hashtag-scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstagramHashtagInput {
+    pub hashtags: Vec<String>,
+    #[serde(rename = "resultsLimit")]
+    pub results_limit: u32,
+}
+
 /// Input for the apify/instagram-post-scraper actor.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstagramScraperInput {
@@ -10,6 +34,7 @@ pub struct InstagramScraperInput {
 }
 
 /// A single Instagram post from the Apify dataset.
+/// Also used as the output type for the hashtag scraper (same schema).
 #[derive(Debug, Clone, Deserialize)]
 pub struct InstagramPost {
     pub caption: Option<String>,
@@ -32,6 +57,22 @@ pub struct InstagramPost {
     pub mentions: Option<Vec<String>>,
     #[serde(rename = "locationName")]
     pub location_name: Option<String>,
+}
+
+impl InstagramPost {
+    /// Convert to a platform-agnostic DiscoveredPost for the discovery pipeline.
+    pub fn into_discovered(self) -> Option<DiscoveredPost> {
+        let content = self.caption?;
+        let author_username = self.owner_username?;
+        Some(DiscoveredPost {
+            content,
+            author_display_name: self.owner_full_name,
+            author_username,
+            post_url: self.url,
+            timestamp: self.timestamp,
+            platform: "instagram".to_string(),
+        })
+    }
 }
 
 /// Wrapper for Apify API responses.

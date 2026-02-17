@@ -1033,6 +1033,7 @@ impl GraphWriter {
             let discovery_method = match discovery_str.as_str() {
                 "gap_analysis" => DiscoveryMethod::GapAnalysis,
                 "signal_reference" => DiscoveryMethod::SignalReference,
+                "hashtag_discovery" => DiscoveryMethod::HashtagDiscovery,
                 _ => DiscoveryMethod::Curated,
             };
 
