@@ -70,6 +70,17 @@ pub fn tavily_queries() -> Vec<&'static str> {
         // Immigration / enforcement
         "Minneapolis ICE immigration enforcement raid",
         "Twin Cities immigrant community response sanctuary",
+        // Youth programs (coverage gap)
+        "Twin Cities youth programs mentoring employment",
+        "Minneapolis youth services drop-in center",
+        // Senior services (coverage gap)
+        "Minneapolis senior services programs resources",
+        "Twin Cities senior care aging services",
+        // Housing advocacy (coverage gap)
+        "Minneapolis housing advocacy tenant rights",
+        "Twin Cities affordable housing homelessness services",
+        // Mutual aid (coverage gap)
+        "Twin Cities mutual aid network community support 2026",
     ]
 }
 
@@ -111,6 +122,26 @@ pub fn curated_sources() -> Vec<(&'static str, f32)> {
         ("https://www.volunteermatch.org/search?l=St+Paul%2C+MN&k=&v=true", 0.75),
         ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Minneapolis%2C+MN&lat=44.9778&lng=-93.2650&radius=25", 0.7),
         ("https://www.justserve.org/projects?city=Minneapolis&state=MN", 0.7),
+        // Youth services
+        ("https://www.youthlinkmn.org/", 0.75),
+        ("https://thelinkmn.org/what-we-do/", 0.75),
+        ("https://www.achievetwincities.org/what-we-do", 0.75),
+        ("https://www.ywcampls.org/what-we-do", 0.8),
+        // Senior services
+        ("https://seniorcommunity.org/our-services/", 0.75),
+        ("https://www.neseniors.org/", 0.65),
+        ("https://trellisconnects.org/get-help/", 0.75),
+        // Housing advocacy & services
+        ("https://www.hjcmn.org/our-work/", 0.75),
+        ("https://homesforallmn.org/ways-to-be-involved/", 0.7),
+        ("https://agatemn.org/programs/", 0.75),
+        ("https://mphaonline.org/housing/programs/", 0.8),
+        // Mutual aid
+        ("https://www.canmn.org/", 0.65),
+        ("https://nhn-tc.org/", 0.65),
+        // United Way (volunteer + assistance)
+        ("https://www.gtcuw.org/volunteer/", 0.8),
+        ("https://www.gtcuw.org/get-assistance/", 0.8),
     ]
 }
 
@@ -146,6 +177,15 @@ pub fn instagram_accounts() -> Vec<(&'static str, f32)> {
         // Libraries
         ("hclib", 0.7),              // Hennepin County Library
         ("stpaulpubliclibrary", 0.7),
+        // Youth services
+        ("youthlinkmn", 0.7),
+        ("achievetwincities", 0.7),
+        ("ywcampls", 0.7),
+        // Housing / homelessness
+        ("agateservicesmn", 0.7),
+        // Mutual aid
+        ("communityaidnetworkmn", 0.6),
+        ("nhn_tc", 0.6),
     ]
 }
 
