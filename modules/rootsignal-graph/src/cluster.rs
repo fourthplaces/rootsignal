@@ -289,7 +289,7 @@ impl Clusterer {
     /// Run Leiden community detection on the SIMILAR_TO subgraph.
     async fn run_leiden(&self) -> Result<Vec<Community>, neo4rs::Error> {
         let q = query(
-            "CALL leiden_community_detection.get({weight: 'weight', gamma: 1.0})
+            "CALL leiden_community_detection.get('weight', 1.0)
              YIELD node, community_id
              RETURN node.id AS signal_id, community_id"
         );
