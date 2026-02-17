@@ -479,7 +479,6 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         _ => SensitivityLevel::General,
     };
     let confidence: f64 = n.get("confidence").unwrap_or(0.5);
-    let source_trust: f64 = n.get("source_trust").unwrap_or(0.5);
     let freshness_score: f64 = n.get("freshness_score").unwrap_or(0.5);
     let corroboration_count: i64 = n.get("corroboration_count").unwrap_or(0);
     let source_url: String = n.get("source_url").unwrap_or_default();
@@ -503,7 +502,6 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         summary,
         sensitivity,
         confidence: confidence as f32,
-        source_trust: source_trust as f32,
         freshness_score: freshness_score as f32,
         corroboration_count: corroboration_count as u32,
         location,
@@ -706,7 +704,8 @@ fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
     let audience_roles: Vec<String> = n.get("audience_roles").unwrap_or_default();
     let sensitivity: String = n.get("sensitivity").unwrap_or_else(|_| "general".to_string());
     let source_count: i64 = n.get("source_count").unwrap_or(0);
-    let org_count: i64 = n.get("org_count").unwrap_or(0);
+    let entity_count: i64 = n.get("entity_count").unwrap_or(0);
+    let type_diversity: i64 = n.get("type_diversity").unwrap_or(0);
     let source_domains: Vec<String> = n.get("source_domains").unwrap_or_default();
     let corroboration_depth: i64 = n.get("corroboration_depth").unwrap_or(0);
     let status: String = n.get("status").unwrap_or_else(|_| "emerging".to_string());
@@ -726,7 +725,8 @@ fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
         audience_roles,
         sensitivity,
         source_count: source_count as u32,
-        org_count: org_count as u32,
+        entity_count: entity_count as u32,
+        type_diversity: type_diversity as u32,
         source_domains,
         corroboration_depth: corroboration_depth as u32,
         status,

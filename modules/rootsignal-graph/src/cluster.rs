@@ -28,12 +28,12 @@ pub struct Clusterer {
     client: GraphClient,
     writer: GraphWriter,
     anthropic_api_key: String,
-    org_mappings: Vec<OrgMappingRef>,
+    entity_mappings: Vec<EntityMappingRef>,
 }
 
-/// Lightweight org mapping reference for clustering.
-pub struct OrgMappingRef {
-    pub org_id: String,
+/// Lightweight entity mapping reference for clustering.
+pub struct EntityMappingRef {
+    pub entity_id: String,
     pub domains: Vec<String>,
     pub instagram: Vec<String>,
     pub facebook: Vec<String>,
@@ -50,13 +50,13 @@ impl Clusterer {
     pub fn new(
         client: GraphClient,
         anthropic_api_key: &str,
-        org_mappings: Vec<OrgMappingRef>,
+        entity_mappings: Vec<EntityMappingRef>,
     ) -> Self {
         Self {
             writer: GraphWriter::new(client.clone()),
             client,
             anthropic_api_key: anthropic_api_key.to_string(),
-            org_mappings,
+            entity_mappings,
         }
     }
 
@@ -131,17 +131,18 @@ impl Clusterer {
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            let org_count = self.count_distinct_orgs(&source_urls);
+            let entity_count = self.count_distinct_entities(&source_urls);
             let corroboration_depth = signal_meta.iter().filter(|s| s.corroboration_count > 0).count() as u32;
 
-            // Status: confirmed if multi-org, emerging if single-org
-            let status = if org_count >= 2 { "confirmed" } else { "emerging" };
+            // Status: confirmed if multi-entity, emerging if single-entity
+            let status = if entity_count >= 2 { "confirmed" } else { "emerging" };
 
-            // Dominant type
+            // Dominant type and type diversity
             let mut type_counts: HashMap<String, u32> = HashMap::new();
             for meta in &signal_meta {
                 *type_counts.entry(meta.node_type.clone()).or_insert(0) += 1;
             }
+            let type_diversity = type_counts.len() as u32;
             let dominant_type = type_counts
                 .iter()
                 .max_by_key(|(_, c)| *c)
@@ -197,7 +198,8 @@ impl Clusterer {
                     audience_roles,
                     sensitivity,
                     source_count: source_domains.len() as u32,
-                    org_count,
+                    entity_count,
+                    type_diversity,
                     source_domains,
                     corroboration_depth,
                     status: status.to_string(),
@@ -235,7 +237,8 @@ impl Clusterer {
                     audience_roles,
                     sensitivity,
                     source_count: source_domains.len() as u32,
-                    org_count,
+                    entity_count,
+                    type_diversity,
                     source_domains,
                     corroboration_depth,
                     status: status.to_string(),
@@ -366,41 +369,41 @@ Respond in this exact JSON format:
         Ok((headline, summary))
     }
 
-    /// Count distinct organizations across source URLs.
-    fn count_distinct_orgs(&self, source_urls: &[&str]) -> u32 {
-        let mut orgs = HashSet::new();
+    /// Count distinct entities across source URLs.
+    fn count_distinct_entities(&self, source_urls: &[&str]) -> u32 {
+        let mut entities = HashSet::new();
         for url in source_urls {
-            let org = self.resolve_org(url);
-            orgs.insert(org);
+            let entity = self.resolve_entity(url);
+            entities.insert(entity);
         }
-        orgs.len() as u32
+        entities.len() as u32
     }
 
-    /// Resolve a URL to its organization ID using org mappings.
-    fn resolve_org(&self, url: &str) -> String {
+    /// Resolve a URL to its entity ID using entity mappings.
+    fn resolve_entity(&self, url: &str) -> String {
         let domain = extract_domain(url);
 
-        for mapping in &self.org_mappings {
+        for mapping in &self.entity_mappings {
             for d in &mapping.domains {
                 let d: &str = d.as_str();
                 if domain.contains(d) {
-                    return mapping.org_id.clone();
+                    return mapping.entity_id.clone();
                 }
             }
             for ig in &mapping.instagram {
                 if url.contains(&format!("instagram.com/{ig}")) {
-                    return mapping.org_id.clone();
+                    return mapping.entity_id.clone();
                 }
             }
             for fb in &mapping.facebook {
                 let fb: &str = fb.as_str();
                 if url.contains(fb) {
-                    return mapping.org_id.clone();
+                    return mapping.entity_id.clone();
                 }
             }
             for r in &mapping.reddit {
                 if url.contains(&format!("reddit.com/user/{r}")) || url.contains(&format!("reddit.com/u/{r}")) {
-                    return mapping.org_id.clone();
+                    return mapping.entity_id.clone();
                 }
             }
         }
@@ -466,7 +469,8 @@ Respond in this exact JSON format:
                  s.audience_roles = $audience_roles,
                  s.sensitivity = $sensitivity,
                  s.source_count = $source_count,
-                 s.org_count = $org_count,
+                 s.entity_count = $entity_count,
+                 s.type_diversity = $type_diversity,
                  s.source_domains = $source_domains,
                  s.corroboration_depth = $corroboration_depth,
                  s.status = $status"
@@ -478,7 +482,8 @@ Respond in this exact JSON format:
         .param("audience_roles", story.audience_roles.clone())
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
-        .param("org_count", story.org_count as i64)
+        .param("entity_count", story.entity_count as i64)
+        .param("type_diversity", story.type_diversity as i64)
         .param("source_domains", story.source_domains.clone())
         .param("corroboration_depth", story.corroboration_depth as i64)
         .param("status", story.status.as_str());
@@ -496,12 +501,12 @@ Respond in this exact JSON format:
     async fn compute_velocity_and_energy(&self) -> Result<(), neo4rs::Error> {
         let now = Utc::now();
 
-        // Get all stories with current signal counts and org counts
+        // Get all stories with current signal counts and entity counts
         let q = query(
             "MATCH (s:Story)
              OPTIONAL MATCH (s)-[:CONTAINS]->(n)
              RETURN s.id AS id, s.source_count AS source_count,
-                    s.org_count AS org_count, count(n) AS signal_count"
+                    s.entity_count AS entity_count, count(n) AS signal_count"
         );
 
         let mut stories: Vec<(Uuid, u32, u32, u32)> = Vec::new();
@@ -509,30 +514,30 @@ Respond in this exact JSON format:
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let source_count: i64 = row.get("source_count").unwrap_or(0);
-            let org_count: i64 = row.get("org_count").unwrap_or(0);
+            let entity_count: i64 = row.get("entity_count").unwrap_or(0);
             let signal_count: i64 = row.get("signal_count").unwrap_or(0);
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                stories.push((id, signal_count as u32, source_count as u32, org_count as u32));
+                stories.push((id, signal_count as u32, source_count as u32, entity_count as u32));
             }
         }
 
-        for (story_id, current_count, source_count, org_count) in stories {
-            // Create snapshot with org_count for velocity tracking
+        for (story_id, current_count, source_count, entity_count) in stories {
+            // Create snapshot with entity_count for velocity tracking
             let snapshot = ClusterSnapshot {
                 id: Uuid::new_v4(),
                 story_id,
                 signal_count: current_count,
-                org_count,
+                entity_count,
                 run_at: now,
             };
             self.writer.create_cluster_snapshot(&snapshot).await?;
 
-            // Velocity driven by org diversity growth, not raw signal count.
+            // Velocity driven by entity diversity growth, not raw signal count.
             // A flood from one source doesn't move the needle.
-            let org_count_7d_ago = self.writer.get_snapshot_org_count_7d_ago(story_id).await?;
-            let velocity = match org_count_7d_ago {
-                Some(old_orgs) => (org_count as f64 - old_orgs as f64) / 7.0,
-                None => org_count as f64 / 7.0, // First run, assume all new
+            let entity_count_7d_ago = self.writer.get_snapshot_entity_count_7d_ago(story_id).await?;
+            let velocity = match entity_count_7d_ago {
+                Some(old_entities) => (entity_count as f64 - old_entities as f64) / 7.0,
+                None => entity_count as f64 / 7.0, // First run, assume all new
             };
 
             // Recency score: 1.0 today -> 0.0 at 14 days

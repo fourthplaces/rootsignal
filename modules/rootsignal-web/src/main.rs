@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use rootsignal_common::{Config, EvidenceNode, Node, NodeType, StoryNode};
+use rootsignal_common::{Config, EvidenceNode, Node, NodeType};
 use rootsignal_graph::{GraphClient, PublicGraphReader};
 
 mod templates;
@@ -435,7 +435,6 @@ pub struct NodeView {
     pub last_confirmed: String,
     pub action_url: String,
     pub audience_roles: Vec<String>,
-    pub source_trust_label: String,
     pub completeness_label: String,
 }
 
@@ -463,16 +462,6 @@ fn node_to_view(node: &Node) -> NodeView {
     };
 
     let confidence = meta.map(|m| m.confidence).unwrap_or(0.0);
-    let source_trust = meta.map(|m| m.source_trust).unwrap_or(0.0);
-    let source_trust_label = if source_trust >= 0.85 {
-        "Government / official source"
-    } else if source_trust >= 0.7 {
-        "Established organization"
-    } else if source_trust >= 0.5 {
-        "Community source"
-    } else {
-        "Unverified source"
-    };
 
     let has_loc = meta.map(|m| m.location.is_some()).unwrap_or(false);
     let completeness_label = if has_loc && !action_url.is_empty() {
@@ -511,7 +500,6 @@ fn node_to_view(node: &Node) -> NodeView {
         audience_roles: meta
             .map(|m| m.audience_roles.iter().map(|r| format!("{r}")).collect())
             .unwrap_or_default(),
-        source_trust_label: source_trust_label.to_string(),
         completeness_label: completeness_label.to_string(),
     }
 }

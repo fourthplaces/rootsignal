@@ -109,7 +109,6 @@ pub struct NodeMeta {
     pub summary: String,
     pub sensitivity: SensitivityLevel,
     pub confidence: f32,
-    pub source_trust: f32,
     pub freshness_score: f32,
     pub corroboration_count: u32,
     pub location: Option<GeoPoint>,
@@ -251,20 +250,21 @@ pub struct StoryNode {
     pub audience_roles: Vec<String>,
     pub sensitivity: String,
     pub source_count: u32,
-    pub org_count: u32,
+    pub entity_count: u32,
+    pub type_diversity: u32,
     pub source_domains: Vec<String>,
     pub corroboration_depth: u32,
     pub status: String,  // "emerging" or "confirmed"
 }
 
-/// A snapshot of a story's signal and org counts at a point in time, used for velocity tracking.
-/// Velocity is driven by org_count growth (not raw signal count) to resist single-source flooding.
+/// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
+/// Velocity is driven by entity_count growth (not raw signal count) to resist single-source flooding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
     pub id: Uuid,
     pub story_id: Uuid,
     pub signal_count: u32,
-    pub org_count: u32,
+    pub entity_count: u32,
     pub run_at: DateTime<Utc>,
 }
 

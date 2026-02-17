@@ -73,7 +73,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
         GeoAccuracy::Low => 0.3,
     };
     let confidence =
-        meta.source_trust * 0.3 + geo_score * 0.2 + completeness * 0.3 + meta.freshness_score * 0.2;
+        completeness * 0.4 + geo_score * 0.3 + meta.freshness_score * 0.3;
 
     ExtractionQuality {
         actionable,

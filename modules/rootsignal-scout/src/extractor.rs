@@ -105,7 +105,6 @@ impl Extractor {
         &self,
         content: &str,
         source_url: &str,
-        source_trust: f32,
     ) -> Result<Vec<Node>> {
         // Truncate content to avoid token limits
         let content = if content.len() > 30_000 {
@@ -187,7 +186,6 @@ impl Extractor {
                 summary: signal.summary.clone(),
                 sensitivity,
                 confidence: 0.0, // Will be computed by QualityScorer
-                source_trust,
                 freshness_score: 1.0, // Fresh at extraction time
                 corroboration_count: 0,
                 location,

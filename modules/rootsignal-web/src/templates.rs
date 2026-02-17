@@ -160,7 +160,6 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         {action_section}
         <dl class="detail-meta">
             <dt>Last verified</dt><dd>{last}</dd>
-            <dt>Source trust</dt><dd>{trust}</dd>
             <dt>Corroboration</dt><dd>Confirmed by {corr} source{s}</dd>
             <dt>Completeness</dt><dd>{comp}</dd>
         </dl>
@@ -173,7 +172,6 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         title = html_escape(&node.title),
         summary = html_escape(&node.summary),
         last = html_escape(&node.last_confirmed),
-        trust = html_escape(&node.source_trust_label),
         corr = node.corroboration_count,
         comp = html_escape(&node.completeness_label),
     );

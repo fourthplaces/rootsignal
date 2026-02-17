@@ -394,7 +394,7 @@ impl Scout {
                 }
 
                 // Extract (LLM call) — only reached for new/changed content
-                match self.extractor.extract(&content, &clean_url, source_trust).await {
+                match self.extractor.extract(&content, &clean_url).await {
                     Ok(nodes) => (clean_url, source_trust, ScrapeOutcome::New { content, nodes }),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
@@ -464,12 +464,12 @@ impl Scout {
 
         // 5. Clustering — build similarity edges, run Leiden, create/update stories
         info!("Starting clustering...");
-        let org_mappings: Vec<rootsignal_graph::cluster::OrgMappingRef> = self
+        let entity_mappings: Vec<rootsignal_graph::cluster::EntityMappingRef> = self
             .profile
-            .org_mappings
+            .entity_mappings
             .iter()
-            .map(|m| rootsignal_graph::cluster::OrgMappingRef {
-                org_id: m.org_id.to_string(),
+            .map(|m| rootsignal_graph::cluster::EntityMappingRef {
+                entity_id: m.entity_id.to_string(),
                 domains: m.domains.iter().map(|s| s.to_string()).collect(),
                 instagram: m.instagram.iter().map(|s| s.to_string()).collect(),
                 facebook: m.facebook.iter().map(|s| s.to_string()).collect(),
@@ -480,7 +480,7 @@ impl Scout {
         let clusterer = Clusterer::new(
             self.graph_client.clone(),
             &self.anthropic_api_key,
-            org_mappings,
+            entity_mappings,
         );
 
         match clusterer.run().await {
@@ -519,7 +519,7 @@ impl Scout {
         for (username, trust) in ig_accounts {
             let source_url = format!("https://www.instagram.com/{username}/");
             let username = username.to_string();
-            let trust = *trust;
+            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_instagram_posts(&username, 10).await {
                     Ok(p) => p,
@@ -539,7 +539,7 @@ impl Scout {
                 if combined_text.is_empty() {
                     return None;
                 }
-                let nodes = match self.extractor.extract(&combined_text, &source_url, trust).await {
+                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
                     Ok(n) => n,
                     Err(e) => {
                         warn!(username, error = %e, "Instagram extraction failed");
@@ -553,7 +553,7 @@ impl Scout {
 
         for (page_url, trust) in fb_pages {
             let page_url = page_url.to_string();
-            let trust = *trust;
+            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_facebook_posts(&page_url, 10).await {
                     Ok(p) => p,
@@ -573,7 +573,7 @@ impl Scout {
                 if combined_text.is_empty() {
                     return None;
                 }
-                let nodes = match self.extractor.extract(&combined_text, &page_url, trust).await {
+                let nodes = match self.extractor.extract(&combined_text, &page_url).await {
                     Ok(n) => n,
                     Err(e) => {
                         warn!(page_url, error = %e, "Facebook extraction failed");
@@ -587,7 +587,7 @@ impl Scout {
 
         for (subreddit_url, trust) in reddit_subs {
             let subreddit_url = subreddit_url.to_string();
-            let trust = *trust;
+            let _trust = *trust;
             futures.push(Box::pin(async move {
                 let posts = match apify.scrape_reddit_posts(&subreddit_url, 20).await {
                     Ok(p) => p,
@@ -616,7 +616,7 @@ impl Scout {
                         continue;
                     }
                     combined_all.push_str(&combined_text);
-                    match self.extractor.extract(&combined_text, &subreddit_url, trust).await {
+                    match self.extractor.extract(&combined_text, &subreddit_url).await {
                         Ok(n) => all_nodes.extend(n),
                         Err(e) => {
                             warn!(subreddit_url, error = %e, "Reddit extraction failed");

@@ -8,53 +8,54 @@ pub struct CityProfile {
     pub instagram_accounts: Vec<(&'static str, f32)>,
     pub facebook_pages: Vec<(&'static str, f32)>,
     pub reddit_subreddits: Vec<(&'static str, f32)>,
-    pub org_mappings: Vec<OrgMapping>,
+    pub entity_mappings: Vec<EntityMapping>,
 }
 
-/// Maps social media accounts and domains to a parent organization.
-/// Used for cross-source corroboration (same org = same source, don't increment)
-/// and for story promotion (multi-org gate).
-pub struct OrgMapping {
-    pub org_id: &'static str,
+/// Maps social media accounts and domains to a parent entity (organization or individual).
+/// Used for cross-source corroboration (same entity = same source, don't increment)
+/// and for story promotion (multi-entity gate).
+pub struct EntityMapping {
+    pub entity_id: &'static str,
+    pub entity_type: &'static str,
     pub domains: Vec<&'static str>,
     pub instagram: Vec<&'static str>,
     pub facebook: Vec<&'static str>,
     pub reddit: Vec<&'static str>,
 }
 
-/// Resolve a source URL to its parent organization ID using org mappings.
-/// Returns the org_id if matched, otherwise extracts the domain as a fallback org.
-pub fn resolve_org(url: &str, mappings: &[OrgMapping]) -> String {
+/// Resolve a source URL to its parent entity ID using entity mappings.
+/// Returns the entity_id if matched, otherwise extracts the domain as a fallback entity.
+pub fn resolve_entity(url: &str, mappings: &[EntityMapping]) -> String {
     let domain = extract_domain(url);
 
     for mapping in mappings {
         // Check domain match
         for d in &mapping.domains {
             if domain.contains(d) {
-                return mapping.org_id.to_string();
+                return mapping.entity_id.to_string();
             }
         }
         // Check Instagram
         for ig in &mapping.instagram {
             if url.contains(&format!("instagram.com/{ig}")) {
-                return mapping.org_id.to_string();
+                return mapping.entity_id.to_string();
             }
         }
         // Check Facebook
         for fb in &mapping.facebook {
             if url.contains(fb) {
-                return mapping.org_id.to_string();
+                return mapping.entity_id.to_string();
             }
         }
         // Check Reddit
         for r in &mapping.reddit {
             if url.contains(&format!("reddit.com/user/{r}")) || url.contains(&format!("reddit.com/u/{r}")) {
-                return mapping.org_id.to_string();
+                return mapping.entity_id.to_string();
             }
         }
     }
 
-    // Fallback: use the domain itself as the org
+    // Fallback: use the domain itself as the entity
     domain
 }
 
@@ -212,114 +213,130 @@ fn twincities_profile() -> CityProfile {
             ("https://www.reddit.com/r/TwinCities", 0.4),
             ("https://www.reddit.com/r/SaintPaul", 0.4),
         ],
-        org_mappings: vec![
-            OrgMapping {
-                org_id: "handsontwincities.org",
+        entity_mappings: vec![
+            EntityMapping {
+                entity_id: "handsontwincities.org",
+                entity_type: "org",
                 domains: vec!["handsontwincities.org"],
                 instagram: vec!["handsontwincities"],
                 facebook: vec!["facebook.com/HandsOnTC"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "gtcuw.org",
+            EntityMapping {
+                entity_id: "gtcuw.org",
+                entity_type: "org",
                 domains: vec!["gtcuw.org"],
                 instagram: vec!["unitedwaytc"],
                 facebook: vec!["facebook.com/unitedwaytwincities"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "2harvest.org",
+            EntityMapping {
+                entity_id: "2harvest.org",
+                entity_type: "org",
                 domains: vec!["2harvest.org"],
                 instagram: vec!["secondharvestheartland"],
                 facebook: vec!["facebook.com/2harvest"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "everymeal.org",
+            EntityMapping {
+                entity_id: "everymeal.org",
+                entity_type: "org",
                 domains: vec!["everymeal.org", "everymealorg"],
                 instagram: vec!["everymealorg"],
                 facebook: vec!["facebook.com/EveryMealOrg"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "openarmsmn.org",
+            EntityMapping {
+                entity_id: "openarmsmn.org",
+                entity_type: "org",
                 domains: vec!["openarmsmn.org"],
                 instagram: vec!["openarmsmn"],
                 facebook: vec!["facebook.com/openarmsmn"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "tchabitat.org",
+            EntityMapping {
+                entity_id: "tchabitat.org",
+                entity_type: "org",
                 domains: vec!["tchabitat.org"],
                 instagram: vec!["tchabitat"],
                 facebook: vec!["facebook.com/tchabitat"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "fmr.org",
+            EntityMapping {
+                entity_id: "fmr.org",
+                entity_type: "org",
                 domains: vec!["fmr.org"],
                 instagram: vec!["friendsmissriv"],
                 facebook: vec!["facebook.com/FriendsMissRiv"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "mirac-mn.org",
+            EntityMapping {
+                entity_id: "mirac-mn.org",
+                entity_type: "org",
                 domains: vec!["mirac-mn.org", "miracmn"],
                 instagram: vec!["miracmn"],
                 facebook: vec!["facebook.com/miracmn"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "unidosmn.org",
+            EntityMapping {
+                entity_id: "unidosmn.org",
+                entity_type: "org",
                 domains: vec!["unidosmn.org"],
                 instagram: vec!["unidosmn"],
                 facebook: vec!["facebook.com/unidosmn"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "ilcm.org",
+            EntityMapping {
+                entity_id: "ilcm.org",
+                entity_type: "org",
                 domains: vec!["ilcm.org", "immigrantlawcenter"],
                 instagram: vec!["immigrantlawcentermn"],
                 facebook: vec!["facebook.com/immigrantlawcenterMN"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "clues.org",
+            EntityMapping {
+                entity_id: "clues.org",
+                entity_type: "org",
                 domains: vec!["clues.org"],
                 instagram: vec!["cluesofficial"],
                 facebook: vec!["facebook.com/CLUESPage"],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "loavesandfishesmn.org",
+            EntityMapping {
+                entity_id: "loavesandfishesmn.org",
+                entity_type: "org",
                 domains: vec!["loavesandfishesmn.org"],
                 instagram: vec!["loavesandfishesmn"],
                 facebook: vec![],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "minneapolisparks.org",
+            EntityMapping {
+                entity_id: "minneapolisparks.org",
+                entity_type: "org",
                 domains: vec!["minneapolisparks.org"],
                 instagram: vec!["minneapolisparks"],
                 facebook: vec![],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "pillsburyunited.org",
+            EntityMapping {
+                entity_id: "pillsburyunited.org",
+                entity_type: "org",
                 domains: vec!["pillsburyunited.org"],
                 instagram: vec!["pillsburyunited"],
                 facebook: vec![],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "hclib.org",
+            EntityMapping {
+                entity_id: "hclib.org",
+                entity_type: "org",
                 domains: vec!["hclib.org"],
                 instagram: vec!["hclib"],
                 facebook: vec![],
                 reddit: vec![],
             },
-            OrgMapping {
-                org_id: "sppl.org",
+            EntityMapping {
+                entity_id: "sppl.org",
+                entity_type: "org",
                 domains: vec!["sppl.org"],
                 instagram: vec!["stpaulpubliclibrary"],
                 facebook: vec![],
@@ -376,7 +393,7 @@ fn nyc_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/nyc", 0.4),
         ],
-        org_mappings: vec![],
+        entity_mappings: vec![],
     }
 }
 
@@ -426,7 +443,7 @@ fn portland_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/Portland", 0.4),
         ],
-        org_mappings: vec![],
+        entity_mappings: vec![],
     }
 }
 
@@ -472,7 +489,7 @@ fn berlin_profile() -> CityProfile {
         reddit_subreddits: vec![
             ("https://www.reddit.com/r/berlin", 0.4),
         ],
-        org_mappings: vec![],
+        entity_mappings: vec![],
     }
 }
 

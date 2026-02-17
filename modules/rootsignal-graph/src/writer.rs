@@ -53,7 +53,6 @@ impl GraphWriter {
                 summary: $summary,
                 sensitivity: $sensitivity,
                 confidence: $confidence,
-                source_trust: $source_trust,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
                 source_url: $source_url,
@@ -76,7 +75,6 @@ impl GraphWriter {
         .param("summary", n.meta.summary.as_str())
         .param("sensitivity", sensitivity_str(n.meta.sensitivity))
         .param("confidence", n.meta.confidence as f64)
-        .param("source_trust", n.meta.source_trust as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
@@ -118,7 +116,6 @@ impl GraphWriter {
                 summary: $summary,
                 sensitivity: $sensitivity,
                 confidence: $confidence,
-                source_trust: $source_trust,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
                 source_url: $source_url,
@@ -139,7 +136,6 @@ impl GraphWriter {
         .param("summary", n.meta.summary.as_str())
         .param("sensitivity", sensitivity_str(n.meta.sensitivity))
         .param("confidence", n.meta.confidence as f64)
-        .param("source_trust", n.meta.source_trust as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
@@ -174,7 +170,6 @@ impl GraphWriter {
                 summary: $summary,
                 sensitivity: $sensitivity,
                 confidence: $confidence,
-                source_trust: $source_trust,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
                 source_url: $source_url,
@@ -196,7 +191,6 @@ impl GraphWriter {
         .param("summary", n.meta.summary.as_str())
         .param("sensitivity", sensitivity_str(n.meta.sensitivity))
         .param("confidence", n.meta.confidence as f64)
-        .param("source_trust", n.meta.source_trust as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
@@ -238,7 +232,6 @@ impl GraphWriter {
                 summary: $summary,
                 sensitivity: $sensitivity,
                 confidence: $confidence,
-                source_trust: $source_trust,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
                 source_url: $source_url,
@@ -260,7 +253,6 @@ impl GraphWriter {
         .param("summary", n.meta.summary.as_str())
         .param("sensitivity", sensitivity_str(n.meta.sensitivity))
         .param("confidence", n.meta.confidence as f64)
-        .param("source_trust", n.meta.source_trust as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
@@ -301,7 +293,6 @@ impl GraphWriter {
                 summary: $summary,
                 sensitivity: $sensitivity,
                 confidence: $confidence,
-                source_trust: $source_trust,
                 freshness_score: $freshness_score,
                 corroboration_count: $corroboration_count,
                 source_url: $source_url,
@@ -320,7 +311,6 @@ impl GraphWriter {
         .param("summary", n.meta.summary.as_str())
         .param("sensitivity", sensitivity_str(n.meta.sensitivity))
         .param("confidence", n.meta.confidence as f64)
-        .param("source_trust", n.meta.source_trust as f64)
         .param("freshness_score", n.meta.freshness_score as f64)
         .param("corroboration_count", n.meta.corroboration_count as i64)
         .param("source_url", n.meta.source_url.as_str())
@@ -759,7 +749,8 @@ impl GraphWriter {
                 audience_roles: $audience_roles,
                 sensitivity: $sensitivity,
                 source_count: $source_count,
-                org_count: $org_count,
+                entity_count: $entity_count,
+                type_diversity: $type_diversity,
                 source_domains: $source_domains,
                 corroboration_depth: $corroboration_depth,
                 status: $status
@@ -777,7 +768,8 @@ impl GraphWriter {
         .param("audience_roles", story.audience_roles.clone())
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
-        .param("org_count", story.org_count as i64)
+        .param("entity_count", story.entity_count as i64)
+        .param("type_diversity", story.type_diversity as i64)
         .param("source_domains", story.source_domains.clone())
         .param("corroboration_depth", story.corroboration_depth as i64)
         .param("status", story.status.as_str());
@@ -807,7 +799,8 @@ impl GraphWriter {
                  s.audience_roles = $audience_roles,
                  s.sensitivity = $sensitivity,
                  s.source_count = $source_count,
-                 s.org_count = $org_count,
+                 s.entity_count = $entity_count,
+                 s.type_diversity = $type_diversity,
                  s.source_domains = $source_domains,
                  s.corroboration_depth = $corroboration_depth,
                  s.status = $status"
@@ -823,7 +816,8 @@ impl GraphWriter {
         .param("audience_roles", story.audience_roles.clone())
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
-        .param("org_count", story.org_count as i64)
+        .param("entity_count", story.entity_count as i64)
+        .param("type_diversity", story.type_diversity as i64)
         .param("source_domains", story.source_domains.clone())
         .param("corroboration_depth", story.corroboration_depth as i64)
         .param("status", story.status.as_str());
@@ -892,14 +886,14 @@ impl GraphWriter {
                 id: $id,
                 story_id: $story_id,
                 signal_count: $signal_count,
-                org_count: $org_count,
+                entity_count: $entity_count,
                 run_at: datetime($run_at)
             })"
         )
         .param("id", snapshot.id.to_string())
         .param("story_id", snapshot.story_id.to_string())
         .param("signal_count", snapshot.signal_count as i64)
-        .param("org_count", snapshot.org_count as i64)
+        .param("entity_count", snapshot.entity_count as i64)
         .param("run_at", memgraph_datetime(&snapshot.run_at));
 
         self.client.graph.run(q).await?;
@@ -1160,14 +1154,14 @@ impl GraphWriter {
         }
     }
 
-    /// Get the snapshot org count from 7 days ago for velocity calculation.
-    /// Velocity is driven by org diversity growth — a flood from one source doesn't move the needle.
-    pub async fn get_snapshot_org_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
+    /// Get the snapshot entity count from 7 days ago for velocity calculation.
+    /// Velocity is driven by entity diversity growth — a flood from one source doesn't move the needle.
+    pub async fn get_snapshot_entity_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
         let q = query(
             "MATCH (cs:ClusterSnapshot {story_id: $story_id})
              WHERE datetime(cs.run_at) >= datetime() - duration('P8D')
                AND datetime(cs.run_at) <= datetime() - duration('P6D')
-             RETURN cs.org_count AS cnt
+             RETURN cs.entity_count AS cnt
              ORDER BY cs.run_at ASC
              LIMIT 1"
         )
