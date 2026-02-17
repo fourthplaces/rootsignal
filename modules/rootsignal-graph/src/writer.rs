@@ -306,30 +306,25 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Find a duplicate signal by vector similarity. Checks same type first (fast path),
-    /// then other types if no match. Returns (node_id, node_type, source_url, similarity).
+    /// Find a duplicate signal by vector similarity across all signal types.
+    /// Returns the best match (highest similarity) above threshold.
     pub async fn find_duplicate(
         &self,
         embedding: &[f32],
-        primary_type: NodeType,
+        _primary_type: NodeType,
         threshold: f64,
     ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
-        // Fast path: check same type first
-        if let Some(m) = self.vector_search(primary_type, embedding, threshold).await? {
-            return Ok(Some(m));
-        }
+        let mut best: Option<DuplicateMatch> = None;
 
-        // Slow path: check other types
         for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension] {
-            if *nt == primary_type {
-                continue;
-            }
             if let Some(m) = self.vector_search(*nt, embedding, threshold).await? {
-                return Ok(Some(m));
+                if best.as_ref().map_or(true, |b| m.similarity > b.similarity) {
+                    best = Some(m);
+                }
             }
         }
 
-        Ok(None)
+        Ok(best)
     }
 
     async fn vector_search(
@@ -372,6 +367,47 @@ impl GraphWriter {
         }
 
         Ok(None)
+    }
+
+    /// Check if content with this hash has already been processed.
+    /// Used to skip re-extraction of unchanged pages.
+    pub async fn content_already_processed(
+        &self,
+        content_hash: &str,
+    ) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (ev:Evidence {content_hash: $hash})
+             RETURN ev LIMIT 1",
+        )
+        .param("hash", content_hash);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        Ok(stream.next().await?.is_some())
+    }
+
+    /// Bump `last_confirmed_active` on all signals from a source URL.
+    /// Used when content hasn't changed — keeps signals fresh without re-extracting.
+    pub async fn refresh_url_signals(
+        &self,
+        source_url: &str,
+        now: DateTime<Utc>,
+    ) -> Result<u64, neo4rs::Error> {
+        let q = query(
+            "MATCH (n)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Tension)
+               AND n.source_url = $url
+             SET n.last_confirmed_active = datetime($now)
+             RETURN count(n) AS refreshed",
+        )
+        .param("url", source_url)
+        .param("now", memgraph_datetime(&now));
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("refreshed").unwrap_or(0) as u64)
+        } else {
+            Ok(0)
+        }
     }
 
     /// Return titles of existing signals from a given source URL.

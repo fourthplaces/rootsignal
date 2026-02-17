@@ -18,6 +18,7 @@ use crate::sources;
 #[derive(Debug, Default)]
 pub struct ScoutStats {
     pub urls_scraped: u32,
+    pub urls_unchanged: u32,
     pub urls_failed: u32,
     pub signals_extracted: u32,
     pub signals_rejected_pii: u32,
@@ -35,6 +36,7 @@ impl std::fmt::Display for ScoutStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "\n=== Scout Run Complete ===")?;
         writeln!(f, "URLs scraped:       {}", self.urls_scraped)?;
+        writeln!(f, "URLs unchanged:     {}", self.urls_unchanged)?;
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
@@ -59,6 +61,12 @@ impl std::fmt::Display for ScoutStats {
         }
         Ok(())
     }
+}
+
+enum ScrapeOutcome {
+    New { content: String, nodes: Vec<Node> },
+    Unchanged,
+    Failed,
 }
 
 pub struct Scout {
@@ -169,26 +177,42 @@ impl Scout {
         all_urls.dedup_by(|a, b| a.0 == b.0);
         info!(total_urls = all_urls.len(), "Unique URLs to scrape");
 
-        // 3. Scrape + extract in parallel (5 concurrent), then write to graph sequentially
+        // 3. Scrape + check content hash + extract in parallel, then write sequentially
         let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|(url, source_trust)| {
             let url = url.clone();
             let source_trust = *source_trust;
             async move {
+                let clean_url = sanitize_url(&url);
+
                 // Scrape
                 let content = match self.scraper.scrape(&url).await {
                     Ok(c) if !c.is_empty() => c,
-                    Ok(_) => return (url, source_trust, None),
+                    Ok(_) => return (clean_url, source_trust, ScrapeOutcome::Failed),
                     Err(e) => {
                         warn!(url, error = %e, "Scrape failed");
-                        return (url, source_trust, None);
+                        return (clean_url, source_trust, ScrapeOutcome::Failed);
                     }
                 };
-                // Extract (LLM call)
-                match self.extractor.extract(&content, &url, source_trust).await {
-                    Ok(nodes) => (url, source_trust, Some((content, nodes))),
+
+                // Check content hash — skip extraction if content hasn't changed
+                let hash = format!("{:x}", content_hash(&content));
+                match self.writer.content_already_processed(&hash).await {
+                    Ok(true) => {
+                        info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
+                        return (clean_url, source_trust, ScrapeOutcome::Unchanged);
+                    }
+                    Ok(false) => {} // New content, proceed
                     Err(e) => {
-                        warn!(url, error = %e, "Failed to process URL");
-                        (url, source_trust, None)
+                        warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
+                    }
+                }
+
+                // Extract (LLM call) — only reached for new/changed content
+                match self.extractor.extract(&content, &clean_url, source_trust).await {
+                    Ok(nodes) => (clean_url, source_trust, ScrapeOutcome::New { content, nodes }),
+                    Err(e) => {
+                        warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
+                        (clean_url, source_trust, ScrapeOutcome::Failed)
                     }
                 }
             }
@@ -197,10 +221,11 @@ impl Scout {
         .collect()
         .await;
 
-        // Process extracted nodes sequentially (batch embed + dedup + graph writes)
-        for (url, _source_trust, result) in pipeline_results {
-            match result {
-                Some((content, nodes)) => {
+        // Process results sequentially
+        let now = Utc::now();
+        for (url, _source_trust, outcome) in pipeline_results {
+            match outcome {
+                ScrapeOutcome::New { content, nodes } => {
                     match self.store_signals(&url, &content, nodes, &mut stats).await {
                         Ok(_) => stats.urls_scraped += 1,
                         Err(e) => {
@@ -209,7 +234,18 @@ impl Scout {
                         }
                     }
                 }
-                None => stats.urls_failed += 1,
+                ScrapeOutcome::Unchanged => {
+                    // Refresh timestamps to keep existing signals fresh
+                    match self.writer.refresh_url_signals(&url, now).await {
+                        Ok(n) if n > 0 => info!(url, refreshed = n, "Refreshed unchanged signals"),
+                        Ok(_) => {}
+                        Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
+                    }
+                    stats.urls_unchanged += 1;
+                }
+                ScrapeOutcome::Failed => {
+                    stats.urls_failed += 1;
+                }
             }
         }
 
