@@ -10,7 +10,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
                 has_location: false,
                 has_action_url: false,
                 has_timing: false,
-                pii_detected: false,
+
                 geo_accuracy: GeoAccuracy::Low,
                 completeness: 0.0,
                 confidence: 0.0,
@@ -38,14 +38,16 @@ pub fn score(node: &Node) -> ExtractionQuality {
         }
         Node::Give(g) => (!g.action_url.is_empty(), g.is_ongoing),
         Node::Ask(a) => (a.action_url.is_some(), false),
+        Node::Notice(_) => (false, false),
         Node::Tension(_) => (false, false),
         Node::Evidence(_) => (false, false),
     };
 
-    let actionable = has_action_url
-        && (has_timing
-            || matches!(node, Node::Give(g) if g.is_ongoing)
-            || matches!(node, Node::Ask(_)));
+    let actionable = matches!(node, Node::Notice(_))
+        || (has_action_url
+            && (has_timing
+                || matches!(node, Node::Give(g) if g.is_ongoing)
+                || matches!(node, Node::Ask(_))));
 
     // Completeness: fraction of 7 key fields populated
     // title, summary, signal_type (always), audience_roles, location, action_url, timing
@@ -78,7 +80,6 @@ pub fn score(node: &Node) -> ExtractionQuality {
         has_location,
         has_action_url,
         has_timing,
-        pii_detected: false,
         geo_accuracy,
         completeness,
         confidence: confidence.clamp(0.0, 1.0),

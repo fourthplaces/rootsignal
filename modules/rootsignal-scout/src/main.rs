@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
         &config.voyage_api_key,
         &config.tavily_api_key,
         &config.apify_api_key,
+        &config.city,
     )?;
 
     let stats = scout.run().await?;

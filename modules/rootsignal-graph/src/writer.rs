@@ -4,8 +4,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, EvidenceNode, EventNode, GiveNode, Node, NodeMeta, NodeType, SensitivityLevel,
-    TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS,
+    AskNode, EvidenceNode, EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode,
+    SensitivityLevel, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS,
+    NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -30,6 +31,7 @@ impl GraphWriter {
             Node::Event(n) => self.create_event(n, embedding).await,
             Node::Give(n) => self.create_give(n, embedding).await,
             Node::Ask(n) => self.create_ask(n, embedding).await,
+            Node::Notice(n) => self.create_notice(n, embedding).await,
             Node::Tension(n) => self.create_tension(n, embedding).await,
             Node::Evidence(_) => {
                 return Err(neo4rs::Error::UnsupportedVersion(
@@ -218,6 +220,67 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
+    async fn create_notice(
+        &self,
+        n: &NoticeNode,
+        embedding: &[f32],
+    ) -> Result<Uuid, neo4rs::Error> {
+        let q = query(
+            "CREATE (nc:Notice {
+                id: $id,
+                title: $title,
+                summary: $summary,
+                sensitivity: $sensitivity,
+                confidence: $confidence,
+                source_trust: $source_trust,
+                freshness_score: $freshness_score,
+                corroboration_count: $corroboration_count,
+                source_url: $source_url,
+                extracted_at: datetime($extracted_at),
+                last_confirmed_active: datetime($last_confirmed_active),
+                audience_roles: $audience_roles,
+                severity: $severity,
+                category: $category,
+                effective_date: $effective_date,
+                source_authority: $source_authority,
+                lat: $lat,
+                lng: $lng,
+                embedding: $embedding
+            }) RETURN nc.id AS id",
+        )
+        .param("id", n.meta.id.to_string())
+        .param("title", n.meta.title.as_str())
+        .param("summary", n.meta.summary.as_str())
+        .param("sensitivity", sensitivity_str(n.meta.sensitivity))
+        .param("confidence", n.meta.confidence as f64)
+        .param("source_trust", n.meta.source_trust as f64)
+        .param("freshness_score", n.meta.freshness_score as f64)
+        .param("corroboration_count", n.meta.corroboration_count as i64)
+        .param("source_url", n.meta.source_url.as_str())
+        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param(
+            "last_confirmed_active",
+            memgraph_datetime(&n.meta.last_confirmed_active),
+        )
+        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+        .param("severity", severity_str(n.severity))
+        .param("category", n.category.clone().unwrap_or_default())
+        .param(
+            "effective_date",
+            n.effective_date
+                .map(|dt| memgraph_datetime(&dt))
+                .unwrap_or_default(),
+        )
+        .param("source_authority", n.source_authority.clone().unwrap_or_default())
+        .param("embedding", embedding_to_f64(embedding));
+
+        let q = add_location_params(q, &n.meta);
+        let mut stream = self.client.graph.execute(q).await?;
+        while stream.next().await?.is_some() {}
+
+        Ok(n.meta.id)
+    }
+
     async fn create_tension(
         &self,
         n: &TensionNode,
@@ -283,8 +346,9 @@ impl GraphWriter {
             "OPTIONAL MATCH (e:Event {id: $signal_id})
             OPTIONAL MATCH (g:Give {id: $signal_id})
             OPTIONAL MATCH (a:Ask {id: $signal_id})
+            OPTIONAL MATCH (nc:Notice {id: $signal_id})
             OPTIONAL MATCH (t:Tension {id: $signal_id})
-            WITH coalesce(e, g, a, t) AS n
+            WITH coalesce(e, g, a, nc, t) AS n
             WHERE n IS NOT NULL
             CREATE (ev:Evidence {
                 id: $ev_id,
@@ -316,7 +380,7 @@ impl GraphWriter {
     ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
         let mut best: Option<DuplicateMatch> = None;
 
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension] {
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
             if let Some(m) = self.vector_search(*nt, embedding, threshold).await? {
                 if best.as_ref().map_or(true, |b| m.similarity > b.similarity) {
                     best = Some(m);
@@ -337,6 +401,7 @@ impl GraphWriter {
             NodeType::Event => "event_embedding",
             NodeType::Give => "give_embedding",
             NodeType::Ask => "ask_embedding",
+            NodeType::Notice => "notice_embedding",
             NodeType::Tension => "tension_embedding",
             NodeType::Evidence => return Ok(None),
         };
@@ -396,7 +461,7 @@ impl GraphWriter {
     ) -> Result<u64, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Tension)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
                AND n.source_url = $url
              SET n.last_confirmed_active = datetime($now)
              RETURN count(n) AS refreshed",
@@ -420,7 +485,7 @@ impl GraphWriter {
     ) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Tension)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
                AND n.source_url = $url
              RETURN n.title AS title",
         )
@@ -449,11 +514,12 @@ impl GraphWriter {
         }
 
         // Query each label once with all titles for that type
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask] {
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice] {
             let label = match nt {
                 NodeType::Event => "Event",
                 NodeType::Give => "Give",
                 NodeType::Ask => "Ask",
+                NodeType::Notice => "Notice",
                 _ => continue,
             };
 
@@ -499,6 +565,7 @@ impl GraphWriter {
             NodeType::Event => "Event",
             NodeType::Give => "Give",
             NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
             NodeType::Evidence => return Ok(()),
         };
@@ -559,7 +626,20 @@ impl GraphWriter {
             stats.asks = row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
-        // 3. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
+        // 3. Expired notices
+        let q = query(&format!(
+            "MATCH (n:Notice)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            NOTICE_EXPIRE_DAYS
+        ));
+        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
+            stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 4. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
         for label in &["Give", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})

@@ -14,7 +14,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18,
 }).addTo(map);
 
-const colors = { Event: '#1565c0', Give: '#2e7d32', Ask: '#e65100', Tension: '#c62828' };
+const colors = { Event: '#1565c0', Give: '#2e7d32', Ask: '#e65100', Notice: '#7b1fa2', Tension: '#c62828' };
 let markers = L.layerGroup().addTo(map);
 
 function loadMarkers() {
@@ -260,6 +260,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .badge-event{{background:#e3f2fd;color:#1565c0;}}
 .badge-give{{background:#e8f5e9;color:#2e7d32;}}
 .badge-ask{{background:#fff3e0;color:#e65100;}}
+.badge-notice{{background:#f3e5f5;color:#7b1fa2;}}
 .badge-tension{{background:#fce4ec;color:#c62828;}}
 .meta-row{{display:flex;gap:12px;align-items:center;font-size:12px;color:#888;margin-top:8px;}}
 .action-btn{{display:inline-block;padding:6px 16px;background:#0066cc;color:#fff;border-radius:4px;text-decoration:none;font-size:13px;font-weight:500;}}

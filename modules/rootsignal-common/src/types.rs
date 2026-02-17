@@ -49,6 +49,7 @@ pub enum NodeType {
     Event,
     Give,
     Ask,
+    Notice,
     Tension,
     Evidence,
 }
@@ -59,6 +60,7 @@ impl std::fmt::Display for NodeType {
             NodeType::Event => write!(f, "Event"),
             NodeType::Give => write!(f, "Give"),
             NodeType::Ask => write!(f, "Ask"),
+            NodeType::Notice => write!(f, "Notice"),
             NodeType::Tension => write!(f, "Tension"),
             NodeType::Evidence => write!(f, "Evidence"),
         }
@@ -147,6 +149,15 @@ pub struct AskNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoticeNode {
+    pub meta: NodeMeta,
+    pub severity: Severity,
+    pub category: Option<String>,
+    pub effective_date: Option<DateTime<Utc>>,
+    pub source_authority: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensionNode {
     pub meta: NodeMeta,
     pub severity: Severity,
@@ -169,6 +180,7 @@ pub enum Node {
     Event(EventNode),
     Give(GiveNode),
     Ask(AskNode),
+    Notice(NoticeNode),
     Tension(TensionNode),
     Evidence(EvidenceNode),
 }
@@ -179,6 +191,7 @@ impl Node {
             Node::Event(_) => NodeType::Event,
             Node::Give(_) => NodeType::Give,
             Node::Ask(_) => NodeType::Ask,
+            Node::Notice(_) => NodeType::Notice,
             Node::Tension(_) => NodeType::Tension,
             Node::Evidence(_) => NodeType::Evidence,
         }
@@ -189,6 +202,7 @@ impl Node {
             Node::Event(n) => n.meta.id,
             Node::Give(n) => n.meta.id,
             Node::Ask(n) => n.meta.id,
+            Node::Notice(n) => n.meta.id,
             Node::Tension(n) => n.meta.id,
             Node::Evidence(n) => n.id,
         }
@@ -199,6 +213,7 @@ impl Node {
             Node::Event(n) => Some(&n.meta),
             Node::Give(n) => Some(&n.meta),
             Node::Ask(n) => Some(&n.meta),
+            Node::Notice(n) => Some(&n.meta),
             Node::Tension(n) => Some(&n.meta),
             Node::Evidence(_) => None,
         }
@@ -209,6 +224,7 @@ impl Node {
             Node::Event(n) => &n.meta.title,
             Node::Give(n) => &n.meta.title,
             Node::Ask(n) => &n.meta.title,
+            Node::Notice(n) => &n.meta.title,
             Node::Tension(n) => &n.meta.title,
             Node::Evidence(n) => &n.source_url,
         }

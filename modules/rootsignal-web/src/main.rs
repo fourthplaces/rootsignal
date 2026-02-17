@@ -152,6 +152,7 @@ async fn api_nodes_near(
                 "Event" | "event" => Some(NodeType::Event),
                 "Give" | "give" => Some(NodeType::Give),
                 "Ask" | "ask" => Some(NodeType::Ask),
+                "Notice" | "notice" => Some(NodeType::Notice),
                 "Tension" | "tension" => Some(NodeType::Tension),
                 _ => None,
             })
@@ -261,6 +262,7 @@ fn node_to_view(node: &Node) -> NodeView {
         NodeType::Event => ("Event", "event"),
         NodeType::Give => ("Give", "give"),
         NodeType::Ask => ("Ask", "ask"),
+        NodeType::Notice => ("Notice", "notice"),
         NodeType::Tension => ("Tension", "tension"),
         NodeType::Evidence => ("Evidence", "evidence"),
     };
@@ -269,6 +271,7 @@ fn node_to_view(node: &Node) -> NodeView {
         Node::Event(e) => e.action_url.clone(),
         Node::Give(g) => g.action_url.clone(),
         Node::Ask(a) => a.action_url.clone().unwrap_or_default(),
+        Node::Notice(_) => String::new(),
         _ => String::new(),
     };
 

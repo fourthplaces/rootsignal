@@ -4,9 +4,9 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     fuzz_location, AskNode, AudienceRole, EvidenceNode, EventNode, GeoPoint, GeoPrecision,
-    GiveNode, Node, NodeMeta, NodeType, Severity, SensitivityLevel, TensionNode, Urgency,
-    ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS,
-    SENSITIVE_CORROBORATION_MIN,
+    GiveNode, Node, NodeMeta, NodeType, NoticeNode, Severity, SensitivityLevel, TensionNode,
+    Urgency, ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS,
+    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -36,7 +36,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let types = node_types
             .map(|t| t.to_vec())
-            .unwrap_or_else(|| vec![NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension]);
+            .unwrap_or_else(|| vec![NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension]);
 
         let mut results = Vec::new();
 
@@ -88,7 +88,7 @@ impl PublicGraphReader {
         let id_str = id.to_string();
 
         // Search across all signal types
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension] {
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
             let label = node_type_label(*nt);
             let cypher = format!(
                 "MATCH (n:{label} {{id: $id}})
@@ -122,7 +122,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let types = node_types
             .map(|t| t.to_vec())
-            .unwrap_or_else(|| vec![NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension]);
+            .unwrap_or_else(|| vec![NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension]);
 
         let mut results = Vec::new();
 
@@ -168,7 +168,7 @@ impl PublicGraphReader {
     /// Get total signal count by type (for quality dashboard).
     pub async fn count_by_type(&self) -> Result<Vec<(NodeType, u64)>, neo4rs::Error> {
         let mut counts = Vec::new();
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Tension] {
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
             let label = node_type_label(*nt);
             let q = query(&format!("MATCH (n:{label}) RETURN count(n) AS cnt"));
             let mut stream = self.client.graph.execute(q).await?;
@@ -184,7 +184,7 @@ impl PublicGraphReader {
     pub async fn confidence_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
+            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
             WITH CASE
                 WHEN n.confidence >= 0.8 THEN 'high (0.8+)'
                 WHEN n.confidence >= 0.6 THEN 'good (0.6-0.8)'
@@ -209,7 +209,7 @@ impl PublicGraphReader {
     pub async fn audience_role_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
+            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
             UNWIND n.audience_roles AS role
             RETURN role, count(*) AS cnt
             ORDER BY cnt DESC",
@@ -229,7 +229,7 @@ impl PublicGraphReader {
     pub async fn freshness_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Tension
+            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
             WITH (datetime() - n.last_confirmed_active).day AS age_days
             WITH CASE
                 WHEN age_days <= 7 THEN '< 7 days'
@@ -265,6 +265,7 @@ fn node_type_label(nt: NodeType) -> &'static str {
         NodeType::Event => "Event",
         NodeType::Give => "Give",
         NodeType::Ask => "Ask",
+        NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
         NodeType::Evidence => "Evidence",
     }
@@ -291,6 +292,10 @@ fn expiry_clause(nt: NodeType) -> String {
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
+        NodeType::Notice => format!(
+            "AND datetime(n.extracted_at) >= datetime() - duration('P{days}D')",
+            days = NOTICE_EXPIRE_DAYS,
+        ),
         NodeType::Tension => format!(
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
@@ -314,6 +319,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
         Node::Event(n) => Some(&mut n.meta),
         Node::Give(n) => Some(&mut n.meta),
         Node::Ask(n) => Some(&mut n.meta),
+        Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),
         Node::Evidence(_) => None,
     }
@@ -325,13 +331,6 @@ fn passes_display_filter(node: &Node) -> bool {
     let Some(meta) = node.meta() else {
         return true;
     };
-
-    // Sensitive signals need corroboration
-    if meta.sensitivity == SensitivityLevel::Sensitive
-        && meta.corroboration_count < SENSITIVE_CORROBORATION_MIN
-    {
-        return false;
-    }
 
     let now = Utc::now();
 
@@ -348,6 +347,13 @@ fn passes_display_filter(node: &Node) -> bool {
     // Ask-specific: expire after ASK_EXPIRE_DAYS
     if matches!(node, Node::Ask(_)) {
         if (now - meta.extracted_at).num_days() > ASK_EXPIRE_DAYS {
+            return false;
+        }
+    }
+
+    // Notice-specific: expire after NOTICE_EXPIRE_DAYS
+    if matches!(node, Node::Notice(_)) {
+        if (now - meta.extracted_at).num_days() > NOTICE_EXPIRE_DAYS {
             return false;
         }
     }
@@ -466,6 +472,38 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 what_needed,
                 action_url: if action_url.is_empty() { None } else { Some(action_url) },
                 goal: if goal.is_empty() { None } else { Some(goal) },
+            }))
+        }
+        NodeType::Notice => {
+            let severity_str: String = n.get("severity").unwrap_or_default();
+            let severity = match severity_str.as_str() {
+                "high" => Severity::High,
+                "critical" => Severity::Critical,
+                "low" => Severity::Low,
+                _ => Severity::Medium,
+            };
+            let category: String = n.get("category").unwrap_or_default();
+            let effective_date_str: String = n.get("effective_date").unwrap_or_default();
+            let effective_date = if effective_date_str.is_empty() {
+                None
+            } else {
+                DateTime::parse_from_rfc3339(&effective_date_str)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(&effective_date_str, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|naive| naive.and_utc())
+                    })
+            };
+            let source_authority: String = n.get("source_authority").unwrap_or_default();
+
+            Some(Node::Notice(NoticeNode {
+                meta,
+                severity,
+                category: if category.is_empty() { None } else { Some(category) },
+                effective_date,
+                source_authority: if source_authority.is_empty() { None } else { Some(source_authority) },
             }))
         }
         NodeType::Tension => {

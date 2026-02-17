@@ -15,6 +15,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE CONSTRAINT ON (n:Event) ASSERT n.id IS UNIQUE",
         "CREATE CONSTRAINT ON (n:Give) ASSERT n.id IS UNIQUE",
         "CREATE CONSTRAINT ON (n:Ask) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:Notice) ASSERT n.id IS UNIQUE",
         "CREATE CONSTRAINT ON (n:Tension) ASSERT n.id IS UNIQUE",
         "CREATE CONSTRAINT ON (n:Evidence) ASSERT n.id IS UNIQUE",
     ];
@@ -36,6 +37,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         // Ask
         "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.sensitivity)",
         "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.confidence)",
+        // Notice
+        "CREATE CONSTRAINT ON (n:Notice) ASSERT EXISTS (n.sensitivity)",
+        "CREATE CONSTRAINT ON (n:Notice) ASSERT EXISTS (n.confidence)",
         // Tension
         "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.sensitivity)",
         "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.confidence)",
@@ -54,6 +58,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE INDEX ON :Give(lng)",
         "CREATE INDEX ON :Ask(lat)",
         "CREATE INDEX ON :Ask(lng)",
+        "CREATE INDEX ON :Notice(lat)",
+        "CREATE INDEX ON :Notice(lng)",
         "CREATE INDEX ON :Tension(lat)",
         "CREATE INDEX ON :Tension(lng)",
     ];
@@ -70,6 +76,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "MATCH (n:Event) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Give) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Ask) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Notice) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Tension) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n) WHERE n.location IS NOT NULL REMOVE n.location",
     ];
@@ -87,6 +94,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE TEXT INDEX event_text ON :Event(title, summary)",
         "CREATE TEXT INDEX give_text ON :Give(title, summary)",
         "CREATE TEXT INDEX ask_text ON :Ask(title, summary)",
+        "CREATE TEXT INDEX notice_text ON :Notice(title, summary)",
         "CREATE TEXT INDEX tension_text ON :Tension(title, summary)",
     ];
 
@@ -100,6 +108,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         r#"CREATE VECTOR INDEX event_embedding ON :Event(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
         r#"CREATE VECTOR INDEX give_embedding ON :Give(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
         r#"CREATE VECTOR INDEX ask_embedding ON :Ask(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
+        r#"CREATE VECTOR INDEX notice_embedding ON :Notice(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
         r#"CREATE VECTOR INDEX tension_embedding ON :Tension(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
     ];
 

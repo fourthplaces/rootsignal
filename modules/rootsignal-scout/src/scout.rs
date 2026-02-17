@@ -12,7 +12,7 @@ use crate::embedder::Embedder;
 use crate::extractor::Extractor;
 use crate::quality;
 use crate::scraper::{self, PageScraper, TavilySearcher};
-use crate::sources;
+use crate::sources::{self, CityProfile};
 
 /// Stats from a scout run.
 #[derive(Debug, Default)]
@@ -21,10 +21,9 @@ pub struct ScoutStats {
     pub urls_unchanged: u32,
     pub urls_failed: u32,
     pub signals_extracted: u32,
-    pub signals_rejected_pii: u32,
     pub signals_deduplicated: u32,
     pub signals_stored: u32,
-    pub by_type: [u32; 4], // Event, Give, Ask, Tension
+    pub by_type: [u32; 5], // Event, Give, Ask, Notice, Tension
     pub fresh_7d: u32,
     pub fresh_30d: u32,
     pub fresh_90d: u32,
@@ -40,14 +39,14 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
-        writeln!(f, "Signals rejected:   {} (PII)", self.signals_rejected_pii)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
         writeln!(f, "\nBy type:")?;
         writeln!(f, "  Event:   {}", self.by_type[0])?;
         writeln!(f, "  Give:    {}", self.by_type[1])?;
         writeln!(f, "  Ask:     {}", self.by_type[2])?;
-        writeln!(f, "  Tension: {}", self.by_type[3])?;
+        writeln!(f, "  Notice:  {}", self.by_type[3])?;
+        writeln!(f, "  Tension: {}", self.by_type[4])?;
         let total = self.signals_stored.max(1);
         writeln!(f, "\nFreshness:")?;
         writeln!(f, "  < 7 days:   {} ({:.0}%)", self.fresh_7d, self.fresh_7d as f64 / total as f64 * 100.0)?;
@@ -124,6 +123,7 @@ pub struct Scout {
     scraper: Box<dyn PageScraper>,
     tavily: TavilySearcher,
     apify: Option<ApifyClient>,
+    profile: CityProfile,
 }
 
 impl Scout {
@@ -133,7 +133,10 @@ impl Scout {
         voyage_api_key: &str,
         tavily_api_key: &str,
         apify_api_key: &str,
+        city: &str,
     ) -> Result<Self> {
+        let profile = sources::city_profile(city);
+        info!(city = profile.name, "Initializing scout");
         let apify = if apify_api_key.is_empty() {
             warn!("APIFY_API_KEY not set, skipping social media scraping");
             None
@@ -142,11 +145,12 @@ impl Scout {
         };
         Ok(Self {
             writer: GraphWriter::new(graph_client),
-            extractor: Extractor::new(anthropic_api_key),
+            extractor: Extractor::new(anthropic_api_key, profile.name, profile.default_lat, profile.default_lng),
             embedder: Embedder::new(voyage_api_key),
             scraper: Box::new(scraper::ChromeScraper::new()),
             tavily: TavilySearcher::new(tavily_api_key),
             apify,
+            profile,
         })
     }
 
@@ -190,10 +194,10 @@ impl Scout {
 
         // 1. Tavily searches (parallel, 5 at a time)
         info!("Starting Tavily searches...");
-        let queries = sources::tavily_queries();
-        let search_results: Vec<_> = stream::iter(queries.into_iter().map(|query| {
+        let queries = &self.profile.tavily_queries;
+        let search_results: Vec<_> = stream::iter(queries.iter().map(|query| {
             async move {
-                (query, self.tavily.search(query, 5).await)
+                (*query, self.tavily.search(query, 5).await)
             }
         }))
         .buffer_unordered(5)
@@ -216,8 +220,8 @@ impl Scout {
 
         // 2. Curated sources
         info!("Adding curated sources...");
-        for (url, trust) in sources::curated_sources() {
-            all_urls.push((url.to_string(), trust));
+        for (url, trust) in &self.profile.curated_sources {
+            all_urls.push((url.to_string(), *trust));
         }
 
         // Deduplicate URLs
@@ -314,8 +318,8 @@ impl Scout {
 
         type SocialResult = Option<(String, String, Vec<Node>, usize)>;
 
-        let ig_accounts = sources::instagram_accounts();
-        let fb_pages = sources::facebook_pages();
+        let ig_accounts = &self.profile.instagram_accounts;
+        let fb_pages = &self.profile.facebook_pages;
         info!(
             ig = ig_accounts.len(),
             fb = fb_pages.len(),
@@ -325,7 +329,7 @@ impl Scout {
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
 
-        for (username, trust) in &ig_accounts {
+        for (username, trust) in ig_accounts {
             let source_url = format!("https://www.instagram.com/{username}/");
             let username = username.to_string();
             let trust = *trust;
@@ -360,7 +364,7 @@ impl Scout {
             }));
         }
 
-        for (page_url, trust) in &fb_pages {
+        for (page_url, trust) in fb_pages {
             let page_url = page_url.to_string();
             let trust = *trust;
             futures.push(Box::pin(async move {
@@ -546,7 +550,8 @@ impl Scout {
                 NodeType::Event => 0,
                 NodeType::Give => 1,
                 NodeType::Ask => 2,
-                NodeType::Tension => 3,
+                NodeType::Notice => 3,
+                NodeType::Tension => 4,
                 NodeType::Evidence => continue,
             };
 
@@ -702,6 +707,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
         Node::Event(n) => Some(&mut n.meta),
         Node::Give(n) => Some(&mut n.meta),
         Node::Ask(n) => Some(&mut n.meta),
+        Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),
         Node::Evidence(_) => None,
     }

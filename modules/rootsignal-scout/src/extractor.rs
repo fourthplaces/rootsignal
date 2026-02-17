@@ -7,14 +7,14 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    detect_pii, AskNode, AudienceRole, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
-    NodeMeta, SensitivityLevel, Urgency,
+    AskNode, AudienceRole, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta,
+    NoticeNode, SensitivityLevel, Severity, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedSignal {
-    /// Signal type: "event", "give", or "ask"
+    /// Signal type: "event", "give", "ask", or "notice"
     pub signal_type: String,
     pub title: String,
     pub summary: String,
@@ -50,6 +50,12 @@ pub struct ExtractedSignal {
     pub goal: Option<String>,
     /// Severity for Tension signals: "low", "medium", "high", "critical"
     pub severity: Option<String>,
+    /// Category for Notice signals: "psa", "policy", "advisory", "enforcement", "health"
+    pub category: Option<String>,
+    /// Effective date for Notice signals (ISO 8601)
+    pub effective_date: Option<String>,
+    /// Source authority for Notice signals (e.g. "City of Minneapolis")
+    pub source_authority: Option<String>,
 }
 
 /// The full extraction response from the LLM.
@@ -80,74 +86,16 @@ where
 
 // StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
 
-const EXTRACTION_SYSTEM_PROMPT: &str = r#"You are a civic signal extractor for the Twin Cities (Minneapolis-St. Paul, Minnesota).
-
-Your job: extract ACTIONABLE civic signals from web page content. Each signal must be something a community member can act on. There are exactly three signal types:
-
-- **Event**: A time-bound gathering or happening. "Show up at a time/place." Examples: park cleanup Saturday, city council hearing, community meeting, vigil, rally, workshop, public comment deadline.
-- **Give**: An ongoing resource, service, or offering available to people. "This is available to you." Examples: food shelf hours, tool library, free legal aid hotline, know-your-rights resources, shelter beds, repair cafe, mental health services.
-- **Ask**: A community need — someone needs something from you. "We need your help." Examples: volunteers needed, GoFundMe, donation drive, sign this petition, attend this hearing, call your representative.
-
-## Classification Rules
-- If people show up at a specific time/place → Event
-- If something is available/offered to the community → Give
-- If the community is asked for help/support/resources → Ask
-- If none of the above apply — if there is no action a community member can take — do NOT extract it. Return an empty signals array for that content.
-
-## What NOT to Extract
-- Office/facility closures, holiday notices, weather closures (not actionable)
-- News articles or descriptions of problems with no community response attached
-- Wikipedia or encyclopedia content
-- Descriptions of organizational structure or governance
-- Grant awards or funding announcements (unless they create a new resource for the community)
-- General background information or historical context
-
-## Extracting from Civic Stress Content
-When a page describes civic conflict, enforcement actions, policy disputes, or community crises, extract the COMMUNITY RESPONSES — not the crisis itself:
-- A page about ICE enforcement → extract the legal aid hotlines (Give), know-your-rights workshops (Event), volunteer calls for sanctuary support (Ask)
-- A page about a housing crisis → extract the tenant rights clinic (Give), public hearing date (Event), petition to sign (Ask)
-- A page about environmental contamination → extract the cleanup event (Event), health screening resource (Give), call for citizen scientists (Ask)
-
-The tension itself is context. The responses are the signals. If a page describes only a problem with no community response or action pathway, return an empty signals array.
-
-## Sensitivity Classification
-- **sensitive**: Mentions enforcement (ICE, police operations, raids), vulnerable populations, sanctuary networks
-- **elevated**: Mentions organizing, advocacy, protest, boycott, political action
-- **general**: Everything else (volunteer events, cleanups, public meetings, food shelves)
-
-## Audience Roles
-Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant, steward, civic_participant, skill_provider
-
-## PII Scrubbing — CRITICAL
-- STRIP all personal names (unless the person is a public figure or elected official)
-- STRIP phone numbers, email addresses, home addresses
-- STRIP medical details, immigration status, financial details
-- RETAIN organization names, public venue names, event dates/times
-
-## Location
-- Extract the most specific location possible (venue address, intersection, neighborhood, city)
-- For Twin Cities signals, default to Minneapolis (44.9778, -93.2650) or St. Paul (44.9537, -93.0900) if only the city is known
-- Set geo_precision: "exact" for specific addresses, "neighborhood" for neighborhoods/zip codes, "city" for city-level
-
-## Timing
-- Extract start/end times as ISO 8601 datetime strings
-- For ongoing services, set is_ongoing: true instead of specific times
-- For recurring events, set is_recurring: true
-
-## Action URLs
-- Include the most relevant action URL (registration link, donation link, event page)
-- If no specific action URL exists, use the source page URL
-
-Only return signals that a community member can ACT on. Quality over quantity."#;
-
 pub struct Extractor {
     claude: Claude,
+    system_prompt: String,
 }
 
 impl Extractor {
-    pub fn new(anthropic_api_key: &str) -> Self {
+    pub fn new(anthropic_api_key: &str, city_name: &str, default_lat: f64, default_lng: f64) -> Self {
         let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
-        Self { claude }
+        let system_prompt = build_system_prompt(city_name, default_lat, default_lng);
+        Self { claude, system_prompt }
     }
 
     /// Extract civic signals from page content.
@@ -174,7 +122,7 @@ impl Extractor {
 
         let response: ExtractionResponse = self
             .claude
-            .extract("claude-haiku-4-5-20251001", EXTRACTION_SYSTEM_PROMPT, &user_prompt)
+            .extract("claude-haiku-4-5-20251001", &self.system_prompt, &user_prompt)
             .await?;
 
         let now = Utc::now();
@@ -192,21 +140,6 @@ impl Extractor {
                     title = signal.title,
                     "Filtered junk signal from extraction"
                 );
-                continue;
-            }
-
-            // PII check on title + summary
-            let combined = format!("{} {}", signal.title, signal.summary);
-            let pii = detect_pii(&combined);
-            if !pii.is_empty() {
-                warn!(
-                    source_url,
-                    title = signal.title,
-                    pii_findings = ?pii,
-                    "PII detected in extraction, attempting re-scrub"
-                );
-                // Try scrubbing by just skipping this signal
-                // In production, we'd re-extract with a stronger prompt
                 continue;
             }
 
@@ -310,6 +243,27 @@ impl Extractor {
                         goal: signal.goal,
                     })
                 }
+                "notice" => {
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    let effective_date = signal
+                        .effective_date
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    Node::Notice(NoticeNode {
+                        meta,
+                        severity,
+                        category: signal.category,
+                        effective_date,
+                        source_authority: signal.source_authority,
+                    })
+                }
                 // Tension signals are not extracted individually — they emerge from
                 // signal clustering in the graph (Phase 2). Skip if LLM produces one.
                 "tension" => {
@@ -336,4 +290,61 @@ impl Extractor {
         );
         Ok(nodes)
     }
+}
+
+fn build_system_prompt(city_name: &str, default_lat: f64, default_lng: f64) -> String {
+    format!(
+        r#"You are a civic signal extractor for {city_name}.
+
+Extract civic signals from web page content. Each signal is something a community member can act on or should be aware of.
+
+## Signal Types
+
+- **Event**: A time-bound gathering. Has start time and location.
+- **Give**: An available resource, service, or offering. Has availability and contact info.
+- **Ask**: A community need requesting help. Has what's needed and how to help.
+- **Notice**: An official advisory or policy change. Has source authority and effective date.
+
+If content doesn't map to one of these types, return an empty signals array.
+
+## Extracting from News and Crisis Content
+When a page describes a crisis, conflict, or problem, extract the COMMUNITY RESPONSES — not the narrative itself. The responses are the signals:
+- Legal aid hotlines, know-your-rights resources → Give
+- Community meetings, workshops, public hearings → Event
+- Volunteer calls, donation drives, petitions → Ask
+- Official advisories, policy changes → Notice
+
+If a page describes only a problem with no actionable response, return an empty signals array.
+
+## Sensitivity
+- **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks
+- **elevated**: Organizing, advocacy, political action
+- **general**: Everything else
+
+## Audience Roles
+Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant, steward, civic_participant, skill_provider
+
+## Location
+- Extract the most specific location possible
+- Default to ({default_lat}, {default_lng}) if only city-level is known
+- geo_precision: "exact" for addresses, "neighborhood" for areas, "city" for city-level
+
+## Timing
+- ISO 8601 datetime strings for start/end times
+- is_ongoing: true for ongoing services
+- is_recurring: true for recurring events
+
+## Notice Fields
+- severity: "low", "medium", "high", "critical"
+- category: "psa", "policy", "advisory", "enforcement", "health"
+- effective_date: ISO 8601 when the notice takes effect
+- source_authority: The official body issuing it
+
+## Action URLs
+- Include the most relevant action URL (registration, donation, event page)
+- If none exists, use the source page URL
+
+## Contact Information
+Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs)."#
+    )
 }

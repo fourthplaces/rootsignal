@@ -24,6 +24,9 @@ pub struct Config {
     // Admin
     pub admin_username: String,
     pub admin_password: String,
+
+    // City
+    pub city: String,
 }
 
 impl Config {
@@ -46,6 +49,7 @@ impl Config {
                 .expect("WEB_PORT must be a number"),
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
+            city: String::new(),
         }
     }
 
@@ -64,6 +68,7 @@ impl Config {
             web_port: 0,
             admin_username: String::new(),
             admin_password: String::new(),
+            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
         }
     }
 
@@ -85,6 +90,7 @@ impl Config {
                 .expect("WEB_PORT must be a number"),
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
+            city: String::new(),
         }
     }
 }
