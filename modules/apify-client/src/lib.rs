@@ -4,8 +4,8 @@ pub mod types;
 pub use error::{ApifyError, Result};
 pub use types::{
     FacebookPost, FacebookScraperInput, GoFundMeCampaign, GoFundMeScraperInput, InstagramPost,
-    InstagramScraperInput, RunData, StartUrl, TikTokPost, TikTokScraperInput, Tweet, TweetAuthor,
-    TweetScraperInput,
+    InstagramScraperInput, RedditPost, RedditScraperInput, RunData, StartUrl, TikTokPost,
+    TikTokScraperInput, Tweet, TweetAuthor, TweetScraperInput,
 };
 
 use serde::de::DeserializeOwned;
@@ -27,6 +27,9 @@ const TIKTOK_SCRAPER: &str = "GdWCkxBtKWOsKjdch";
 
 /// Actor ID for jupri/gofundme.
 const GOFUNDME_SCRAPER: &str = "RDZ33qDF65SRiTnxx";
+
+/// Actor ID for trudax/reddit-scraper.
+const REDDIT_SCRAPER: &str = "5JJqHHsNJCMzCEWgA";
 
 pub struct ApifyClient {
     client: reqwest::Client,
@@ -299,6 +302,59 @@ impl ApifyClient {
         tracing::info!(count = campaigns.len(), "Fetched GoFundMe campaigns");
 
         Ok(campaigns)
+    }
+
+    /// Scrape Reddit subreddit posts end-to-end: start run, poll, fetch results.
+    pub async fn scrape_reddit_posts(
+        &self,
+        subreddit_url: &str,
+        limit: u32,
+    ) -> Result<Vec<RedditPost>> {
+        tracing::info!(subreddit_url, limit, "Starting Reddit scrape");
+
+        let input = RedditScraperInput {
+            start_urls: vec![StartUrl {
+                url: subreddit_url.to_string(),
+            }],
+            max_items: limit,
+            sort: "new".to_string(),
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, REDDIT_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Apify run started, polling for completion");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        tracing::info!(
+            run_id = %completed.id,
+            dataset_id = %completed.default_dataset_id,
+            "Run completed, fetching results"
+        );
+
+        let posts: Vec<RedditPost> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = posts.len(), "Fetched Reddit posts");
+
+        Ok(posts)
     }
 
     /// Scrape X/Twitter posts end-to-end: start run, poll, fetch results.

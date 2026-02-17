@@ -7,6 +7,55 @@ pub struct CityProfile {
     pub curated_sources: Vec<(&'static str, f32)>,
     pub instagram_accounts: Vec<(&'static str, f32)>,
     pub facebook_pages: Vec<(&'static str, f32)>,
+    pub reddit_subreddits: Vec<(&'static str, f32)>,
+    pub org_mappings: Vec<OrgMapping>,
+}
+
+/// Maps social media accounts and domains to a parent organization.
+/// Used for cross-source corroboration (same org = same source, don't increment)
+/// and for story promotion (multi-org gate).
+pub struct OrgMapping {
+    pub org_id: &'static str,
+    pub domains: Vec<&'static str>,
+    pub instagram: Vec<&'static str>,
+    pub facebook: Vec<&'static str>,
+    pub reddit: Vec<&'static str>,
+}
+
+/// Resolve a source URL to its parent organization ID using org mappings.
+/// Returns the org_id if matched, otherwise extracts the domain as a fallback org.
+pub fn resolve_org(url: &str, mappings: &[OrgMapping]) -> String {
+    let domain = extract_domain(url);
+
+    for mapping in mappings {
+        // Check domain match
+        for d in &mapping.domains {
+            if domain.contains(d) {
+                return mapping.org_id.to_string();
+            }
+        }
+        // Check Instagram
+        for ig in &mapping.instagram {
+            if url.contains(&format!("instagram.com/{ig}")) {
+                return mapping.org_id.to_string();
+            }
+        }
+        // Check Facebook
+        for fb in &mapping.facebook {
+            if url.contains(fb) {
+                return mapping.org_id.to_string();
+            }
+        }
+        // Check Reddit
+        for r in &mapping.reddit {
+            if url.contains(&format!("reddit.com/user/{r}")) || url.contains(&format!("reddit.com/u/{r}")) {
+                return mapping.org_id.to_string();
+            }
+        }
+    }
+
+    // Fallback: use the domain itself as the org
+    domain
 }
 
 /// Build a CityProfile for the given city key.
@@ -80,11 +129,6 @@ fn twincities_profile() -> CityProfile {
             ("https://www.meetup.com/find/?location=us--mn--St%20Paul&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
             ("https://patch.com/minnesota/minneapolis", 0.65),
             ("https://patch.com/minnesota/st-paul", 0.65),
-            ("https://old.reddit.com/r/Minneapolis/new/", 0.4),
-            ("https://old.reddit.com/r/TwinCities/new/", 0.4),
-            ("https://old.reddit.com/r/SaintPaul/new/", 0.4),
-            ("https://old.reddit.com/r/Minneapolis/search?q=ICE+immigration&restrict_sr=on&sort=new&t=week", 0.4),
-            ("https://old.reddit.com/r/TwinCities/search?q=volunteer+OR+mutual+aid+OR+community&restrict_sr=on&sort=new&t=week", 0.4),
             ("https://bsky.app/search?q=minneapolis+community", 0.4),
             ("https://bsky.app/search?q=twin+cities+volunteer", 0.4),
             ("https://bsky.app/search?q=minneapolis+ICE+immigration", 0.4),
@@ -163,6 +207,125 @@ fn twincities_profile() -> CityProfile {
             ("https://www.facebook.com/immigrantlawcenterMN", 0.6),
             ("https://www.facebook.com/CLUESPage", 0.6),
         ],
+        reddit_subreddits: vec![
+            ("https://www.reddit.com/r/Minneapolis", 0.4),
+            ("https://www.reddit.com/r/TwinCities", 0.4),
+            ("https://www.reddit.com/r/SaintPaul", 0.4),
+        ],
+        org_mappings: vec![
+            OrgMapping {
+                org_id: "handsontwincities.org",
+                domains: vec!["handsontwincities.org"],
+                instagram: vec!["handsontwincities"],
+                facebook: vec!["facebook.com/HandsOnTC"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "gtcuw.org",
+                domains: vec!["gtcuw.org"],
+                instagram: vec!["unitedwaytc"],
+                facebook: vec!["facebook.com/unitedwaytwincities"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "2harvest.org",
+                domains: vec!["2harvest.org"],
+                instagram: vec!["secondharvestheartland"],
+                facebook: vec!["facebook.com/2harvest"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "everymeal.org",
+                domains: vec!["everymeal.org", "everymealorg"],
+                instagram: vec!["everymealorg"],
+                facebook: vec!["facebook.com/EveryMealOrg"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "openarmsmn.org",
+                domains: vec!["openarmsmn.org"],
+                instagram: vec!["openarmsmn"],
+                facebook: vec!["facebook.com/openarmsmn"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "tchabitat.org",
+                domains: vec!["tchabitat.org"],
+                instagram: vec!["tchabitat"],
+                facebook: vec!["facebook.com/tchabitat"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "fmr.org",
+                domains: vec!["fmr.org"],
+                instagram: vec!["friendsmissriv"],
+                facebook: vec!["facebook.com/FriendsMissRiv"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "mirac-mn.org",
+                domains: vec!["mirac-mn.org", "miracmn"],
+                instagram: vec!["miracmn"],
+                facebook: vec!["facebook.com/miracmn"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "unidosmn.org",
+                domains: vec!["unidosmn.org"],
+                instagram: vec!["unidosmn"],
+                facebook: vec!["facebook.com/unidosmn"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "ilcm.org",
+                domains: vec!["ilcm.org", "immigrantlawcenter"],
+                instagram: vec!["immigrantlawcentermn"],
+                facebook: vec!["facebook.com/immigrantlawcenterMN"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "clues.org",
+                domains: vec!["clues.org"],
+                instagram: vec!["cluesofficial"],
+                facebook: vec!["facebook.com/CLUESPage"],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "loavesandfishesmn.org",
+                domains: vec!["loavesandfishesmn.org"],
+                instagram: vec!["loavesandfishesmn"],
+                facebook: vec![],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "minneapolisparks.org",
+                domains: vec!["minneapolisparks.org"],
+                instagram: vec!["minneapolisparks"],
+                facebook: vec![],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "pillsburyunited.org",
+                domains: vec!["pillsburyunited.org"],
+                instagram: vec!["pillsburyunited"],
+                facebook: vec![],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "hclib.org",
+                domains: vec!["hclib.org"],
+                instagram: vec!["hclib"],
+                facebook: vec![],
+                reddit: vec![],
+            },
+            OrgMapping {
+                org_id: "sppl.org",
+                domains: vec!["sppl.org"],
+                instagram: vec!["stpaulpubliclibrary"],
+                facebook: vec![],
+                reddit: vec![],
+            },
+        ],
     }
 }
 
@@ -203,8 +366,6 @@ fn nyc_profile() -> CityProfile {
             ("https://www.eventbrite.com/d/ny--new-york/community/", 0.75),
             ("https://www.eventbrite.com/d/ny--new-york/volunteer/", 0.75),
             ("https://www.meetup.com/find/?location=us--ny--New+York&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://old.reddit.com/r/nyc/new/", 0.4),
-            ("https://old.reddit.com/r/nyc/search?q=volunteer+OR+mutual+aid+OR+community&restrict_sr=on&sort=new&t=week", 0.4),
             ("https://patch.com/new-york/new-york-city", 0.65),
             ("https://www.volunteermatch.org/search?l=New+York%2C+NY&k=&v=true", 0.75),
             ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=New+York%2C+NY&lat=40.7128&lng=-74.0060&radius=25", 0.7),
@@ -212,6 +373,10 @@ fn nyc_profile() -> CityProfile {
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
+        reddit_subreddits: vec![
+            ("https://www.reddit.com/r/nyc", 0.4),
+        ],
+        org_mappings: vec![],
     }
 }
 
@@ -251,8 +416,6 @@ fn portland_profile() -> CityProfile {
             ("https://www.eventbrite.com/d/or--portland/community/", 0.75),
             ("https://www.eventbrite.com/d/or--portland/volunteer/", 0.75),
             ("https://www.meetup.com/find/?location=us--or--Portland&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://old.reddit.com/r/Portland/new/", 0.4),
-            ("https://old.reddit.com/r/Portland/search?q=volunteer+OR+mutual+aid+OR+community&restrict_sr=on&sort=new&t=week", 0.4),
             ("https://patch.com/oregon/portland", 0.65),
             ("https://www.volunteermatch.org/search?l=Portland%2C+OR&k=&v=true", 0.75),
             ("https://www.idealist.org/en/volunteer-opportunities?areasOfFocus=COMMUNITY_DEVELOPMENT&q=&searchMode=true&location=Portland%2C+OR&lat=45.5152&lng=-122.6784&radius=25", 0.7),
@@ -260,6 +423,10 @@ fn portland_profile() -> CityProfile {
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
+        reddit_subreddits: vec![
+            ("https://www.reddit.com/r/Portland", 0.4),
+        ],
+        org_mappings: vec![],
     }
 }
 
@@ -297,13 +464,15 @@ fn berlin_profile() -> CityProfile {
             ("https://www.eventbrite.de/d/germany--berlin/community/", 0.75),
             ("https://www.eventbrite.de/d/germany--berlin/volunteer/", 0.75),
             ("https://www.meetup.com/find/?location=de--berlin&source=EVENTS&categoryId=&distance=tenMiles", 0.7),
-            ("https://old.reddit.com/r/berlin/new/", 0.4),
-            ("https://old.reddit.com/r/berlin/search?q=volunteer+OR+community+OR+ehrenamt&restrict_sr=on&sort=new&t=week", 0.4),
             ("https://www.nebenan.de/berlin", 0.65),
             ("https://www.gofundme.com/discover/search?q=berlin&location=Berlin%2C+Germany", 0.5),
         ],
         instagram_accounts: vec![],
         facebook_pages: vec![],
+        reddit_subreddits: vec![
+            ("https://www.reddit.com/r/berlin", 0.4),
+        ],
+        org_mappings: vec![],
     }
 }
 

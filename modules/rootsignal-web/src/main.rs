@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use rootsignal_common::{Config, EvidenceNode, Node, NodeType};
+use rootsignal_common::{Config, EvidenceNode, Node, NodeType, StoryNode};
 use rootsignal_graph::{GraphClient, PublicGraphReader};
 
 mod templates;
@@ -54,6 +54,12 @@ async fn main() -> Result<()> {
         .route("/nodes", get(nodes_page))
         .route("/nodes/{id}", get(node_detail_page))
         .route("/api/nodes/near", get(api_nodes_near))
+        // Stories API
+        .route("/api/stories", get(api_stories))
+        .route("/api/stories/{id}", get(api_story_detail))
+        .route("/api/stories/{id}/signals", get(api_story_signals))
+        .route("/api/signals", get(api_signals))
+        .route("/api/signals/{id}", get(api_signal_detail))
         // Admin route (basic auth checked in handler)
         .route("/admin/quality", get(quality_dashboard))
         .with_state(state)

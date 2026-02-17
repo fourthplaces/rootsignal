@@ -98,6 +98,12 @@ Root Signal recognizes that people contribute in different ways and all of them 
 
 This means: the audience role model is expansive. Signal is tagged for all the ways someone might act on it. The system doesn't assume that "helping" means physical volunteering — it includes economic action, civic participation, knowledge work, stewardship, and personal behavior change.
 
+### 13. Emergent Over Engineered
+
+Root Signal is an emergent system. The most valuable behaviors — discovering connections between issues, revealing where community energy is concentrating, surfacing patterns no one anticipated — should arise from the structure of the graph and the quality of the signal, not from hand-coded features. The system's job is to create the conditions for emergence: clean data, rich relationships, composable primitives, and simple rules. What emerges from that substrate is the product.
+
+This means: prefer graph structure over application logic. Don't hard-code "insights" — let them arise from signal density and connection patterns. Build small, composable pieces that combine in ways we haven't predicted. Resist the urge to prescribe what the system should reveal. When a useful pattern appears, make it queryable — don't bake it into the architecture. The system should surprise us.
+
 ---
 
 ## Anti-Principles — What Root Signal Will Not Do
@@ -133,3 +139,5 @@ When facing an architectural or product decision, ask:
 5. **Would this still make sense at global scale?** If the decision is hardcoded to one geography or one context, generalize.
 
 6. **Does this treat all forms of showing up with equal respect?** If it privileges one audience role over another without good reason, broaden.
+
+7. **Does this let behavior emerge, or does it prescribe it?** If a feature hard-codes a pattern that should arise naturally from the graph, step back and ask whether better signal or richer relationships would produce the same result without special-case logic.

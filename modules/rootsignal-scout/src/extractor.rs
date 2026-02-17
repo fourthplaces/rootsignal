@@ -26,8 +26,10 @@ pub struct ExtractedSignal {
     pub latitude: Option<f64>,
     /// Longitude if location can be determined
     pub longitude: Option<f64>,
-    /// Geo precision: "exact", "neighborhood", "city"
+    /// Geo precision: "exact", "neighborhood"
     pub geo_precision: Option<String>,
+    /// Human-readable location name (e.g. "YWCA Midtown", "Lake Nokomis")
+    pub location_name: Option<String>,
     /// ISO datetime string for event start time
     pub starts_at: Option<String>,
     /// ISO datetime string for event end time
@@ -189,6 +191,7 @@ impl Extractor {
                 freshness_score: 1.0, // Fresh at extraction time
                 corroboration_count: 0,
                 location,
+                location_name: signal.location_name.clone(),
                 source_url: source_url.to_string(),
                 extracted_at: now,
                 last_confirmed_active: now,
@@ -292,7 +295,7 @@ impl Extractor {
     }
 }
 
-fn build_system_prompt(city_name: &str, default_lat: f64, default_lng: f64) -> String {
+fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
     format!(
         r#"You are a civic signal extractor for {city_name}.
 
@@ -325,9 +328,11 @@ If a page describes only a problem with no actionable response, return an empty 
 Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant, steward, civic_participant, skill_provider
 
 ## Location
-- Extract the most specific location possible
-- Default to ({default_lat}, {default_lng}) if only city-level is known
-- geo_precision: "exact" for addresses, "neighborhood" for areas, "city" for city-level
+- Extract the most specific location possible from the content
+- Only provide latitude/longitude if you can identify a SPECIFIC place (building, park, intersection, venue)
+- If the signal is city-wide or you can't determine a specific location, omit latitude/longitude entirely (null)
+- Also provide location_name: the place name as text (e.g. "YWCA Midtown", "Lake Nokomis", "City Hall")
+- geo_precision: "exact" for specific addresses/buildings, "neighborhood" for areas
 
 ## Timing
 - ISO 8601 datetime strings for start/end times

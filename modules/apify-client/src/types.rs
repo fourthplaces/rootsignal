@@ -184,6 +184,31 @@ pub struct GoFundMeCampaign {
     pub organizer_name: Option<String>,
 }
 
+/// Input for the trudax/reddit-scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct RedditScraperInput {
+    #[serde(rename = "startUrls")]
+    pub start_urls: Vec<StartUrl>,
+    #[serde(rename = "maxItems")]
+    pub max_items: u32,
+    pub sort: String,
+}
+
+/// A single Reddit post from the Apify dataset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedditPost {
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub subreddit: Option<String>,
+    #[serde(rename = "upVotes")]
+    pub up_votes: Option<i64>,
+    #[serde(rename = "numberOfComments")]
+    pub number_of_comments: Option<i64>,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
+}
+
 /// Apify actor run metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunData {

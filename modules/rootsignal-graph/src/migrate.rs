@@ -117,6 +117,40 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Vector indexes created");
 
+    // --- Story and ClusterSnapshot constraints ---
+    let story_constraints = [
+        "CREATE CONSTRAINT ON (n:Story) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (n:ClusterSnapshot) ASSERT n.id IS UNIQUE",
+    ];
+
+    for c in &story_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+    info!("Story/ClusterSnapshot constraints created");
+
+    // --- Story indexes ---
+    let story_indexes = [
+        "CREATE INDEX ON :Story(energy)",
+        "CREATE INDEX ON :Story(status)",
+        "CREATE INDEX ON :Story(last_updated)",
+    ];
+
+    for idx in &story_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Story indexes created");
+
+    // --- Edge index for SIMILAR_TO weight ---
+    // Memgraph supports edge indexes on properties
+    let edge_indexes = [
+        "CREATE INDEX ON :SIMILAR_TO(weight)",
+    ];
+
+    for idx in &edge_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Edge indexes created");
+
     info!("Schema migration complete");
     Ok(())
 }

@@ -113,6 +113,7 @@ pub struct NodeMeta {
     pub freshness_score: f32,
     pub corroboration_count: u32,
     pub location: Option<GeoPoint>,
+    pub location_name: Option<String>,
     pub source_url: String,
     pub extracted_at: DateTime<Utc>,
     pub last_confirmed_active: DateTime<Utc>,
@@ -229,6 +230,40 @@ impl Node {
             Node::Evidence(n) => &n.source_url,
         }
     }
+}
+
+// --- Story Node ---
+
+/// A cluster of related signals that form an emergent story.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoryNode {
+    pub id: Uuid,
+    pub headline: String,
+    pub summary: String,
+    pub signal_count: u32,
+    pub first_seen: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
+    pub velocity: f64,
+    pub energy: f64,
+    pub centroid_lat: Option<f64>,
+    pub centroid_lng: Option<f64>,
+    pub dominant_type: String,
+    pub audience_roles: Vec<String>,
+    pub sensitivity: String,
+    pub source_count: u32,
+    pub org_count: u32,
+    pub source_domains: Vec<String>,
+    pub corroboration_depth: u32,
+    pub status: String,  // "emerging" or "confirmed"
+}
+
+/// A snapshot of a story's signal count at a point in time, used for velocity tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterSnapshot {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub signal_count: u32,
+    pub run_at: DateTime<Utc>,
 }
 
 // --- Edge Types ---

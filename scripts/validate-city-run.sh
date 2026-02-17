@@ -115,16 +115,17 @@ else
     echo "  SKIP: No expected coordinates provided"
 fi
 
-# 6. PII check — emails and phone numbers in titles/summaries
+# 6. Private PII check — SSNs and personal emails in titles (org contact info is expected)
 echo ""
-echo "--- PII Check ---"
-PII_EMAIL=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND (n.title CONTAINS '@' AND n.title CONTAINS '.') RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
-PII_EMAIL="${PII_EMAIL:-0}"
-check "Email PII in signals = 0" "$PII_EMAIL" "0"
+echo "--- Private PII Check ---"
+PII_EMAIL_TITLE=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND (n.title CONTAINS '@' AND n.title CONTAINS '.') RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
+PII_EMAIL_TITLE="${PII_EMAIL_TITLE:-0}"
+check "Personal email in titles = 0" "$PII_EMAIL_TITLE" "0"
 
-PII_PHONE=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND (n.summary CONTAINS '612-' OR n.summary CONTAINS '651-' OR n.summary CONTAINS '763-' OR n.summary CONTAINS '952-' OR n.summary CONTAINS '(612)' OR n.summary CONTAINS '(651)') RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
-PII_PHONE="${PII_PHONE:-0}"
-check "Phone PII in signals = 0" "$PII_PHONE" "0"
+# Check for actual SSN patterns (XXX-XX-XXXX) — mentioning "SSN" as a word is fine
+PII_SSN=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND n.summary =~ '.*[0-9]{3}-[0-9]{2}-[0-9]{4}.*' RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
+PII_SSN="${PII_SSN:-0}"
+check "SSN patterns in signals = 0" "$PII_SSN" "0"
 
 # 7. Evidence trail (every signal should have SOURCED_FROM evidence)
 echo ""

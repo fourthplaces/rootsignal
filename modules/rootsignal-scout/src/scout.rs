@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use apify_client::ApifyClient;
 use rootsignal_common::{EvidenceNode, Node, NodeType};
-use rootsignal_graph::{GraphWriter, GraphClient};
+use rootsignal_graph::{Clusterer, GraphWriter, GraphClient};
 
 use crate::embedder::Embedder;
 use crate::extractor::Extractor;
@@ -28,6 +28,7 @@ pub struct ScoutStats {
     pub fresh_30d: u32,
     pub fresh_90d: u32,
     pub social_media_posts: u32,
+    pub geo_stripped: u32,
     pub audience_roles: std::collections::HashMap<String, u32>,
 }
 
@@ -38,6 +39,7 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "URLs unchanged:     {}", self.urls_unchanged)?;
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
+        writeln!(f, "Geo stripped:       {}", self.geo_stripped)?;
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
@@ -117,12 +119,14 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 }
 
 pub struct Scout {
+    graph_client: GraphClient,
     writer: GraphWriter,
     extractor: Extractor,
     embedder: Embedder,
     scraper: Box<dyn PageScraper>,
     tavily: TavilySearcher,
     apify: Option<ApifyClient>,
+    anthropic_api_key: String,
     profile: CityProfile,
 }
 
@@ -144,12 +148,14 @@ impl Scout {
             Some(ApifyClient::new(apify_api_key.to_string()))
         };
         Ok(Self {
+            graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
             extractor: Extractor::new(anthropic_api_key, profile.name, profile.default_lat, profile.default_lng),
             embedder: Embedder::new(voyage_api_key),
             scraper: Box::new(scraper::ChromeScraper::new()),
             tavily: TavilySearcher::new(tavily_api_key),
             apify,
+            anthropic_api_key: anthropic_api_key.to_string(),
             profile,
         })
     }
@@ -307,11 +313,41 @@ impl Scout {
             self.scrape_social_media(apify, &mut stats, &mut embed_cache).await;
         }
 
+        // 5. Clustering — build similarity edges, run Leiden, create/update stories
+        info!("Starting clustering...");
+        let org_mappings: Vec<rootsignal_graph::cluster::OrgMappingRef> = self
+            .profile
+            .org_mappings
+            .iter()
+            .map(|m| rootsignal_graph::cluster::OrgMappingRef {
+                org_id: m.org_id.to_string(),
+                domains: m.domains.iter().map(|s| s.to_string()).collect(),
+                instagram: m.instagram.iter().map(|s| s.to_string()).collect(),
+                facebook: m.facebook.iter().map(|s| s.to_string()).collect(),
+                reddit: m.reddit.iter().map(|s| s.to_string()).collect(),
+            })
+            .collect();
+
+        let clusterer = Clusterer::new(
+            self.graph_client.clone(),
+            &self.anthropic_api_key,
+            org_mappings,
+        );
+
+        match clusterer.run().await {
+            Ok(cluster_stats) => {
+                info!("{cluster_stats}");
+            }
+            Err(e) => {
+                warn!(error = %e, "Clustering failed (non-fatal)");
+            }
+        }
+
         info!("{stats}");
         Ok(stats)
     }
 
-    /// Scrape Instagram and Facebook accounts via Apify, feed posts through LLM extraction.
+    /// Scrape Instagram, Facebook, and Reddit accounts via Apify, feed posts through LLM extraction.
     async fn scrape_social_media(&self, apify: &ApifyClient, stats: &mut ScoutStats, embed_cache: &mut EmbeddingCache) {
         use std::pin::Pin;
         use std::future::Future;
@@ -320,9 +356,11 @@ impl Scout {
 
         let ig_accounts = &self.profile.instagram_accounts;
         let fb_pages = &self.profile.facebook_pages;
+        let reddit_subs = &self.profile.reddit_subreddits;
         info!(
             ig = ig_accounts.len(),
             fb = fb_pages.len(),
+            reddit = reddit_subs.len(),
             "Scraping social media via Apify..."
         );
 
@@ -398,6 +436,52 @@ impl Scout {
             }));
         }
 
+        for (subreddit_url, trust) in reddit_subs {
+            let subreddit_url = subreddit_url.to_string();
+            let trust = *trust;
+            futures.push(Box::pin(async move {
+                let posts = match apify.scrape_reddit_posts(&subreddit_url, 20).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(subreddit_url, error = %e, "Reddit Apify scrape failed");
+                        return None;
+                    }
+                };
+                let post_count = posts.len();
+                // Batch posts: combine title + body per post, 10 at a time
+                let batches: Vec<_> = posts.chunks(10).collect();
+                let mut all_nodes = Vec::new();
+                let mut combined_all = String::new();
+                for batch in batches {
+                    let combined_text: String = batch
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let title = p.title.as_deref().unwrap_or("");
+                            let body = p.body.as_deref().unwrap_or("");
+                            format!("--- Post {} ---\n{}\n\n{}", i + 1, title, body)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    if combined_text.is_empty() {
+                        continue;
+                    }
+                    combined_all.push_str(&combined_text);
+                    match self.extractor.extract(&combined_text, &subreddit_url, trust).await {
+                        Ok(n) => all_nodes.extend(n),
+                        Err(e) => {
+                            warn!(subreddit_url, error = %e, "Reddit extraction failed");
+                        }
+                    }
+                }
+                if all_nodes.is_empty() {
+                    return None;
+                }
+                info!(subreddit_url, posts = post_count, "Reddit scrape complete");
+                Some((subreddit_url, combined_all, all_nodes, post_count))
+            }));
+        }
+
         let results: Vec<_> = stream::iter(futures)
             .buffer_unordered(10)
             .collect()
@@ -429,6 +513,27 @@ impl Scout {
             if let Some(meta) = node_meta_mut(node) {
                 meta.confidence = q.confidence;
                 meta.source_url = url.clone();
+            }
+        }
+
+        // Strip fake city-center coordinates.
+        // Safety net: if the LLM echoes the default city coords, remove them.
+        let center_lat = self.profile.default_lat;
+        let center_lng = self.profile.default_lng;
+        for node in &mut nodes {
+            let is_fake = node.meta()
+                .and_then(|m| m.location.as_ref())
+                .map(|loc| {
+                    (loc.lat - center_lat).abs() < 0.01
+                        && (loc.lng - center_lng).abs() < 0.01
+                })
+                .unwrap_or(false);
+
+            if is_fake {
+                if let Some(meta) = node_meta_mut(node) {
+                    meta.location = None;
+                    stats.geo_stripped += 1;
+                }
             }
         }
 
@@ -523,14 +628,21 @@ impl Scout {
         }
 
         // Batch embed remaining signals (1 API call instead of N)
+        // Embed source content snippet (not LLM summary) to preserve semantic fingerprint.
+        // The LLM compresses semantic differences using similar civic vocabulary.
+        let content_snippet = if content.len() > 500 {
+            let mut end = 500;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
+        } else {
+            content
+        };
         let embed_texts: Vec<String> = nodes
             .iter()
             .map(|n| {
-                format!(
-                    "{} {}",
-                    n.title(),
-                    n.meta().map(|m| m.summary.as_str()).unwrap_or("")
-                )
+                format!("{} {}", n.title(), content_snippet)
             })
             .collect();
 
