@@ -2,7 +2,7 @@ use ai_client::claude::Claude;
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, de};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -52,7 +52,26 @@ struct InvestigationQueries {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct EvidenceEvaluation {
+    #[serde(default, deserialize_with = "deserialize_evidence")]
     evidence: Vec<EvidenceItem>,
+}
+
+/// Handle LLM returning evidence as either a proper JSON array or a stringified JSON array.
+fn deserialize_evidence<'de, D>(deserializer: D) -> std::result::Result<Vec<EvidenceItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(de::Error::custom)
+        }
+        serde_json::Value::String(ref s) => {
+            serde_json::from_str(s).map_err(de::Error::custom)
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Err(de::Error::custom("evidence must be an array or JSON string")),
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
