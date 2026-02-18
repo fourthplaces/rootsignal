@@ -43,8 +43,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
-# Memgraph (bolt protocol driver)
-neo4rs = "0.8"
+# Memgraph (bolt protocol driver) — vendored to fix bolt+ssc:// with Memgraph Cloud's CA:TRUE cert
+neo4rs = { path = "vendor/neo4rs" }
 
 # GraphQL
 async-graphql = { version = "7", features = ["chrono", "uuid", "dataloader"] }
