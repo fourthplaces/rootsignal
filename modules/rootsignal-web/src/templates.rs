@@ -179,9 +179,10 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
                     None => String::new(),
                 };
                 format!(
-                    r#"<a href="{url}" target="_blank" rel="noopener">{url}</a>{relevance_html}
+                    r#"<a href="{url}" target="_blank" rel="noopener">{label}</a>{relevance_html}
                     {snippet_html}"#,
                     url = html_escape(&ev.source_url),
+                    label = html_escape(&source_label(&ev.source_url)),
                 )
             })
             .collect::<Vec<_>>()
@@ -314,6 +315,26 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 </html>"#,
         title = html_escape(title),
     )
+}
+
+fn source_label(url: &str) -> String {
+    if url.contains("instagram.com/p/") || url.contains("instagram.com/reel/") {
+        "Instagram post".to_string()
+    } else if url.contains("instagram.com") {
+        "Instagram".to_string()
+    } else if url.contains("reddit.com/r/") && url.contains("/comments/") {
+        "Reddit post".to_string()
+    } else if url.contains("reddit.com") {
+        "Reddit".to_string()
+    } else if url.contains("facebook.com") {
+        "Facebook post".to_string()
+    } else if url.contains("tiktok.com") {
+        "TikTok".to_string()
+    } else if let Some(domain) = url.split('/').nth(2) {
+        domain.trim_start_matches("www.").to_string()
+    } else {
+        "Source".to_string()
+    }
 }
 
 fn html_escape(s: &str) -> String {
