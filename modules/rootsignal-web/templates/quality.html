@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Quality Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 style="margin-bottom: 16px;">Quality Dashboard (Internal)</h2>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;">
+        <div class="node-card" style="text-align:center;">
+            <div style="font-size:36px;font-weight:700;color:#1565c0;">{{ total_count }}</div>
+            <div style="font-size:13px;color:#888;">Total Signals</div>
+        </div>
+        <div class="node-card" style="text-align:center;">
+            <div style="font-size:36px;font-weight:700;color:#2e7d32;">{{ type_count }}</div>
+            <div style="font-size:13px;color:#888;">Signal Types</div>
+        </div>
+        <div class="node-card" style="text-align:center;">
+            <div style="font-size:36px;font-weight:700;color:#e65100;">{{ role_count }}</div>
+            <div style="font-size:13px;color:#888;">Audience Roles</div>
+        </div>
+    </div>
+
+    <div class="node-card">
+        <h3 style="margin-bottom:12px;">Signal Type Breakdown</h3>
+        <table style="width:100%;font-size:14px;">
+            <thead><tr><th style="text-align:left;">Type</th><th style="text-align:right;">Count</th></tr></thead>
+            <tbody>
+            {% for item in by_type %}
+            <tr><td>{{ item.0 }}</td><td style="text-align:right;">{{ item.1 }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="node-card">
+        <h3 style="margin-bottom:12px;">Freshness Distribution</h3>
+        <table style="width:100%;font-size:14px;">
+            <thead><tr><th style="text-align:left;">Period</th><th style="text-align:right;">Count</th></tr></thead>
+            <tbody>
+            {% for item in freshness %}
+            <tr><td>{{ item.0 }}</td><td style="text-align:right;">{{ item.1 }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="node-card">
+        <h3 style="margin-bottom:12px;">Confidence Distribution</h3>
+        <table style="width:100%;font-size:14px;">
+            <thead><tr><th style="text-align:left;">Tier</th><th style="text-align:right;">Count</th></tr></thead>
+            <tbody>
+            {% for item in confidence %}
+            <tr><td>{{ item.0 }}</td><td style="text-align:right;">{{ item.1 }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="node-card">
+        <h3 style="margin-bottom:12px;">Audience Roles</h3>
+        <table style="width:100%;font-size:14px;">
+            <thead><tr><th style="text-align:left;">Role</th><th style="text-align:right;">Count</th></tr></thead>
+            <tbody>
+            {% for item in roles %}
+            <tr><td>{{ item.0 }}</td><td style="text-align:right;">{{ item.1 }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

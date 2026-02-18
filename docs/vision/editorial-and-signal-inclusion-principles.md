@@ -6,11 +6,11 @@ This document defines what Root Signal includes, what it excludes, and why. It e
 
 ## Core Principle
 
-**Root Signal amplifies what communities are building, not what they're defending against.**
+**Root Signal surfaces civic reality — what's happening, who's responding, and how to plug in.**
 
-Every signal in the platform should answer the question: *"What can I do?"* — never *"What should I fear?"*
+Every signal in the platform should answer the question: *"What is civic life like here right now?"* — and wherever possible, *"What can I do?"*
 
-Root Signal exists to surface agency, opportunity, and connection. It is not a threat monitor, a crime tracker, or an alert system.
+Root Signal exists to surface agency, opportunity, connection, and context. It maps the full landscape of civic life in a place — including tensions and crises — because understanding what's happening is the first step to showing up.
 
 ---
 
@@ -18,14 +18,14 @@ Root Signal exists to surface agency, opportunity, and connection. It is not a t
 
 Before ingesting a source or surfacing a signal, it must pass all three:
 
-**1. Is it actionable?**
-Can a person do something constructive with this information? Show up, volunteer, attend, buy, learn, participate, contribute, repair, plant, vote, testify, connect?
+**1. Is it civic?**
+Does it relate to community life, ecological stewardship, civic engagement, ethical consumption, or the tensions and needs that animate them? Does it belong in a picture of civic reality?
 
-**2. Is it affirmative?**
-Does it point toward something being built, offered, organized, or created — rather than something being threatened, surveilled, or feared?
+**2. Is it grounded?**
+Is it traceable to an identifiable organization, government entity, public record, established community group, or directly reported by a person? Does it have a source?
 
-**3. Does it build agency?**
-Does encountering this signal make someone feel more capable of participating in their community — not more anxious about living in it?
+**3. Does it connect to action or context?**
+Does encountering this signal either enable someone to act (volunteer, donate, attend, advocate, steward) or help them understand what's happening in their community? Signal doesn't have to be directly actionable — context that illuminates a tension or names a pattern is also valuable — but it must connect to the civic graph.
 
 If the answer to any of these is no, the signal doesn't belong in Root Signal.
 
@@ -41,23 +41,42 @@ If the answer to any of these is no, the signal doesn't belong in Root Signal.
 
 **Ethical Consumption:** Farmers markets, co-ops, local business directories, CSAs, repair events, fix-it clinics, zero-waste resources, buy-nothing groups, secondhand shops, identity-specific business directories, tool lending libraries.
 
+**Tensions and Crises:** When civic reality is under stress — ICE raids, environmental disasters, housing crises, school closures, police accountability — the graph captures both the tension and every response to it. Tension is surfaced because it's connected to action: legal aid clinics, solidarity events, GoFundMes, boycotts, policy actions, mutual aid. The tension is context. The responses are the signal.
+
+**Evidence and Policy:** Government filings, contract data, voting records, environmental reports, court records. These are civic facts that ground the graph in evidence. They surface when connected to tensions, actors, or responses — not as standalone data dumps.
+
 ---
 
 ## What We Exclude
 
-**Threat and surveillance data.** ICE sighting trackers, crime maps, sex offender registries, incident reports, police scanner feeds. These create fear, not agency. The response-side resources (legal aid, rights workshops, victim support) are welcome — the threat data itself is not.
+**Threat data without civic context.** Crime maps, sex offender registries, incident reports, police scanner feeds. These create fear without agency. If an organized response exists (legal aid, victim support, rights workshops, community safety initiatives), the response is the signal — not the threat data itself.
 
-**Crisis and emergency alerts.** Amber alerts, severe weather warnings, active shooter notifications, evacuation orders. These are critically important but belong in purpose-built emergency systems, not a community signal platform. Root Signal is not a replacement for 911, emergency management, or public safety infrastructure.
+**Raw emergency alerts.** Amber alerts, severe weather warnings, active shooter notifications, evacuation orders. These are critically important but belong in purpose-built emergency systems. Root Signal is not a replacement for 911 or emergency management. However, when a crisis generates civic responses (shelters, donation drives, volunteer mobilization, mutual aid), those responses are first-class signal.
 
-**Partisan political content.** Root Signal surfaces civic process (hearings, meetings, comment periods, ballot information) but never endorses candidates, parties, or positions. "When is the school board meeting and how do I testify" is in scope. "Who you should vote for" is not.
+**Partisan political content.** Root Signal surfaces civic process (hearings, meetings, comment periods, ballot information, voting records) but never endorses candidates, parties, or positions. "When is the school board meeting and how do I testify" is in scope. "Who you should vote for" is not.
 
-**Rumors, unverified sightings, and crowdsourced threat reports.** If the provenance is "someone reported seeing something," it doesn't meet Root Signal's standard. Signals must trace back to an identifiable organization, government entity, or established community group.
+**Rumors, unverified sightings, and crowdsourced threat reports.** If the provenance is "someone reported seeing something," it doesn't meet Root Signal's standard. Signals must trace back to an identifiable organization, government entity, or established community group — or be directly reported by a person (human-reported signal with clear provenance).
 
-**Personal disputes, complaints, and grievances.** Nextdoor-style neighbor complaints, landlord reviews, business callouts. Root Signal is not a reputation platform. It surfaces what's available, not what's wrong.
+**Personal disputes, complaints, and grievances.** Nextdoor-style neighbor complaints, landlord reviews, business callouts. Root Signal is not a reputation platform. It surfaces what's available, not what's wrong with individuals.
 
 **Commercial advertising.** Businesses can appear in Root Signal if they meet ethical consumption criteria (local, cooperative, identity-owned, sustainable, repair-oriented). Paid placement, sponsored listings, and general business promotion are permanently out of scope.
 
-**Health and safety data for its own sake.** Restaurant inspection scores, building code violations, environmental contamination maps. These are important public records but don't answer "what can I do." If an organization is holding a cleanup at a contaminated site — that's the signal. The contamination data alone is not.
+---
+
+## Normal Mode vs Crisis Mode
+
+Root Signal operates in two modes, determined by the state of the graph — not by a manual toggle:
+
+**Normal mode:** The graph reflects steady-state civic life. Resources, events, ongoing needs, civic processes, ecological stewardship. Most signal is affirmative — here's what's happening, here's how to participate.
+
+**Crisis mode:** When tension clusters in the graph cross a threshold (multiple signals, same geography, same timeframe, acute urgency), the system enters crisis mode for that area. In crisis mode:
+- Scraping cadence accelerates for the affected geography
+- Response discovery agents actively search for who's responding
+- The interface prioritizes crisis-relevant signal (shelters, legal aid, donation links, volunteer needs)
+- Sensitive-signal holdback rules apply (geographic fuzziness, corroboration thresholds)
+- The tension itself is surfaced as context, but always connected to responses
+
+The boundary is consistent across both modes: **signal must be civic, grounded, and connected to action or context.** Crisis mode doesn't change what's included — it changes the urgency and the intensity of the system's attention.
 
 ---
 
@@ -69,15 +88,15 @@ Some signals live at the boundary. Here's how to think about them:
 The development proposal itself is civic signal — it's a public process with hearings and comment periods. Include the hearing, the comment deadline, and any organized advocacy groups. Don't editorialize about whether the development is good or bad.
 
 **"Eviction rates are high in this neighborhood."**
-The statistic alone is not actionable signal. But a renters' rights clinic in that neighborhood, a legal aid org accepting tenants, or a tenant organizing group — those are signal. Lead with the resource, not the problem.
+The statistic alone is evidence — it enters the graph as an Evidence node connected to the geography. But the highest-value signal is the response: a renters' rights clinic, a legal aid org, a tenant organizing group. Lead with the resource. The evidence provides context.
 
 **"The food shelf on Lake Street closed."**
-A closure is not actionable signal. But if another food shelf nearby is accepting new clients, or if a mutual aid group has stepped in — surface that. Root Signal shows people where to go, not what they've lost.
+A closure changes the graph — a Resource node goes inactive. If another food shelf nearby is accepting new clients, or a mutual aid group has stepped in, surface that. Root Signal shows people where to go and how the landscape is shifting.
 
-**"There's a new homeless encampment near my block."**
-Not signal for Root Signal. But organizations offering housing navigation, outreach services, or volunteer opportunities supporting people experiencing homelessness — those are signal.
+**"ICE is conducting operations in this neighborhood."**
+This is a tension — and a critical one. It enters the graph connected to responses (legal aid hotlines, know-your-rights trainings, sanctuary churches, GoFundMes for affected families) and context (the federal policy, the corporate actors). The people posting about ICE activity on Reddit, Bluesky, and community forums are neighbors, organizers, and journalists who *want* this signal amplified. They are acting in the open because visibility is the point. The people who need protection — undocumented individuals and families — are not the ones broadcasting on social media. They communicate through encrypted channels, through proxies, through trusted networks. Suppressing public civic signal about enforcement activity doesn't protect vulnerable people — it silences the community members trying to organize a response. Root Signal treats this signal the same as any other public civic signal: it flows through the graph, links to responses, and is surfaced with geographic fuzziness appropriate to the sensitivity level. The signal is not held back. The community's voice is not muted.
 
-**Pattern:** When confronted with a problem or negative condition, Root Signal's job is to surface the organized, constructive response to that condition — not the condition itself. The response is the signal.
+**Pattern:** When confronted with a problem or negative condition, Root Signal surfaces both the organized, constructive response *and* the civic context that helps people understand what's happening. The response is the primary signal. The context is what makes it meaningful.
 
 ---
 
@@ -87,7 +106,9 @@ These principles extend beyond data ingestion into how Root Signal presents info
 
 - Descriptions should be invitational, not alarmist
 - Urgency should be about opportunity windows ("public comment closes Friday") not about threats ("they're about to approve this")
+- Tension should be presented with context and connection to action, not as fear
 - Language should assume the user wants to participate, not that they need to be protected
+- Public civic voice should be amplified, never suppressed out of fear of bad actors
 - Gaps in coverage should be acknowledged honestly, not papered over with fear-based framing
 
 ---
@@ -98,10 +119,9 @@ When evaluating a new source for ingestion, use this quick checklist:
 
 | Question | Required Answer |
 |---|---|
-| Does the source primarily offer opportunities, resources, or pathways to action? | Yes |
-| Could the data, if aggregated and mapped, put vulnerable people at risk? | No |
-| Does the signal make someone feel more capable of participating? | Yes |
-| Is the data traceable to an identifiable organization or public process? | Yes |
+| Does the source carry civic signal — needs, resources, events, tensions, evidence, or actors? | Yes |
+| Is this private content that was not intended to be public? | No — Root Signal only ingests public signal. Public broadcasts don't create new risk by being aggregated; they were already public. Geographic fuzziness applies to sensitive signals at the display layer. |
+| Is the data traceable to an identifiable source? | Yes |
 | Would surfacing this data in a community platform feel constructive? | Yes |
 
 If any answer doesn't match, the source is either out of scope or needs to be ingested selectively (take the resource listings, skip the threat data).
@@ -110,4 +130,4 @@ If any answer doesn't match, the source is either out of scope or needs to be in
 
 ## This Is a Living Document
 
-As Root Signal grows and encounters new source types and signal categories, these principles should be revisited. The core question never changes: **Does this help someone participate in their community?** If yes, it belongs. If no — no matter how interesting, important, or publicly available the data is — it doesn't.
+As Root Signal grows and encounters new source types and signal categories, these principles should be revisited. The core question never changes: **Does this help someone understand and participate in civic life where they are?** If yes, it belongs. If no — no matter how interesting, important, or publicly available the data is — it doesn't.

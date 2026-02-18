@@ -42,9 +42,11 @@ This means: no algorithmic feeds designed to maximize engagement. No dark patter
 
 ### 5. Privacy as a Structural Guarantee
 
-Root Signal handles sensitive information — where people need help, who's in crisis, what communities are organizing around. Privacy isn't a feature toggle. It's a structural property of the system.
+The system handles sensitive information — where people need help, who's in crisis, what communities are organizing around. Privacy isn't a feature toggle. It's a structural property of the system.
 
-Tier 2 data (scraped from walled-garden platforms) is never served to consumers. This boundary is enforced at the database and API level, not just in application logic. Personal information from direct intake is handled with care. Location data is served at the minimum precision necessary. Root Signal does not build profiles of people seeking help.
+The boundary is **public vs. private**, not which platform something came from. Public posts on Instagram, public GoFundMe campaigns, public Facebook events — these are civic signal and are treated the same as org websites or government data. Private messages, friends-only posts, closed groups — these are never touched. Personal information from direct intake is handled with care. Location data is served at the minimum precision necessary. The system does not build profiles of people seeking help.
+
+Privacy protection is not signal suppression. When community members post publicly about civic tensions — including enforcement activity, sanctuary responses, or organizing — they are exercising voice, not exposing vulnerability. Muting that signal out of paternalistic caution silences the people trying to help. The privacy boundary protects *private* content. Public civic voice flows freely.
 
 This means: privacy isn't a policy — it's architecture. The system is designed so that certain violations are structurally impossible, not merely discouraged.
 
@@ -54,17 +56,15 @@ Root Signal does not replace the sources it reads from. Every signal links back 
 
 This means: every signal record includes an action URL pointing to the original source. Root Signal summaries are gateways, not destinations. The goal is to get people to the point of action, which usually lives somewhere else.
 
-### 7. Tiered Trust, Structural Boundaries
+### 7. Public Signal Is Public Signal
 
-Root Signal operates across a spectrum of data openness — from fully public websites to login-walled social platforms. The tiering model (Tier 1: public and displayable, Tier 2: enrichment only, Tier 3: direct intake) isn't just a technical convenience. It's an ethical framework.
+The system reads from many platforms — org websites, social media, government databases, event platforms, fundraising sites. The ethical boundary is not which platform something came from. It's whether the content was made public by its creator.
 
-Tier 1 is the open web. It's public. Search engines do this. No ethical ambiguity.
+A church posting "we need food pantry volunteers" on Instagram has the same standing as the same church posting it on their website. A GoFundMe campaign is public by design. A public Facebook event is public. The system treats all public civic signal equally — it extracts facts, builds graph nodes, and links back to the original.
 
-Tier 2 is the gray zone. Root Signal scrapes walled-garden platforms to enrich and verify public signal — detecting staleness, capacity changes, event cancellations. This data is never displayed to users. It's used to compute metadata flags (freshness score, capacity status) that attach to Tier 1 records. The ethical defensibility rests entirely on this boundary: Tier 2 content is internal signal processing, not republication.
+What the system never touches: private messages, friends-only posts, closed groups, DMs, login-walled content that was not intended to be public. If there's ever ambiguity about whether content was meant to be public, it's left alone.
 
-Tier 3 is direct, consensual input. People and organizations choosing to put signal into the system. This is the cleanest tier ethically and the highest quality signal.
-
-This means: the tiering model is non-negotiable. Tier 2 data must never leak into consumer-facing responses. If there's ever ambiguity about whether something should be displayed, it shouldn't be. When in doubt, protect the boundary.
+This means: the boundary is consent and intent, not platform of origin. Public broadcasts are fair game. Private content is off-limits. Attribution and linking back are non-negotiable — the system is a search engine, not a content mirror.
 
 ### 8. Community Ownership Over Corporate Dependence
 
@@ -98,6 +98,12 @@ Root Signal recognizes that people contribute in different ways and all of them 
 
 This means: the audience role model is expansive. Signal is tagged for all the ways someone might act on it. The system doesn't assume that "helping" means physical volunteering — it includes economic action, civic participation, knowledge work, stewardship, and personal behavior change.
 
+### 13. Emergent Over Engineered
+
+Root Signal is an emergent system. The most valuable behaviors — discovering connections between issues, revealing where community energy is concentrating, surfacing patterns no one anticipated — should arise from the structure of the graph and the quality of the signal, not from hand-coded features. The system's job is to create the conditions for emergence: clean data, rich relationships, composable primitives, and simple rules. What emerges from that substrate is the product.
+
+This means: prefer graph structure over application logic. Don't hard-code "insights" — let them arise from signal density and connection patterns. Build small, composable pieces that combine in ways we haven't predicted. Resist the urge to prescribe what the system should reveal. When a useful pattern appears, make it queryable — don't bake it into the architecture. The system should surprise us.
+
 ---
 
 ## Anti-Principles — What Root Signal Will Not Do
@@ -108,13 +114,13 @@ This means: the audience role model is expansive. Signal is tagged for all the w
 
 **Root Signal will not take political positions.** Root Signal surfaces signal that exists — boycotts being organized, policies being debated, actions being planned. It does not editorialize. It does not endorse. It concentrates signal and lets people decide how to act.
 
-**Root Signal will not gatekeep signal.** If a community is organizing, their signal belongs in the system. The threshold for inclusion is "is this actionable and is it real?" — not "do we agree with it?"
+**Root Signal will not gatekeep what enters the graph.** If a community is organizing, their signal belongs in the system. The threshold for inclusion is "is this civic, grounded, and connected to action or context?" — not "do we agree with it?" The system practices open ingestion and confidence-tiered surfacing: everything civic enters the graph, but what surfaces first is determined by evidence density, freshness, and source corroboration — and every ranking factor is visible to the user.
 
 **Root Signal will not optimize for growth at the expense of trust.** Trust is the only thing that makes a community utility viable. If growth and trust ever conflict, trust wins. Every time.
 
 **Root Signal will not depend on a single corporate platform.** No critical path should run through a service that could disappear, change its API, or change its terms overnight. Diversify dependencies. Prefer open-source tooling. Self-host where possible.
 
-**Root Signal will not display Tier 2 data.** This is absolute. Content scraped from walled-garden platforms is internal enrichment data. It never appears in any consumer-facing response, under any circumstance. This boundary is the ethical foundation of the tiering model.
+**The system will not touch private content.** Private messages, friends-only posts, closed groups, DMs — these are off-limits regardless of how accessible they might be technically. The boundary is what the creator intended to be public. This is absolute.
 
 ---
 
@@ -124,7 +130,7 @@ When facing an architectural or product decision, ask:
 
 1. **Does this serve the signal or serve the platform?** If it optimizes for Root Signal's growth or engagement at the expense of signal quality or community trust, don't do it.
 
-2. **Does this respect the tiering model?** If it blurs the line between what's displayed and what's internal, tighten the boundary.
+2. **Does this respect the public/private boundary?** If it blurs the line between public civic signal and private content, tighten the boundary.
 
 3. **Could a community run this themselves?** If the decision creates corporate dependence or makes self-hosting harder, reconsider.
 
@@ -133,3 +139,5 @@ When facing an architectural or product decision, ask:
 5. **Would this still make sense at global scale?** If the decision is hardcoded to one geography or one context, generalize.
 
 6. **Does this treat all forms of showing up with equal respect?** If it privileges one audience role over another without good reason, broaden.
+
+7. **Does this let behavior emerge, or does it prescribe it?** If a feature hard-codes a pattern that should arise naturally from the graph, step back and ask whether better signal or richer relationships would produce the same result without special-case logic.

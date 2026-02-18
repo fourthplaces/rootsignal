@@ -9,7 +9,7 @@ topic: civic-tension-search-engine
 
 A civic platform that raises signal from noise across the entire web, organized around tension. Tension could be civic, environmental, economic — anything. The system detects that something is happening, investigates why, and surfaces everything connected to it — including ways to be civically involved.
 
-Think of it as a **search engine for civic engagement**. The web already contains all the information — food drives, protests, GoFundMes, boycotts, mutual aid, org events, individual efforts — but it's scattered across news sites, social media, event pages, fundraising platforms, government filings, and more. Taproot brings it all into one civic platform.
+Think of it as a **search engine for civic engagement**. The web already contains all the information — food drives, protests, GoFundMes, boycotts, mutual aid, org events, individual efforts — but it's scattered across news sites, social media, event pages, fundraising platforms, government filings, and more. Root Signal brings it all into one civic platform.
 
 ## Core Concept
 
@@ -48,7 +48,7 @@ All three views into the same underlying data.
 
 A civically curious person who doesn't know where to start. Doesn't even know what questions to ask. Wants to be engaged but the information is scattered across 50 tabs and buried in algorithmic feeds that don't care about civic engagement.
 
-They open Taproot, they see tension, they explore what's connected, and they find their own on-ramp.
+They open Root Signal, they see tension, they explore what's connected, and they find their own on-ramp.
 
 ## Examples of Tension
 

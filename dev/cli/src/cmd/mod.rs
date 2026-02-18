@@ -1,2 +1,3 @@
-pub mod db;
+//! Command modules for dev-cli
+
 pub mod docker;

@@ -1,0 +1,36 @@
+# Bob's House of Pizza — Menu
+
+## Pizza
+
+| Size | Cheese | 1 Topping | 2 Toppings | Supreme |
+|------|--------|-----------|------------|---------|
+| Personal (8") | $8.99 | $10.49 | $11.99 | $13.99 |
+| Medium (12") | $13.99 | $15.99 | $17.99 | $19.99 |
+| Large (16") | $17.99 | $20.49 | $22.99 | $25.99 |
+
+**Toppings:** Pepperoni, sausage, mushrooms, green peppers, onions, black olives, jalapeños, pineapple, anchovies, extra cheese
+
+**Specialty Pizzas:**
+- The Bob: pepperoni, sausage, mushroom, green pepper, onion — $22.99 (lg)
+- Meat Lover's: pepperoni, sausage, ham, bacon, ground beef — $24.99 (lg)
+- Veggie Delight: mushroom, green pepper, onion, tomato, black olive — $22.99 (lg)
+- BBQ Chicken: grilled chicken, BBQ sauce, red onion, cilantro — $23.99 (lg)
+
+## Sides
+- Garlic Bread: $4.99
+- Mozzarella Sticks (6): $7.99
+- Garden Salad: $5.99
+- Caesar Salad: $6.99
+- Wings (10): $12.99
+
+## Drinks
+- 2-Liter Soda: $3.49
+- Bottled Water: $1.99
+
+## Hours
+Mon-Thu: 11 AM - 9 PM
+Fri-Sat: 11 AM - 11 PM
+Sun: 12 PM - 8 PM
+
+## Delivery
+Free delivery within 3 miles on orders over $20. Call 612-555-1234 or order at bobshouseofpizza.com.

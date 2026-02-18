@@ -2,10 +2,12 @@
 members = [
     "modules/ai-client",
     "modules/apify-client",
-    "modules/rootsignal-core",
-    "modules/rootsignal-domains",
-    "modules/rootsignal-server",
     "modules/twilio-rs",
+    "modules/rootsignal-common",
+    "modules/rootsignal-graph",
+    "modules/rootsignal-scout",
+    "modules/rootsignal-web",
+    "modules/rootsignal-editions",
 ]
 resolver = "2"
 
@@ -19,22 +21,6 @@ license = "MIT"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
-
-# Web framework
-axum = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-
-# GraphQL
-async-graphql = { version = "7", features = ["dataloader", "chrono", "uuid"] }
-async-graphql-axum = "7"
-
-# Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
-pgvector = { version = "0.4", features = ["sqlx"] }
-
-# Durable execution
-restate-sdk = "0.4"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
@@ -52,45 +38,32 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Crypto / hashing
-sha2 = "0.10"
-hex = "0.4"
-
-# Bytes (for Restate SDK serde)
-bytes = "1"
-
 # IDs and time
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
-# Clustering / similarity
-strsim = "0.11"
-petgraph = "0.7"
+# Neo4j
+neo4rs = "0.8"
 
-# Web crawling
-spider = { version = "2.45", default-features = false, features = ["basic", "chrome", "chrome_stealth"] }
+# Web framework
+axum = "0.8"
+askama = "0.15"
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-header", "cors"] }
+tower = "0.5"
 
-# HTML parsing
-scraper = "0.20"
+# Web scraping
+spider_transformations = "2"
+firecrawl = "1"
 
-# URL / network validation
-url = "2.5"
-ipnet = "2.9"
-regex = "1.10"
+# Regex (PII detection)
+regex = "1"
 
-# Environment
-dotenvy = "0.15"
-
-# Config
-toml = "0.8"
-clap = { version = "4", features = ["derive"] }
-
-# JWT
-jsonwebtoken = "9"
+# Testing
+testcontainers = "0.23"
 
 # Local crates
 ai-client = { path = "modules/ai-client" }
 apify-client = { path = "modules/apify-client" }
-rootsignal-core = { path = "modules/rootsignal-core" }
-rootsignal-domains = { path = "modules/rootsignal-domains" }
 twilio = { path = "modules/twilio-rs" }
+rootsignal-common = { path = "modules/rootsignal-common" }
+rootsignal-graph = { path = "modules/rootsignal-graph" }

@@ -66,7 +66,7 @@ Three classes of signal, all first-class:
 
 1. **Structured sources** — government databases (USAspending, FPDS, 311), city council agendas, permit filings, court records
 2. **Unstructured/web sources** — news, social media, GoFundMe, event platforms, org websites, community forums
-3. **Human-reported** — people submit signal directly to Taproot ("my sister is feeding 7 families, here's her Venmo")
+3. **Human-reported** — people submit signal directly to Root Signal ("my sister is feeding 7 families, here's her Venmo")
 
 Human-reported signal enters the graph with the same standing as AI-discovered signal. An individual with a GoFundMe and the ACLU are both Response nodes — **no hierarchy of legitimacy.**
 
@@ -219,7 +219,7 @@ The individual feeding 7 families has the same standing as the ACLU. Both are Re
 
 - How does the system bootstrap in a new geography with no prior knowledge?
 - What's the MVP that proves the core loop (sense → understand → surface) works?
-- How does this relate to the existing Taproot infrastructure? Evolve it or start fresh?
+- How does this relate to the existing Root Signal infrastructure? Evolve it or start fresh?
 - What's the right graph database choice given the existing Rust/PostgreSQL stack?
 - How does the attention budget get initially seeded? Population density? News volume? User requests?
 

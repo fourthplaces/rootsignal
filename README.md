@@ -1,124 +1,88 @@
 # Root Signal
 
-A community signal utility. Root Signal discovers, concentrates, and serves actionable local signal — volunteer needs, fundraisers, mutual aid, events, ecological stewardship, civic action — through a GraphQL API that any application can build on.
-
-The internet made information abundant but orientation scarce. There is no reliable place to answer: **where is life asking for help right now, and how do I show up?** Root Signal is that place.
-
-## How It Works
-
-```
-Sources ──→ Engine (crawl, extract, geo-locate, dedup, store) ──→ GraphQL API ──→ Consumers
-                        ▲
-                  Configuration
-            (prompts, taxonomy, sources, hotspots)
-```
-
-Root Signal crawls public sources (org websites, Eventbrite, GoFundMe, VolunteerMatch, government sites, environmental orgs, news outlets), extracts structured signal via AI, geo-localizes it, deduplicates it, and serves it through a typed API. The engine is domain-agnostic — what makes it serve community signal is configuration.
-
-Every signal is one of four types: **ask** (something is needed — you can help), **give** (something is offered — you can receive), **event** (people are gathering — you can show up), or **informative** (a published fact — you can know). Signals are organized across four domains: **human services**, **ecological stewardship**, **civic & economic action**, and **knowledge & awareness**, and tagged with audience roles (volunteer, donor, attendee, advocate, citizen scientist, land steward, etc.) so people can filter by how they want to help.
-
-This structure produces something larger than a broadcast index. Asks are declarations of misalignment — gaps between what a community has and what it needs. Gives are attempts to close those gaps. When asks stop clustering, the system reflects that alignment was restored — no engagement tracking required. The system measures the world's state, not its own impact. See [`docs/vision/alignment-machine.md`](docs/vision/alignment-machine.md).
-
-## Architecture
-
-Rust + TypeScript monorepo under `modules/`:
-
-| Module | Purpose |
-|--------|---------|
-| `rootsignal-server` | Axum HTTP server, GraphQL API (async-graphql), auth, routes |
-| `rootsignal-core` | Shared types, database queries, core logic |
-| `rootsignal-domains` | Domain models and business rules |
-| `ai-client` | LLM extraction client (Claude API) |
-| `apify-client` | Apify integration for web scraping |
-| `twilio-rs` | Twilio integration for SMS/voice intake |
-| `api-client-js` | TypeScript GraphQL client with codegen |
-| `admin-app` | Next.js admin interface |
-| `dev/cli` | Developer CLI for local workflows |
-
-### Key Technologies
-
-- **Rust** — Axum web framework, async-graphql, SQLx
-- **PostgreSQL 16** with pgvector for semantic search and PostGIS-style geography
-- **Restate** — Durable execution for crawl/extraction workflows
-- **GraphQL** — Primary API surface with codegen'd TypeScript client
-- **Docker Compose** — Local dev (Postgres + Restate)
-
-### Data Model
-
-The schema tracks entities (organizations, people), their locations, listings (the actionable signals), sources, tags (full taxonomy), schedules, contacts, observations, hotspots, heat map points, clusters, and search infrastructure. Signal tiering enforces privacy boundaries at the database level — Tier 2 enrichment data is never served to consumers.
-
-## Getting Started
-
-### Prerequisites
-
-- Rust (stable)
-- Docker & Docker Compose
-- pnpm (for JS codegen)
-
-### Setup
-
-```sh
-# Start Postgres and Restate
-docker compose up -d
-
-# Run database migrations
-# (migrations are in ./migrations/, applied in order)
-
-# Start the server
-cargo run --bin rootsignal-server
-```
-
-### Dev CLI
-
-```sh
-# The dev CLI auto-builds on first run
-./dev.sh <command>
-```
-
-### GraphQL Schema
-
-```sh
-# Export the schema to SDL
-make schema
-
-# Generate TypeScript types from the schema
-make codegen
-```
-
-The GraphQL API exposes queries for entities, listings, locations, tags, hotspots, heat maps, sources, observations, schedules, contacts, notes, stats, and search. Mutations support creating entities, listings, and observations. Auth is handled via JWT.
-
-## Signal Tiering
-
-| Tier | Source | Policy |
-|------|--------|--------|
-| **Tier 1** | Public web (org sites, APIs, open data) | Displayable with attribution |
-| **Tier 2** | Semi-public (social media via scrapers) | Enrichment only, never served to consumers |
-| **Tier 3** | Direct intake (SMS, email, web forms, API) | Highest quality, consensual |
-
-Tier 2 data manifests only as computed flags (freshness score, capacity status, confidence boost) on Tier 1 records. This boundary is structural, enforced at the database and API level.
-
-## Project Principles
-
-- **Signal is a public good** — open source, open API, no paywalls, no data selling
-- **Utility, not platform** — reliable infrastructure, not an engagement product
-- **Privacy as architecture** — Tier 2 boundaries are structural, not policy
-- **Attribution** — every signal links back to its original source
-- **Community ownership** — designed for self-hosting, no corporate lock-in
-- **Life, not just people** — ecological signal is first-class alongside human services
-
-## Documentation
-
-Detailed project documentation lives in `docs/`:
-
-- [`docs/vision/`](docs/vision/) — Problem space, principles, milestones, kill tests, alignment machine, editorial principles
-- [`docs/architecture/`](docs/architecture/) — Signal architecture, taxonomy, service architecture, discovery queries
-- [`docs/landscape/`](docs/landscape/) — Ecosystem and adjacent systems
-- [`docs/brainstorms/`](docs/brainstorms/) — Feature exploration sessions
-- [`docs/plans/`](docs/plans/) — Implementation plans
+A civic intelligence system. Root Signal continuously discovers civic signal across the web — volunteer shifts, mutual aid requests, environmental actions, policy changes, community tensions — builds a living knowledge graph, and makes it freely navigable. A search engine for civic life.
 
 ## Status
 
-Early development. Currently building the signal pipeline for the first hotspot (Twin Cities, MN). The focus is proving signal quality — volume, freshness, actionability — before expanding scope or geography.
+Greenfield. Building Phase 1a — the smallest loop that proves the core concept works: scout agent discovers signal, graph stores it, web surface serves it, quality measurement keeps it honest.
+
+## What It Does
+
+Root Signal sits between fragmented civic sources and people who want to act. The Scout agent crawls curated URLs, web search results, and social media accounts for a city, then extracts structured signals using LLMs. Signals are deduplicated across three layers (exact match, URL-scoped, vector similarity), scored for quality, and persisted into a knowledge graph.
+
+**Five signal types:**
+
+| Type | What it captures |
+|------|-----------------|
+| **Event** | Time-bound gatherings — volunteer shifts, cleanups, protests, workshops |
+| **Give** | Available resources — food shelves, tool libraries, free clinics |
+| **Ask** | Community needs — volunteer calls, donation drives, skill requests |
+| **Notice** | Official advisories — policy changes, shelter openings, city announcements |
+| **Tension** | Systemic conflicts — housing crises, environmental harm, civil rights issues |
+
+## Repository Structure
+
+```
+modules/
+  rootsignal-common/     Types, quality scoring, safety (PII detection), config
+  rootsignal-graph/      Neo4j/Memgraph client, dedup, clustering, cause heat
+  rootsignal-scout/      Scout agent — scraping, extraction, geo-filtering
+  rootsignal-web/        Axum web server, graph queries, templates
+  rootsignal-editions/   Curated thematic signal collections
+  ai-client/             Provider-agnostic LLM client (Claude, OpenAI, OpenRouter)
+  apify-client/          Social media scraping via Apify (Instagram, Facebook, Reddit)
+  twilio-rs/             Twilio OTP and WebRTC
+
+docs/
+  vision/                Principles, values, problem space, milestones, kill tests
+  landscape/             Competitive analysis, ecosystem vision
+  reference/             Signal sources, quality dimensions, use cases
+  brainstorms/           Architecture brainstorms
+```
+
+## Development
+
+### Prerequisites
+
+- Rust (2021 edition)
+- Docker and Docker Compose
+
+### Running locally
+
+```sh
+# Start Memgraph and web server
+docker compose up
+
+# Run the scout for a city
+CITY=twincities docker compose --profile scout up scout
+```
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `ANTHROPIC_API_KEY` | Yes | LLM extraction and clustering (Claude) |
+| `VOYAGE_API_KEY` | Yes | Vector embeddings (Voyage AI) |
+| `TAVILY_API_KEY` | Yes | Web search for signal discovery |
+| `FIRECRAWL_API_KEY` | No | Advanced web scraping |
+| `APIFY_API_KEY` | No | Social media scraping |
+| `CITY` | No | Target city (twincities, nyc, portland, berlin). Default: twincities |
+
+### Running tests
+
+```sh
+cargo test
+```
+
+Integration tests use [testcontainers](https://github.com/testcontainers/testcontainers-rs) to spin up Memgraph automatically.
+
+## Documentation
+
+- [`docs/vision/principles-and-values.md`](docs/vision/principles-and-values.md) — Why this exists
+- [`docs/vision/problem-space-positioning.md`](docs/vision/problem-space-positioning.md) — The problem we're solving
+- [`docs/scout-architecture.md`](docs/scout-architecture.md) — Scout system architecture
+- [`docs/reference/signal-sources-and-roles.md`](docs/reference/signal-sources-and-roles.md) — Signal sources and quality dimensions
+- [`docs/reference/use-cases.md`](docs/reference/use-cases.md) — Concrete user stories
 
 ## License
 

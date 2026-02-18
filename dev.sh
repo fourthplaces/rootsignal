@@ -1,52 +1,71 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── Resolve repo root ────────────────────────────────────────────────
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export REPO_ROOT
-CLI_DIR="$REPO_ROOT/dev/cli"
-BIN="$CLI_DIR/target/release/dev-cli"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
 
-# ── Colors ───────────────────────────────────────────────────────────
-red()   { printf '\033[0;31m%s\033[0m\n' "$*"; }
-green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
-dim()   { printf '\033[0;90m%s\033[0m\n' "$*"; }
+need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-# ── Health checks ────────────────────────────────────────────────────
-fail=0
-for cmd in docker git cargo; do
-  if ! command -v "$cmd" &>/dev/null; then
-    red "Missing: $cmd"
-    fail=1
+# Quick health check for critical dependencies
+quick_doctor() {
+  local missing=()
+  for cmd in docker git cargo; do
+    need_cmd "$cmd" || missing+=("$cmd")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "⚠️  Missing recommended tools: ${missing[*]}"
+    echo "   Run './dev.sh doctor' for details."
+    echo
   fi
-done
-if [ "$fail" -ne 0 ]; then
-  red "Install missing tools and retry."
-  exit 1
+}
+
+ensure_rust() {
+  if need_cmd cargo && need_cmd rustc; then
+    return
+  fi
+
+  echo "Rust toolchain not found. Installing rustup..."
+  if ! need_cmd curl; then
+    echo "Error: curl is required to install rustup." >&2
+    exit 1
+  fi
+
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y
+  # shellcheck disable=SC1091
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    source "$HOME/.cargo/env"
+  fi
+
+  if ! need_cmd cargo; then
+    echo "Error: cargo not found after rustup install. Restart your terminal and try again." >&2
+    exit 1
+  fi
+}
+
+ensure_rust
+
+# Show quick doctor check only for interactive mode (no args)
+if [[ $# -eq 0 ]]; then
+  quick_doctor
 fi
 
-# ── Smart rebuild ────────────────────────────────────────────────────
-needs_build() {
-  [ ! -f "$BIN" ] && return 0
+export REPO_ROOT
 
-  # Rebuild if any source file is newer than the binary
-  while IFS= read -r -d '' f; do
-    if [ "$f" -nt "$BIN" ]; then
-      return 0
-    fi
-  done < <(find "$CLI_DIR/src" -name '*.rs' -print0 2>/dev/null)
+# Build once and reuse for faster startup
+DEV_CLI_DIR="$REPO_ROOT/dev/cli"
+DEV_CLI_BIN="$DEV_CLI_DIR/target/release/dev-cli"
 
-  # Rebuild if Cargo.toml changed
-  [ "$CLI_DIR/Cargo.toml" -nt "$BIN" ] && return 0
-
+needs_rebuild() {
+  [[ ! -f "$DEV_CLI_BIN" ]] && return 0
+  # Rebuild if any source file is newer than binary
+  find "$DEV_CLI_DIR/src" -name '*.rs' -newer "$DEV_CLI_BIN" 2>/dev/null | grep -q . && return 0
+  [[ "$DEV_CLI_DIR/Cargo.toml" -nt "$DEV_CLI_BIN" ]] && return 0
   return 1
 }
 
-if needs_build; then
-  dim "Building dev-cli..."
-  cargo build --release --manifest-path "$CLI_DIR/Cargo.toml" --quiet
-  green "dev-cli built."
+if needs_rebuild; then
+  echo "Building dev-cli (release mode)..."
+  cargo build --release --manifest-path "$DEV_CLI_DIR/Cargo.toml" --quiet
 fi
 
-# ── Exec ─────────────────────────────────────────────────────────────
-exec "$BIN" "$@"
+exec "$DEV_CLI_BIN" "$@"

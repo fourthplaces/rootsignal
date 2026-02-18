@@ -19,7 +19,7 @@ You scrape 10 sources, extract 40 signals, and the resulting feed feels dead. St
 
 **Test:** After first sprint, manually review every signal in the database. For each one, ask: "If I showed up to act on this today, would it work?" Track the percentage that are genuinely actionable. If it's below 70%, the pipeline needs fundamental work before anything else.
 
-**Mitigation:** Aggressive expiration defaults. Tier 2 freshness checking from day one, not as a later enhancement. Build "last confirmed active" as a core field, not a nice-to-have. Default to hiding low-confidence signals rather than showing everything.
+**Mitigation:** Aggressive expiration defaults. Cross-source freshness checking from day one, not as a later enhancement. Build "last confirmed active" as a core field, not a nice-to-have. Default to hiding low-confidence signals rather than showing everything.
 
 ---
 
@@ -58,7 +58,7 @@ The same volunteer opportunity appears on VolunteerMatch, the org's website, the
 
 **Test:** After first sprint, count unique signals vs total extracted signals. If the dedup pipeline is catching fewer than 60% of actual duplicates (verified manually), it needs work.
 
-**Mitigation:** Multi-layer dedup — URL matching, fuzzy title+org matching, and vector similarity. Merge duplicates into single records with multiple sources (which actually increases confidence). Prioritize the richest source as the primary record.
+**Mitigation:** Multi-layer dedup — exact URL matching, fuzzy content matching, and semantic similarity. Merge duplicates into single records with multiple sources (which actually increases confidence). Prioritize the richest source as the primary record.
 
 ---
 
@@ -84,9 +84,9 @@ Facebook aggressively blocks scrapers. Instagram requires login. Nextdoor is ful
 
 **Why this kills it:** If the most valuable signal sources are unscrapeable, the feed is skewed toward only what's on the open web — which is dominated by larger, more established organizations. Grassroots, informal, and community-level signal (which is the most valuable) lives disproportionately on walled platforms.
 
-**Test:** Before building automated scrapers, manually test access to every planned Tier 1 and Tier 2 source. Can you get the data? How many requests before you get blocked? Is the data structured enough to extract from? Document the access profile for each source.
+**Test:** Before building automated scrapers, manually test access to every planned source — open web and social media. Can you get the data? How many requests before you get blocked? Is the data structured enough to extract from? Document the access profile for each source.
 
-**Mitigation:** Apify for Tier 2 (they handle the cat-and-mouse game with platforms). Firecrawl for Tier 1 websites. Accept that some sources will be intermittently accessible and build the system to gracefully degrade. Prioritize sources you can reliably access over sources with theoretically better signal. Long-term, direct intake (Tier 3) reduces dependence on scraping.
+**Mitigation:** Use specialized scraping services that handle the cat-and-mouse game with platforms. Accept that some sources will be intermittently accessible and build the system to gracefully degrade. Prioritize sources you can reliably access over sources with theoretically better signal. Long-term, direct intake reduces dependence on scraping.
 
 ---
 
@@ -99,7 +99,7 @@ Websites change their HTML structure. APIs change their response format. A scrap
 
 **Test:** After building 5 scrapers, track how often they break over 30 days. If more than 2 break per week, the maintenance model is unsustainable.
 
-**Mitigation:** Build scrapers defensively — fail loudly when structure changes. Monitor signal volume per source and alert when it drops unexpectedly. Use Firecrawl's LLM-based extraction over CSS selectors where possible (more resilient to HTML changes). Accept that some sources will have higher maintenance costs and prioritize accordingly.
+**Mitigation:** Build scrapers defensively — fail loudly when structure changes. Monitor signal volume per source and alert when it drops unexpectedly. Prefer LLM-based extraction over CSS selectors where possible (more resilient to HTML changes). Accept that some sources will have higher maintenance costs and prioritize accordingly.
 
 ---
 
@@ -110,9 +110,9 @@ A platform sends a cease-and-desist. GoFundMe changes their robots.txt. An org c
 
 **Why this kills it:** Probably doesn't kill it outright, but could force removal of key sources. The reputational risk of being seen as a "scraper" rather than a "community utility" could undermine trust.
 
-**Test:** This isn't testable in advance, but you can de-risk it. Document the legal landscape (hiQ v. LinkedIn precedent). Ensure Tier 2 boundary is airtight. Ensure attribution and linking back is impeccable.
+**Test:** This isn't testable in advance, but you can de-risk it. Document the legal landscape (hiQ v. LinkedIn precedent). Ensure the public/private boundary is airtight. Ensure attribution and linking back is impeccable.
 
-**Mitigation:** The tiering model is the primary defense. Tier 1 is defensible — it's public web content, same as what Google does. Tier 2 never surfaces to users. Attribution and action URLs send traffic back to sources, which makes the relationship additive, not extractive. Long-term, build direct relationships with orgs who want to be in the system (Tier 3), reducing dependence on scraping entirely.
+**Mitigation:** The public/private boundary is the primary defense. Public content is defensible — it's the same as what Google does. The system never touches private content, never reproduces full posts, and always links back to the original. Attribution and action URLs send traffic back to sources, which makes the relationship additive, not extractive. Long-term, build direct relationships with orgs who want to be in the system, reducing dependence on scraping entirely.
 
 ---
 
@@ -153,7 +153,7 @@ A mutual aid request gets scraped that contains someone's home address, phone nu
 
 **Test:** Run extraction on 50 mutual aid and fundraiser signals. Check every output for PII — names, addresses, phone numbers, medical details, immigration status. If any PII leaks through that shouldn't, the extraction pipeline needs a PII scrubbing step.
 
-**Mitigation:** Build PII detection into the extraction pipeline. Strip personal details from summaries. Link back to the original source where the creator controls their own disclosure. Never scrape or surface signal from private conversations, closed groups, or DMs. For Tier 3 direct intake, build clear consent language about what will be public.
+**Mitigation:** Build PII detection into the extraction pipeline. Strip personal details from summaries. Link back to the original source where the creator controls their own disclosure. Never scrape or surface signal from private conversations, closed groups, or DMs. For direct intake, build clear consent language about what will be public.
 
 ---
 
@@ -203,7 +203,7 @@ Even if the signal is good, a new Root Signal instance in a new city has no sign
 
 Nonprofits and community organizations react negatively to being scraped. They see Root Signal as taking their content without permission, competing for their audience, or misrepresenting their work. Instead of becoming allies, they become adversaries.
 
-**Why this kills it:** Orgs are the primary producers of Tier 1 signal. If they actively block scraping or publicly complain, it undermines both the data pipeline and community trust.
+**Why this kills it:** Orgs are the primary producers of public signal. If they actively block scraping or publicly complain, it undermines both the data pipeline and community trust.
 
 **Test:** Reach out to 5 local nonprofits. Show them how their information appears in Root Signal. Ask: "Is this helpful or harmful to you?" Listen carefully to the response.
 
@@ -216,7 +216,7 @@ Nonprofits and community organizations react negatively to being scraped. They s
 ### 16. Cost Escalation
 **Risk level: Medium**
 
-Claude API costs grow as signal volume increases. Apify costs grow with more Tier 2 sources. Scraping frequency multiplied by number of hotspots creates a cost curve that outpaces any revenue or funding.
+AI costs grow as signal volume increases. Scraping costs grow with more social media sources. Scraping frequency multiplied by number of hotspots creates a cost curve that outpaces any revenue or funding.
 
 **Why this kills it:** An infrastructure project with no revenue model that costs $500/month for one hotspot and $5,000/month for ten hotspots burns through goodwill and personal funds fast.
 
@@ -305,7 +305,7 @@ Before showing Root Signal to anyone outside the core team, verify:
 - [ ] **Dedup catches at least 60%** of actual duplicates (verified manually)
 - [ ] **Extraction error rate below 10%** on critical fields (signal type, timing, location)
 - [ ] **Every signal has a working action URL** that leads to the real opportunity
-- [ ] **Tier 2 data is confirmed absent** from all API responses (structural, not just checked)
+- [ ] **No private content** from any source appears in any output (structural, not just checked)
 - [ ] **The feed is noticeably better than Googling** the same query — side-by-side test with 3 people
 - [ ] **Five community-active people** have reviewed the output and said "I would use this"
 - [ ] **Cost per signal is known** and projected for 5x and 20x scale

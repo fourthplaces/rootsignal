@@ -1,9 +1,0 @@
-{
-  "private": true,
-  "packageManager": "pnpm@10.29.3",
-  "pnpm": {
-    "overrides": {
-      "graphql": "16.12.0"
-    }
-  }
-}
