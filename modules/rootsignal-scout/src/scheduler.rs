@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use tracing::info;
 
-use rootsignal_common::SourceNode;
+use rootsignal_common::{SourceNode, SourceRole};
 
 /// Determines which sources to scrape this run based on weight, cadence, and exploration policy.
 pub struct SourceScheduler {
@@ -21,6 +21,10 @@ pub struct ScheduleResult {
     pub exploration: Vec<ScheduledSource>,
     /// Sources skipped (not yet due based on cadence).
     pub skipped: usize,
+    /// Convenience partition: canonical keys of sources with role=Tension or Mixed (Phase A).
+    pub tension_phase: Vec<String>,
+    /// Convenience partition: canonical keys of sources with role=Response (Phase B).
+    pub response_phase: Vec<String>,
 }
 
 pub struct ScheduledSource {
@@ -105,10 +109,35 @@ impl SourceScheduler {
             );
         }
 
+        // Build role lookup for partition
+        let role_map: std::collections::HashMap<&str, SourceRole> = sources
+            .iter()
+            .map(|s| (s.canonical_key.as_str(), s.source_role))
+            .collect();
+
+        // Partition all scheduled+exploration keys by source role
+        let all_keys: Vec<&str> = scheduled
+            .iter()
+            .chain(exploration.iter())
+            .map(|s| s.canonical_key.as_str())
+            .collect();
+
+        let mut tension_phase = Vec::new();
+        let mut response_phase = Vec::new();
+        for key in all_keys {
+            match role_map.get(key).copied().unwrap_or(SourceRole::Mixed) {
+                SourceRole::Response => response_phase.push(key.to_string()),
+                // Tension and Mixed both go in Phase A
+                SourceRole::Tension | SourceRole::Mixed => tension_phase.push(key.to_string()),
+            }
+        }
+
         ScheduleResult {
             scheduled,
             exploration,
             skipped,
+            tension_phase,
+            response_phase,
         }
     }
 
@@ -247,6 +276,7 @@ mod tests {
             last_cost_cents: 0,
             taxonomy_stats: None,
             quality_penalty: 1.0,
+            source_role: SourceRole::default(),
         }
     }
 

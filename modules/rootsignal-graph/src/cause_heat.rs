@@ -324,18 +324,18 @@ mod tests {
         assert!(heats[4] < 0.01, "Unrelated signal should have near-zero heat, got {}", heats[4]);
     }
 
-    /// Integration test: run cause_heat against a live Memgraph instance.
+    /// Integration test: run cause_heat against a live Neo4j instance.
     /// Run with: cargo test -p rootsignal-graph cause_heat_live -- --ignored
     #[tokio::test]
     #[ignore]
     async fn cause_heat_live() {
         let client = crate::GraphClient::connect(
             "bolt://localhost:7687",
-            "memgraph",
+            "neo4j",
             "rootsignal",
         )
         .await
-        .expect("Failed to connect to Memgraph");
+        .expect("Failed to connect to Neo4j");
 
         compute_cause_heat(&client, 0.7)
             .await

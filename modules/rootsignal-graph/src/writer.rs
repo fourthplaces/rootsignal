@@ -6,7 +6,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EditionNode, EvidenceNode,
     EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode,
-    SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
+    SourceRole, SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
@@ -1391,7 +1391,8 @@ impl GraphWriter {
                 s.avg_signals_per_scrape = $avg_signals_per_scrape,
                 s.total_cost_cents = $total_cost_cents,
                 s.last_cost_cents = $last_cost_cents,
-                s.quality_penalty = $quality_penalty
+                s.quality_penalty = $quality_penalty,
+                s.source_role = $source_role
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                 s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1413,7 +1414,8 @@ impl GraphWriter {
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("total_cost_cents", source.total_cost_cents as i64)
         .param("last_cost_cents", source.last_cost_cents as i64)
-        .param("quality_penalty", source.quality_penalty);
+        .param("quality_penalty", source.quality_penalty)
+        .param("source_role", source.source_role.to_string());
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1467,7 +1469,8 @@ impl GraphWriter {
                     s.total_cost_cents AS total_cost_cents,
                     s.last_cost_cents AS last_cost_cents,
                     s.taxonomy_stats AS taxonomy_stats,
-                    s.quality_penalty AS quality_penalty"
+                    s.quality_penalty AS quality_penalty,
+                    s.source_role AS source_role"
         )
         .param("city", city);
 
@@ -1530,6 +1533,9 @@ impl GraphWriter {
                 last_cost_cents: row.get::<i64>("last_cost_cents").unwrap_or(0) as u64,
                 taxonomy_stats: if taxonomy_stats.is_empty() { None } else { Some(taxonomy_stats) },
                 quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
+                source_role: SourceRole::from_str_loose(
+                    &row.get::<String>("source_role").unwrap_or_default(),
+                ),
             });
         }
 

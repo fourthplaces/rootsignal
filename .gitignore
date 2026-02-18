@@ -33,3 +33,6 @@ Thumbs.db
 lcov.info
 tarpaulin-report.html
 certs
+
+# Sim test run logs (regenerated each run)
+modules/rootsignal-scout/tests/run_logs/*.json

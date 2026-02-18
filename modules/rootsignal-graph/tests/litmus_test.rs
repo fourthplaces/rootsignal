@@ -1,9 +1,9 @@
 //! Integration tests for litmus-test scenarios.
 //!
 //! Validates datetime storage, keyword search, geo queries, source diversity,
-//! actor linking, and cross-type topic search against a real Memgraph instance.
+//! actor linking, and cross-type topic search against a real Neo4j instance.
 //!
-//! Requirements: Docker (for Memgraph via testcontainers)
+//! Requirements: Docker (for Neo4j via testcontainers)
 //!
 //! Run with: cargo test -p rootsignal-graph --features test-utils --test litmus_test
 
@@ -15,14 +15,14 @@ use uuid::Uuid;
 use rootsignal_common::EvidenceNode;
 use rootsignal_graph::{query, GraphClient, GraphWriter};
 
-/// Spin up a fresh Memgraph container and run migrations.
+/// Spin up a fresh Neo4j container and run migrations.
 async fn setup() -> (impl std::any::Any, GraphClient) {
-    let (container, client) = rootsignal_graph::testutil::memgraph_container().await;
+    let (container, client) = rootsignal_graph::testutil::neo4j_container().await;
     rootsignal_graph::migrate::migrate(&client).await.expect("migration failed");
     (container, client)
 }
 
-fn memgraph_dt(dt: &chrono::DateTime<Utc>) -> String {
+fn neo4j_dt(dt: &chrono::DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
@@ -42,7 +42,7 @@ async fn create_signal(
     title: &str,
     source_url: &str,
 ) {
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
         "CREATE (n:{label} {{
@@ -83,7 +83,7 @@ async fn create_event_with_date(
     title: &str,
     starts_at: &str, // ISO datetime string, or "" for missing
 ) {
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
         "CREATE (e:Event {{
@@ -130,7 +130,7 @@ async fn create_actor_and_link(
     signal_label: &str,
     role: &str,
 ) {
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let q = query(
         "CREATE (a:Actor {
             id: $id,
@@ -297,7 +297,7 @@ async fn topic_keyword_search() {
 async fn geo_bounding_box_query() {
     let (_container, client) = setup().await;
 
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
 
     // Signal inside bounding box (downtown Minneapolis)
@@ -367,7 +367,7 @@ async fn geo_bounding_box_query() {
 async fn source_diversity_ranking() {
     let (_container, client) = setup().await;
 
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
 
     // Create signals with different source_diversity values
@@ -715,7 +715,7 @@ async fn deduplicate_evidence_migration() {
 
     // Create a signal with corroboration_count already inflated
     let signal_id = Uuid::new_v4();
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
         "CREATE (n:Event {{

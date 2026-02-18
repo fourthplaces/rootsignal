@@ -34,8 +34,8 @@ pub async fn triage_suspects(
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let mut suspects = Vec::new();
 
-    let from_ts = rootsignal_graph::writer::memgraph_datetime_pub(from);
-    let to_ts = rootsignal_graph::writer::memgraph_datetime_pub(to);
+    let from_ts = rootsignal_graph::writer::format_datetime_pub(from);
+    let to_ts = rootsignal_graph::writer::format_datetime_pub(to);
 
     suspects.extend(triage_misclassification(client, &from_ts, &to_ts).await?);
     suspects.extend(triage_incoherent_stories(client, &from_ts, &to_ts).await?);

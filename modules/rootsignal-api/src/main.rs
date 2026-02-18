@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     config.log_redacted();
 
     let client =
-        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
+        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
             .await?;
 
     rootsignal_graph::migrate::migrate(&client)
@@ -132,6 +132,11 @@ async fn main() -> Result<()> {
         .route("/admin/cities/{slug}/scout/stop", post(pages::stop_city_scout))
         .route("/admin/cities/{slug}/scout/reset", post(pages::reset_scout_lock))
         .route("/admin/quality", get(pages::quality_dashboard))
+        .route("/admin/dashboard", get(pages::dashboard_page))
+        .route("/admin/actors", get(pages::actors_page))
+        .route("/admin/actors/{id}", get(pages::actor_detail_page))
+        .route("/admin/editions", get(pages::editions_page))
+        .route("/admin/editions/{id}", get(pages::edition_detail_page))
         // REST API
         .route("/api/nodes/near", get(rest::api_nodes_near))
         .route("/api/stories", get(rest::api_stories))
@@ -182,7 +187,7 @@ async fn main() -> Result<()> {
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("content-security-policy"),
-            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"),
+            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("strict-transport-security"),

@@ -35,7 +35,7 @@ impl IssueStore {
         }
 
         // Create new issue
-        let ts = rootsignal_graph::writer::memgraph_datetime_pub(&issue.created_at);
+        let ts = rootsignal_graph::writer::format_datetime_pub(&issue.created_at);
 
         let create = query(
             "CREATE (v:ValidationIssue {

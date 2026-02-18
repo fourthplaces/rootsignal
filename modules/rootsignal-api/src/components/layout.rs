@@ -8,9 +8,11 @@ struct NavItem {
 
 const NAV_ITEMS: &[NavItem] = &[
     NavItem { key: "map", label: "Map", href: "/admin" },
+    NavItem { key: "dashboard", label: "Dashboard", href: "/admin/dashboard" },
     NavItem { key: "stories", label: "Stories", href: "/admin/stories" },
+    NavItem { key: "actors", label: "Actors", href: "/admin/actors" },
+    NavItem { key: "editions", label: "Editions", href: "/admin/editions" },
     NavItem { key: "cities", label: "Cities", href: "/admin/cities" },
-    NavItem { key: "quality", label: "Quality", href: "/admin/quality" },
 ];
 
 /// Admin layout with sidebar navigation.
@@ -25,6 +27,7 @@ pub fn Layout(title: String, active_page: String, children: Element) -> Element 
             title { "{full_title}" }
             script { src: "https://cdn.tailwindcss.com" }
             link { rel: "stylesheet", href: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" }
+            script { src: "https://cdn.jsdelivr.net/npm/chart.js" }
         }
         body { class: "flex min-h-screen bg-gray-50 font-sans text-gray-900",
             div { class: "w-56 bg-gray-900 text-white flex flex-col shrink-0 fixed inset-y-0 left-0 z-50",

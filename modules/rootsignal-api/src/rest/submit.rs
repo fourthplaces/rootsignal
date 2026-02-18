@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType, SubmissionNode};
+use rootsignal_common::{DiscoveryMethod, SourceNode, SourceRole, SourceType, SubmissionNode};
 
 use crate::AppState;
 
@@ -136,6 +136,7 @@ pub async fn api_submit(
         last_cost_cents: 0,
         taxonomy_stats: None,
         quality_penalty: 1.0,
+        source_role: SourceRole::default(),
     };
 
     if let Err(e) = state.writer.upsert_source(&source).await {

@@ -265,10 +265,17 @@ impl Scout {
             .map(|s| s.canonical_key.clone())
             .collect();
 
+        let tension_phase_keys: std::collections::HashSet<String> =
+            schedule.tension_phase.iter().cloned().collect();
+        let response_phase_keys: std::collections::HashSet<String> =
+            schedule.response_phase.iter().cloned().collect();
+
         info!(
             scheduled = schedule.scheduled.len(),
             exploration = schedule.exploration.len(),
             skipped = schedule.skipped,
+            tension_phase = tension_phase_keys.len(),
+            response_phase = response_phase_keys.len(),
             "Source scheduling complete"
         );
 
@@ -277,196 +284,125 @@ impl Scout {
             .filter(|s| scheduled_keys.contains(&s.canonical_key))
             .collect();
 
-        // Partition scheduled sources by behavior: query (produces URLs) vs page (produces content) vs social
-        let query_sources: Vec<&SourceNode> = scheduled_sources.iter()
-            .filter(|s| s.source_type.is_query())
-            .copied()
-            .collect();
-        let page_sources: Vec<&SourceNode> = scheduled_sources.iter()
-            .filter(|s| s.source_type == SourceType::Web)
-            .copied()
-            .collect();
-        let social_sources: Vec<&SourceNode> = scheduled_sources.iter()
-            .filter(|s| matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit))
-            .copied()
-            .collect();
-
-        let mut all_urls: Vec<String> = Vec::new();
-
-        // Phase 1: Resolve query sources → URLs
-        // 1a. API-based queries (Tavily) — parallel, 5 at a time
-        let api_queries: Vec<&&SourceNode> = query_sources.iter()
-            .filter(|s| s.source_type == SourceType::TavilyQuery)
-            .collect();
-        info!(queries = api_queries.len(), "Starting Tavily searches...");
-        let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
-            let query_str = source.canonical_value.clone();
-            async move {
-                (query_str.clone(), self.searcher.search(&query_str, 5).await)
-            }
-        }))
-        .buffer_unordered(5)
-        .collect()
-        .await;
-
-        for (query, result) in search_results {
-            match result {
-                Ok(results) => {
-                    for r in results {
-                        all_urls.push(r.url);
-                    }
-                }
-                Err(e) => {
-                    warn!(query, error = %e, "Tavily search failed");
-                }
-            }
-        }
-
-        // 1b. HTML-based queries — scrape raw HTML, extract links by pattern
-        let html_queries: Vec<&&SourceNode> = query_sources.iter()
-            .filter(|s| s.source_type.link_pattern().is_some())
-            .collect();
-        info!(queries = html_queries.len(), "Resolving HTML query sources...");
-        for source in &html_queries {
-            if let (Some(url), Some(pattern)) = (&source.url, source.source_type.link_pattern()) {
-                match self.scraper.scrape_raw(url).await {
-                    Ok(html) if !html.is_empty() => {
-                        let links = scraper::extract_links_by_pattern(&html, url, pattern);
-                        info!(url = url.as_str(), links = links.len(), "Query resolved");
-                        all_urls.extend(links);
-                    }
-                    Ok(_) => warn!(url = url.as_str(), "Empty HTML from query source"),
-                    Err(e) => warn!(url = url.as_str(), error = %e, "Query scrape failed"),
-                }
-            }
-        }
-
-        // Phase 2: Add page source URLs directly
-        info!(count = page_sources.len(), "Adding page sources...");
-        for source in &page_sources {
-            if let Some(ref url) = source.url {
-                all_urls.push(url.clone());
-            }
-        }
-
-        // Deduplicate URLs
-        all_urls.sort();
-        all_urls.dedup();
-        info!(total_urls = all_urls.len(), "Unique URLs to scrape");
-
-        self.check_cancelled()?;
-
-        // 3. Scrape + check content hash + extract in parallel, then write sequentially
-        // buffer_unordered(3): Chrome semaphore allows 2 concurrent processes, +1 buffer
-        // to keep one future ready while waiting for Chrome to finish.
-        let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|url| {
-            let url = url.clone();
-            async move {
-                let clean_url = sanitize_url(&url);
-
-                // Scrape
-                let content = match self.scraper.scrape(&url).await {
-                    Ok(c) if !c.is_empty() => c,
-                    Ok(_) => return (clean_url, ScrapeOutcome::Failed),
-                    Err(e) => {
-                        warn!(url, error = %e, "Scrape failed");
-                        return (clean_url, ScrapeOutcome::Failed);
-                    }
-                };
-
-                // Check content hash — skip extraction if content hasn't changed for this URL
-                let hash = format!("{:x}", content_hash(&content));
-                match self.writer.content_already_processed(&hash, &clean_url).await {
-                    Ok(true) => {
-                        info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
-                        return (clean_url, ScrapeOutcome::Unchanged);
-                    }
-                    Ok(false) => {} // New content, proceed
-                    Err(e) => {
-                        warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
-                    }
-                }
-
-                // Extract (LLM call) — only reached for new/changed content
-                match self.extractor.extract(&content, &clean_url).await {
-                    Ok(nodes) => (clean_url, ScrapeOutcome::New { content, nodes }),
-                    Err(e) => {
-                        warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
-                        (clean_url, ScrapeOutcome::Failed)
-                    }
-                }
-            }
-        }))
-        .buffer_unordered(3)
-        .collect()
-        .await;
-
         // Build URL→canonical_key lookup for mapping scrape results back to sources
         let url_to_canonical_key: std::collections::HashMap<String, String> = all_sources.iter()
             .filter_map(|s| s.url.as_ref().map(|u| (sanitize_url(u), s.canonical_key.clone())))
             .collect();
 
-        // Process results sequentially, with in-memory embedding cache for cross-batch dedup
-        let now = Utc::now();
         let mut embed_cache = EmbeddingCache::new();
         let mut source_signal_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-        for (url, outcome) in pipeline_results {
-            let ck = url_to_canonical_key.get(&url).cloned().unwrap_or_else(|| url.clone());
-            match outcome {
-                ScrapeOutcome::New { content, nodes } => {
-                    let signal_count_before = stats.signals_stored;
-                    match self.store_signals(&url, &content, nodes, &mut stats, &mut embed_cache).await {
-                        Ok(_) => {
-                            stats.urls_scraped += 1;
-                            let produced = stats.signals_stored - signal_count_before;
-                            *source_signal_counts.entry(ck).or_default() += produced;
-                        }
-                        Err(e) => {
-                            warn!(url, error = %e, "Failed to store signals");
-                            stats.urls_failed += 1;
-                            source_signal_counts.entry(ck).or_default();
-                        }
-                    }
-                }
-                ScrapeOutcome::Unchanged => {
-                    // Refresh timestamps to keep existing signals fresh
-                    match self.writer.refresh_url_signals(&url, now).await {
-                        Ok(n) if n > 0 => info!(url, refreshed = n, "Refreshed unchanged signals"),
-                        Ok(_) => {}
-                        Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
-                    }
-                    stats.urls_unchanged += 1;
-                    // Unchanged still counts as a scrape (content was fetched, just didn't change)
-                    source_signal_counts.entry(ck).or_default();
-                }
-                ScrapeOutcome::Failed => {
-                    stats.urls_failed += 1;
-                    // Don't record failed scrapes — don't penalize for network errors
-                }
-            }
+
+        // ================================================================
+        // Phase A: Find Problems — scrape tension + mixed sources
+        // ================================================================
+        info!("=== Phase A: Find Problems ===");
+        let phase_a_sources: Vec<&SourceNode> = scheduled_sources.iter()
+            .filter(|s| tension_phase_keys.contains(&s.canonical_key))
+            .copied()
+            .collect();
+
+        self.scrape_phase(
+            &phase_a_sources,
+            &url_to_canonical_key,
+            &mut stats,
+            &mut embed_cache,
+            &mut source_signal_counts,
+        ).await;
+
+        self.check_cancelled()?;
+
+        // ================================================================
+        // Mid-Run Discovery — use fresh tensions to create response-seeking queries
+        // ================================================================
+        info!("=== Mid-Run Discovery ===");
+        let discoverer = crate::discovery::SourceDiscoverer::new(
+            &self.writer,
+            &self.city_node.slug,
+            &self.city_node.name,
+            Some(self.anthropic_api_key.as_str()),
+            &self.budget,
+        );
+        let mid_discovery_stats = discoverer.run().await;
+        if mid_discovery_stats.actor_sources + mid_discovery_stats.gap_sources > 0 {
+            info!("{mid_discovery_stats}");
         }
 
         self.check_cancelled()?;
 
-        // 4. Social media scraping — driven by social SourceNodes from the graph
+        // ================================================================
+        // Phase B: Find Responses — scrape response sources + fresh discovery sources
+        // ================================================================
+        info!("=== Phase B: Find Responses ===");
+
+        // Reload sources to pick up fresh discovery sources from mid-run
+        let fresh_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "Failed to reload sources for Phase B");
+                Vec::new()
+            }
+        };
+
+        // Phase B includes: originally-scheduled response sources + never-scraped fresh discovery sources
+        let phase_b_sources: Vec<&SourceNode> = fresh_sources.iter()
+            .filter(|s| {
+                response_phase_keys.contains(&s.canonical_key)
+                    || (s.last_scraped.is_none() && !scheduled_keys.contains(&s.canonical_key))
+            })
+            .collect();
+
+        // Extend URL→canonical_key with fresh sources
+        let mut extended_url_map = url_to_canonical_key;
+        for s in &fresh_sources {
+            if let Some(ref url) = s.url {
+                extended_url_map.entry(sanitize_url(url)).or_insert_with(|| s.canonical_key.clone());
+            }
+        }
+
+        if !phase_b_sources.is_empty() {
+            info!(count = phase_b_sources.len(), "Phase B sources (response + fresh discovery)");
+            self.scrape_phase(
+                &phase_b_sources,
+                &extended_url_map,
+                &mut stats,
+                &mut embed_cache,
+                &mut source_signal_counts,
+            ).await;
+        }
+
+        self.check_cancelled()?;
+
+        // ================================================================
+        // Social media scraping — both phases' social sources
+        // ================================================================
+        let social_sources: Vec<&SourceNode> = scheduled_sources.iter()
+            .filter(|s| matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit))
+            .copied()
+            .collect();
+
         {
             self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &social_sources).await;
 
-            // 4.5. Topic discovery — search hashtags to find new accounts
+            // Topic discovery — search hashtags to find new accounts
             self.discover_from_topics(&mut stats, &mut embed_cache, &mut source_signal_counts).await;
         }
 
-        // 4a. Update per-source metrics in the graph (keyed by canonical_key)
+        // ================================================================
+        // Source metrics + weight updates
+        // ================================================================
+        let now = Utc::now();
+
+        // Update per-source metrics in the graph (keyed by canonical_key)
         for (canonical_key, signals_produced) in &source_signal_counts {
             if let Err(e) = self.writer.record_source_scrape(canonical_key, *signals_produced, now).await {
                 warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
             }
         }
 
-        // 4b. Update source weights based on scrape results
+        // Update source weights based on scrape results
         for source in &all_sources {
             let tension_count = self.writer.count_source_tensions(&source.canonical_key).await.unwrap_or(0);
-            let scrape_count = source.signals_produced.max(1); // approximate from cumulative
+            let scrape_count = source.signals_produced.max(1);
             let base_weight = crate::scheduler::compute_weight(
                 source.signals_produced,
                 source.signals_corroborated,
@@ -475,7 +411,6 @@ impl Scout {
                 source.last_produced_signal,
                 now,
             );
-            // Apply supervisor quality penalty (1.0 = no penalty, <1.0 = penalized)
             let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
             let cadence = crate::scheduler::cadence_hours_for_weight(new_weight);
             if let Err(e) = self.writer.update_source_weight(&source.canonical_key, new_weight, cadence).await {
@@ -483,7 +418,7 @@ impl Scout {
             }
         }
 
-        // 4c. Deactivate dead sources (10+ consecutive empty runs, non-curated only)
+        // Deactivate dead sources (10+ consecutive empty runs, non-curated only)
         match self.writer.deactivate_dead_sources(10).await {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
             Ok(_) => {}
@@ -509,8 +444,11 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // 5. Clustering — build similarity edges, run Leiden, create/update stories
-        // (Always runs — no API calls, just graph math)
+        // ================================================================
+        // Synthesis — clustering, response mapping, investigation, end-of-run discovery
+        // ================================================================
+
+        // Clustering — build similarity edges, run Leiden, create/update stories
         info!("Starting clustering...");
         let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
 
@@ -531,8 +469,7 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // 5b. Response mapping — match Give/Event to Tensions/Asks (non-fatal)
-        // (Uses Claude API — check budget)
+        // Response mapping — match Give/Event to Tensions/Asks (non-fatal)
         if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
             info!("Starting response mapping...");
             let response_mapper = rootsignal_graph::response::ResponseMapper::new(
@@ -549,7 +486,7 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // 6. Investigation (Uses Tavily + Claude — check budget)
+        // Investigation (Uses Tavily + Claude — check budget)
         if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::TAVILY_INVESTIGATION) {
             info!("Starting investigation phase...");
             let investigator = crate::investigator::Investigator::new(
@@ -563,18 +500,17 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // 7. Source discovery — find new sources from actors, gaps, references
-        // (Actor discovery = graph only; gap discovery = LLM-powered with mechanical fallback)
-        let discoverer = crate::discovery::SourceDiscoverer::new(
+        // End-of-run discovery — find new sources for next run
+        let end_discoverer = crate::discovery::SourceDiscoverer::new(
             &self.writer,
             &self.city_node.slug,
             &self.city_node.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         );
-        let discovery_stats = discoverer.run().await;
-        if discovery_stats.actor_sources + discovery_stats.gap_sources > 0 {
-            info!("{discovery_stats}");
+        let end_discovery_stats = end_discoverer.run().await;
+        if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
+            info!("{end_discovery_stats}");
         }
 
         // Log final budget status
@@ -582,6 +518,166 @@ impl Scout {
 
         info!("{stats}");
         Ok(stats)
+    }
+
+    /// Scrape a set of sources: resolve queries → URLs, scrape pages, extract signals, store results.
+    /// Used by both Phase A (tension/mixed sources) and Phase B (response/discovery sources).
+    async fn scrape_phase(
+        &self,
+        sources: &[&SourceNode],
+        url_to_canonical_key: &std::collections::HashMap<String, String>,
+        stats: &mut ScoutStats,
+        embed_cache: &mut EmbeddingCache,
+        source_signal_counts: &mut std::collections::HashMap<String, u32>,
+    ) {
+        // Partition by behavior type
+        let query_sources: Vec<&&SourceNode> = sources.iter()
+            .filter(|s| s.source_type.is_query())
+            .collect();
+        let page_sources: Vec<&&SourceNode> = sources.iter()
+            .filter(|s| s.source_type == SourceType::Web)
+            .collect();
+
+        let mut phase_urls: Vec<String> = Vec::new();
+
+        // Resolve query sources → URLs
+        let api_queries: Vec<&&&SourceNode> = query_sources.iter()
+            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .collect();
+        if !api_queries.is_empty() {
+            info!(queries = api_queries.len(), "Resolving Tavily queries...");
+            let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
+                let query_str = source.canonical_value.clone();
+                async move {
+                    (query_str.clone(), self.searcher.search(&query_str, 5).await)
+                }
+            }))
+            .buffer_unordered(5)
+            .collect()
+            .await;
+
+            for (query_str, result) in search_results {
+                match result {
+                    Ok(results) => {
+                        for r in results {
+                            phase_urls.push(r.url);
+                        }
+                    }
+                    Err(e) => {
+                        warn!(query_str, error = %e, "Tavily search failed");
+                    }
+                }
+            }
+        }
+
+        // HTML-based queries
+        let html_queries: Vec<&&&SourceNode> = query_sources.iter()
+            .filter(|s| s.source_type.link_pattern().is_some())
+            .collect();
+        for source in &html_queries {
+            if let (Some(url), Some(pattern)) = (&source.url, source.source_type.link_pattern()) {
+                match self.scraper.scrape_raw(url).await {
+                    Ok(html) if !html.is_empty() => {
+                        let links = scraper::extract_links_by_pattern(&html, url, pattern);
+                        info!(url = url.as_str(), links = links.len(), "Query resolved");
+                        phase_urls.extend(links);
+                    }
+                    Ok(_) => warn!(url = url.as_str(), "Empty HTML from query source"),
+                    Err(e) => warn!(url = url.as_str(), error = %e, "Query scrape failed"),
+                }
+            }
+        }
+
+        // Add page source URLs directly
+        for source in &page_sources {
+            if let Some(ref url) = source.url {
+                phase_urls.push(url.clone());
+            }
+        }
+
+        // Deduplicate
+        phase_urls.sort();
+        phase_urls.dedup();
+        info!(urls = phase_urls.len(), "Phase URLs to scrape");
+
+        if phase_urls.is_empty() {
+            return;
+        }
+
+        // Scrape + extract in parallel
+        let pipeline_results: Vec<_> = stream::iter(phase_urls.iter().map(|url| {
+            let url = url.clone();
+            async move {
+                let clean_url = sanitize_url(&url);
+
+                let content = match self.scraper.scrape(&url).await {
+                    Ok(c) if !c.is_empty() => c,
+                    Ok(_) => return (clean_url, ScrapeOutcome::Failed),
+                    Err(e) => {
+                        warn!(url, error = %e, "Scrape failed");
+                        return (clean_url, ScrapeOutcome::Failed);
+                    }
+                };
+
+                let hash = format!("{:x}", content_hash(&content));
+                match self.writer.content_already_processed(&hash, &clean_url).await {
+                    Ok(true) => {
+                        info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
+                        return (clean_url, ScrapeOutcome::Unchanged);
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
+                    }
+                }
+
+                match self.extractor.extract(&content, &clean_url).await {
+                    Ok(nodes) => (clean_url, ScrapeOutcome::New { content, nodes }),
+                    Err(e) => {
+                        warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
+                        (clean_url, ScrapeOutcome::Failed)
+                    }
+                }
+            }
+        }))
+        .buffer_unordered(3)
+        .collect()
+        .await;
+
+        // Process results
+        let now = Utc::now();
+        for (url, outcome) in pipeline_results {
+            let ck = url_to_canonical_key.get(&url).cloned().unwrap_or_else(|| url.clone());
+            match outcome {
+                ScrapeOutcome::New { content, nodes } => {
+                    let signal_count_before = stats.signals_stored;
+                    match self.store_signals(&url, &content, nodes, stats, embed_cache).await {
+                        Ok(_) => {
+                            stats.urls_scraped += 1;
+                            let produced = stats.signals_stored - signal_count_before;
+                            *source_signal_counts.entry(ck).or_default() += produced;
+                        }
+                        Err(e) => {
+                            warn!(url, error = %e, "Failed to store signals");
+                            stats.urls_failed += 1;
+                            source_signal_counts.entry(ck).or_default();
+                        }
+                    }
+                }
+                ScrapeOutcome::Unchanged => {
+                    match self.writer.refresh_url_signals(&url, now).await {
+                        Ok(n) if n > 0 => info!(url, refreshed = n, "Refreshed unchanged signals"),
+                        Ok(_) => {}
+                        Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
+                    }
+                    stats.urls_unchanged += 1;
+                    source_signal_counts.entry(ck).or_default();
+                }
+                ScrapeOutcome::Failed => {
+                    stats.urls_failed += 1;
+                }
+            }
+        }
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
@@ -868,6 +964,7 @@ impl Scout {
                 last_cost_cents: 0,
                 taxonomy_stats: None,
                 quality_penalty: 1.0,
+                source_role: rootsignal_common::SourceRole::default(),
             };
 
             *source_signal_counts.entry(ck).or_default() += produced;

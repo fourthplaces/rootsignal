@@ -122,13 +122,13 @@ impl SimilarityBuilder {
             })
             .collect();
 
-        // Use a simpler approach: iterate and create edges one by one via UNWIND
-        // Memgraph doesn't support MERGE on relationships well, so use CREATE with existence check
+        // Use UNWIND + MERGE for idempotent edge creation
         let q = query(
             "UNWIND $edges AS edge
              MATCH (a) WHERE a.id = edge.from AND (a:Event OR a:Give OR a:Ask OR a:Notice OR a:Tension)
              MATCH (b) WHERE b.id = edge.to AND (b:Event OR b:Give OR b:Ask OR b:Notice OR b:Tension)
-             CREATE (a)-[:SIMILAR_TO {weight: edge.weight}]->(b)
+             MERGE (a)-[r:SIMILAR_TO]->(b)
+             SET r.weight = edge.weight
              RETURN count(*) AS created"
         )
         .param("edges", edge_data);

@@ -94,8 +94,8 @@ impl ResponseMapper {
 
         for index in &["give_embedding", "event_embedding", "ask_embedding"] {
             let q = query(&format!(
-                "CALL vector_search.search('{}', 5, $embedding)
-                 YIELD node, similarity
+                "CALL db.index.vector.queryNodes('{}', 5, $embedding)
+                 YIELD node, score AS similarity
                  WHERE similarity >= 0.4
                  RETURN node.id AS id, similarity",
                 index
