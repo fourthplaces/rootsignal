@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     };
 
     // Create and run supervisor
-    let supervisor = Supervisor::new(client, city, notifier);
+    let supervisor = Supervisor::new(client, city, config.anthropic_api_key.clone(), notifier);
     let stats = supervisor.run().await?;
 
     info!("Supervisor complete. {stats}");
