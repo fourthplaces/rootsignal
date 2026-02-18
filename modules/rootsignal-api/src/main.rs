@@ -8,7 +8,7 @@ use anyhow::Result;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::State,
-    http::{header, HeaderValue},
+    http::{header, HeaderValue, Method},
     response::Html,
     routing::{get, post},
     Router,
@@ -50,9 +50,16 @@ async fn graphql_handler(
     state.schema.execute(req.into_inner()).await.into()
 }
 
-async fn graphiql() -> Html<String> {
-    Html(async_graphql::http::GraphiQLSource::build().endpoint("/graphql").finish())
+async fn graphiql() -> impl axum::response::IntoResponse {
+    if cfg!(debug_assertions) {
+        Html(async_graphql::http::GraphiQLSource::build().endpoint("/graphql").finish())
+            .into_response()
+    } else {
+        axum::http::StatusCode::NOT_FOUND.into_response()
+    }
 }
+
+use axum::response::IntoResponse;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -61,6 +68,7 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::web_from_env();
+    config.log_redacted();
 
     let client =
         GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
@@ -146,13 +154,40 @@ async fn main() -> Result<()> {
         .route("/api/scout/run", post(rest::scout::scout_run_handler))
         .route("/api/scout/status", get(rest::scout::scout_status))
         .with_state(state)
-        // CORS
-        .layer(
+        // CORS: restrict to known origins (allow any in debug for local dev)
+        .layer(if cfg!(debug_assertions) {
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any),
-        )
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([header::CONTENT_TYPE])
+        } else {
+            let origins: Vec<HeaderValue> = std::env::var("CORS_ORIGINS")
+                .unwrap_or_else(|_| "https://rootsignal.app".to_string())
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([header::CONTENT_TYPE])
+        })
+        // Security headers
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        ))
         // Privacy headers: no caching, no tracking
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,

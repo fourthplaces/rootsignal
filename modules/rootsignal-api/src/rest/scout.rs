@@ -163,54 +163,49 @@ pub async fn scout_run_handler(
 
 pub async fn scout_status(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    if !check_admin_auth(&headers, &state.config.admin_username, &state.config.admin_password) {
+        return axum::response::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(header::WWW_AUTHENTICATE, "Basic realm=\"admin\"")
+            .body(axum::body::Body::from("Unauthorized"))
+            .unwrap()
+            .into_response();
+    }
+
     match state.writer.acquire_scout_lock().await {
         Ok(true) => {
             let _ = state.writer.release_scout_lock().await;
-            Json(serde_json::json!({"running": false}))
+            Json(serde_json::json!({"running": false})).into_response()
         }
         Ok(false) => {
-            Json(serde_json::json!({"running": true}))
+            Json(serde_json::json!({"running": true})).into_response()
         }
         Err(e) => {
             warn!(error = %e, "Failed to check scout lock");
-            Json(serde_json::json!({"running": false, "error": "Failed to check lock"}))
+            Json(serde_json::json!({"running": false, "error": "Failed to check lock"})).into_response()
         }
     }
 }
 
 fn check_admin_auth(headers: &axum::http::HeaderMap, username: &str, password: &str) -> bool {
+    use base64::Engine;
+
     let Some(auth) = headers.get(header::AUTHORIZATION) else { return false };
     let Ok(auth_str) = auth.to_str() else { return false };
     if !auth_str.starts_with("Basic ") { return false; }
 
     let encoded = &auth_str[6..];
-    let decoded = match base64_decode(encoded) {
-        Some(d) => d,
-        None => return false,
+    let decoded_bytes = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let decoded = match String::from_utf8(decoded_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
     };
 
     let expected = format!("{username}:{password}");
-    decoded == expected
-}
-
-fn base64_decode(input: &str) -> Option<String> {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let input = input.trim_end_matches('=');
-    let mut output = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-
-    for &b in input.as_bytes() {
-        let val = TABLE.iter().position(|&c| c == b)? as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            output.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-
-    String::from_utf8(output).ok()
+    crate::auth::constant_time_eq(decoded.as_bytes(), expected.as_bytes())
 }

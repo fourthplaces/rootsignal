@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
 };
@@ -19,10 +20,17 @@ use crate::components::{
     render_story_detail, render_verify, story_to_view, tension_response_to_view, CityView,
     EvidenceView, NodeView, ResponseView, StoryView,
 };
+use crate::rest::submit::check_rate_limit;
 use crate::AppState;
 
-/// Test phone number that bypasses Twilio in development.
-const TEST_PHONE: &str = "+1234567890";
+/// Test phone number — only available in debug builds.
+#[cfg(debug_assertions)]
+const TEST_PHONE: Option<&str> = Some("+1234567890");
+#[cfg(not(debug_assertions))]
+const TEST_PHONE: Option<&str> = None;
+
+/// Max auth attempts per IP per hour.
+const AUTH_RATE_LIMIT_PER_HOUR: usize = 10;
 
 // --- Auth pages (no AdminSession required) ---
 
@@ -32,8 +40,19 @@ pub async fn login_page() -> impl IntoResponse {
 
 pub async fn login_submit(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     axum::Form(form): axum::Form<LoginForm>,
 ) -> Response {
+    // Rate limit auth attempts
+    {
+        let mut limiter = state.rate_limiter.lock().await;
+        let entries = limiter.entry(addr.ip()).or_default();
+        if !check_rate_limit(entries, Instant::now(), AUTH_RATE_LIMIT_PER_HOUR) {
+            return Html(render_login(Some("Too many attempts. Try again later.".to_string())))
+                .into_response();
+        }
+    }
+
     let phone = form.phone.trim().to_string();
 
     // Check the number is in the allowlist
@@ -41,9 +60,11 @@ pub async fn login_submit(
         return Html(render_login(Some("Phone number not authorized.".to_string()))).into_response();
     }
 
-    // Test number: skip Twilio, go straight to verify
-    if phone == TEST_PHONE {
-        return Html(render_verify(phone, None)).into_response();
+    // Test number: skip Twilio, go straight to verify (debug builds only)
+    if let Some(test_phone) = TEST_PHONE {
+        if phone == test_phone {
+            return Html(render_verify(phone, None)).into_response();
+        }
     }
 
     // Send OTP via Twilio
@@ -67,8 +88,22 @@ pub async fn login_submit(
 
 pub async fn verify_submit(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     axum::Form(form): axum::Form<VerifyForm>,
 ) -> Response {
+    // Rate limit verify attempts
+    {
+        let mut limiter = state.rate_limiter.lock().await;
+        let entries = limiter.entry(addr.ip()).or_default();
+        if !check_rate_limit(entries, Instant::now(), AUTH_RATE_LIMIT_PER_HOUR) {
+            return Html(render_verify(
+                form.phone.clone(),
+                Some("Too many attempts. Try again later.".to_string()),
+            ))
+            .into_response();
+        }
+    }
+
     let phone = form.phone.trim().to_string();
     let code = form.code.trim().to_string();
 
@@ -77,8 +112,8 @@ pub async fn verify_submit(
         return Redirect::to("/admin/login").into_response();
     }
 
-    // Test number: accept any 6-digit code
-    let verified = if phone == TEST_PHONE {
+    // Test number: accept any 6-digit code (debug builds only)
+    let verified = if TEST_PHONE.is_some_and(|tp| phone == tp) {
         code.len() == 6 && code.chars().all(|c| c.is_ascii_digit())
     } else {
         match &state.twilio {
@@ -88,7 +123,8 @@ pub async fn verify_submit(
     };
 
     if verified {
-        let cookie = auth::session_cookie(&phone, &state.config.admin_password);
+        let secret = auth::session_secret(&state.config);
+        let cookie = auth::session_cookie(&phone, secret);
         Response::builder()
             .status(StatusCode::SEE_OTHER)
             .header("location", "/admin")
@@ -537,6 +573,9 @@ struct NominatimResult {
 }
 
 async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> {
+    if location.len() > 200 {
+        anyhow::bail!("Location input too long (max 200 chars)");
+    }
     let client = reqwest::Client::new();
     let resp = client
         .get("https://nominatim.openstreetmap.org/search")
