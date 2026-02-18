@@ -356,6 +356,8 @@ impl Scout {
         self.check_cancelled()?;
 
         // 3. Scrape + check content hash + extract in parallel, then write sequentially
+        // buffer_unordered(3): Chrome semaphore allows 2 concurrent processes, +1 buffer
+        // to keep one future ready while waiting for Chrome to finish.
         let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|url| {
             let url = url.clone();
             async move {
@@ -394,7 +396,7 @@ impl Scout {
                 }
             }
         }))
-        .buffer_unordered(10)
+        .buffer_unordered(3)
         .collect()
         .await;
 

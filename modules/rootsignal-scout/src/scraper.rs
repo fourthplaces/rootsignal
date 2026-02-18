@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use rand::Rng;
 use spider_transformations::transformation::content::{
     transform_content_input, ReturnFormat, TransformConfig, TransformInput,
 };
@@ -29,6 +30,11 @@ pub trait PageScraper: Send + Sync {
 /// multiple child processes). Railway containers hit PID/memory limits fast.
 const MAX_CONCURRENT_CHROME: usize = 2;
 
+/// Max retry attempts for transient Chrome failures (e.g. "Cannot fork").
+const CHROME_MAX_ATTEMPTS: u32 = 3;
+/// Base backoff duration for Chrome retries. Actual delay is base * 3^attempt + jitter.
+const CHROME_RETRY_BASE: Duration = Duration::from_secs(3);
+
 pub struct ChromeScraper {
     semaphore: Semaphore,
 }
@@ -40,6 +46,84 @@ impl ChromeScraper {
             semaphore: Semaphore::new(MAX_CONCURRENT_CHROME),
         }
     }
+
+    /// Launch Chrome --dump-dom and return raw stdout bytes.
+    /// Retries up to CHROME_MAX_ATTEMPTS on transient fork/launch failures
+    /// with exponential backoff (3s, 9s) plus random jitter (0-1s).
+    async fn run_chrome(&self, url: &str) -> Result<Vec<u8>> {
+        let parsed = url::Url::parse(url).context("Invalid URL")?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            anyhow::bail!("Only http/https URLs are allowed, got: {}", parsed.scheme());
+        }
+
+        let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
+
+        for attempt in 0..CHROME_MAX_ATTEMPTS {
+            let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
+
+            let result = tokio::time::timeout(
+                Duration::from_secs(30),
+                tokio::process::Command::new(&chrome_bin)
+                    .args([
+                        "--headless",
+                        "--no-sandbox",
+                        "--disable-gpu",
+                        "--disable-dev-shm-usage",
+                        &format!("--user-data-dir={}", tmp_dir.path().display()),
+                        "--dump-dom",
+                        url,
+                    ])
+                    .output(),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(output)) => {
+                    if output.status.success() {
+                        return Ok(output.stdout);
+                    }
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    // Transient fork/resource exhaustion — retry
+                    if stderr.contains("Cannot fork") || stderr.contains("Resource temporarily unavailable") {
+                        if attempt + 1 < CHROME_MAX_ATTEMPTS {
+                            let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
+                            let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                            warn!(
+                                url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                                "Chrome cannot fork, retrying after backoff"
+                            );
+                            tokio::time::sleep(backoff + jitter).await;
+                            continue;
+                        }
+                    }
+                    warn!(url, scraper = "chrome", stderr = %stderr, "Chrome exited with error");
+                    return Ok(Vec::new());
+                }
+                Ok(Err(e)) => {
+                    // Failed to launch process at all — retry on transient errors
+                    let msg = e.to_string();
+                    if (msg.contains("Cannot fork") || msg.contains("Resource temporarily unavailable"))
+                        && attempt + 1 < CHROME_MAX_ATTEMPTS
+                    {
+                        let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
+                        let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                        warn!(
+                            url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                            error = %e, "Chrome launch failed, retrying after backoff"
+                        );
+                        tokio::time::sleep(backoff + jitter).await;
+                        continue;
+                    }
+                    anyhow::bail!("Failed to run Chrome for {url}: {e}");
+                }
+                Err(_) => {
+                    anyhow::bail!("Chrome timed out after 30s for {url}");
+                }
+            }
+        }
+
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]
@@ -50,40 +134,7 @@ impl PageScraper for ChromeScraper {
 
         info!(url, scraper = "chrome", "Scraping URL");
 
-        // Validate URL before passing to Chrome subprocess
-        let parsed = url::Url::parse(url).context("Invalid URL")?;
-        if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            anyhow::bail!("Only http/https URLs are allowed, got: {}", parsed.scheme());
-        }
-
-        let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
-        let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
-
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(&chrome_bin)
-                .args([
-                    "--headless",
-                    "--no-sandbox",
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    &format!("--user-data-dir={}", tmp_dir.path().display()),
-                    "--dump-dom",
-                    url,
-                ])
-                .output(),
-        )
-        .await
-        .context(format!("Chrome timed out after 30s for {url}"))?
-        .context(format!("Failed to run Chrome for {url}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(url, scraper = "chrome", stderr = %stderr, "Chrome exited with error");
-            return Ok(String::new());
-        }
-
-        let html = &output.stdout;
+        let html = self.run_chrome(url).await?;
 
         if html.is_empty() {
             warn!(url, scraper = "chrome", "Empty DOM output");
@@ -101,7 +152,7 @@ impl PageScraper for ChromeScraper {
         };
         let input = TransformInput {
             url: parsed_url.as_ref(),
-            content: html,
+            content: &html,
             screenshot_bytes: None,
             encoding: None,
             selector_config: None,
@@ -120,58 +171,21 @@ impl PageScraper for ChromeScraper {
     }
 
     async fn scrape_raw(&self, url: &str) -> Result<String> {
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
+        let _permit = self.semaphore.acquire().await
             .map_err(|_| anyhow::anyhow!("Chrome semaphore closed"))?;
 
         info!(url, scraper = "chrome", "Scraping raw HTML");
 
-        let parsed = url::Url::parse(url).context("Invalid URL")?;
-        if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            anyhow::bail!(
-                "Only http/https URLs are allowed, got: {}",
-                parsed.scheme()
-            );
-        }
-
-        let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
-        let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
-
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(&chrome_bin)
-                .args([
-                    "--headless",
-                    "--no-sandbox",
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    &format!("--user-data-dir={}", tmp_dir.path().display()),
-                    "--dump-dom",
-                    url,
-                ])
-                .output(),
-        )
-        .await
-        .context(format!("Chrome timed out after 30s for {url}"))?
-        .context(format!("Failed to run Chrome for {url}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(url, scraper = "chrome", stderr = %stderr, "Chrome exited with error");
-            return Ok(String::new());
-        }
-
-        let html = String::from_utf8_lossy(&output.stdout).into_owned();
+        let html = self.run_chrome(url).await?;
 
         if html.is_empty() {
             warn!(url, scraper = "chrome", "Empty DOM output");
-        } else {
-            info!(url, scraper = "chrome", bytes = html.len(), "Raw HTML scraped");
+            return Ok(String::new());
         }
 
-        Ok(html)
+        let text = String::from_utf8_lossy(&html).into_owned();
+        info!(url, scraper = "chrome", bytes = text.len(), "Raw HTML scraped");
+        Ok(text)
     }
 
     fn name(&self) -> &str {
