@@ -297,6 +297,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Supervisor constraints and indexes created");
 
+    // --- Reclassify query sources: web → *_query for listing pages ---
+    reclassify_query_sources(client).await?;
+
     // --- Deduplicate evidence + recompute corroboration ---
     deduplicate_evidence(client).await?;
 
@@ -304,6 +307,67 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     backfill_event_dates(client).await?;
 
     info!("Schema migration complete");
+    Ok(())
+}
+
+/// Reclassify Source nodes that were stored as "web" but are actually query sources
+/// (Eventbrite, VolunteerMatch, GoFundMe listing pages). Updates both source_type
+/// and canonical_key. Also deletes signals with listing-page source_urls (garbage data).
+/// Idempotent — WHERE clauses match nothing after the first run.
+pub async fn reclassify_query_sources(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Reclassifying query sources...");
+
+    let reclassifications = [
+        ("eventbrite.com", "eventbrite_query"),
+        ("volunteermatch.org", "volunteermatch_query"),
+        ("gofundme.com", "gofundme_query"),
+    ];
+
+    for (domain, new_type) in &reclassifications {
+        let q = query(
+            "MATCH (s:Source) WHERE s.source_type = 'web' AND s.url CONTAINS $domain \
+             SET s.source_type = $new_type, \
+                 s.canonical_key = s.city + ':' + $new_type + ':' + s.canonical_value \
+             RETURN count(s) AS updated"
+        )
+        .param("domain", *domain)
+        .param("new_type", *new_type);
+
+        match g.execute(q).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(updated, domain, new_type, "Reclassified sources");
+                    }
+                }
+            }
+            Err(e) => warn!(domain, "Source reclassification failed (non-fatal): {e}"),
+        }
+    }
+
+    // Delete signals with listing-page source_urls (misattributed garbage data)
+    let cleanup = query(
+        "MATCH (n) WHERE n.source_url CONTAINS 'eventbrite.com/d/' \
+         DETACH DELETE n \
+         RETURN count(n) AS deleted"
+    );
+
+    match g.execute(cleanup).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted signals with listing-page source_urls");
+                }
+            }
+        }
+        Err(e) => warn!("Listing-page signal cleanup failed (non-fatal): {e}"),
+    }
+
+    info!("Query source reclassification complete");
     Ok(())
 }
 
