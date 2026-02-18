@@ -522,14 +522,15 @@ Respond in this exact JSON format:
 
             let energy = story_energy(velocity, recency_score, source_diversity, triangulation);
 
-            // Update story velocity and energy
+            // Update story velocity, energy, and reconcile signal_count with actual edges
             let q = query(
                 "MATCH (s:Story {id: $id})
-                 SET s.velocity = $velocity, s.energy = $energy"
+                 SET s.velocity = $velocity, s.energy = $energy, s.signal_count = $signal_count"
             )
             .param("id", story_id.to_string())
             .param("velocity", velocity)
-            .param("energy", energy);
+            .param("energy", energy)
+            .param("signal_count", current_count as i64);
 
             self.client.graph.run(q).await?;
         }
