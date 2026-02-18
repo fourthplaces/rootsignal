@@ -72,6 +72,25 @@ impl Config {
         }
     }
 
+    /// Load config for edition generation (Memgraph + Anthropic + city).
+    pub fn editions_from_env() -> Self {
+        Self {
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
+            anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
+            voyage_api_key: String::new(),
+            firecrawl_api_key: String::new(),
+            tavily_api_key: String::new(),
+            apify_api_key: String::new(),
+            web_host: String::new(),
+            web_port: 0,
+            admin_username: String::new(),
+            admin_password: String::new(),
+            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
+        }
+    }
+
     /// Load a minimal config for the web server (read-only, no AI keys needed).
     pub fn web_from_env() -> Self {
         Self {

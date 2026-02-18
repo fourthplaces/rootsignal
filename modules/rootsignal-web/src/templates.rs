@@ -81,12 +81,19 @@ pub fn render_nodes(nodes: &[NodeView]) -> String {
             String::new()
         };
 
+        let heat = if node.cause_heat > 0.1 {
+            let pct = (node.cause_heat * 100.0).round() as u32;
+            format!(r#"<span style="color:#e65100;font-size:11px;font-weight:600;" title="Cause heat: community attention in this signal's neighborhood">cause heat {pct}%</span>"#)
+        } else {
+            String::new()
+        };
+
         cards.push_str(&format!(
             r#"<div class="node-card">
     <div><span class="badge badge-{tc}">{tl}</span>{limited}</div>
     <h3><a href="/nodes/{id}">{title}</a></h3>
     <p class="summary">{summary}</p>
-    <div class="meta-row"><span>Verified {last}</span>{corr}{action}</div>
+    <div class="meta-row"><span>Verified {last}</span>{corr}{heat}{action}</div>
 </div>"#,
             tc = node.type_class,
             tl = html_escape(&node.type_label),
@@ -129,16 +136,21 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
     } else {
         "Not yet corroborated".to_string()
     };
-    let roles_html = if !node.audience_roles.is_empty() {
-        let tags: String = node
-            .audience_roles
-            .iter()
-            .map(|r| format!(r#"<span class="role-tag">{}</span>"#, html_escape(r)))
-            .collect::<Vec<_>>()
-            .join("");
-        format!(r#"<div class="roles">{tags}</div>"#)
-    } else {
-        String::new()
+    let tension_html = {
+        let mut parts = String::new();
+        if let Some(ref cat) = node.tension_category {
+            parts.push_str(&format!(
+                r#"<span class="badge" style="background:#fce4ec;color:#c62828;margin-right:8px;">{}</span>"#,
+                html_escape(cat)
+            ));
+        }
+        if let Some(ref help) = node.tension_what_would_help {
+            parts.push_str(&format!(
+                r#"<div style="background:#fff3e0;border-left:3px solid #e65100;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:14px;color:#333;"><strong>What would help:</strong> {}</div>"#,
+                html_escape(help)
+            ));
+        }
+        parts
     };
 
     let evidence_html = if !evidence.is_empty() {
@@ -187,13 +199,13 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
         <h2 style="margin:8px 0;">{title}</h2>
         <p class="summary" style="font-size:15px;">{summary}</p>
         {limited_banner}
+        {tension_html}
         {action_section}
         <dl class="detail-meta">
             <dt>Last verified</dt><dd>{last}</dd>
             <dt>Corroboration</dt><dd>{corr_label}</dd>
             <dt>Completeness</dt><dd>{comp}</dd>
         </dl>
-        {roles_html}
         {evidence_html}
     </div>
 </div>"#,
@@ -212,11 +224,9 @@ pub fn render_node_detail(node: &NodeView, evidence: &[EvidenceView]) -> String 
 pub fn render_quality(
     total_count: u64,
     type_count: usize,
-    role_count: usize,
     by_type: &[(String, u64)],
     freshness: &[(String, u64)],
     confidence: &[(String, u64)],
-    roles: &[(String, u64)],
 ) -> String {
     let type_rows: String = by_type
         .iter()
@@ -233,24 +243,16 @@ pub fn render_quality(
         .map(|(t, c)| format!("<tr><td>{t}</td><td style=\"text-align:right;\">{c}</td></tr>"))
         .collect::<Vec<_>>()
         .join("");
-    let role_rows: String = roles
-        .iter()
-        .map(|(t, c)| format!("<tr><td>{t}</td><td style=\"text-align:right;\">{c}</td></tr>"))
-        .collect::<Vec<_>>()
-        .join("");
-
     let content = format!(
         r#"<div class="container">
     <h2 style="margin-bottom:16px;">Quality Dashboard (Internal)</h2>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px;">
         <div class="node-card" style="text-align:center;"><div style="font-size:36px;font-weight:700;color:#1565c0;">{total_count}</div><div style="font-size:13px;color:#888;">Total Signals</div></div>
         <div class="node-card" style="text-align:center;"><div style="font-size:36px;font-weight:700;color:#2e7d32;">{type_count}</div><div style="font-size:13px;color:#888;">Signal Types</div></div>
-        <div class="node-card" style="text-align:center;"><div style="font-size:36px;font-weight:700;color:#e65100;">{role_count}</div><div style="font-size:13px;color:#888;">Audience Roles</div></div>
     </div>
     <div class="node-card"><h3 style="margin-bottom:12px;">Signal Type Breakdown</h3><table style="width:100%;font-size:14px;"><thead><tr><th style="text-align:left;">Type</th><th style="text-align:right;">Count</th></tr></thead><tbody>{type_rows}</tbody></table></div>
     <div class="node-card"><h3 style="margin-bottom:12px;">Freshness Distribution</h3><table style="width:100%;font-size:14px;"><thead><tr><th style="text-align:left;">Period</th><th style="text-align:right;">Count</th></tr></thead><tbody>{freshness_rows}</tbody></table></div>
     <div class="node-card"><h3 style="margin-bottom:12px;">Confidence Distribution</h3><table style="width:100%;font-size:14px;"><thead><tr><th style="text-align:left;">Tier</th><th style="text-align:right;">Count</th></tr></thead><tbody>{confidence_rows}</tbody></table></div>
-    <div class="node-card"><h3 style="margin-bottom:12px;">Audience Roles</h3><table style="width:100%;font-size:14px;"><thead><tr><th style="text-align:left;">Role</th><th style="text-align:right;">Count</th></tr></thead><tbody>{role_rows}</tbody></table></div>
 </div>"#
     );
 
@@ -299,8 +301,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .detail-meta{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0;font-size:13px;}}
 .detail-meta dt{{color:#888;}}
 .detail-meta dd{{color:#333;}}
-.roles{{display:flex;gap:6px;flex-wrap:wrap;}}
-.role-tag{{background:#f0f0f0;padding:2px 8px;border-radius:10px;font-size:11px;color:#555;}}
+
 </style>
 </head>
 <body>

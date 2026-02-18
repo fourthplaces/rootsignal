@@ -491,6 +491,58 @@ async fn nyc_community_discussion_extracts_responses() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Scenario 15: Tension extraction — urgent community tension content
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tension_extraction_produces_tension_signals() {
+    let Some(ctx) = TestContext::try_new().await else {
+        eprintln!("Skipping: API keys not set");
+        return;
+    };
+
+    let stats = ctx
+        .scout()
+        .with_web_content(include_str!("fixtures/urgent_community_tension.txt"))
+        .with_search_results(vec![search_result(
+            "https://example.com/phillips-ice-enforcement",
+            "ICE Enforcement Activity in Phillips Neighborhood",
+        )])
+        .run()
+        .await;
+
+    assert!(
+        stats.signals_extracted >= 1,
+        "tension content should extract signals, got {}",
+        stats.signals_extracted,
+    );
+
+    // Check that at least one Tension signal exists in the graph
+    let tensions = harness::queries::tension_signals(ctx.client()).await;
+    assert!(
+        !tensions.is_empty(),
+        "should extract at least one Tension signal from urgent community content; \
+         got {} tensions, {} total signals extracted (by_type: {:?})",
+        tensions.len(),
+        stats.signals_extracted,
+        stats.by_type,
+    );
+
+    // Verify at least one tension has category or what_would_help populated
+    let enriched = tensions
+        .iter()
+        .any(|t| t.category.is_some() || t.what_would_help.is_some());
+    assert!(
+        enriched,
+        "at least one tension should have category or what_would_help; got: {:?}",
+        tensions
+            .iter()
+            .map(|t| (&t.title, &t.category, &t.what_would_help))
+            .collect::<Vec<_>>(),
+    );
+}
+
 // ===========================================================================
 // ADVERSARIAL SCENARIOS
 // ===========================================================================

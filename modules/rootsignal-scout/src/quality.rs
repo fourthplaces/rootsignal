@@ -47,12 +47,9 @@ pub fn score(node: &Node) -> ExtractionQuality {
                 || matches!(node, Node::Give(g) if g.is_ongoing)
                 || matches!(node, Node::Ask(_))));
 
-    // Completeness: fraction of 7 key fields populated
-    // title, summary, signal_type (always), audience_roles, location, action_url, timing
+    // Completeness: fraction of 6 key fields populated
+    // title, summary, signal_type (always), location, action_url, timing
     let mut filled = 3.0_f32; // title, summary, signal_type always present
-    if !meta.audience_roles.is_empty() {
-        filled += 1.0;
-    }
     if has_location {
         filled += 1.0;
     }
@@ -62,7 +59,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
     if has_timing {
         filled += 1.0;
     }
-    let completeness = filled / 7.0;
+    let completeness = filled / 6.0;
 
     // Confidence: weighted average
     let geo_score = match geo_accuracy {
@@ -89,7 +86,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rootsignal_common::{
-        AudienceRole, EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel,
+        EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel,
     };
     use uuid::Uuid;
 
@@ -111,9 +108,9 @@ mod tests {
             source_url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
             last_confirmed_active: Utc::now(),
-            audience_roles: vec![AudienceRole::Neighbor],
             source_diversity: 1,
             external_ratio: 0.0,
+            cause_heat: 0.0,
             mentioned_actors: vec![],
         }
     }

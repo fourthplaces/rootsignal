@@ -142,14 +142,6 @@ impl Clusterer {
                 .map(|(t, _)| t.clone())
                 .unwrap_or_else(|| "notice".to_string());
 
-            // Audience roles (union)
-            let audience_roles: Vec<String> = signal_meta
-                .iter()
-                .flat_map(|s| s.audience_roles.iter().cloned())
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect();
-
             // Sensitivity (highest)
             let sensitivity = signal_meta
                 .iter()
@@ -188,7 +180,7 @@ impl Clusterer {
                     centroid_lat,
                     centroid_lng,
                     dominant_type,
-                    audience_roles,
+
                     sensitivity,
                     source_count: source_domains.len() as u32,
                     entity_count,
@@ -232,7 +224,7 @@ impl Clusterer {
                     centroid_lat,
                     centroid_lng,
                     dominant_type,
-                    audience_roles,
+
                     sensitivity,
                     source_count: source_domains.len() as u32,
                     entity_count,
@@ -395,7 +387,7 @@ Respond in this exact JSON format:
                  WHERE n.id IN $ids
                  RETURN n.id AS id, n.title AS title, n.summary AS summary,
                         n.source_url AS source_url, n.corroboration_count AS corroboration_count,
-                        n.audience_roles AS audience_roles, n.sensitivity AS sensitivity,
+                        n.sensitivity AS sensitivity,
                         n.lat AS lat, n.lng AS lng"
             ))
             .param("ids", signal_ids.to_vec());
@@ -407,7 +399,6 @@ Respond in this exact JSON format:
                 let summary: String = row.get("summary").unwrap_or_default();
                 let source_url: String = row.get("source_url").unwrap_or_default();
                 let corroboration_count: i64 = row.get("corroboration_count").unwrap_or(0);
-                let audience_roles: Vec<String> = row.get("audience_roles").unwrap_or_default();
                 let sensitivity: String = row.get("sensitivity").unwrap_or_else(|_| "general".to_string());
                 let lat: Option<f64> = row.get("lat").ok().and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
                 let lng: Option<f64> = row.get("lng").ok().and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
@@ -419,7 +410,7 @@ Respond in this exact JSON format:
                     source_url,
                     node_type: label.to_lowercase(),
                     corroboration_count: corroboration_count as u32,
-                    audience_roles,
+
                     sensitivity,
                     lat,
                     lng,
@@ -439,7 +430,7 @@ Respond in this exact JSON format:
                  s.centroid_lat = $centroid_lat,
                  s.centroid_lng = $centroid_lng,
                  s.dominant_type = $dominant_type,
-                 s.audience_roles = $audience_roles,
+
                  s.sensitivity = $sensitivity,
                  s.source_count = $source_count,
                  s.entity_count = $entity_count,
@@ -452,7 +443,7 @@ Respond in this exact JSON format:
         .param("signal_count", story.signal_count as i64)
         .param("last_updated", crate::writer::memgraph_datetime_pub(&story.last_updated))
         .param("dominant_type", story.dominant_type.as_str())
-        .param("audience_roles", story.audience_roles.clone())
+
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -604,7 +595,6 @@ Respond in this exact JSON format:
                     summary: s.summary.clone(),
                     node_type: s.node_type.clone(),
                     source_url: s.source_url.clone(),
-                    audience_roles: s.audience_roles.clone(),
                     action_url: None,
                 })
                 .collect();
@@ -679,7 +669,6 @@ struct SignalMeta {
     source_url: String,
     node_type: String,
     corroboration_count: u32,
-    audience_roles: Vec<String>,
     sensitivity: String,
     lat: Option<f64>,
     lng: Option<f64>,

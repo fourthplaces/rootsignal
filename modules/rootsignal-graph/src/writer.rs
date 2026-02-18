@@ -61,7 +61,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
-                audience_roles: $audience_roles,
+
                 location_name: $location_name,
                 starts_at: $starts_at,
                 ends_at: $ends_at,
@@ -88,7 +88,7 @@ impl GraphWriter {
             "last_confirmed_active",
             memgraph_datetime(&n.meta.last_confirmed_active),
         )
-        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
             "starts_at",
@@ -133,7 +133,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
-                audience_roles: $audience_roles,
+
                 location_name: $location_name,
                 action_url: $action_url,
                 availability: $availability,
@@ -158,7 +158,7 @@ impl GraphWriter {
             "last_confirmed_active",
             memgraph_datetime(&n.meta.last_confirmed_active),
         )
-        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param("action_url", n.action_url.as_str())
         .param("availability", n.availability.as_str())
@@ -191,7 +191,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
-                audience_roles: $audience_roles,
+
                 location_name: $location_name,
                 urgency: $urgency,
                 what_needed: $what_needed,
@@ -217,7 +217,7 @@ impl GraphWriter {
             "last_confirmed_active",
             memgraph_datetime(&n.meta.last_confirmed_active),
         )
-        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
             "urgency",
@@ -257,7 +257,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
-                audience_roles: $audience_roles,
+
                 location_name: $location_name,
                 severity: $severity,
                 category: $category,
@@ -283,7 +283,7 @@ impl GraphWriter {
             "last_confirmed_active",
             memgraph_datetime(&n.meta.last_confirmed_active),
         )
-        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param("severity", severity_str(n.severity))
         .param("category", n.category.clone().unwrap_or_default())
@@ -322,9 +322,11 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
-                audience_roles: $audience_roles,
+
                 location_name: $location_name,
                 severity: $severity,
+                category: $category,
+                what_would_help: $what_would_help,
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding
@@ -345,12 +347,14 @@ impl GraphWriter {
             "last_confirmed_active",
             memgraph_datetime(&n.meta.last_confirmed_active),
         )
-        .param("audience_roles", roles_to_strings(&n.meta.audience_roles))
+
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
             "severity",
             severity_str(n.severity),
         )
+        .param("category", n.category.as_deref().unwrap_or(""))
+        .param("what_would_help", n.what_would_help.as_deref().unwrap_or(""))
         .param("embedding", embedding_to_f64(embedding));
 
         let q = add_location_params(q, &n.meta);
@@ -850,7 +854,7 @@ impl GraphWriter {
                 centroid_lat: $centroid_lat,
                 centroid_lng: $centroid_lng,
                 dominant_type: $dominant_type,
-                audience_roles: $audience_roles,
+
                 sensitivity: $sensitivity,
                 source_count: $source_count,
                 entity_count: $entity_count,
@@ -869,7 +873,7 @@ impl GraphWriter {
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
-        .param("audience_roles", story.audience_roles.clone())
+
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -900,7 +904,7 @@ impl GraphWriter {
                  s.centroid_lat = $centroid_lat,
                  s.centroid_lng = $centroid_lng,
                  s.dominant_type = $dominant_type,
-                 s.audience_roles = $audience_roles,
+
                  s.sensitivity = $sensitivity,
                  s.source_count = $source_count,
                  s.entity_count = $entity_count,
@@ -917,7 +921,7 @@ impl GraphWriter {
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
-        .param("audience_roles", story.audience_roles.clone())
+
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -1767,26 +1771,6 @@ fn sensitivity_str(s: SensitivityLevel) -> &'static str {
         SensitivityLevel::General => "general",
         SensitivityLevel::Elevated => "elevated",
         SensitivityLevel::Sensitive => "sensitive",
-    }
-}
-
-fn roles_to_strings(roles: &[rootsignal_common::AudienceRole]) -> Vec<String> {
-    roles.iter().map(|r| audience_role_str(r).to_string()).collect()
-}
-
-fn audience_role_str(role: &rootsignal_common::AudienceRole) -> &'static str {
-    use rootsignal_common::AudienceRole;
-    match role {
-        AudienceRole::Volunteer => "volunteer",
-        AudienceRole::Donor => "donor",
-        AudienceRole::Neighbor => "neighbor",
-        AudienceRole::Parent => "parent",
-        AudienceRole::Youth => "youth",
-        AudienceRole::Senior => "senior",
-        AudienceRole::Immigrant => "immigrant",
-        AudienceRole::Steward => "steward",
-        AudienceRole::CivicParticipant => "civic_participant",
-        AudienceRole::SkillProvider => "skill_provider",
     }
 }
 

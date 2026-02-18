@@ -217,6 +217,7 @@ fn twincities_profile() -> CityProfile {
             "nhn_tc",
             "sadeinthecities",
             "sj_tapp",
+            "minnesota_neighbors",
         ],
         facebook_pages: vec![
             "https://www.facebook.com/HandsOnTC",

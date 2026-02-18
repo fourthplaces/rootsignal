@@ -31,9 +31,9 @@ The investigator evaluates each piece of evidence as `DIRECT`, `SUPPORTING`, or 
 
 The investigator scores each evidence 0.0–1.0 (filtering below 0.5), but the surviving score isn't stored. Two evidence nodes at 0.51 and 0.99 look the same. Evidence quality *is* signal quality.
 
-- [ ] Add `confidence: Option<f32>` to `EvidenceNode`
-- [ ] Store evidence confidence in the graph
-- [ ] Parse and surface in reader/web layer
+- [x] Add `evidence_confidence: Option<f32>` to `EvidenceNode`
+- [x] Store evidence confidence in the graph
+- [x] Parse and surface in reader/web layer
 - [ ] Use confidence to order evidence display (highest first)
 
 ### 3. Tension nodes are semantically thin
@@ -57,16 +57,16 @@ Evidence is always mediated by signals (`Story → Signal → Evidence`). If inv
 
 Each signal in a story triggers `get_signal_evidence()` which iterates 5 node types. A story with 8 signals means up to 40 queries.
 
-- [ ] Add `get_story_signal_evidence(story_id)` batch method to `reader.rs`
-- [ ] Cypher: `MATCH (s:Story {id: $id})-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence) RETURN n.id AS signal_id, collect(ev) AS evidence`
-- [ ] Replace per-signal loop in `api_story_detail` with single batch call
+- [x] Add `get_story_signal_evidence(story_id)` batch method to `reader.rs`
+- [x] Cypher: `MATCH (s:Story {id: $id})-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence) RETURN n.id AS signal_id, collect(ev) AS evidence`
+- [x] Replace per-signal loop in `api_story_detail` with single batch call
 
 ### 6. Feedback loop not visible
 
 The vision describes: *"when needs stop clustering, the graph gets quiet — silence signals alignment was restored."* But the web layer has no temporal dimension. Stories have `velocity` and `energy` but these aren't surfaced.
 
-- [ ] Add `velocity` and `energy` to `api_stories` response
-- [ ] Add `velocity` and `energy` to `api_story_detail` response
+- [x] Add `velocity` and `energy` to `api_stories` response (already present via StoryNode serialization)
+- [x] Add `velocity` and `energy` to `api_story_detail` response (already present via StoryNode serialization)
 - [ ] Consider a `trend` indicator (heating/cooling) derived from velocity history
 - [ ] Surface temporal change in story list UI (e.g. rising/falling badges)
 
@@ -74,8 +74,9 @@ The vision describes: *"when needs stop clustering, the graph gets quiet — sil
 
 The vision's core emergent property: *"Needs/Tensions = misalignment, Responses/Resources = alignment being restored."* But the web layer treats all signals in a story as a flat list. No way to see which Gives/Events respond to which Asks/Tensions.
 
-- [ ] Design `RESPONDS_TO` edge semantics and creation logic
-- [ ] Update clustering or investigation to detect and link response→tension pairs
+- [x] Design `RESPONDS_TO` edge semantics and creation logic (exists: `tension_responses()` in reader, `RESPONDS_TO` edges in graph)
+- [x] Surface via dedicated endpoint (`/api/tensions/{id}/responses`)
+- [ ] Update clustering or investigation to detect and link response→tension pairs automatically
 - [ ] Surface grouped tension→response structure in `api_story_detail`
 - [ ] Render tension→response grouping in story detail HTML
 

@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use rootsignal_common::{AudienceRole, StoryArc, StoryCategory, StorySynthesis, ActionGuidance};
+use rootsignal_common::{StoryArc, StoryCategory, StorySynthesis, ActionGuidance};
 
 /// LLM response schema for story synthesis.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -24,9 +24,7 @@ pub struct StorySynthesisResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ActionGuidanceResponse {
-    /// Audience role: volunteer, donor, neighbor, etc.
-    pub role: String,
-    /// 1-2 sentences of what this role can do
+    /// 1-2 sentences of what someone can do
     pub guidance: String,
     /// URLs for taking action
     pub action_urls: Vec<String>,
@@ -56,29 +54,12 @@ fn parse_category(s: &str) -> StoryCategory {
     }
 }
 
-fn parse_audience_role(s: &str) -> Option<AudienceRole> {
-    match s {
-        "volunteer" => Some(AudienceRole::Volunteer),
-        "donor" => Some(AudienceRole::Donor),
-        "neighbor" => Some(AudienceRole::Neighbor),
-        "parent" => Some(AudienceRole::Parent),
-        "youth" => Some(AudienceRole::Youth),
-        "senior" => Some(AudienceRole::Senior),
-        "immigrant" => Some(AudienceRole::Immigrant),
-        "steward" => Some(AudienceRole::Steward),
-        "civic_participant" => Some(AudienceRole::CivicParticipant),
-        "skill_provider" => Some(AudienceRole::SkillProvider),
-        _ => None,
-    }
-}
-
 /// Signal metadata passed to the synthesizer.
 pub struct SynthesisInput {
     pub title: String,
     pub summary: String,
     pub node_type: String,
     pub source_url: String,
-    pub audience_roles: Vec<String>,
     pub action_url: Option<String>,
 }
 
@@ -112,32 +93,22 @@ impl Synthesizer {
             })
             .collect();
 
-        let roles_in_signals: Vec<String> = signals
-            .iter()
-            .flat_map(|s| s.audience_roles.iter().cloned())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
         let prompt = format!(
             r#"You are writing for a community newspaper. This story cluster was originally headlined: "{headline}"
 
 Constituent signals:
 {signals}
 
-Audience roles present: {roles}
-
 Write a story synthesis as structured JSON. The synthesis should:
 1. headline: A compelling, specific headline (max 100 chars). Avoid generic labels.
 2. lede: 2-4 sentences capturing the essence — who, what, where, why it matters to community members.
 3. narrative: 3-6 sentences giving fuller context. Connect the signals into a coherent story.
-4. action_guidance: For each relevant audience role, give 1-2 sentences of specific "what you can do" guidance. Include action_urls from the signals where applicable.
+4. action_guidance: A list of specific actions someone can take. Include action_urls from the signals where applicable.
 5. key_entities: Names of organizations, groups, or individuals mentioned across the signals.
 6. category: One of: resource, gathering, crisis, governance, stewardship, community
 
 Write for community members, not journalists. Be specific, not generic."#,
             signals = signal_descriptions.join("\n"),
-            roles = roles_in_signals.join(", "),
         );
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
@@ -154,13 +125,9 @@ Write for community members, not journalists. Be specific, not generic."#,
         let action_guidance: Vec<ActionGuidance> = response
             .action_guidance
             .into_iter()
-            .filter_map(|ag| {
-                let role = parse_audience_role(&ag.role)?;
-                Some(ActionGuidance {
-                    role,
-                    guidance: ag.guidance,
-                    action_urls: ag.action_urls,
-                })
+            .map(|ag| ActionGuidance {
+                guidance: ag.guidance,
+                action_urls: ag.action_urls,
             })
             .collect();
 

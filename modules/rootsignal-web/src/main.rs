@@ -63,15 +63,12 @@ async fn main() -> Result<()> {
         .route("/api/stories/{id}/actors", get(api_story_actors))
         .route("/api/stories/category/{category}", get(api_stories_by_category))
         .route("/api/stories/arc/{arc}", get(api_stories_by_arc))
-        .route("/api/stories/role/{role}", get(api_stories_by_role))
         .route("/api/signals", get(api_signals))
         .route("/api/signals/{id}", get(api_signal_detail))
         // Actors API
         .route("/api/actors", get(api_actors))
         .route("/api/actors/{id}", get(api_actor_detail))
         .route("/api/actors/{id}/stories", get(api_actor_stories))
-        // Action routing
-        .route("/api/actions/{role}", get(api_actions_for_role))
         // Tension responses
         .route("/api/tensions/{id}/responses", get(api_tension_responses))
         // Editions API
@@ -264,6 +261,11 @@ async fn api_story_detail(
                 .get_story_signal_evidence(uuid)
                 .await
                 .unwrap_or_default();
+            let tension_responses = state
+                .reader
+                .get_story_tension_responses(uuid)
+                .await
+                .unwrap_or_default();
             let signal_views: Vec<serde_json::Value> = signals
                 .iter()
                 .filter_map(|n| {
@@ -284,7 +286,7 @@ async fn api_story_detail(
                             })
                         })
                         .collect();
-                    Some(serde_json::json!({
+                    let mut signal_json = serde_json::json!({
                         "id": meta.id.to_string(),
                         "title": meta.title,
                         "summary": meta.summary,
@@ -293,7 +295,25 @@ async fn api_story_detail(
                         "source_url": meta.source_url,
                         "evidence_count": evidence.len(),
                         "evidence": ev_json,
-                    }))
+                    });
+                    // For Tension signals, include type-specific fields and responses
+                    if let Node::Tension(t) = n {
+                        if let Some(obj) = signal_json.as_object_mut() {
+                            obj.insert("severity".into(), serde_json::json!(format!("{:?}", t.severity)));
+                            obj.insert("category".into(), serde_json::json!(t.category));
+                            obj.insert("what_would_help".into(), serde_json::json!(t.what_would_help));
+                        }
+                        let responses: Vec<&serde_json::Value> = tension_responses
+                            .iter()
+                            .filter(|(tid, _)| *tid == meta.id)
+                            .flat_map(|(_, resps)| resps.iter())
+                            .collect();
+                        if let Some(obj) = signal_json.as_object_mut() {
+                            obj.insert("responses".to_string(), serde_json::json!(responses));
+                            obj.insert("response_count".to_string(), serde_json::json!(responses.len()));
+                        }
+                    }
+                    Some(signal_json)
                 })
                 .collect();
             Json(serde_json::json!({
@@ -404,21 +424,31 @@ async fn api_signal_detail(
                 _ => None,
             };
 
+            let mut signal_json = serde_json::json!({
+                "id": meta.map(|m| m.id.to_string()),
+                "title": meta.map(|m| &m.title),
+                "summary": meta.map(|m| &m.summary),
+                "node_type": format!("{}", node.node_type()),
+                "confidence": meta.map(|m| m.confidence),
+                "corroboration_count": meta.map(|m| m.corroboration_count),
+                "source_diversity": meta.map(|m| m.source_diversity),
+                "external_ratio": meta.map(|m| m.external_ratio),
+                "cause_heat": meta.map(|m| m.cause_heat),
+                "source_url": meta.map(|m| &m.source_url),
+                "action_url": action_url,
+                "location": meta.and_then(|m| m.location).map(|l| serde_json::json!({"lat": l.lat, "lng": l.lng})),
+            });
+
+            if let Node::Tension(t) = &node {
+                if let Some(obj) = signal_json.as_object_mut() {
+                    obj.insert("severity".into(), serde_json::json!(format!("{:?}", t.severity)));
+                    obj.insert("category".into(), serde_json::json!(t.category));
+                    obj.insert("what_would_help".into(), serde_json::json!(t.what_would_help));
+                }
+            }
+
             Json(serde_json::json!({
-                "signal": {
-                    "id": meta.map(|m| m.id.to_string()),
-                    "title": meta.map(|m| &m.title),
-                    "summary": meta.map(|m| &m.summary),
-                    "node_type": format!("{}", node.node_type()),
-                    "confidence": meta.map(|m| m.confidence),
-                    "corroboration_count": meta.map(|m| m.corroboration_count),
-                    "source_diversity": meta.map(|m| m.source_diversity),
-                    "external_ratio": meta.map(|m| m.external_ratio),
-                    "source_url": meta.map(|m| &m.source_url),
-                    "action_url": action_url,
-                    "audience_roles": meta.map(|m| m.audience_roles.iter().map(|r| format!("{r}")).collect::<Vec<_>>()),
-                    "location": meta.and_then(|m| m.location).map(|l| serde_json::json!({"lat": l.lat, "lng": l.lng})),
-                },
+                "signal": signal_json,
                 "evidence": ev_views,
             }))
             .into_response()
@@ -458,21 +488,6 @@ async fn api_stories_by_arc(
         Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
         Err(e) => {
             warn!(error = %e, "Failed to load stories by arc");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-async fn api_stories_by_role(
-    State(state): State<Arc<AppState>>,
-    Path(role): Path<String>,
-    Query(params): Query<StoriesQuery>,
-) -> impl IntoResponse {
-    let limit = params.limit.unwrap_or(20).min(100);
-    match state.reader.stories_by_role(&role, limit).await {
-        Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
-        Err(e) => {
-            warn!(error = %e, "Failed to load stories by role");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -551,45 +566,6 @@ async fn api_actor_stories(
         Ok(stories) => Json(serde_json::json!({ "stories": stories })).into_response(),
         Err(e) => {
             warn!(error = %e, "Failed to load actor stories");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-// --- Action routing ---
-
-#[derive(Deserialize)]
-struct ActionQuery {
-    lat: Option<f64>,
-    lng: Option<f64>,
-    radius: Option<f64>,
-}
-
-async fn api_actions_for_role(
-    State(state): State<Arc<AppState>>,
-    Path(role): Path<String>,
-    Query(_params): Query<ActionQuery>,
-) -> impl IntoResponse {
-    match state.reader.signals_for_role(&role, 20).await {
-        Ok(plan) => Json(serde_json::json!({
-            "role": format!("{}", plan.role),
-            "urgent_asks": plan.urgent_asks.iter().filter_map(|n| n.meta().map(|m| serde_json::json!({
-                "id": m.id.to_string(),
-                "title": m.title,
-                "summary": m.summary,
-                "source_url": m.source_url,
-            }))).collect::<Vec<_>>(),
-            "opportunities": plan.opportunities.iter().filter_map(|n| n.meta().map(|m| serde_json::json!({
-                "id": m.id.to_string(),
-                "title": m.title,
-                "summary": m.summary,
-                "node_type": format!("{}", n.node_type()),
-            }))).collect::<Vec<_>>(),
-            "active_tensions_count": plan.active_tensions.len(),
-        }))
-        .into_response(),
-        Err(e) => {
-            warn!(error = %e, "Failed to load actions for role");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -718,10 +694,7 @@ async fn render_quality_page(reader: &PublicGraphReader) -> Result<String> {
     let by_type = reader.count_by_type().await.unwrap_or_default();
     let freshness = reader.freshness_distribution().await.unwrap_or_default();
     let confidence = reader.confidence_distribution().await.unwrap_or_default();
-    let roles = reader.audience_role_distribution().await.unwrap_or_default();
-
     let type_count = by_type.iter().filter(|(_, c)| *c > 0).count();
-    let role_count = roles.len();
 
     let by_type_strs: Vec<(String, u64)> = by_type
         .iter()
@@ -731,11 +704,9 @@ async fn render_quality_page(reader: &PublicGraphReader) -> Result<String> {
     Ok(render_quality(
         total_count,
         type_count,
-        role_count,
         &by_type_strs,
         &freshness,
         &confidence,
-        &roles,
     ))
 }
 
@@ -751,10 +722,13 @@ pub struct NodeView {
     pub corroboration_count: u32,
     pub source_diversity: u32,
     pub external_ratio: f32,
+    pub cause_heat: f64,
     pub last_confirmed: String,
     pub action_url: String,
-    pub audience_roles: Vec<String>,
+
     pub completeness_label: String,
+    pub tension_category: Option<String>,
+    pub tension_what_would_help: Option<String>,
 }
 
 pub struct EvidenceView {
@@ -809,6 +783,11 @@ fn node_to_view(node: &Node) -> NodeView {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
+    let (tension_category, tension_what_would_help) = match node {
+        Node::Tension(t) => (t.category.clone(), t.what_would_help.clone()),
+        _ => (None, None),
+    };
+
     NodeView {
         id: node.id().to_string(),
         title: node.title().to_string(),
@@ -819,12 +798,13 @@ fn node_to_view(node: &Node) -> NodeView {
         corroboration_count: meta.map(|m| m.corroboration_count).unwrap_or(0),
         source_diversity: meta.map(|m| m.source_diversity).unwrap_or(1),
         external_ratio: meta.map(|m| m.external_ratio).unwrap_or(0.0),
+        cause_heat: meta.map(|m| m.cause_heat).unwrap_or(0.0),
         last_confirmed,
         action_url,
-        audience_roles: meta
-            .map(|m| m.audience_roles.iter().map(|r| format!("{r}")).collect())
-            .unwrap_or_default(),
+
         completeness_label: completeness_label.to_string(),
+        tension_category,
+        tension_what_would_help,
     }
 }
 
@@ -857,6 +837,7 @@ fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
                     "confidence": meta.confidence,
                     "corroboration_count": meta.corroboration_count,
                     "source_diversity": meta.source_diversity,
+                    "cause_heat": meta.cause_heat,
                 }
             }))
         })

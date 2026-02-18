@@ -21,7 +21,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AudienceRole, EventNode, Node, NodeMeta, SensitivityLevel,
+    EventNode, Node, NodeMeta, SensitivityLevel,
 };
 
 use crate::embedder::TextEmbedder;
@@ -382,9 +382,10 @@ impl FixtureExtractor {
                 source_url: String::new(), // set by store_signals
                 extracted_at: now,
                 last_confirmed_active: now,
-                audience_roles: vec![AudienceRole::Volunteer, AudienceRole::Neighbor],
+
                 source_diversity: 1,
                 external_ratio: 0.0,
+                cause_heat: 0.0,
                 mentioned_actors: vec!["Minneapolis Parks".to_string()],
             },
             starts_at: Some(now + chrono::Duration::days(7)),

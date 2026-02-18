@@ -3,7 +3,7 @@ use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, AskNode, AudienceRole, EvidenceNode, EventNode, GeoPoint, GeoPrecision,
+    fuzz_location, AskNode, EvidenceNode, EventNode, GeoPoint, GeoPrecision,
     GiveNode, Node, NodeMeta, NodeType, NoticeNode, Severity, SensitivityLevel, StoryNode,
     TensionNode, Urgency, ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
@@ -55,7 +55,7 @@ impl PublicGraphReader {
                    AND n.confidence >= $min_confidence
                    {expiry}
                  RETURN n
-                 ORDER BY n.confidence DESC, n.last_confirmed_active DESC
+                 ORDER BY n.cause_heat DESC, n.confidence DESC, n.last_confirmed_active DESC
                  LIMIT 200",
                 expiry = expiry_clause(*nt),
             );
@@ -133,7 +133,7 @@ impl PublicGraphReader {
                  WHERE n.confidence >= $min_confidence
                    {expiry}
                  RETURN n
-                 ORDER BY n.last_confirmed_active DESC
+                 ORDER BY n.cause_heat DESC, n.last_confirmed_active DESC
                  LIMIT $limit",
                 expiry = expiry_clause(*nt),
             );
@@ -152,11 +152,17 @@ impl PublicGraphReader {
             }
         }
 
-        // Sort all results by last_confirmed_active descending
+        // Sort all results by cause_heat descending, then by recency
         results.sort_by(|a, b| {
-            let a_time = a.meta().map(|m| m.last_confirmed_active);
-            let b_time = b.meta().map(|m| m.last_confirmed_active);
-            b_time.cmp(&a_time)
+            let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            b_heat.partial_cmp(&a_heat)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    let a_time = a.meta().map(|m| m.last_confirmed_active);
+                    let b_time = b.meta().map(|m| m.last_confirmed_active);
+                    b_time.cmp(&a_time)
+                })
         });
 
         results.truncate(limit as usize);
@@ -327,6 +333,45 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Batch-fetch response signals for all tensions in a story.
+    /// Returns (tension_id, Vec<response_summary>) pairs.
+    pub async fn get_story_tension_responses(
+        &self,
+        story_id: Uuid,
+    ) -> Result<Vec<(Uuid, Vec<serde_json::Value>)>, neo4rs::Error> {
+        let cypher =
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[:RESPONDS_TO]-(resp)
+             WHERE resp:Give OR resp:Event
+             RETURN t.id AS tension_id, resp.id AS resp_id, resp.title AS resp_title,
+                    resp.summary AS resp_summary,
+                    labels(resp) AS resp_labels";
+
+        let q = query(cypher).param("id", story_id.to_string());
+        let mut stream = self.client.graph.execute(q).await?;
+
+        let mut map: std::collections::HashMap<Uuid, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+
+        while let Some(row) = stream.next().await? {
+            let tid_str: String = row.get("tension_id").unwrap_or_default();
+            let Ok(tid) = Uuid::parse_str(&tid_str) else { continue };
+            let rid_str: String = row.get("resp_id").unwrap_or_default();
+            let title: String = row.get("resp_title").unwrap_or_default();
+            let summary: String = row.get("resp_summary").unwrap_or_default();
+            let labels: Vec<String> = row.get("resp_labels").unwrap_or_default();
+            let node_type = labels.iter().find(|l| *l != "Node").cloned().unwrap_or_default();
+
+            map.entry(tid).or_default().push(serde_json::json!({
+                "id": rid_str,
+                "title": title,
+                "summary": summary,
+                "node_type": node_type,
+            }));
+        }
+
+        Ok(map.into_iter().collect())
+    }
+
     /// Get a single signal by ID.
     pub async fn get_signal_by_id(
         &self,
@@ -374,29 +419,6 @@ impl PublicGraphReader {
              RETURN s ORDER BY s.energy DESC LIMIT $limit"
         )
         .param("arc", arc)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Get stories relevant to a specific audience role.
-    pub async fn stories_by_role(
-        &self,
-        role: &str,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story) WHERE $role IN s.audience_roles
-             RETURN s ORDER BY s.energy DESC LIMIT $limit"
-        )
-        .param("role", role)
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
@@ -496,108 +518,6 @@ impl PublicGraphReader {
             }
         }
         Ok(results)
-    }
-
-    // --- Role-based action routing ---
-
-    /// Get signals relevant to a specific audience role, with urgency-aware ranking.
-    pub async fn signals_for_role(
-        &self,
-        role: &str,
-        limit: u32,
-    ) -> Result<rootsignal_common::RoleActionPlan, neo4rs::Error> {
-        use rootsignal_common::RoleActionPlan;
-
-        let role_enum = parse_audience_role(role).unwrap_or(AudienceRole::Neighbor);
-
-        // Urgent asks: Critical/High urgency matching this role
-        let q = query(
-            "MATCH (n:Ask)
-             WHERE $role IN n.audience_roles
-               AND n.urgency IN ['critical', 'high']
-               AND n.confidence >= $min_conf
-             RETURN n
-             ORDER BY CASE n.urgency WHEN 'critical' THEN 0 ELSE 1 END,
-                      n.last_confirmed_active DESC
-             LIMIT $limit"
-        )
-        .param("role", role)
-        .param("min_conf", CONFIDENCE_DISPLAY_LIMITED as f64)
-        .param("limit", limit as i64);
-
-        let mut urgent_asks = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(node) = row_to_node(&row, NodeType::Ask) {
-                urgent_asks.push(fuzz_node(node));
-            }
-        }
-
-        // Opportunities: Give/Event signals matching this role
-        let mut opportunities = Vec::new();
-        for nt in &[NodeType::Give, NodeType::Event] {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (n:{label})
-                 WHERE $role IN n.audience_roles
-                   AND n.confidence >= $min_conf
-                   {expiry}
-                 RETURN n
-                 ORDER BY n.last_confirmed_active DESC
-                 LIMIT $limit",
-                expiry = expiry_clause(*nt),
-            );
-
-            let q = query(&cypher)
-                .param("role", role)
-                .param("min_conf", CONFIDENCE_DISPLAY_LIMITED as f64)
-                .param("limit", limit as i64);
-
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        opportunities.push(fuzz_node(node));
-                    }
-                }
-            }
-        }
-
-        // Active tensions with responses
-        let q = query(
-            "MATCH (t:Tension)
-             WHERE $role IN t.audience_roles
-               AND t.confidence >= $min_conf
-             OPTIONAL MATCH (t)<-[r:RESPONDS_TO]-(resp)
-             RETURN t, collect(resp) AS responses
-             ORDER BY CASE t.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
-                      t.last_confirmed_active DESC
-             LIMIT $limit"
-        )
-        .param("role", role)
-        .param("min_conf", CONFIDENCE_DISPLAY_LIMITED as f64)
-        .param("limit", limit as i64);
-
-        let mut active_tensions = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(tension) = row_to_node(&row, NodeType::Tension) {
-                // Parse response nodes — these could be Give or Event nodes
-                let resp_nodes: Vec<neo4rs::Node> = row.get("responses").unwrap_or_default();
-                let responses: Vec<Node> = resp_nodes
-                    .into_iter()
-                    .filter_map(|_| None::<Node>) // Simplified: responses need proper parsing
-                    .collect();
-                active_tensions.push((fuzz_node(tension), responses));
-            }
-        }
-
-        Ok(RoleActionPlan {
-            role: role_enum,
-            urgent_asks,
-            opportunities,
-            active_tensions,
-        })
     }
 
     // --- Edition queries ---
@@ -742,26 +662,6 @@ impl PublicGraphReader {
             let bucket: String = row.get("bucket").unwrap_or_default();
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             results.push((bucket, cnt as u64));
-        }
-        Ok(results)
-    }
-
-    /// Get audience role distribution (for quality dashboard).
-    pub async fn audience_role_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
-            UNWIND n.audience_roles AS role
-            RETURN role, count(*) AS cnt
-            ORDER BY cnt DESC",
-        );
-
-        let mut stream = self.client.graph.execute(q).await?;
-        let mut results = Vec::new();
-        while let Some(row) = stream.next().await? {
-            let role: String = row.get("role").unwrap_or_default();
-            let cnt: i64 = row.get("cnt").unwrap_or(0);
-            results.push((role, cnt as u64));
         }
         Ok(results)
     }
@@ -934,8 +834,6 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let freshness_score: f64 = n.get("freshness_score").unwrap_or(0.5);
     let corroboration_count: i64 = n.get("corroboration_count").unwrap_or(0);
     let source_url: String = n.get("source_url").unwrap_or_default();
-    let audience_roles_raw: Vec<String> = n.get("audience_roles").unwrap_or_default();
-
     // Parse location from point
     let location = parse_location(&n);
 
@@ -943,13 +841,9 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let extracted_at = parse_datetime_prop(&n, "extracted_at");
     let last_confirmed_active = parse_datetime_prop(&n, "last_confirmed_active");
 
-    let audience_roles = audience_roles_raw
-        .iter()
-        .filter_map(|s| parse_audience_role(s))
-        .collect();
-
     let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
     let external_ratio: f64 = n.get("external_ratio").unwrap_or(0.0);
+    let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
 
     let meta = NodeMeta {
         id,
@@ -967,9 +861,9 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         source_url,
         extracted_at,
         last_confirmed_active,
-        audience_roles,
         source_diversity: source_diversity as u32,
         external_ratio: external_ratio as f32,
+        cause_heat,
         mentioned_actors: Vec::new(),
     };
 
@@ -1068,8 +962,15 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 "low" => Severity::Low,
                 _ => Severity::Medium,
             };
+            let category: String = n.get("category").unwrap_or_default();
+            let what_would_help: String = n.get("what_would_help").unwrap_or_default();
 
-            Some(Node::Tension(TensionNode { meta, severity }))
+            Some(Node::Tension(TensionNode {
+                meta,
+                severity,
+                category: if category.is_empty() { None } else { Some(category) },
+                what_would_help: if what_would_help.is_empty() { None } else { Some(what_would_help) },
+            }))
         }
         NodeType::Evidence => None,
     }
@@ -1117,26 +1018,10 @@ fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     Utc::now()
 }
 
-fn parse_audience_role(s: &str) -> Option<AudienceRole> {
-    match s {
-        "volunteer" => Some(AudienceRole::Volunteer),
-        "donor" => Some(AudienceRole::Donor),
-        "neighbor" => Some(AudienceRole::Neighbor),
-        "parent" => Some(AudienceRole::Parent),
-        "youth" => Some(AudienceRole::Youth),
-        "senior" => Some(AudienceRole::Senior),
-        "immigrant" => Some(AudienceRole::Immigrant),
-        "steward" => Some(AudienceRole::Steward),
-        "civicparticipant" | "civic_participant" => Some(AudienceRole::CivicParticipant),
-        "skillprovider" | "skill_provider" => Some(AudienceRole::SkillProvider),
-        _ => None,
-    }
-}
-
 fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
-    // Evidence nodes come as a collected list
+    // Evidence nodes come as a collected list, sorted by confidence descending
     let nodes: Vec<neo4rs::Node> = row.get("evidence").unwrap_or_default();
-    nodes
+    let mut evidence: Vec<EvidenceNode> = nodes
         .into_iter()
         .filter_map(|n| {
             let id_str: String = n.get("id").ok()?;
@@ -1158,7 +1043,13 @@ fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
                 evidence_confidence: if ev_conf > 0.0 { Some(ev_conf as f32) } else { None },
             })
         })
-        .collect()
+        .collect();
+    evidence.sort_by(|a, b| {
+        let ca = a.evidence_confidence.unwrap_or(0.0);
+        let cb = b.evidence_confidence.unwrap_or(0.0);
+        cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    evidence
 }
 
 fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
@@ -1179,7 +1070,6 @@ fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
     let centroid_lng: Option<f64> = n.get("centroid_lng").ok();
 
     let dominant_type: String = n.get("dominant_type").unwrap_or_default();
-    let audience_roles: Vec<String> = n.get("audience_roles").unwrap_or_default();
     let sensitivity: String = n.get("sensitivity").unwrap_or_else(|_| "general".to_string());
     let source_count: i64 = n.get("source_count").unwrap_or(0);
     let entity_count: i64 = n.get("entity_count").unwrap_or(0);
@@ -1206,7 +1096,6 @@ fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
         centroid_lat,
         centroid_lng,
         dominant_type,
-        audience_roles,
         sensitivity,
         source_count: source_count as u32,
         entity_count: entity_count as u32,

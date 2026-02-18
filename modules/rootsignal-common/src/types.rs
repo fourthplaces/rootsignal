@@ -67,39 +67,6 @@ impl std::fmt::Display for NodeType {
     }
 }
 
-/// Controlled vocabulary for audience roles.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AudienceRole {
-    Volunteer,
-    Donor,
-    Neighbor,
-    Parent,
-    Youth,
-    Senior,
-    Immigrant,
-    Steward,
-    CivicParticipant,
-    SkillProvider,
-}
-
-impl std::fmt::Display for AudienceRole {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AudienceRole::Volunteer => write!(f, "Volunteer"),
-            AudienceRole::Donor => write!(f, "Donor"),
-            AudienceRole::Neighbor => write!(f, "Neighbor"),
-            AudienceRole::Parent => write!(f, "Parent"),
-            AudienceRole::Youth => write!(f, "Youth"),
-            AudienceRole::Senior => write!(f, "Senior"),
-            AudienceRole::Immigrant => write!(f, "Immigrant"),
-            AudienceRole::Steward => write!(f, "Steward"),
-            AudienceRole::CivicParticipant => write!(f, "Civic Participant"),
-            AudienceRole::SkillProvider => write!(f, "Skill Provider"),
-        }
-    }
-}
-
 // --- Story Synthesis Types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -148,7 +115,6 @@ impl std::fmt::Display for StoryCategory {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionGuidance {
-    pub role: AudienceRole,
     pub guidance: String,
     pub action_urls: Vec<String>,
 }
@@ -219,13 +185,8 @@ pub struct EditionNode {
 
 // --- Response Mapping Types ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoleActionPlan {
-    pub role: AudienceRole,
-    pub urgent_asks: Vec<Node>,
-    pub opportunities: Vec<Node>,
-    pub active_tensions: Vec<(Node, Vec<Node>)>,
-}
+// RoleActionPlan removed: audience roles no longer drive action routing.
+// Use signal type (Ask/Give/Event) and geography for discovery instead.
 
 // --- Node Metadata (shared across all signal types) ---
 
@@ -243,11 +204,13 @@ pub struct NodeMeta {
     pub source_url: String,
     pub extracted_at: DateTime<Utc>,
     pub last_confirmed_active: DateTime<Utc>,
-    pub audience_roles: Vec<AudienceRole>,
     /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
     pub source_diversity: u32,
     /// Fraction of evidence from sources other than the signal's originating entity (0.0-1.0).
     pub external_ratio: f32,
+    /// Cross-story cause heat: how much independent community attention exists in this signal's
+    /// semantic neighborhood (0.0–1.0). A food shelf Ask rises when the housing crisis is trending.
+    pub cause_heat: f64,
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
@@ -295,6 +258,8 @@ pub struct NoticeNode {
 pub struct TensionNode {
     pub meta: NodeMeta,
     pub severity: Severity,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,7 +348,6 @@ pub struct StoryNode {
     pub centroid_lat: Option<f64>,
     pub centroid_lng: Option<f64>,
     pub dominant_type: String,
-    pub audience_roles: Vec<String>,
     pub sensitivity: String,
     pub source_count: u32,
     pub entity_count: u32,
@@ -547,4 +511,58 @@ pub fn extract_domain(url: &str) -> String {
 pub enum EdgeType {
     /// Any signal node -> Evidence (provenance)
     SourcedFrom,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use crate::safety::SensitivityLevel;
+
+    fn test_meta() -> NodeMeta {
+        NodeMeta {
+            id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            summary: "Test summary".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: "https://example.com".to_string(),
+            extracted_at: Utc::now(),
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            mentioned_actors: vec![],
+        }
+    }
+
+    #[test]
+    fn tension_node_has_all_fields() {
+        let t = TensionNode {
+            meta: test_meta(),
+            severity: Severity::High,
+            category: Some("housing".to_string()),
+            what_would_help: Some("affordable housing policy".to_string()),
+        };
+        assert_eq!(t.severity, Severity::High);
+        assert_eq!(t.category.as_deref(), Some("housing"));
+        assert_eq!(t.what_would_help.as_deref(), Some("affordable housing policy"));
+    }
+
+    #[test]
+    fn tension_node_optional_fields_default_none() {
+        let t = TensionNode {
+            meta: test_meta(),
+            severity: Severity::Medium,
+            category: None,
+            what_would_help: None,
+        };
+        assert_eq!(t.severity, Severity::Medium);
+        assert!(t.category.is_none());
+        assert!(t.what_would_help.is_none());
+    }
 }

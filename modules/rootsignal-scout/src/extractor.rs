@@ -7,8 +7,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, AudienceRole, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta,
-    NoticeNode, SensitivityLevel, Severity, Urgency,
+    AskNode, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta,
+    NoticeNode, SensitivityLevel, Severity, TensionNode, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
@@ -20,8 +20,6 @@ pub struct ExtractedSignal {
     pub summary: String,
     /// "general", "elevated", or "sensitive"
     pub sensitivity: String,
-    /// Audience roles this signal is relevant to
-    pub audience_roles: Vec<String>,
     /// Latitude if location can be determined
     pub latitude: Option<f64>,
     /// Longitude if location can be determined
@@ -63,6 +61,8 @@ pub struct ExtractedSignal {
     pub content_date: Option<String>,
     /// Organizations, groups, or individuals mentioned in the signal
     pub mentioned_actors: Option<Vec<String>>,
+    /// What response would address this tension (for Tension signals)
+    pub what_would_help: Option<String>,
 }
 
 /// The full extraction response from the LLM.
@@ -174,24 +174,6 @@ impl Extractor {
                 _ => None,
             };
 
-            let audience_roles: Vec<AudienceRole> = signal
-                .audience_roles
-                .iter()
-                .filter_map(|s| match s.as_str() {
-                    "volunteer" => Some(AudienceRole::Volunteer),
-                    "donor" => Some(AudienceRole::Donor),
-                    "neighbor" => Some(AudienceRole::Neighbor),
-                    "parent" => Some(AudienceRole::Parent),
-                    "youth" => Some(AudienceRole::Youth),
-                    "senior" => Some(AudienceRole::Senior),
-                    "immigrant" => Some(AudienceRole::Immigrant),
-                    "steward" => Some(AudienceRole::Steward),
-                    "civic_participant" => Some(AudienceRole::CivicParticipant),
-                    "skill_provider" => Some(AudienceRole::SkillProvider),
-                    _ => None,
-                })
-                .collect();
-
             let mentioned_actors = signal.mentioned_actors.unwrap_or_default();
 
             let meta = NodeMeta {
@@ -207,9 +189,9 @@ impl Extractor {
                 source_url: source_url.to_string(),
                 extracted_at: now,
                 last_confirmed_active: now,
-                audience_roles,
                 source_diversity: 1,
                 external_ratio: 0.0,
+                cause_heat: 0.0,
                 mentioned_actors,
             };
 
@@ -281,15 +263,19 @@ impl Extractor {
                         source_authority: signal.source_authority,
                     })
                 }
-                // Tension signals are not extracted individually — they emerge from
-                // signal clustering in the graph (Phase 2). Skip if LLM produces one.
                 "tension" => {
-                    warn!(
-                        source_url,
-                        title = signal.title,
-                        "LLM produced tension signal, skipping (tensions emerge from clustering)"
-                    );
-                    continue;
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    Node::Tension(TensionNode {
+                        meta,
+                        severity,
+                        category: signal.category.clone(),
+                        what_would_help: signal.what_would_help.clone(),
+                    })
                 }
                 other => {
                     warn!(signal_type = other, title = signal.title, "Unknown signal type, skipping");
@@ -329,6 +315,7 @@ Extract civic signals from web page content. Each signal is something a communit
 - **Give**: An available resource, service, or offering. Has availability and contact info.
 - **Ask**: A community need requesting help. Has what's needed and how to help.
 - **Notice**: An official advisory or policy change. Has source authority and effective date.
+- **Tension**: A community conflict, systemic problem, or misalignment that people are experiencing. Has severity and what would help. NOT the narrative itself — the underlying structural issue.
 
 If content doesn't map to one of these types, return an empty signals array.
 
@@ -338,6 +325,7 @@ When a page describes a crisis, conflict, or problem, extract the COMMUNITY RESP
 - Community meetings, workshops, public hearings → Event
 - Volunteer calls, donation drives, petitions → Ask
 - Official advisories, policy changes → Notice
+- The underlying conflict or systemic problem → Tension (only when there IS a structural issue, not just news)
 
 If a page describes only a problem with no actionable response, return an empty signals array.
 
@@ -345,9 +333,6 @@ If a page describes only a problem with no actionable response, return an empty 
 - **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks
 - **elevated**: Organizing, advocacy, political action
 - **general**: Everything else
-
-## Audience Roles
-Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant, steward, civic_participant, skill_provider
 
 ## Location
 - Extract the most specific location possible from the content
@@ -369,6 +354,11 @@ Assign one or more: volunteer, donor, neighbor, parent, youth, senior, immigrant
 - effective_date: ISO 8601 when the notice takes effect
 - source_authority: The official body issuing it
 
+## Tension Fields
+- severity: "low", "medium", "high", "critical"
+- category: "housing", "safety", "equity", "infrastructure", "environment", "governance", "health"
+- what_would_help: What response would address this tension (e.g. "affordable housing policy", "community oversight board")
+
 ## Action URLs
 - Include the most relevant action URL (registration, donation, event page)
 - If none exists, use the source page URL
@@ -381,4 +371,60 @@ Extract the names of organizations, groups, government bodies, or notable indivi
 ## Contact Information
 Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs)."#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_includes_tension() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        assert!(
+            prompt.contains("Tension"),
+            "system prompt should mention Tension as a signal type"
+        );
+        assert!(
+            prompt.contains("what would help"),
+            "system prompt should mention 'what would help' for tensions"
+        );
+    }
+
+    #[test]
+    fn tension_type_constructs_node() {
+        // The tension match arm now constructs a TensionNode instead of skipping.
+        // This test verifies the ExtractedSignal has the what_would_help field
+        // and that TensionNode can be constructed with all fields.
+        let signal = ExtractedSignal {
+            signal_type: "tension".to_string(),
+            title: "Housing crisis".to_string(),
+            summary: "Rent increases displacing families".to_string(),
+            sensitivity: "elevated".to_string(),
+            latitude: None,
+            longitude: None,
+            geo_precision: None,
+            location_name: None,
+            starts_at: None,
+            ends_at: None,
+            action_url: None,
+            organizer: None,
+            is_recurring: None,
+            availability: None,
+            is_ongoing: None,
+            urgency: None,
+            what_needed: None,
+            goal: None,
+            severity: Some("high".to_string()),
+            category: Some("housing".to_string()),
+            effective_date: None,
+            source_authority: None,
+            content_date: None,
+            mentioned_actors: None,
+            what_would_help: Some("affordable housing policy".to_string()),
+        };
+
+        assert_eq!(signal.signal_type, "tension");
+        assert_eq!(signal.what_would_help.as_deref(), Some("affordable housing policy"));
+        assert_eq!(signal.category.as_deref(), Some("housing"));
+    }
 }

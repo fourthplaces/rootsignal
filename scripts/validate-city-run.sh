@@ -5,7 +5,7 @@
 # Checks:
 #   1. Signal count >= 50 (kill-test pre-launch minimum)
 #   2. 4+ signal types present (Event, Give, Ask, Notice)
-#   3. 3+ audience roles present (stored as audience_roles property array)
+
 #   4. 0 exact duplicates (same title+type)
 #   5. Geo-accuracy: >80% of signals with coords within radius of city center
 #   6. Zero PII in titles/summaries (emails, phone numbers)
@@ -73,16 +73,7 @@ check_gte "Signal types >= 3" "$TYPE_COUNT" 3
 
 run_query "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice RETURN labels(n)[0] AS type, count(*) AS count ORDER BY count DESC;"
 
-# 3. Audience role diversity (audience_roles is a property array on each node)
-echo ""
-echo "--- Audience Role Diversity ---"
-ROLE_COUNT=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND n.audience_roles IS NOT NULL UNWIND n.audience_roles AS role RETURN count(DISTINCT role) AS c;" | grep -oE '[0-9]+' | head -1)
-ROLE_COUNT="${ROLE_COUNT:-0}"
-check_gte "Audience roles >= 3" "$ROLE_COUNT" 3
-
-run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND n.audience_roles IS NOT NULL UNWIND n.audience_roles AS role RETURN role, count(*) AS signals ORDER BY signals DESC;"
-
-# 4. Exact-title+type duplicates (should be 0)
+# 3. Exact-title+type duplicates (should be 0)
 echo ""
 echo "--- Deduplication ---"
 DUPES=$(run_query "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice WITH toLower(n.title) AS t, labels(n)[0] AS type, count(*) AS c WHERE c > 1 RETURN sum(c - 1) AS duplicates;" | grep -oE '[0-9]+' | head -1)

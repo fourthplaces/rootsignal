@@ -37,14 +37,6 @@
             <dd>{{ node.completeness_label }}</dd>
         </dl>
 
-        {% if !node.audience_roles.is_empty() %}
-        <div class="roles">
-            {% for role in node.audience_roles %}
-            <span class="role-tag">{{ role }}</span>
-            {% endfor %}
-        </div>
-        {% endif %}
-
         {% if !evidence.is_empty() %}
         <div class="evidence-list">
             <h4>Sources</h4>

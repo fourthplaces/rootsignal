@@ -98,6 +98,43 @@ pub async fn evidence_for_signal(client: &GraphClient, signal_id: Uuid) -> Vec<E
     results
 }
 
+#[derive(Debug)]
+pub struct TensionRow {
+    pub id: Uuid,
+    pub title: String,
+    pub confidence: f32,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
+}
+
+/// Tension signals with category and what_would_help fields.
+pub async fn tension_signals(client: &GraphClient) -> Vec<TensionRow> {
+    let cypher = "MATCH (n:Tension) \
+                  RETURN n.id AS id, n.title AS title, n.confidence AS confidence, \
+                  n.category AS category, n.what_would_help AS what_would_help \
+                  ORDER BY n.confidence DESC";
+
+    let q = query(cypher);
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut results = Vec::new();
+
+    while let Some(row) = stream.next().await.expect("row failed") {
+        let id_str: String = row.get("id").unwrap_or_default();
+        let id = Uuid::parse_str(&id_str).unwrap_or_default();
+        let category: String = row.get("category").unwrap_or_default();
+        let what_would_help: String = row.get("what_would_help").unwrap_or_default();
+        results.push(TensionRow {
+            id,
+            title: row.get("title").unwrap_or_default(),
+            confidence: row.get::<f64>("confidence").unwrap_or_default() as f32,
+            category: if category.is_empty() { None } else { Some(category) },
+            what_would_help: if what_would_help.is_empty() { None } else { Some(what_would_help) },
+        });
+    }
+
+    results
+}
+
 /// Stories ordered by energy DESC.
 pub async fn stories_by_energy(client: &GraphClient) -> Vec<StoryRow> {
     let cypher = "MATCH (s:Story) \

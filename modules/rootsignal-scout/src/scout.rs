@@ -34,7 +34,6 @@ pub struct ScoutStats {
     pub geo_filtered: u32,
     pub discovery_posts_found: u32,
     pub discovery_accounts_found: u32,
-    pub audience_roles: std::collections::HashMap<String, u32>,
 }
 
 impl std::fmt::Display for ScoutStats {
@@ -62,12 +61,6 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "  < 7 days:   {} ({:.0}%)", self.fresh_7d, self.fresh_7d as f64 / total as f64 * 100.0)?;
         writeln!(f, "  7-30 days:  {} ({:.0}%)", self.fresh_30d, self.fresh_30d as f64 / total as f64 * 100.0)?;
         writeln!(f, "  30-90 days: {} ({:.0}%)", self.fresh_90d, self.fresh_90d as f64 / total as f64 * 100.0)?;
-        writeln!(f, "\nAudience roles:")?;
-        let mut roles: Vec<_> = self.audience_roles.iter().collect();
-        roles.sort_by(|a, b| b.1.cmp(a.1));
-        for (role, count) in roles {
-            writeln!(f, "  {}: {}", role, count)?;
-        }
         Ok(())
     }
 }
@@ -1224,12 +1217,6 @@ impl Scout {
                     stats.fresh_90d += 1;
                 }
 
-                for role in &meta.audience_roles {
-                    *stats
-                        .audience_roles
-                        .entry(role.to_string())
-                        .or_insert(0) += 1;
-                }
             }
         }
 

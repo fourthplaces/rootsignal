@@ -103,6 +103,20 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Source diversity indexes created");
 
+    // --- Cause heat indexes ---
+    let heat_indexes = [
+        "CREATE INDEX ON :Event(cause_heat)",
+        "CREATE INDEX ON :Give(cause_heat)",
+        "CREATE INDEX ON :Ask(cause_heat)",
+        "CREATE INDEX ON :Notice(cause_heat)",
+        "CREATE INDEX ON :Tension(cause_heat)",
+    ];
+
+    for idx in &heat_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Cause heat indexes created");
+
     // --- Full-text indexes ---
     let fulltext = [
         "CREATE TEXT INDEX event_text ON :Event(title, summary)",
