@@ -207,15 +207,16 @@ impl Scout {
 
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
-        // Acquire lock
-        if !self.writer.acquire_scout_lock().await.context("Failed to check scout lock")? {
-            anyhow::bail!("Another scout run is in progress");
+        // Acquire per-city lock
+        let city_slug = &self.city_node.slug;
+        if !self.writer.acquire_scout_lock(city_slug).await.context("Failed to check scout lock")? {
+            anyhow::bail!("Another scout run is in progress for {}", city_slug);
         }
 
         let result = self.run_inner().await;
 
         // Always release lock
-        if let Err(e) = self.writer.release_scout_lock().await {
+        if let Err(e) = self.writer.release_scout_lock(city_slug).await {
             error!("Failed to release scout lock: {e}");
         }
 

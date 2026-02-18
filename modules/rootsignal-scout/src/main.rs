@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
 use anyhow::Result;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -19,9 +22,9 @@ async fn main() -> Result<()> {
     let config = Config::scout_from_env();
     config.log_redacted();
 
-    // Connect to Memgraph
+    // Connect to Neo4j
     let client =
-        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
+        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
             .await?;
 
     // Run migrations
@@ -63,6 +66,7 @@ async fn main() -> Result<()> {
                 geo_terms: vec![city_name.to_string()],
                 active: true,
                 created_at: chrono::Utc::now(),
+                last_scout_completed_at: None,
             };
             writer.upsert_city(&node).await?;
 
@@ -93,6 +97,7 @@ async fn main() -> Result<()> {
         &config.apify_api_key,
         city_node,
         config.daily_budget_cents,
+        Arc::new(AtomicBool::new(false)),
     )?;
 
     let stats = scout.run().await?;

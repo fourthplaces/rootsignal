@@ -61,35 +61,66 @@ async fn run_scout(
 
     compute_cause_heat(client, 0.7).await?;
 
+    // Stamp completion time on the city
+    writer.set_city_scout_completed(city_slug).await?;
+
     Ok(())
 }
 
-/// Start the scout interval loop in a background thread.
-/// Runs scout every `interval_hours`, sleeping between runs.
+/// Start the multi-city scout interval loop in a background thread.
+/// Iterates over all active cities, runs one per iteration, sleeps between.
 pub fn start_scout_interval(client: GraphClient, config: Config, interval_hours: u64) {
-    let city_slug = config.city.clone();
     info!(
         interval_hours,
-        city = city_slug.as_str(),
-        "Starting scout interval loop"
+        "Starting multi-city scout interval loop"
     );
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
+            let writer = rootsignal_graph::GraphWriter::new(client.clone());
             loop {
-                info!(city = city_slug.as_str(), "Scout interval: starting run");
+                // List all active cities
+                let cities = match writer.list_cities().await {
+                    Ok(c) => c.into_iter().filter(|c| c.active).collect::<Vec<_>>(),
+                    Err(e) => {
+                        error!(error = %e, "Scout interval: failed to list cities");
+                        Vec::new()
+                    }
+                };
 
-                let cancel = Arc::new(AtomicBool::new(false));
-                if let Err(e) = run_scout(&client, &config, &city_slug, cancel).await {
-                    error!(error = %e, "Scout interval run failed");
+                let num_cities = cities.len().max(1);
+
+                // Run one city per iteration to spread load
+                for city in &cities {
+                    match writer.is_scout_running(&city.slug).await {
+                        Ok(true) => {
+                            info!(city = city.slug.as_str(), "Scout interval: already running, skipping");
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!(city = city.slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
+                            continue;
+                        }
+                        Ok(false) => {}
+                    }
+
+                    info!(city = city.slug.as_str(), "Scout interval: starting run");
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    if let Err(e) = run_scout(&client, &config, &city.slug, cancel).await {
+                        error!(city = city.slug.as_str(), error = %e, "Scout interval run failed");
+                    }
+                    // Only run one city per iteration
+                    break;
                 }
 
+                // Sleep: interval_hours / num_cities, minimum 30 minutes
+                let sleep_secs = ((interval_hours * 3600) / num_cities as u64).max(30 * 60);
                 info!(
-                    hours = interval_hours,
+                    sleep_minutes = sleep_secs / 60,
                     "Scout interval: sleeping until next run"
                 );
-                tokio::time::sleep(std::time::Duration::from_secs(interval_hours * 3600)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }
         });
     });
@@ -122,13 +153,16 @@ pub async fn scout_run_handler(
         ).into_response();
     }
 
-    // Check if a run is already in progress
-    let lock_held = match state.writer.acquire_scout_lock().await {
+    // Check if a run is already in progress for this city
+    let city_slug = &state.config.city;
+    match state.writer.is_scout_running(city_slug).await {
         Ok(true) => {
-            let _ = state.writer.release_scout_lock().await;
-            false
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "Scout run already in progress"})),
+            )
+                .into_response();
         }
-        Ok(false) => true,
         Err(e) => {
             warn!(error = %e, "Failed to check scout lock");
             return (
@@ -137,20 +171,13 @@ pub async fn scout_run_handler(
             )
                 .into_response();
         }
-    };
-
-    if lock_held {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": "Scout run already in progress"})),
-        )
-            .into_response();
+        Ok(false) => {}
     }
 
     spawn_scout_run(
         state.graph_client.clone(),
         state.config.clone(),
-        state.config.city.clone(),
+        city_slug.clone(),
         state.scout_cancel.clone(),
     );
 
@@ -174,13 +201,9 @@ pub async fn scout_status(
             .into_response();
     }
 
-    match state.writer.acquire_scout_lock().await {
-        Ok(true) => {
-            let _ = state.writer.release_scout_lock().await;
-            Json(serde_json::json!({"running": false})).into_response()
-        }
-        Ok(false) => {
-            Json(serde_json::json!({"running": true})).into_response()
+    match state.writer.is_scout_running(&state.config.city).await {
+        Ok(running) => {
+            Json(serde_json::json!({"running": running})).into_response()
         }
         Err(e) => {
             warn!(error = %e, "Failed to check scout lock");

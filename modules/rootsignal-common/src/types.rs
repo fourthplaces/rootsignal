@@ -400,6 +400,7 @@ pub struct CityNode {
     pub geo_terms: Vec<String>,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    pub last_scout_completed_at: Option<DateTime<Utc>>,
 }
 
 // --- Source Types (for emergent source discovery) ---

@@ -83,23 +83,23 @@ impl GraphWriter {
         .param("source_diversity", n.meta.source_diversity as i64)
         .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param("extracted_at", format_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            memgraph_datetime(&n.meta.last_confirmed_active),
+            format_datetime(&n.meta.last_confirmed_active),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
             "starts_at",
             n.starts_at
-                .map(|dt| memgraph_datetime(&dt))
+                .map(|dt| format_datetime(&dt))
                 .unwrap_or_default(),
         )
         .param(
             "ends_at",
             n.ends_at
-                .map(|dt| memgraph_datetime(&dt))
+                .map(|dt| format_datetime(&dt))
                 .unwrap_or_default(),
         )
         .param("action_url", n.action_url.as_str())
@@ -153,10 +153,10 @@ impl GraphWriter {
         .param("source_diversity", n.meta.source_diversity as i64)
         .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param("extracted_at", format_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            memgraph_datetime(&n.meta.last_confirmed_active),
+            format_datetime(&n.meta.last_confirmed_active),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -212,10 +212,10 @@ impl GraphWriter {
         .param("source_diversity", n.meta.source_diversity as i64)
         .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param("extracted_at", format_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            memgraph_datetime(&n.meta.last_confirmed_active),
+            format_datetime(&n.meta.last_confirmed_active),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -278,10 +278,10 @@ impl GraphWriter {
         .param("source_diversity", n.meta.source_diversity as i64)
         .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param("extracted_at", format_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            memgraph_datetime(&n.meta.last_confirmed_active),
+            format_datetime(&n.meta.last_confirmed_active),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -290,7 +290,7 @@ impl GraphWriter {
         .param(
             "effective_date",
             n.effective_date
-                .map(|dt| memgraph_datetime(&dt))
+                .map(|dt| format_datetime(&dt))
                 .unwrap_or_default(),
         )
         .param("source_authority", n.source_authority.clone().unwrap_or_default())
@@ -342,10 +342,10 @@ impl GraphWriter {
         .param("source_diversity", n.meta.source_diversity as i64)
         .param("external_ratio", n.meta.external_ratio as f64)
         .param("source_url", n.meta.source_url.as_str())
-        .param("extracted_at", memgraph_datetime(&n.meta.extracted_at))
+        .param("extracted_at", format_datetime(&n.meta.extracted_at))
         .param(
             "last_confirmed_active",
-            memgraph_datetime(&n.meta.last_confirmed_active),
+            format_datetime(&n.meta.last_confirmed_active),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -400,7 +400,7 @@ impl GraphWriter {
         )
         .param("ev_id", evidence.id.to_string())
         .param("source_url", evidence.source_url.as_str())
-        .param("retrieved_at", memgraph_datetime(&evidence.retrieved_at))
+        .param("retrieved_at", format_datetime(&evidence.retrieved_at))
         .param("content_hash", evidence.content_hash.as_str())
         .param("snippet", evidence.snippet.clone().unwrap_or_default())
         .param("relevance", evidence.relevance.clone().unwrap_or_default())
@@ -435,7 +435,7 @@ impl GraphWriter {
             label
         ))
         .param("id", signal_id.to_string())
-        .param("now", memgraph_datetime(&now));
+        .param("now", format_datetime(&now));
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -478,8 +478,8 @@ impl GraphWriter {
         };
 
         let q = query(&format!(
-            "CALL vector_search.search('{}', 1, $embedding)
-             YIELD node, similarity
+            "CALL db.index.vector.queryNodes('{}', 1, $embedding)
+             YIELD node, score AS similarity
              RETURN node.id AS id, node.source_url AS source_url, similarity",
             index_name
         ))
@@ -538,7 +538,7 @@ impl GraphWriter {
              RETURN count(n) AS refreshed",
         )
         .param("url", source_url)
-        .param("now", memgraph_datetime(&now));
+        .param("now", format_datetime(&now));
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -650,7 +650,7 @@ impl GraphWriter {
             label
         ))
         .param("id", node_id.to_string())
-        .param("now", memgraph_datetime(&now));
+        .param("now", format_datetime(&now));
 
         self.client.graph.run(q).await?;
 
@@ -835,25 +835,25 @@ impl GraphWriter {
         Ok(deleted)
     }
 
-    /// Acquire a scout lock. Returns false if another scout is running.
+    /// Acquire a per-city scout lock. Returns false if a scout is already running for this city.
     /// Cleans up stale locks (>30 min) from killed containers.
     /// Uses a single atomic query to avoid TOCTOU race between check and create.
-    pub async fn acquire_scout_lock(&self) -> Result<bool, neo4rs::Error> {
-        // Delete stale locks older than 30 minutes
+    pub async fn acquire_scout_lock(&self, city: &str) -> Result<bool, neo4rs::Error> {
+        // Delete stale locks older than 30 minutes for this city
         self.client
             .graph
             .run(query(
-                "MATCH (lock:ScoutLock) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
-            ))
+                "MATCH (lock:ScoutLock {city: $city}) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
+            ).param("city", city))
             .await?;
 
-        // Atomic check-and-create: only creates if no lock exists
+        // Atomic check-and-create: only creates if no lock exists for this city
         let q = query(
-            "OPTIONAL MATCH (existing:ScoutLock)
+            "OPTIONAL MATCH (existing:ScoutLock {city: $city})
              WITH existing WHERE existing IS NULL
-             CREATE (lock:ScoutLock {started_at: datetime()})
+             CREATE (lock:ScoutLock {city: $city, started_at: datetime()})
              RETURN lock IS NOT NULL AS acquired"
-        );
+        ).param("city", city);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -865,13 +865,75 @@ impl GraphWriter {
         Ok(false)
     }
 
-    /// Release the scout lock.
-    pub async fn release_scout_lock(&self) -> Result<(), neo4rs::Error> {
+    /// Release the per-city scout lock.
+    pub async fn release_scout_lock(&self, city: &str) -> Result<(), neo4rs::Error> {
         self.client
             .graph
-            .run(query("MATCH (lock:ScoutLock) DELETE lock"))
+            .run(query("MATCH (lock:ScoutLock {city: $city}) DELETE lock").param("city", city))
             .await?;
         Ok(())
+    }
+
+    /// Check if a scout is currently running for a city (read-only, no acquire/release dance).
+    pub async fn is_scout_running(&self, city: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "OPTIONAL MATCH (lock:ScoutLock {city: $city}) WHERE lock.started_at >= datetime() - duration('PT30M') RETURN lock IS NOT NULL AS running"
+        ).param("city", city);
+
+        let mut result = self.client.graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let running: bool = row.get("running").unwrap_or(false);
+            return Ok(running);
+        }
+        Ok(false)
+    }
+
+    /// Stamp the city's last_scout_completed_at to now.
+    pub async fn set_city_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
+        self.client
+            .graph
+            .run(query(
+                "MATCH (c:City {slug: $slug}) SET c.last_scout_completed_at = datetime()"
+            ).param("slug", slug))
+            .await?;
+        Ok(())
+    }
+
+    /// Count sources that are overdue for scraping.
+    pub async fn count_due_sources(&self, city: &str) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city, active: true})
+             WHERE s.last_scraped IS NULL
+                OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
+             RETURN count(s) AS due"
+        ).param("city", city);
+
+        let mut result = self.client.graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let due: i64 = row.get("due").unwrap_or(0);
+            return Ok(due as u32);
+        }
+        Ok(0)
+    }
+
+    /// Get the earliest time a source becomes due for scraping.
+    pub async fn next_source_due(&self, city: &str) -> Result<Option<chrono::DateTime<Utc>>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city, active: true})
+             WHERE s.last_scraped IS NOT NULL
+             RETURN min(datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H')) AS next_due"
+        ).param("city", city);
+
+        let mut result = self.client.graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let next_due_str: String = row.get("next_due").unwrap_or_default();
+            if !next_due_str.is_empty() {
+                if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&next_due_str, "%Y-%m-%dT%H:%M:%S%.f") {
+                    return Ok(Some(ndt.and_utc()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     // --- Story operations ---
@@ -905,8 +967,8 @@ impl GraphWriter {
         .param("headline", story.headline.as_str())
         .param("summary", story.summary.as_str())
         .param("signal_count", story.signal_count as i64)
-        .param("first_seen", memgraph_datetime(&story.first_seen))
-        .param("last_updated", memgraph_datetime(&story.last_updated))
+        .param("first_seen", format_datetime(&story.first_seen))
+        .param("last_updated", format_datetime(&story.last_updated))
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
@@ -954,7 +1016,7 @@ impl GraphWriter {
         .param("headline", story.headline.as_str())
         .param("summary", story.summary.as_str())
         .param("signal_count", story.signal_count as i64)
-        .param("last_updated", memgraph_datetime(&story.last_updated))
+        .param("last_updated", format_datetime(&story.last_updated))
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
@@ -1039,7 +1101,7 @@ impl GraphWriter {
         .param("story_id", snapshot.story_id.to_string())
         .param("signal_count", snapshot.signal_count as i64)
         .param("entity_count", snapshot.entity_count as i64)
-        .param("run_at", memgraph_datetime(&snapshot.run_at));
+        .param("run_at", format_datetime(&snapshot.run_at));
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1163,7 +1225,7 @@ impl GraphWriter {
         .param("radius_km", city.radius_km)
         .param("geo_terms", city.geo_terms.clone())
         .param("active", city.active)
-        .param("created_at", memgraph_datetime(&city.created_at));
+        .param("created_at", format_datetime(&city.created_at));
 
         self.client.graph.run(q).await?;
         info!(slug = city.slug.as_str(), name = city.name.as_str(), "City node upserted");
@@ -1177,7 +1239,8 @@ impl GraphWriter {
              RETURN c.id AS id, c.name AS name, c.slug AS slug,
                     c.center_lat AS center_lat, c.center_lng AS center_lng,
                     c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at"
+                    c.active AS active, c.created_at AS created_at,
+                    c.last_scout_completed_at AS last_scout_completed_at"
         )
         .param("slug", slug);
 
@@ -1194,6 +1257,17 @@ impl GraphWriter {
                 .map(|ndt| ndt.and_utc())
                 .unwrap_or_else(|_| Utc::now());
 
+            let last_scout_completed_at = {
+                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
+                if s.is_empty() {
+                    None
+                } else {
+                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                        .map(|ndt| ndt.and_utc())
+                        .ok()
+                }
+            };
+
             Ok(Some(CityNode {
                 id,
                 name: row.get("name").unwrap_or_default(),
@@ -1204,6 +1278,7 @@ impl GraphWriter {
                 geo_terms: row.get("geo_terms").unwrap_or_default(),
                 active: row.get("active").unwrap_or(true),
                 created_at,
+                last_scout_completed_at,
             }))
         } else {
             Ok(None)
@@ -1217,7 +1292,8 @@ impl GraphWriter {
              RETURN c.id AS id, c.name AS name, c.slug AS slug,
                     c.center_lat AS center_lat, c.center_lng AS center_lng,
                     c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at
+                    c.active AS active, c.created_at AS created_at,
+                    c.last_scout_completed_at AS last_scout_completed_at
              ORDER BY c.name"
         );
 
@@ -1235,6 +1311,17 @@ impl GraphWriter {
                 .map(|ndt| ndt.and_utc())
                 .unwrap_or_else(|_| Utc::now());
 
+            let last_scout_completed_at = {
+                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
+                if s.is_empty() {
+                    None
+                } else {
+                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                        .map(|ndt| ndt.and_utc())
+                        .ok()
+                }
+            };
+
             cities.push(CityNode {
                 id,
                 name: row.get("name").unwrap_or_default(),
@@ -1245,10 +1332,39 @@ impl GraphWriter {
                 geo_terms: row.get("geo_terms").unwrap_or_default(),
                 active: row.get("active").unwrap_or(true),
                 created_at,
+                last_scout_completed_at,
             });
         }
 
         Ok(cities)
+    }
+
+    /// Batch count of sources and signals per city slug.
+    /// Returns Vec<(slug, source_count, signal_count)>.
+    pub async fn get_city_counts(&self, slugs: &[String]) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
+        if slugs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let q = query(
+            "UNWIND $slugs AS slug
+             OPTIONAL MATCH (src:Source {city: slug, active: true})
+             WITH slug, count(src) AS source_count
+             OPTIONAL MATCH (n)
+             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+               AND n.city = slug
+             RETURN slug, source_count, count(n) AS signal_count"
+        )
+        .param("slugs", slugs.to_vec());
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let slug: String = row.get("slug").unwrap_or_default();
+            let source_count: i64 = row.get("source_count").unwrap_or(0);
+            let signal_count: i64 = row.get("signal_count").unwrap_or(0);
+            results.push((slug, source_count as u32, signal_count as u32));
+        }
+        Ok(results)
     }
 
     // --- Source operations (emergent source discovery) ---
@@ -1287,7 +1403,7 @@ impl GraphWriter {
         .param("source_type", source.source_type.to_string())
         .param("discovery_method", source.discovery_method.to_string())
         .param("city", source.city.as_str())
-        .param("created_at", memgraph_datetime(&source.created_at))
+        .param("created_at", format_datetime(&source.created_at))
         .param("signals_produced", source.signals_produced as i64)
         .param("signals_corroborated", source.signals_corroborated as i64)
         .param("consecutive_empty_runs", source.consecutive_empty_runs as i64)
@@ -1325,7 +1441,7 @@ impl GraphWriter {
         .param("url", submission.url.as_str())
         .param("reason", submission.reason.clone().unwrap_or_default())
         .param("city", submission.city.as_str())
-        .param("submitted_at", memgraph_datetime(&submission.submitted_at))
+        .param("submitted_at", format_datetime(&submission.submitted_at))
         .param("canonical_key", source_canonical_key);
 
         self.client.graph.run(q).await?;
@@ -1378,13 +1494,13 @@ impl GraphWriter {
                 _ => DiscoveryMethod::Curated,
             };
 
-            let created_at = parse_memgraph_datetime_opt(&row.get::<String>("created_at").unwrap_or_default())
+            let created_at = parse_datetime_opt(&row.get::<String>("created_at").unwrap_or_default())
                 .unwrap_or_else(Utc::now);
 
             let last_scraped = row.get::<String>("last_scraped").ok()
-                .and_then(|s| parse_memgraph_datetime_opt(&s));
+                .and_then(|s| parse_datetime_opt(&s));
             let last_produced_signal = row.get::<String>("last_produced_signal").ok()
-                .and_then(|s| parse_memgraph_datetime_opt(&s));
+                .and_then(|s| parse_datetime_opt(&s));
 
             let gap_context: String = row.get("gap_context").unwrap_or_default();
             let url: String = row.get("url").unwrap_or_default();
@@ -1437,7 +1553,7 @@ impl GraphWriter {
                      s.consecutive_empty_runs = 0"
             )
             .param("key", canonical_key)
-            .param("now", memgraph_datetime(&now))
+            .param("now", format_datetime(&now))
             .param("count", signals_produced as i64);
             self.client.graph.run(q).await?;
         } else {
@@ -1447,7 +1563,7 @@ impl GraphWriter {
                      s.consecutive_empty_runs = s.consecutive_empty_runs + 1"
             )
             .param("key", canonical_key)
-            .param("now", memgraph_datetime(&now));
+            .param("now", format_datetime(&now));
             self.client.graph.run(q).await?;
         }
         Ok(())
@@ -1582,8 +1698,8 @@ impl GraphWriter {
         .param("city", actor.city.as_str())
         .param("description", actor.description.as_str())
         .param("signal_count", actor.signal_count as i64)
-        .param("first_seen", memgraph_datetime(&actor.first_seen))
-        .param("last_active", memgraph_datetime(&actor.last_active))
+        .param("first_seen", format_datetime(&actor.first_seen))
+        .param("last_active", format_datetime(&actor.last_active))
         .param("typical_roles", actor.typical_roles.clone());
 
         self.client.graph.run(q).await?;
@@ -1677,7 +1793,7 @@ impl GraphWriter {
                  a.last_active = datetime($now)"
         )
         .param("id", actor_id.to_string())
-        .param("now", memgraph_datetime(&now));
+        .param("now", format_datetime(&now));
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1727,9 +1843,9 @@ impl GraphWriter {
         .param("id", edition.id.to_string())
         .param("city", edition.city.as_str())
         .param("period", edition.period.as_str())
-        .param("period_start", memgraph_datetime(&edition.period_start))
-        .param("period_end", memgraph_datetime(&edition.period_end))
-        .param("generated_at", memgraph_datetime(&edition.generated_at))
+        .param("period_start", format_datetime(&edition.period_start))
+        .param("period_end", format_datetime(&edition.period_end))
+        .param("generated_at", format_datetime(&edition.generated_at))
         .param("story_count", edition.story_count as i64)
         .param("new_signal_count", edition.new_signal_count as i64)
         .param("editorial_summary", edition.editorial_summary.as_str());
@@ -2011,8 +2127,8 @@ impl GraphWriter {
                     s.category AS category, s.energy AS energy
              ORDER BY s.energy DESC"
         )
-        .param("start", memgraph_datetime(start))
-        .param("end", memgraph_datetime(end));
+        .param("start", format_datetime(start))
+        .param("end", format_datetime(end));
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2155,7 +2271,7 @@ impl GraphWriter {
             label
         ))
         .param("id", signal_id.to_string())
-        .param("now", memgraph_datetime(&Utc::now()));
+        .param("now", format_datetime(&Utc::now()));
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -2556,19 +2672,22 @@ fn embedding_to_f64(embedding: &[f32]) -> Vec<f64> {
 }
 
 /// Format a DateTime<Utc> as a local datetime string without timezone offset.
-/// Memgraph's datetime() requires "YYYY-MM-DDThh:mm:ss" format (no +00:00 suffix).
-fn memgraph_datetime(dt: &DateTime<Utc>) -> String {
+/// Neo4j's datetime() requires "YYYY-MM-DDThh:mm:ss" format (no +00:00 suffix).
+fn format_datetime(dt: &DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// Public version of memgraph_datetime for use by other modules (e.g. cluster.rs).
-pub fn memgraph_datetime_pub(dt: &DateTime<Utc>) -> String {
-    memgraph_datetime(dt)
+/// Public version of format_datetime for use by other modules (e.g. cluster.rs).
+pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
+    format_datetime(dt)
 }
 
-/// Parse a Memgraph datetime string back into a DateTime<Utc>.
+// Backwards-compatible aliases
+pub use format_datetime_pub as memgraph_datetime_pub;
+
+/// Parse a datetime string back into a DateTime<Utc>.
 /// Returns None for empty strings or parse failures.
-fn parse_memgraph_datetime_opt(s: &str) -> Option<DateTime<Utc>> {
+fn parse_datetime_opt(s: &str) -> Option<DateTime<Utc>> {
     if s.is_empty() {
         return None;
     }

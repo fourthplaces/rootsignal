@@ -1,12 +1,12 @@
-//! Test harness for integration tests with real LLM calls and real Memgraph.
+//! Test harness for integration tests with real LLM calls and real Neo4j.
 //!
 //! Fakes the *data sources* (web pages, search results, social posts).
-//! Uses real Claude, real Voyage embeddings, real Memgraph.
+//! Uses real Claude, real Voyage embeddings, real Neo4j.
 
 pub mod queries;
 
 use rootsignal_common::CityNode;
-use rootsignal_graph::testutil::memgraph_container;
+use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::Extractor;
@@ -33,10 +33,11 @@ fn default_city_node() -> CityNode {
         ],
         active: true,
         created_at: chrono::Utc::now(),
+        last_scout_completed_at: None,
     }
 }
 
-/// Owns a Memgraph container and API keys for the lifetime of a test.
+/// Owns a Neo4j container and API keys for the lifetime of a test.
 /// The container handle is type-erased to avoid leaking testcontainers types.
 pub struct TestContext {
     _container: Box<dyn std::any::Any + Send>,
@@ -46,13 +47,13 @@ pub struct TestContext {
 }
 
 impl TestContext {
-    /// Spin up Memgraph and validate API keys are present.
+    /// Spin up Neo4j and validate API keys are present.
     /// Returns `None` if keys are missing (test should be skipped).
     pub async fn try_new() -> Option<Self> {
         let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
         let voyage_key = std::env::var("VOYAGE_API_KEY").ok()?;
 
-        let (container, client) = memgraph_container().await;
+        let (container, client) = neo4j_container().await;
 
         rootsignal_graph::migrate::migrate(&client)
             .await

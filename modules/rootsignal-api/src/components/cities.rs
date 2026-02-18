@@ -13,6 +13,10 @@ pub struct CityView {
     pub geo_terms: String,
     pub active: bool,
     pub scout_running: bool,
+    pub source_count: u32,
+    pub signal_count: u32,
+    pub last_scout_completed: Option<String>,
+    pub sources_due: u32,
 }
 
 #[allow(non_snake_case)]
@@ -65,6 +69,34 @@ fn CitiesList(cities: Vec<CityView>) -> Element {
                             } else {
                                 span { class: "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-gray-100 text-gray-500",
                                     "inactive"
+                                }
+                            }
+                        }
+                        div { class: "flex gap-3 items-center text-xs text-gray-400 mt-1",
+                            span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold",
+                                "{city.signal_count} signals"
+                            }
+                            span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold",
+                                "{city.source_count} sources"
+                            }
+                            if let Some(last) = &city.last_scout_completed {
+                                span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold",
+                                    "Last scout: {last}"
+                                }
+                            } else {
+                                span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-400 font-semibold",
+                                    "Never scouted"
+                                }
+                            }
+                            if city.sources_due > 0 {
+                                {
+                                    let due = city.sources_due;
+                                    let s = if due != 1 { "s" } else { "" };
+                                    rsx! {
+                                        span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold",
+                                            "{due} source{s} due"
+                                        }
+                                    }
                                 }
                             }
                         }

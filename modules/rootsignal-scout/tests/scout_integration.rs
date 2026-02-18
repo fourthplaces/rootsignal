@@ -1,7 +1,7 @@
-//! Integration tests for Scout with real LLM calls against real Memgraph.
+//! Integration tests for Scout with real LLM calls against real Neo4j.
 //!
 //! Requirements:
-//!   - Docker (for Memgraph via testcontainers)
+//!   - Docker (for Neo4j via testcontainers)
 //!   - ANTHROPIC_API_KEY env var
 //!   - VOYAGE_API_KEY env var
 //!
@@ -26,6 +26,7 @@ fn city_node(name: &str, slug: &str, lat: f64, lng: f64, radius_km: f64, geo_ter
         geo_terms: geo_terms.iter().map(|s| s.to_string()).collect(),
         active: true,
         created_at: chrono::Utc::now(),
+        last_scout_completed_at: None,
     }
 }
 use rootsignal_scout::scraper::SocialPost;
