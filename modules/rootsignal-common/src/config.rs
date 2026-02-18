@@ -3,17 +3,16 @@ use std::env;
 /// Application configuration loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
-    // Neo4j
-    pub neo4j_uri: String,
-    pub neo4j_user: String,
-    pub neo4j_password: String,
+    // Memgraph (bolt protocol via neo4rs driver)
+    pub memgraph_uri: String,
+    pub memgraph_user: String,
+    pub memgraph_password: String,
 
     // AI providers
     pub anthropic_api_key: String,
     pub voyage_api_key: String,
 
     // Scraping
-    pub firecrawl_api_key: String,
     pub tavily_api_key: String,
     pub apify_api_key: String,
 
@@ -37,6 +36,14 @@ pub struct Config {
     // Budget
     /// Daily budget limit in cents. 0 = unlimited.
     pub daily_budget_cents: u64,
+
+    // Twilio (for admin OTP auth)
+    pub twilio_account_sid: String,
+    pub twilio_auth_token: String,
+    pub twilio_service_id: String,
+
+    // Admin phone numbers (E.164) allowed to authenticate
+    pub admin_numbers: Vec<String>,
 }
 
 impl Config {
@@ -44,12 +51,11 @@ impl Config {
     /// Panics with a clear message if required vars are missing.
     pub fn from_env() -> Self {
         Self {
-            neo4j_uri: required_env("NEO4J_URI"),
-            neo4j_user: required_env("NEO4J_USER"),
-            neo4j_password: required_env("NEO4J_PASSWORD"),
+            memgraph_uri: required_env("MEMGRAPH_URI"),
+            memgraph_user: required_env("MEMGRAPH_USER"),
+            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -65,18 +71,21 @@ impl Config {
             city_lng: None,
             city_radius_km: None,
             daily_budget_cents: 0,
+            twilio_account_sid: String::new(),
+            twilio_auth_token: String::new(),
+            twilio_service_id: String::new(),
+            admin_numbers: Vec::new(),
         }
     }
 
     /// Load config for scout (no web server or admin fields needed).
     pub fn scout_from_env() -> Self {
         Self {
-            neo4j_uri: required_env("NEO4J_URI"),
-            neo4j_user: required_env("NEO4J_USER"),
-            neo4j_password: required_env("NEO4J_PASSWORD"),
+            memgraph_uri: required_env("MEMGRAPH_URI"),
+            memgraph_user: required_env("MEMGRAPH_USER"),
+            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: String::new(),
@@ -92,18 +101,21 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            twilio_account_sid: String::new(),
+            twilio_auth_token: String::new(),
+            twilio_service_id: String::new(),
+            admin_numbers: Vec::new(),
         }
     }
 
     /// Load config for edition generation (Memgraph + Anthropic + city).
     pub fn editions_from_env() -> Self {
         Self {
-            neo4j_uri: required_env("NEO4J_URI"),
-            neo4j_user: required_env("NEO4J_USER"),
-            neo4j_password: required_env("NEO4J_PASSWORD"),
+            memgraph_uri: required_env("MEMGRAPH_URI"),
+            memgraph_user: required_env("MEMGRAPH_USER"),
+            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
-            firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
             apify_api_key: String::new(),
             web_host: String::new(),
@@ -116,20 +128,61 @@ impl Config {
             city_lng: None,
             city_radius_km: None,
             daily_budget_cents: 0,
+            twilio_account_sid: String::new(),
+            twilio_auth_token: String::new(),
+            twilio_service_id: String::new(),
+            admin_numbers: Vec::new(),
         }
     }
 
-    /// Load a minimal config for the web server (read-only, no AI keys needed).
-    pub fn web_from_env() -> Self {
+    /// Load config for the scout supervisor (Memgraph + Anthropic + city + notifications).
+    pub fn supervisor_from_env() -> Self {
         Self {
-            neo4j_uri: required_env("NEO4J_URI"),
-            neo4j_user: required_env("NEO4J_USER"),
-            neo4j_password: required_env("NEO4J_PASSWORD"),
-            anthropic_api_key: String::new(),
+            memgraph_uri: required_env("MEMGRAPH_URI"),
+            memgraph_user: required_env("MEMGRAPH_USER"),
+            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
-            firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
             apify_api_key: String::new(),
+            web_host: String::new(),
+            web_port: 0,
+            admin_username: String::new(),
+            admin_password: String::new(),
+            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
+            city_name: None,
+            city_lat: None,
+            city_lng: None,
+            city_radius_km: None,
+            daily_budget_cents: env::var("SUPERVISOR_DAILY_BUDGET_CENTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
+            twilio_account_sid: String::new(),
+            twilio_auth_token: String::new(),
+            twilio_service_id: String::new(),
+            admin_numbers: Vec::new(),
+        }
+    }
+
+    /// Load config for the web/API server.
+    /// AI keys are optional — if set, the API can trigger scout runs.
+    pub fn web_from_env() -> Self {
+        let admin_numbers: Vec<String> = env::var("ADMIN_NUMBERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        Self {
+            memgraph_uri: required_env("MEMGRAPH_URI"),
+            memgraph_user: required_env("MEMGRAPH_USER"),
+            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            anthropic_api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            voyage_api_key: env::var("VOYAGE_API_KEY").unwrap_or_default(),
+            tavily_api_key: env::var("TAVILY_API_KEY").unwrap_or_default(),
+            apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             web_port: env::var("WEB_PORT")
                 .unwrap_or_else(|_| "3000".to_string())
@@ -143,6 +196,10 @@ impl Config {
             city_lng: None,
             city_radius_km: None,
             daily_budget_cents: 0,
+            twilio_account_sid: env::var("TWILIO_ACCOUNT_SID").unwrap_or_default(),
+            twilio_auth_token: env::var("TWILIO_AUTH_TOKEN").unwrap_or_default(),
+            twilio_service_id: env::var("TWILIO_SERVICE_ID").unwrap_or_default(),
+            admin_numbers,
         }
     }
 }
@@ -151,12 +208,11 @@ impl Config {
     /// Log the first 8 characters of each sensitive env var for debugging.
     pub fn log_redacted(&self) {
         let vars = [
-            ("NEO4J_URI", &self.neo4j_uri),
-            ("NEO4J_USER", &self.neo4j_user),
-            ("NEO4J_PASSWORD", &self.neo4j_password),
+            ("MEMGRAPH_URI", &self.memgraph_uri),
+            ("MEMGRAPH_USER", &self.memgraph_user),
+            ("MEMGRAPH_PASSWORD", &self.memgraph_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
-            ("FIRECRAWL_API_KEY", &self.firecrawl_api_key),
             ("TAVILY_API_KEY", &self.tavily_api_key),
             ("APIFY_API_KEY", &self.apify_api_key),
         ];

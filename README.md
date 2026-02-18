@@ -4,7 +4,7 @@ A civic intelligence system. Root Signal continuously discovers civic signal acr
 
 ## Status
 
-Greenfield. Building Phase 1a — the smallest loop that proves the core concept works: scout agent discovers signal, graph stores it, web surface serves it, quality measurement keeps it honest.
+Phase 1a complete. Scout agent discovers signal, graph stores it, web surface serves it, quality measurement keeps it honest. Building out: GraphQL API, scout supervisor, emergent source discovery, and investigation framework.
 
 ## What It Does
 
@@ -24,20 +24,26 @@ Root Signal sits between fragmented civic sources and people who want to act. Th
 
 ```
 modules/
-  rootsignal-common/     Types, quality scoring, safety (PII detection), config
-  rootsignal-graph/      Neo4j/Memgraph client, dedup, clustering, cause heat
-  rootsignal-scout/      Scout agent — scraping, extraction, geo-filtering
-  rootsignal-web/        Axum web server, graph queries, templates
-  rootsignal-editions/   Curated thematic signal collections
-  ai-client/             Provider-agnostic LLM client (Claude, OpenAI, OpenRouter)
-  apify-client/          Social media scraping via Apify (Instagram, Facebook, Reddit)
-  twilio-rs/             Twilio OTP and WebRTC
+  rootsignal-common/           Types, quality scoring, safety (PII detection), config
+  rootsignal-graph/            Neo4j/Memgraph client, dedup, clustering, cause heat
+  rootsignal-scout/            Scout agent — scraping, extraction, investigation, geo-filtering
+  rootsignal-scout-supervisor/ Supervisor — auto-fixes, health checks, notifications
+  rootsignal-api/              GraphQL API (async-graphql + DataLoaders)
+  rootsignal-admin/            Admin dashboard — Axum SSR, graph queries, templates
+  rootsignal-editions/         Curated thematic signal collections
+  ai-client/                   Provider-agnostic LLM client (Claude, OpenAI, OpenRouter)
+  apify-client/                Social media scraping via Apify (Instagram, Facebook, Reddit)
+  twilio-rs/                   Twilio OTP and WebRTC
 
 docs/
   vision/                Principles, values, problem space, milestones, kill tests
   landscape/             Competitive analysis, ecosystem vision
   reference/             Signal sources, quality dimensions, use cases
-  brainstorms/           Architecture brainstorms
+  brainstorms/           Architecture and feature brainstorms
+  plans/                 Implementation plans
+  tests/                 Testing playbooks
+  audits/                System audits
+  solutions/             Documented learnings
 ```
 
 ## Development
@@ -64,7 +70,6 @@ CITY=twincities docker compose --profile scout up scout
 | `ANTHROPIC_API_KEY` | Yes | LLM extraction and clustering (Claude) |
 | `VOYAGE_API_KEY` | Yes | Vector embeddings (Voyage AI) |
 | `TAVILY_API_KEY` | Yes | Web search for signal discovery |
-| `FIRECRAWL_API_KEY` | No | Advanced web scraping |
 | `APIFY_API_KEY` | No | Social media scraping |
 | `CITY` | No | Target city (twincities, nyc, portland, berlin). Default: twincities |
 

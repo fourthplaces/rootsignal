@@ -92,7 +92,7 @@ impl ResponseMapper {
 
         let mut candidates = Vec::new();
 
-        for index in &["give_embedding", "event_embedding"] {
+        for index in &["give_embedding", "event_embedding", "ask_embedding"] {
             let q = query(&format!(
                 "CALL vector_search.search('{}', 5, $embedding)
                  YIELD node, similarity

@@ -539,6 +539,8 @@ pub struct SourceNode {
     pub last_cost_cents: u64,
     /// JSON string of signal type breakdown: `{"tension": N, "ask": N, ...}`.
     pub taxonomy_stats: Option<String>,
+    /// Quality penalty from supervisor (0.0-1.0, default 1.0). Multiplied with weight.
+    pub quality_penalty: f64,
 }
 
 /// A human-submitted link with an optional reason for investigation.
@@ -617,13 +619,37 @@ pub fn extract_domain(url: &str) -> String {
         .to_lowercase()
 }
 
+// --- Response Mapping Result ---
+
+/// A signal that responds to a Tension, with edge metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TensionResponse {
+    pub node: Node,
+    pub match_strength: f64,
+    pub explanation: String,
+}
+
 // --- Edge Types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeType {
-    /// Any signal node -> Evidence (provenance)
+    /// Signal -> Evidence (provenance)
     SourcedFrom,
+    /// Story -> Signal (membership)
+    Contains,
+    /// Give/Event/Ask -> Tension (feedback loop). Properties: match_strength, explanation
+    RespondsTo,
+    /// Actor -> Signal (participation). Properties: role
+    ActedIn,
+    /// Story -> Story (evolution)
+    EvolvedFrom,
+    /// Edition -> Story (editorial curation)
+    Features,
+    /// Signal <-> Signal (clustering). Properties: weight
+    SimilarTo,
+    /// Submission -> Source (human submission)
+    SubmittedFor,
 }
 
 #[cfg(test)]

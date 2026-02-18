@@ -26,7 +26,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     info!("UUID uniqueness constraints created");
 
     // --- Existence (NOT NULL) constraints ---
-    // Memgraph supports these for free (Neo4j required Enterprise).
+    // Memgraph supports these natively.
     let existence = [
         // Event
         "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.sensitivity)",
@@ -271,6 +271,31 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- BlockedSource constraint ---
     run_ignoring_exists(g, "CREATE CONSTRAINT ON (b:BlockedSource) ASSERT b.url_pattern IS UNIQUE").await?;
     info!("BlockedSource constraint created");
+
+    // --- Supervisor node constraints and indexes ---
+    let supervisor_constraints = [
+        "CREATE CONSTRAINT ON (s:SupervisorState) ASSERT s.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (r:ExtractionRule) ASSERT r.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (v:ValidationIssue) ASSERT v.id IS UNIQUE",
+    ];
+
+    for c in &supervisor_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+
+    let supervisor_indexes = [
+        "CREATE INDEX ON :ValidationIssue(status)",
+        "CREATE INDEX ON :ValidationIssue(city)",
+        "CREATE INDEX ON :ValidationIssue(target_id)",
+        "CREATE INDEX ON :ExtractionRule(city)",
+        "CREATE INDEX ON :ExtractionRule(approved)",
+        "CREATE INDEX ON :SupervisorState(city)",
+    ];
+
+    for idx in &supervisor_indexes {
+        run_ignoring_exists(g, idx).await?;
+    }
+    info!("Supervisor constraints and indexes created");
 
     // --- Deduplicate evidence + recompute corroboration ---
     deduplicate_evidence(client).await?;

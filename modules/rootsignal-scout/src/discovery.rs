@@ -125,6 +125,7 @@ impl<'a> SourceDiscoverer<'a> {
                     total_cost_cents: 0,
                     last_cost_cents: 0,
                     taxonomy_stats: None,
+                    quality_penalty: 1.0,
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -173,6 +174,7 @@ impl<'a> SourceDiscoverer<'a> {
                     total_cost_cents: 0,
                     last_cost_cents: 0,
                     taxonomy_stats: None,
+                    quality_penalty: 1.0,
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -260,6 +262,7 @@ impl<'a> SourceDiscoverer<'a> {
                 total_cost_cents: 0,
                 last_cost_cents: 0,
                 taxonomy_stats: None,
+                quality_penalty: 1.0,
             };
 
             match self.writer.upsert_source(&source).await {

@@ -23,7 +23,7 @@ taproot/
     apify-client/               # EXISTING — social media scraping
     twilio-rs/                  # EXISTING — not used in 1a
     rootsignal-common/          # NEW — shared types, config, errors, safety types
-    rootsignal-graph/           # NEW — Neo4j wrapper, schema, typed CRUD, safety enforcement
+    rootsignal-graph/           # NEW — Memgraph wrapper, schema, typed CRUD, safety enforcement
     rootsignal-scout/           # NEW — scout agent only (extraction, embedding, dedup)
     rootsignal-web/             # NEW — axum + askama SSR public app (read-only)
 ```
@@ -60,7 +60,7 @@ Events expire on their date. Fundraisers expire on end date or 60 days. Ongoing 
 ## Build Order
 
 1. `rootsignal-common` — shared types, safety types, config
-2. `rootsignal-graph` — Neo4j wrapper, schema, PublicGraphReader, GraphWriter
+2. `rootsignal-graph` — Memgraph wrapper, schema, PublicGraphReader, GraphWriter
 3. Extraction + embedding pipeline in rootsignal-scout
 4. Scout agent (Tavily + Firecrawl + extraction + dedup + graph writes)
 5. Web interface (axum + askama, map + list + detail)

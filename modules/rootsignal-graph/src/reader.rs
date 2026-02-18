@@ -5,8 +5,8 @@ use uuid::Uuid;
 use rootsignal_common::{
     fuzz_location, AskNode, EvidenceNode, EventNode, GeoPoint, GeoPrecision,
     GiveNode, Node, NodeMeta, NodeType, NoticeNode, Severity, SensitivityLevel, StoryNode,
-    TensionNode, Urgency, ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS,
-    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    TensionNode, TensionResponse, Urgency, ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED,
+    EVENT_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -347,11 +347,13 @@ impl PublicGraphReader {
         story_id: Uuid,
     ) -> Result<Vec<(Uuid, Vec<serde_json::Value>)>, neo4rs::Error> {
         let cypher =
-            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[:RESPONDS_TO]-(resp)
-             WHERE resp:Give OR resp:Event
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[rel:RESPONDS_TO]-(resp)
+             WHERE resp:Give OR resp:Event OR resp:Ask
              RETURN t.id AS tension_id, resp.id AS resp_id, resp.title AS resp_title,
                     resp.summary AS resp_summary,
-                    labels(resp) AS resp_labels";
+                    labels(resp) AS resp_labels,
+                    rel.match_strength AS match_strength,
+                    rel.explanation AS explanation";
 
         let q = query(cypher).param("id", story_id.to_string());
         let mut stream = self.client.graph.execute(q).await?;
@@ -367,12 +369,16 @@ impl PublicGraphReader {
             let summary: String = row.get("resp_summary").unwrap_or_default();
             let labels: Vec<String> = row.get("resp_labels").unwrap_or_default();
             let node_type = labels.iter().find(|l| *l != "Node").cloned().unwrap_or_default();
+            let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
+            let explanation: String = row.get("explanation").unwrap_or_default();
 
             map.entry(tid).or_default().push(serde_json::json!({
                 "id": rid_str,
                 "title": title,
                 "summary": summary,
                 "node_type": node_type,
+                "match_strength": match_strength,
+                "explanation": explanation,
             }));
         }
 
@@ -602,18 +608,18 @@ impl PublicGraphReader {
 
     // --- Tension response queries ---
 
-    /// Get Give/Event signals that respond to a tension.
+    /// Get Give/Event/Ask signals that respond to a tension, with edge metadata.
     pub async fn tension_responses(
         &self,
         tension_id: Uuid,
-    ) -> Result<Vec<Node>, neo4rs::Error> {
+    ) -> Result<Vec<TensionResponse>, neo4rs::Error> {
         let mut results = Vec::new();
 
-        for nt in &[NodeType::Give, NodeType::Event] {
+        for nt in &[NodeType::Give, NodeType::Event, NodeType::Ask] {
             let label = node_type_label(*nt);
             let cypher = format!(
-                "MATCH (t:Tension {{id: $id}})<-[:RESPONDS_TO]-(n:{label})
-                 RETURN n
+                "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO]-(n:{label})
+                 RETURN n, rel.match_strength AS match_strength, rel.explanation AS explanation
                  ORDER BY n.confidence DESC"
             );
 
@@ -622,7 +628,13 @@ impl PublicGraphReader {
             while let Some(row) = stream.next().await? {
                 if let Some(node) = row_to_node(&row, *nt) {
                     if passes_display_filter(&node) {
-                        results.push(fuzz_node(node));
+                        let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
+                        let explanation: String = row.get("explanation").unwrap_or_default();
+                        results.push(TensionResponse {
+                            node: fuzz_node(node),
+                            match_strength,
+                            explanation,
+                        });
                     }
                 }
             }
@@ -703,6 +715,142 @@ impl PublicGraphReader {
     pub async fn total_count(&self) -> Result<u64, neo4rs::Error> {
         let counts = self.count_by_type().await?;
         Ok(counts.iter().map(|(_, c)| c).sum())
+    }
+
+    // --- Batch queries for DataLoaders ---
+
+    /// Get a single story by ID (without signals).
+    pub async fn get_story_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<StoryNode>, neo4rs::Error> {
+        let q = query("MATCH (s:Story {id: $id}) RETURN s")
+            .param("id", id.to_string());
+        let mut stream = self.client.graph.execute(q).await?;
+        match stream.next().await? {
+            Some(row) => Ok(row_to_story(&row)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get stories for an edition.
+    pub async fn edition_stories(
+        &self,
+        edition_id: Uuid,
+    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (e:Edition {id: $id})-[:FEATURES]->(s:Story)
+             RETURN s
+             ORDER BY s.energy DESC"
+        )
+        .param("id", edition_id.to_string());
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(story) = row_to_story(&row) {
+                results.push(story);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Batch-fetch evidence for multiple signal IDs. Returns map of signal_id -> Vec<EvidenceNode>.
+    pub async fn batch_evidence_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<EvidenceNode>>, neo4rs::Error> {
+        let mut map: std::collections::HashMap<Uuid, Vec<EvidenceNode>> =
+            std::collections::HashMap::new();
+
+        if ids.is_empty() {
+            return Ok(map);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let cypher =
+            "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             WHERE n.id IN $ids AND (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+             RETURN n.id AS signal_id, collect(ev) AS evidence";
+
+        let q = query(cypher).param("ids", id_strs);
+        let mut stream = self.client.graph.execute(q).await?;
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let evidence = extract_evidence(&row);
+                map.insert(id, evidence);
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Batch-fetch actors for multiple signal IDs. Returns map of signal_id -> Vec<ActorNode>.
+    pub async fn batch_actors_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<rootsignal_common::ActorNode>>, neo4rs::Error> {
+        let mut map: std::collections::HashMap<Uuid, Vec<rootsignal_common::ActorNode>> =
+            std::collections::HashMap::new();
+
+        if ids.is_empty() {
+            return Ok(map);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let cypher =
+            "MATCH (a:Actor)-[:ACTED_IN]->(n)
+             WHERE n.id IN $ids
+             RETURN n.id AS signal_id, a";
+
+        let q = query(cypher).param("ids", id_strs);
+        let mut stream = self.client.graph.execute(q).await?;
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                if let Some(actor) = row_to_actor(&row) {
+                    map.entry(id).or_default().push(actor);
+                }
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Batch-fetch the parent story for multiple signal IDs. Returns map of signal_id -> StoryNode.
+    pub async fn batch_story_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, StoryNode>, neo4rs::Error> {
+        let mut map: std::collections::HashMap<Uuid, StoryNode> =
+            std::collections::HashMap::new();
+
+        if ids.is_empty() {
+            return Ok(map);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let cypher =
+            "MATCH (s:Story)-[:CONTAINS]->(n)
+             WHERE n.id IN $ids
+             RETURN n.id AS signal_id, s";
+
+        let q = query(cypher).param("ids", id_strs);
+        let mut stream = self.client.graph.execute(q).await?;
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                if let Some(story) = row_to_story(&row) {
+                    map.insert(id, story);
+                }
+            }
+        }
+
+        Ok(map)
     }
 }
 

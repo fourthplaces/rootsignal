@@ -1,24 +1,33 @@
 [package]
-name = "rootsignal-web"
+name = "rootsignal-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "web"
+name = "api"
 path = "src/main.rs"
 
 [dependencies]
 rootsignal-common = { workspace = true }
 rootsignal-graph = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
-axum = { workspace = true }
 tower-http = { workspace = true }
 tower = { workspace = true }
+dioxus = { version = "0.6", features = ["ssr"] }
+rootsignal-scout = { path = "../rootsignal-scout" }
+twilio = { workspace = true }
+reqwest = { workspace = true }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
