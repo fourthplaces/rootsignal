@@ -4,6 +4,310 @@ The scout is a self-tuning system. Its outputs become inputs to future runs thro
 
 ---
 
+## System Overview
+
+How data flows through one scout cycle. Arrows show where outputs become inputs to future decisions.
+
+```mermaid
+flowchart TB
+    subgraph SCRAPE ["Phase 1-4: Scrape & Extract"]
+        Schedule["Scheduler<br/><i>weight → cadence</i>"]
+        Scrape["Scrape URLs"]
+        Hash{"Content<br/>changed?"}
+        Extract["LLM Extract"]
+        Dedup["3-Layer Dedup<br/><i>title → embedding → vector</i>"]
+        Store["Store Signals"]
+
+        Schedule --> Scrape --> Hash
+        Hash -- yes --> Extract --> Dedup --> Store
+        Hash -- no --> Refresh["Refresh timestamps"]
+    end
+
+    subgraph ENRICH ["Phase 5-6: Enrich"]
+        Cluster["Clustering<br/><i>similarity → stories</i>"]
+        Respond["Response Mapping<br/><i>Give ↔ Tension</i>"]
+        Investigate["Investigation<br/><i>Tavily corroboration</i>"]
+    end
+
+    subgraph DISCOVER ["Phase 7: Discover"]
+        Actors["Actor Discovery<br/><i>mentions → sources</i>"]
+        Curiosity["Curiosity Engine<br/><i>LLM briefing → queries</i>"]
+        Mechanical["Mechanical Fallback<br/><i>template queries</i>"]
+    end
+
+    subgraph GRAPH ["Graph (persistent state)"]
+        Sources[("Sources<br/><i>weight, cadence,<br/>empty_runs</i>")]
+        Signals[("Signals<br/><i>confidence,<br/>corroboration</i>")]
+        Stories2[("Stories<br/><i>energy, velocity</i>")]
+        ActorNodes[("Actors<br/><i>domains, signals</i>")]
+        Evidence[("Evidence<br/><i>content_hash</i>")]
+    end
+
+    Store --> Signals
+    Store --> Evidence
+    Refresh --> Signals
+    Cluster --> Stories2
+    Respond --> Signals
+    Investigate --> Evidence
+    Actors --> Sources
+    Curiosity --> Sources
+    Mechanical --> Sources
+
+    Sources --> Schedule
+    Signals --> Cluster
+    Signals --> Respond
+    Signals --> Investigate
+    Signals --> Curiosity
+    Stories2 --> Curiosity
+    ActorNodes --> Actors
+    Evidence --> Hash
+    Store -.->|"actor mentions"| ActorNodes
+
+    Signals --> Dedup
+    Sources -.->|"metrics"| Sources
+
+    style SCRAPE fill:#1a1a2e,stroke:#e94560,color:#fff
+    style ENRICH fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style DISCOVER fill:#1a1a2e,stroke:#16213e,color:#fff
+    style GRAPH fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+## Amplifying Loops
+
+Productive activity begets more productive activity. These loops grow the graph.
+
+```mermaid
+flowchart LR
+    subgraph L1 ["Loop 1: Source Weight"]
+        S1_scrape["Scrape source"] --> S1_signals["Signals produced"]
+        S1_signals --> S1_weight["Weight increases"]
+        S1_weight --> S1_cadence["Cadence shortens"]
+        S1_cadence --> S1_scrape
+    end
+
+    subgraph L3 ["Loop 3: Corroboration"]
+        S3_signal["Signal exists"] --> S3_found["Same signal<br/>from different source"]
+        S3_found --> S3_corrob["corroboration_count++<br/>source_diversity++"]
+        S3_corrob --> S3_weight["Source weight<br/>diversity_factor boost"]
+        S3_weight --> S3_signal
+    end
+
+    subgraph L16 ["Loop 16: Actor → Source"]
+        S16_signal["Signal mentions<br/>organization"] --> S16_actor["Actor node<br/>created"]
+        S16_actor --> S16_domain["Domains/URLs<br/>extracted"]
+        S16_domain --> S16_source["New Source<br/>created"]
+        S16_source --> S16_signal
+    end
+
+    style L1 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style L3 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style L16 fill:#1a1a2e,stroke:#e94560,color:#fff
+```
+
+## Corrective Loops
+
+These loops counteract problems — removing stale data, rebalancing signal types, and degrading gracefully under budget pressure.
+
+```mermaid
+flowchart LR
+    subgraph L2 ["Loop 2: Dead Source"]
+        S2_scrape["Scrape yields<br/>0 signals"] --> S2_counter["empty_runs++"]
+        S2_counter --> S2_check{"≥ 10?"}
+        S2_check -- yes --> S2_deactivate["Source deactivated"]
+        S2_check -- no --> S2_scrape
+    end
+
+    subgraph L4 ["Loop 4: Freshness Reaping"]
+        S4_active["Signal exists"] --> S4_confirmed{"Re-confirmed<br/>by source?"}
+        S4_confirmed -- yes --> S4_refresh["last_confirmed_active<br/>refreshed"]
+        S4_refresh --> S4_active
+        S4_confirmed -- no, 150d --> S4_delete["Signal reaped"]
+    end
+
+    subgraph L8 ["Loop 8: Type Imbalance"]
+        S8_count["Count signal types"] --> S8_check{"Tensions >> Gives?"}
+        S8_check -- yes --> S8_annotate["Briefing: 'Gives<br/>underrepresented'"]
+        S8_annotate --> S8_queries["LLM generates<br/>resource queries"]
+        S8_queries --> S8_gives["More Give<br/>signals found"]
+        S8_gives --> S8_count
+    end
+
+    style L2 fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style L4 fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style L8 fill:#1a1a2e,stroke:#0f3460,color:#fff
+```
+
+## Curiosity Engine (Loop 5)
+
+The most sophisticated loop. The LLM sees its own track record and adjusts strategy.
+
+```mermaid
+flowchart TB
+    Build["Build briefing<br/>from graph"] --> Tensions["Unmet Tensions<br/><i>sorted: unmet first,<br/>then severity</i>"]
+    Build --> Stories["Story Landscape<br/><i>by energy</i>"]
+    Build --> Balance["Signal Balance<br/><i>type counts +<br/>imbalance annotations</i>"]
+    Build --> Performance["Discovery Performance<br/><i>top 5 successes,<br/>bottom 5 failures</i>"]
+    Build --> Existing["Existing Queries<br/><i>for dedup</i>"]
+
+    Tensions --> Prompt["Formatted Briefing<br/>(structured text)"]
+    Stories --> Prompt
+    Balance --> Prompt
+    Performance --> Prompt
+    Existing --> Prompt
+
+    Prompt --> LLM["Claude Haiku<br/><i>'Where should I look next?'</i>"]
+    LLM --> Plan["DiscoveryPlan<br/><i>3-7 queries with reasoning</i>"]
+
+    Plan --> Dedup{"Substring<br/>dedup"}
+    Dedup -- novel --> Create["Create TavilyQuery<br/>SourceNode"]
+    Dedup -- duplicate --> Skip["Skip"]
+
+    Create --> Search["Future run:<br/>Tavily search"]
+    Search --> Signals["Signals produced<br/>(or not)"]
+
+    Signals --> Metrics["Source metrics update:<br/>signals_produced, weight,<br/>consecutive_empty_runs"]
+    Metrics --> Performance
+
+    Create -.->|"gap_context stores<br/>LLM reasoning"| Performance
+
+    subgraph Fallback ["Fallback Triggers"]
+        F1["No API key"]
+        F2["Budget exhausted"]
+        F3["Cold start<br/>< 3 tensions"]
+    end
+
+    Fallback --> Mechanical["Mechanical discovery<br/><i>'{what_would_help}<br/>resources services {city}'</i>"]
+
+    style Build fill:#16213e,stroke:#e94560,color:#fff
+    style LLM fill:#e94560,stroke:#fff,color:#fff
+    style Prompt fill:#0f3460,stroke:#e94560,color:#fff
+    style Fallback fill:#1a1a2e,stroke:#0f3460,color:#fff
+```
+
+## Response Mapping Loop (Loops 6 + 9)
+
+How discovered resources reduce tension priority over time.
+
+```mermaid
+flowchart LR
+    T["Tension extracted<br/><i>severity=high,<br/>what_would_help='food shelf'</i>"]
+    T --> Unmet["Marked UNMET<br/><i>no RESPONDS_TO edges</i>"]
+    Unmet --> Brief["High priority in<br/>discovery briefing"]
+    Brief --> Query["LLM generates:<br/>'food shelf locations<br/>Minneapolis'"]
+    Query --> Source["New TavilyQuery<br/>source created"]
+    Source --> Scrape["Scraped next run"]
+    Scrape --> Give["Give signal found:<br/>'Second Harvest food shelf<br/>expansion program'"]
+    Give --> Map["Response Mapper:<br/>cosine similarity > 0.7"]
+    Map --> Edge["RESPONDS_TO edge<br/><i>match_strength=0.82</i>"]
+    Edge --> Met["Tension now has<br/>response_count=1"]
+    Met --> Lower["Lower priority<br/>in next briefing"]
+
+    style T fill:#e94560,stroke:#fff,color:#fff
+    style Give fill:#16213e,stroke:#e94560,color:#fff
+    style Edge fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+## Dedup Pipeline (Loops 13-15)
+
+Three layers prevent the same information from appearing as multiple signals.
+
+```mermaid
+flowchart TB
+    Content["Scraped content"] --> Hash{"Layer 1:<br/>Content Hash<br/><i>FNV-1a(content, url)</i>"}
+    Hash -- "same hash + url" --> SkipExtract["Skip extraction<br/>refresh timestamps"]
+    Hash -- "new content" --> Extract["LLM extraction"]
+
+    Extract --> TitleDedup{"Layer 2:<br/>Title Dedup<br/><i>exact match by<br/>(title, type, url)</i>"}
+    TitleDedup -- "match, same source" --> RefreshOnly["Refresh<br/><i>no corroboration</i>"]
+    TitleDedup -- "match, diff source" --> Corroborate1["Corroborate"]
+    TitleDedup -- "no match" --> Embed["Batch embed"]
+
+    Embed --> CacheCheck{"Layer 3a:<br/>Embedding Cache<br/><i>in-memory, this run</i>"}
+    CacheCheck -- "sim ≥ 0.85 same-src" --> RefreshOnly2["Refresh"]
+    CacheCheck -- "sim ≥ 0.92 cross-src" --> Corroborate2["Corroborate"]
+    CacheCheck -- "no match" --> GraphCheck{"Layer 3b:<br/>Vector Index<br/><i>graph, all runs</i>"}
+
+    GraphCheck -- "sim ≥ 0.85 same-src" --> RefreshOnly3["Refresh"]
+    GraphCheck -- "sim ≥ 0.92 cross-src" --> Corroborate3["Corroborate"]
+    GraphCheck -- "no match" --> Create["Create new signal"]
+
+    style Hash fill:#0f3460,stroke:#e94560,color:#fff
+    style TitleDedup fill:#0f3460,stroke:#e94560,color:#fff
+    style CacheCheck fill:#0f3460,stroke:#e94560,color:#fff
+    style GraphCheck fill:#0f3460,stroke:#e94560,color:#fff
+    style Create fill:#16213e,stroke:#e94560,color:#fff
+```
+
+## Budget Degradation (Loop 11)
+
+The system gracefully drops expensive features as budget is consumed.
+
+```mermaid
+flowchart LR
+    subgraph Full ["Full Budget"]
+        direction TB
+        P1["Scrape + Extract"]
+        P2["Clustering"]
+        P3["Response Mapping<br/><i>~10 Haiku calls</i>"]
+        P4["Investigation<br/><i>Haiku + Tavily</i>"]
+        P5["LLM Discovery<br/><i>1 Haiku call</i>"]
+        P1 --> P2 --> P3 --> P4 --> P5
+    end
+
+    subgraph Low ["Budget Low"]
+        direction TB
+        Q1["Scrape + Extract"]
+        Q2["Clustering"]
+        Q3["Response Mapping<br/>⚠ SKIPPED"]
+        Q4["Investigation<br/>⚠ SKIPPED"]
+        Q5["Mechanical Discovery<br/><i>template fallback</i>"]
+        Q1 --> Q2 --> Q3 --> Q4 --> Q5
+    end
+
+    subgraph Zero ["No Budget"]
+        direction TB
+        R1["Scrape + Extract"]
+        R2["Clustering"]
+        R3["Actor Discovery<br/><i>graph reads only</i>"]
+        R1 --> R2 --> R3
+    end
+
+    Full --> Low --> Zero
+
+    style Full fill:#16213e,stroke:#e94560,color:#fff
+    style Low fill:#1a1a2e,stroke:#e94560,color:#fff
+    style Zero fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+## Source Lifecycle
+
+How a source moves through the system from discovery to deactivation.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered: Actor mention / LLM query / Topic search / Curated
+    Discovered --> Active: weight=0.3, cadence=3d
+
+    Active --> Productive: signals_produced > 0
+    Productive --> HighValue: weight > 0.8
+    HighValue --> Productive: weight drops
+
+    Active --> Struggling: empty_runs increasing
+    Struggling --> Active: produces signal (resets counter)
+    Struggling --> Deactivated: 10 consecutive empties
+
+    Productive --> Struggling: stops producing
+
+    Deactivated --> [*]: removed from schedule
+
+    note right of HighValue: cadence = 6h
+    note right of Active: cadence = 24h-3d
+    note right of Struggling: cadence = 3d-7d
+    note left of Deactivated: non-curated only
+```
+
+---
+
 ## Loop Map
 
 | # | Loop | Type | Timescale | Files |
@@ -277,6 +581,200 @@ The system never crashes from budget exhaustion. It gracefully drops expensive f
 **Consumes:** Enables "who's most active in civic space" analysis. Actors with high signal counts and recent activity represent key civic organizations.
 
 **Effect:** Primarily informing — doesn't directly change scout behavior, but enriches the graph for downstream consumers (editions, API queries).
+
+---
+
+---
+
+## Decision Trees
+
+### Signal Ingestion
+
+What happens when the scout encounters a piece of content.
+
+```mermaid
+flowchart TB
+    Start["URL scraped"] --> Empty{"Content<br/>empty?"}
+    Empty -- yes --> Fail["Mark failed"]
+    Empty -- no --> HashCheck{"Hash + URL<br/>seen before?"}
+    HashCheck -- yes --> Refresh["Refresh timestamps<br/>on existing signals"]
+    HashCheck -- no --> Extract["LLM extraction<br/>(Haiku)"]
+    Extract --> Nodes{"Signals<br/>extracted?"}
+    Nodes -- "0 signals" --> RecordEmpty["Record empty scrape<br/>empty_runs++"]
+    Nodes -- "≥1 signal" --> GeoCheck
+
+    subgraph GeoCheck ["Geo Filter (per signal)"]
+        G1{"Has<br/>coordinates?"}
+        G1 -- yes --> G2{"Within city<br/>radius?"}
+        G2 -- yes --> Accept1["Accept"]
+        G2 -- no --> Drop["Drop signal"]
+        G1 -- no --> G3{"location_name<br/>matches geo_term?"}
+        G3 -- yes --> Accept2["Accept"]
+        G3 -- no --> G4{"Source is<br/>city-local?"}
+        G4 -- yes --> Penalize["Accept<br/>confidence × 0.8"]
+        G4 -- no --> Drop2["Drop signal"]
+    end
+
+    Accept1 --> DedupTree
+    Accept2 --> DedupTree
+    Penalize --> DedupTree
+
+    subgraph DedupTree ["Dedup Decision"]
+        D0["Normalize title"] --> D1{"Same title+type<br/>from same URL?"}
+        D1 -- yes --> D1a["Refresh only"]
+        D1 -- no --> D2{"Same title+type<br/>from different URL?"}
+        D2 -- yes --> D2a["Corroborate<br/>+ create evidence"]
+        D2 -- no --> D3["Embed signal"]
+        D3 --> D4{"Cache/vector<br/>sim ≥ 0.85?"}
+        D4 -- "yes, same source" --> D4a["Refresh only"]
+        D4 -- "yes, diff source<br/>≥ 0.92" --> D4b["Corroborate"]
+        D4 -- "no match or<br/>< 0.92 cross-src" --> D5["CREATE new signal"]
+    end
+
+    style Start fill:#16213e,stroke:#e94560,color:#fff
+    style D5 fill:#e94560,stroke:#fff,color:#fff
+    style Drop fill:#555,stroke:#888,color:#ccc
+    style Drop2 fill:#555,stroke:#888,color:#ccc
+```
+
+### Discovery Method Selection
+
+How the scout decides which discovery strategy to use.
+
+```mermaid
+flowchart TB
+    Start["Phase 7: Discovery"] --> Actors["Always: discover_from_actors()<br/><i>free — graph reads only</i>"]
+    Actors --> HasClaude{"Claude API<br/>key set?"}
+    HasClaude -- no --> Mechanical["Mechanical fallback<br/><i>template queries</i>"]
+    HasClaude -- yes --> HasBudget{"Budget<br/>remaining?"}
+    HasBudget -- no --> Mechanical
+    HasBudget -- yes --> BuildBrief["Build briefing<br/>from graph"]
+    BuildBrief --> BriefOk{"Briefing<br/>built OK?"}
+    BriefOk -- error --> Mechanical
+    BriefOk -- ok --> ColdStart{"Cold start?<br/><i>< 3 tensions<br/>AND 0 stories</i>"}
+    ColdStart -- yes --> Mechanical
+    ColdStart -- no --> LLMCall["Claude Haiku<br/>extract DiscoveryPlan"]
+    LLMCall --> LLMOk{"LLM call<br/>succeeded?"}
+    LLMOk -- error --> Mechanical
+    LLMOk -- ok --> CreateSources["Create TavilyQuery<br/>sources (max 7)<br/><i>with dedup</i>"]
+
+    Mechanical --> CreateMech["Create template queries<br/>(max 5)<br/><i>'{help} resources services {city}'</i>"]
+
+    style Start fill:#16213e,stroke:#e94560,color:#fff
+    style LLMCall fill:#e94560,stroke:#fff,color:#fff
+    style Mechanical fill:#0f3460,stroke:#e94560,color:#fff
+    style CreateSources fill:#16213e,stroke:#e94560,color:#fff
+    style CreateMech fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+### Source Scheduling
+
+How the scheduler decides which sources to scrape this run.
+
+```mermaid
+flowchart TB
+    Start["All active sources"] --> ForEach["For each source"]
+    ForEach --> Cadence{"Time since<br/>last_scraped ≥<br/>cadence_hours?"}
+    Cadence -- no --> Skip["Skip this run"]
+    Cadence -- yes --> Scheduled["Add to schedule"]
+
+    ForEach --> Explore{"Exploration<br/>policy?"}
+    Explore -- "10% random<br/>from skipped" --> ExploreAdd["Add as exploration<br/><i>prevents weight death spiral</i>"]
+
+    Scheduled --> WeightSort["Sort by weight DESC"]
+    ExploreAdd --> WeightSort
+
+    WeightSort --> Execute["Scrape in order"]
+
+    subgraph CadenceTable ["Weight → Cadence Mapping"]
+        W1["> 0.8 → 6h"]
+        W2["0.5-0.8 → 24h"]
+        W3["0.2-0.5 → 3 days"]
+        W4["< 0.2 → 7 days"]
+    end
+
+    style Start fill:#16213e,stroke:#e94560,color:#fff
+    style CadenceTable fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+### Investigation Target Selection
+
+How the investigator picks which signals to verify.
+
+```mermaid
+flowchart TB
+    Start["Find targets"] --> P1["Priority 1:<br/>New tensions (< 24h)<br/>with < 2 evidence nodes"]
+    P1 --> P2["Priority 2:<br/>High-urgency asks<br/>with < 2 evidence nodes"]
+    P2 --> P3["Priority 3:<br/>Thin-story signals<br/>(emerging stories)"]
+
+    P3 --> Filters["Apply filters"]
+
+    subgraph Filters ["Filtering"]
+        F1{"investigated_at<br/>> 7 days ago<br/>or null?"}
+        F1 -- no --> FSkip["Skip<br/><i>cooldown active</i>"]
+        F1 -- yes --> F2{"Domain already<br/>seen this run?"}
+        F2 -- yes --> FSkip2["Skip<br/><i>per-domain dedup</i>"]
+        F2 -- no --> FAccept["Accept target"]
+    end
+
+    FAccept --> Cap{"≤ 5 targets<br/>total?"}
+    Cap -- yes --> Investigate
+    Cap -- no --> Done["Stop"]
+
+    subgraph Investigate ["Per Target"]
+        I1["LLM generates<br/>1-3 search queries"]
+        I1 --> I2["Tavily searches<br/><i>filter out same-domain</i>"]
+        I2 --> I3["LLM evaluates<br/>evidence quality"]
+        I3 --> I4{"confidence<br/>≥ 0.5?"}
+        I4 -- yes --> I5["Create Evidence node"]
+        I4 -- no --> I6["Discard"]
+    end
+
+    Cap -- yes --> I1
+    I5 --> Mark["Mark signal<br/>investigated_at = now"]
+    I6 --> Mark
+
+    style Start fill:#16213e,stroke:#e94560,color:#fff
+    style Investigate fill:#0f3460,stroke:#e94560,color:#fff
+```
+
+### Weight Computation
+
+How source weight is calculated from accumulated metrics.
+
+```mermaid
+flowchart TB
+    Inputs["Source metrics:<br/>signals_produced<br/>signals_corroborated<br/>total_scrapes<br/>tension_count<br/>last_produced_signal"]
+
+    Inputs --> Yield["base_yield =<br/>(signals + 1) / (scrapes + 3)<br/><i>Bayesian smoothing,<br/>prior = 0.3</i>"]
+
+    Inputs --> Tension["tension_bonus =<br/>1.0 + (tension_count / signals)<br/><i>capped at 2.0</i>"]
+
+    Inputs --> Recency{"Days since<br/>last signal?"}
+    Recency -- "< 14d" --> R1["recency = 1.0"]
+    Recency -- "14-30d" --> R2["recency = 0.75"]
+    Recency -- "30-90d" --> R3["recency = 0.5"]
+    Recency -- "> 90d" --> R4["recency = 0.25"]
+
+    Inputs --> Diversity["diversity_factor =<br/>1.0 + (corroboration_ratio × 0.5)<br/><i>max 1.5</i>"]
+
+    Yield --> Combine
+    Tension --> Combine
+    R1 --> Combine
+    R2 --> Combine
+    R3 --> Combine
+    R4 --> Combine
+    Diversity --> Combine
+
+    Combine["weight = yield × tension ×<br/>recency × diversity"]
+    Combine --> QualityPenalty["× quality_penalty<br/><i>supervisor override</i>"]
+    QualityPenalty --> Clamp["clamp(0.1, 1.0)"]
+    Clamp --> Final["Final weight"]
+
+    style Inputs fill:#16213e,stroke:#e94560,color:#fff
+    style Combine fill:#e94560,stroke:#fff,color:#fff
+    style Final fill:#0f3460,stroke:#e94560,color:#fff
+```
 
 ---
 
