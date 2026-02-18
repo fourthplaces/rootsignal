@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
 };
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{CityNode, NodeType};
@@ -471,6 +471,28 @@ pub async fn create_city(
     Redirect::to("/admin/cities")
 }
 
+pub async fn stop_city_scout(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    info!(city = slug.as_str(), "Scout stop requested by admin");
+    state.scout_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    Redirect::to(&format!("/admin/cities/{slug}"))
+}
+
+pub async fn reset_scout_lock(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    info!(city = slug.as_str(), "Scout lock reset requested by admin");
+    if let Err(e) = state.writer.release_scout_lock().await {
+        warn!(error = %e, "Failed to release scout lock");
+    }
+    Redirect::to(&format!("/admin/cities/{slug}"))
+}
+
 pub async fn run_city_scout(
     _session: AdminSession,
     State(state): State<Arc<AppState>>,
@@ -500,6 +522,7 @@ pub async fn run_city_scout(
             state.graph_client.clone(),
             state.config.clone(),
             slug,
+            state.scout_cancel.clone(),
         );
     }
 

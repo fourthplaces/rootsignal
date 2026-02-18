@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::{
     extract::State,
@@ -15,11 +16,14 @@ use crate::AppState;
 
 /// Spawn a scout run in a dedicated thread.
 /// Returns immediately. The scout lock prevents concurrent runs.
-pub fn spawn_scout_run(client: GraphClient, config: Config, city_slug: String) {
+pub fn spawn_scout_run(client: GraphClient, config: Config, city_slug: String, cancel: Arc<AtomicBool>) {
+    // Reset cancel flag at the start of each run
+    cancel.store(false, Ordering::Relaxed);
+
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
-            if let Err(e) = run_scout(&client, &config, &city_slug).await {
+            if let Err(e) = run_scout(&client, &config, &city_slug, cancel).await {
                 error!(error = %e, "Scout run failed");
             }
         });
@@ -30,6 +34,7 @@ async fn run_scout(
     client: &GraphClient,
     config: &Config,
     city_slug: &str,
+    cancel: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let writer = rootsignal_graph::GraphWriter::new(client.clone());
 
@@ -48,6 +53,7 @@ async fn run_scout(
         &config.apify_api_key,
         city_node,
         config.daily_budget_cents,
+        cancel,
     )?;
 
     let stats = scout.run().await?;
@@ -74,7 +80,8 @@ pub fn start_scout_interval(client: GraphClient, config: Config, interval_hours:
             loop {
                 info!(city = city_slug.as_str(), "Scout interval: starting run");
 
-                if let Err(e) = run_scout(&client, &config, &city_slug).await {
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Err(e) = run_scout(&client, &config, &city_slug, cancel).await {
                     error!(error = %e, "Scout interval run failed");
                 }
 
@@ -144,6 +151,7 @@ pub async fn scout_run_handler(
         state.graph_client.clone(),
         state.config.clone(),
         state.config.city.clone(),
+        state.scout_cancel.clone(),
     );
 
     (

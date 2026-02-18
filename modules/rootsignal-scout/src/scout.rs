@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
@@ -131,6 +134,7 @@ pub struct Scout {
     anthropic_api_key: String,
     city_node: CityNode,
     budget: BudgetTracker,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Scout {
@@ -142,6 +146,7 @@ impl Scout {
         apify_api_key: &str,
         city_node: CityNode,
         daily_budget_cents: u64,
+        cancelled: Arc<AtomicBool>,
     ) -> Result<Self> {
         info!(city = city_node.name.as_str(), "Initializing scout");
         let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
@@ -161,6 +166,7 @@ impl Scout {
             anthropic_api_key: anthropic_api_key.to_string(),
             city_node,
             budget: BudgetTracker::new(daily_budget_cents),
+            cancelled,
         })
     }
 
@@ -186,7 +192,17 @@ impl Scout {
             anthropic_api_key: anthropic_api_key.to_string(),
             city_node,
             budget: BudgetTracker::new(0), // Unlimited for tests
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Check if the scout has been cancelled. Returns Err if so.
+    fn check_cancelled(&self) -> Result<()> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            info!("Scout run cancelled by user");
+            anyhow::bail!("Scout run cancelled");
+        }
+        Ok(())
     }
 
     /// Run a full scout cycle.
@@ -314,6 +330,8 @@ impl Scout {
         all_urls.dedup();
         info!(total_urls = all_urls.len(), "Unique URLs to scrape");
 
+        self.check_cancelled()?;
+
         // 3. Scrape + check content hash + extract in parallel, then write sequentially
         let pipeline_results: Vec<_> = stream::iter(all_urls.iter().map(|url| {
             let url = url.clone();
@@ -402,6 +420,8 @@ impl Scout {
             }
         }
 
+        self.check_cancelled()?;
+
         // 4. Social media scraping — driven by social SourceNodes from the graph
         {
             self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &social_sources).await;
@@ -461,6 +481,8 @@ impl Scout {
         // Log budget status before compute-heavy phases
         self.budget.log_status();
 
+        self.check_cancelled()?;
+
         // 5. Clustering — build similarity edges, run Leiden, create/update stories
         // (Always runs — no API calls, just graph math)
         info!("Starting clustering...");
@@ -481,6 +503,8 @@ impl Scout {
             }
         }
 
+        self.check_cancelled()?;
+
         // 5b. Response mapping — match Give/Event to Tensions/Asks (non-fatal)
         // (Uses Claude API — check budget)
         if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
@@ -497,6 +521,8 @@ impl Scout {
             info!("Skipping response mapping (budget exhausted)");
         }
 
+        self.check_cancelled()?;
+
         // 6. Investigation (Uses Tavily + Claude — check budget)
         if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::TAVILY_INVESTIGATION) {
             info!("Starting investigation phase...");
@@ -508,6 +534,8 @@ impl Scout {
         } else if self.budget.is_active() {
             info!("Skipping investigation (budget exhausted)");
         }
+
+        self.check_cancelled()?;
 
         // 7. Source discovery — find new sources from actors, gaps, references
         // (No API calls for actor/gap discovery, just graph reads + writes)
