@@ -5,7 +5,7 @@ use crate::GraphClient;
 
 /// Cosine similarity threshold for creating SIMILAR_TO edges.
 /// Single-city deployments use cosine only (geo/temporal add noise).
-const SIMILARITY_THRESHOLD: f64 = 0.55;
+const SIMILARITY_THRESHOLD: f64 = 0.65;
 
 /// Batch size for UNWIND edge creation.
 const EDGE_BATCH_SIZE: usize = 500;
