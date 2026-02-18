@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use spider_transformations::transformation::content::{
     transform_content_input, ReturnFormat, TransformConfig, TransformInput,
 };
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 // --- PageScraper trait ---
@@ -19,19 +20,36 @@ pub trait PageScraper: Send + Sync {
 
 /// Scraper that uses headless Chromium --dump-dom for JS rendering, then
 /// spider_transformations Readability extraction for clean main content.
-pub struct ChromeScraper;
+/// Max concurrent Chromium processes. Each instance is heavy (~100MB+ RSS,
+/// multiple child processes). Railway containers hit PID/memory limits fast.
+const MAX_CONCURRENT_CHROME: usize = 2;
+
+pub struct ChromeScraper {
+    semaphore: Semaphore,
+}
 
 impl ChromeScraper {
     pub fn new() -> Self {
-        info!("Using ChromeScraper (dump-dom + Readability extraction)");
-        Self
+        info!("Using ChromeScraper (dump-dom + Readability extraction, max_concurrent={MAX_CONCURRENT_CHROME})");
+        Self {
+            semaphore: Semaphore::new(MAX_CONCURRENT_CHROME),
+        }
     }
 }
 
 #[async_trait]
 impl PageScraper for ChromeScraper {
     async fn scrape(&self, url: &str) -> Result<String> {
+        let _permit = self.semaphore.acquire().await
+            .map_err(|_| anyhow::anyhow!("Chrome semaphore closed"))?;
+
         info!(url, scraper = "chrome", "Scraping URL");
+
+        // Validate URL before passing to Chrome subprocess
+        let parsed = url::Url::parse(url).context("Invalid URL")?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            anyhow::bail!("Only http/https URLs are allowed, got: {}", parsed.scheme());
+        }
 
         let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
         let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
