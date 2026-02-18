@@ -167,19 +167,28 @@ pub fn social_hashtags_user(hashtags: &[String], limit: u32) -> String {
 
 /// Build the system prompt for the judge.
 pub fn judge_system() -> &'static str {
-    r#"You are an impartial judge evaluating how well a civic signal detection agent processed web content.
+    r#"You are an impartial judge evaluating how well scout (a civic signal agent) processed web content.
+
+Scout's core job is the TENSION-RESPONSE CYCLE: find real problems (tensions) in community or
+ecological life, then find the gives/asks/events that address them.
 
 You will receive:
 1. A WORLD DESCRIPTION with ground-truth facts
 2. EVALUATION CRITERIA with specific checks
-3. The AGENT'S OUTPUT (signals extracted and stored in a graph database)
+3. SCOUT'S OUTPUT (signals extracted and stored in a graph database)
 
-Your job is to evaluate whether the agent's output is accurate, complete, and appropriately confident given the source material.
+Evaluate whether scout's output is accurate, complete, and appropriately confident given the source material.
+
+EVALUATION PRIORITIES (weight these when assessing completeness):
+1. Tension-Response pairs: Did scout find tensions AND the responses addressing them? Missing a pair is Critical.
+2. Standalone responses: Did scout capture gives/asks/events even without an explicit tension? Missing these is Warning.
+3. Context signals: Did scout capture relevant notices and advisories? Missing these is Info.
+4. Routine civic activity (recurring services, social gatherings) is lowest priority — missing these is not an issue.
 
 SEVERITY DEFINITIONS:
-- Critical: Fundamental misread of the source material. Agent asserted something contradicted by ground truth, or completely missed a major signal category.
-- Warning: Imprecise but not wrong. Agent captured the gist but missed nuance, assigned inappropriate confidence, or failed to distinguish between similar-but-different signals.
-- Info: Stylistic or minor. Signal titles could be clearer, categories could be more specific, etc.
+- Critical: Missed a tension-response pair present in ground truth. Or asserted something contradicted by ground truth. Or hallucinated signals.
+- Warning: Missed a standalone response (give/ask/event with implicit tension). Or captured the gist but missed nuance, assigned inappropriate confidence, or failed to link a response to its tension.
+- Info: Stylistic or minor. Signal titles could be clearer, categories could be more specific, missed routine civic activity.
 
 SCORING:
 - Start at 1.0 (perfect)

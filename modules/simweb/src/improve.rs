@@ -102,9 +102,10 @@ impl Improver {
         let world_json =
             serde_json::to_string_pretty(world).map_err(|e| anyhow!("serialize: {e}"))?;
 
-        let system = "You generate evaluation criteria for a civic signal extraction agent. \
-                      Given a World scenario description, return JSON with checks that the agent \
-                      should pass. Focus on what would expose the blind spot this scenario targets.";
+        let system = "You generate evaluation criteria for scout, a civic signal agent whose core job \
+                      is finding tensions (real problems) and the responses (gives/asks/events) that \
+                      address them. Given a World scenario, return JSON with checks that scout should \
+                      pass. Focus on tension-response completeness and what would expose the blind spot.";
 
         let user = format!(
             "Generate JudgeCriteria for this scenario:\n\n{world_json}\n\n\
@@ -133,16 +134,22 @@ impl Improver {
     }
 
     async fn identify_blind_spots(&self, failures_json: &str) -> Result<AnalysisResponse> {
-        let system = "You analyze test failures from a civic signal extraction system to identify \
-                      blind spots — capabilities that are missing or broken. Return structured JSON.";
+        let system = "You analyze test failures from scout, a civic signal agent whose core job is \
+                      the TENSION-RESPONSE CYCLE: find tensions (problems in community or ecological \
+                      life) and the responses (gives/asks/events) that address them. \
+                      Blind spots fall into: missed tensions, missed responses to known tensions, \
+                      broken tension-response linking, or hallucinated signals. Return structured JSON.";
 
         let user = format!(
-            "Given these test failures from a civic signal extraction system:\n\n\
+            "Given these test failures from scout:\n\n\
              {failures_json}\n\n\
-             For each failure, identify the blind spot:\n\
-             1. What capability is missing or broken\n\
-             2. What adversarial scenario would stress-test this weakness\n\
-             3. Any prompt improvements that could help\n\n\
+             For each failure, identify which part of the tension-response cycle broke:\n\
+             1. Did scout miss a TENSION (a real problem in the community)?\n\
+             2. Did it miss a RESPONSE (give/ask/event) that addresses a tension?\n\
+             3. Did it fail to LINK a response to its underlying tension?\n\
+             4. Did it hallucinate signals not grounded in the source material?\n\
+             5. What adversarial scenario would stress-test this weakness?\n\
+             6. Any prompt improvements that could help?\n\n\
              Return JSON: {{\n  \
                \"blind_spots\": [{{\"category\": \"string\", \"description\": \"string\", \
                \"source\": \"scenario name\", \"severity\": \"High|Medium|Low\"}}],\n  \
@@ -161,10 +168,10 @@ impl Improver {
         let spot_json =
             serde_json::to_string_pretty(blind_spot).map_err(|e| anyhow!("serialize: {e}"))?;
 
-        let system = "You generate World definitions for testing a civic signal extraction agent. \
+        let system = "You generate World definitions for testing scout, a civic signal agent. \
                       A World describes a simulated city with websites, social profiles, and \
-                      ground-truth facts. The scenario must target a specific blind spot so that \
-                      a system with this weakness WILL fail.";
+                      ground-truth facts. The scenario must target a specific blind spot in scout's \
+                      tension-response extraction so that a system with this weakness WILL fail.";
 
         let user = format!(
             "Generate a World definition targeting this blind spot:\n\n{spot_json}\n\n\

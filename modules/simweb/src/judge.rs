@@ -11,7 +11,7 @@ use crate::world::World;
 const SONNET_MODEL: &str = "claude-sonnet-4-6-20250514";
 
 /// Criteria for judge evaluation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeCriteria {
     pub checks: Vec<String>,
     pub pass_threshold: f32,
