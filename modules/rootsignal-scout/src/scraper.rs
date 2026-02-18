@@ -13,6 +13,11 @@ use tracing::{info, warn};
 #[async_trait]
 pub trait PageScraper: Send + Sync {
     async fn scrape(&self, url: &str) -> Result<String>;
+    /// Return raw HTML without Readability extraction. Used for query sources
+    /// where we need to extract links from the page structure.
+    async fn scrape_raw(&self, url: &str) -> Result<String> {
+        self.scrape(url).await
+    }
     fn name(&self) -> &str;
 }
 
@@ -114,9 +119,99 @@ impl PageScraper for ChromeScraper {
         Ok(text)
     }
 
+    async fn scrape_raw(&self, url: &str) -> Result<String> {
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| anyhow::anyhow!("Chrome semaphore closed"))?;
+
+        info!(url, scraper = "chrome", "Scraping raw HTML");
+
+        let parsed = url::Url::parse(url).context("Invalid URL")?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            anyhow::bail!(
+                "Only http/https URLs are allowed, got: {}",
+                parsed.scheme()
+            );
+        }
+
+        let chrome_bin = std::env::var("CHROME_BIN").unwrap_or_else(|_| "chromium".to_string());
+        let tmp_dir = tempfile::tempdir().context("Failed to create temp profile dir")?;
+
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new(&chrome_bin)
+                .args([
+                    "--headless",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    &format!("--user-data-dir={}", tmp_dir.path().display()),
+                    "--dump-dom",
+                    url,
+                ])
+                .output(),
+        )
+        .await
+        .context(format!("Chrome timed out after 30s for {url}"))?
+        .context(format!("Failed to run Chrome for {url}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(url, scraper = "chrome", stderr = %stderr, "Chrome exited with error");
+            return Ok(String::new());
+        }
+
+        let html = String::from_utf8_lossy(&output.stdout).into_owned();
+
+        if html.is_empty() {
+            warn!(url, scraper = "chrome", "Empty DOM output");
+        } else {
+            info!(url, scraper = "chrome", bytes = html.len(), "Raw HTML scraped");
+        }
+
+        Ok(html)
+    }
+
     fn name(&self) -> &str {
         "chrome"
     }
+}
+
+/// Extract links from raw HTML that match a given URL pattern.
+/// Resolves relative URLs against `base_url`, deduplicates, and caps at 20 results.
+pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Vec<String> {
+    let href_re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("valid regex");
+    let base = url::Url::parse(base_url).ok();
+
+    let mut seen = std::collections::HashSet::new();
+    let mut links = Vec::new();
+
+    for cap in href_re.captures_iter(html) {
+        let raw = &cap[1];
+
+        // Resolve relative URLs
+        let resolved = if raw.starts_with("http://") || raw.starts_with("https://") {
+            raw.to_string()
+        } else if let Some(ref b) = base {
+            match b.join(raw) {
+                Ok(u) => u.to_string(),
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+
+        if resolved.contains(pattern) && seen.insert(resolved.clone()) {
+            links.push(resolved);
+            if links.len() >= 20 {
+                break;
+            }
+        }
+    }
+
+    links
 }
 
 // --- Social media types ---

@@ -414,8 +414,9 @@ pub enum SourceType {
     TavilyQuery,
     TikTok,
     Twitter,
-    GoFundMe,
-    EventbriteSearch,
+    GoFundMeQuery,
+    EventbriteQuery,
+    VolunteerMatchQuery,
     Bluesky,
 }
 
@@ -429,8 +430,9 @@ impl std::fmt::Display for SourceType {
             SourceType::TavilyQuery => write!(f, "tavily_query"),
             SourceType::TikTok => write!(f, "tiktok"),
             SourceType::Twitter => write!(f, "twitter"),
-            SourceType::GoFundMe => write!(f, "gofundme"),
-            SourceType::EventbriteSearch => write!(f, "eventbrite_search"),
+            SourceType::GoFundMeQuery => write!(f, "gofundme_query"),
+            SourceType::EventbriteQuery => write!(f, "eventbrite_query"),
+            SourceType::VolunteerMatchQuery => write!(f, "volunteermatch_query"),
             SourceType::Bluesky => write!(f, "bluesky"),
         }
     }
@@ -445,8 +447,9 @@ impl SourceType {
             "tavily_query" => Self::TavilyQuery,
             "tiktok" => Self::TikTok,
             "twitter" => Self::Twitter,
-            "gofundme" => Self::GoFundMe,
-            "eventbrite_search" => Self::EventbriteSearch,
+            "gofundme" | "gofundme_query" => Self::GoFundMeQuery,
+            "eventbrite_search" | "eventbrite_query" => Self::EventbriteQuery,
+            "volunteermatch_query" => Self::VolunteerMatchQuery,
             "bluesky" => Self::Bluesky,
             _ => Self::Web,
         }
@@ -466,8 +469,35 @@ impl SourceType {
             Self::Twitter
         } else if url.contains("bsky.app") {
             Self::Bluesky
+        } else if url.contains("eventbrite.com") {
+            Self::EventbriteQuery
+        } else if url.contains("gofundme.com") {
+            Self::GoFundMeQuery
+        } else if url.contains("volunteermatch.org") {
+            Self::VolunteerMatchQuery
         } else {
             Self::Web
+        }
+    }
+
+    /// Returns true if this source type produces URLs (queries) rather than content (pages).
+    pub fn is_query(&self) -> bool {
+        matches!(
+            self,
+            Self::TavilyQuery
+                | Self::EventbriteQuery
+                | Self::GoFundMeQuery
+                | Self::VolunteerMatchQuery
+        )
+    }
+
+    /// For HTML-based query sources, returns the URL pattern that identifies individual item pages.
+    pub fn link_pattern(&self) -> Option<&'static str> {
+        match self {
+            Self::EventbriteQuery => Some("eventbrite.com/e/"),
+            Self::GoFundMeQuery => Some("gofundme.com/f/"),
+            Self::VolunteerMatchQuery => Some("volunteermatch.org/search/opp"),
+            _ => None,
         }
     }
 }

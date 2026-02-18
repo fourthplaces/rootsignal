@@ -276,12 +276,12 @@ impl Scout {
             .filter(|s| scheduled_keys.contains(&s.canonical_key))
             .collect();
 
-        // Partition scheduled sources by type
-        let tavily_sources: Vec<&SourceNode> = scheduled_sources.iter()
-            .filter(|s| s.source_type == SourceType::TavilyQuery)
+        // Partition scheduled sources by behavior: query (produces URLs) vs page (produces content) vs social
+        let query_sources: Vec<&SourceNode> = scheduled_sources.iter()
+            .filter(|s| s.source_type.is_query())
             .copied()
             .collect();
-        let web_sources: Vec<&SourceNode> = scheduled_sources.iter()
+        let page_sources: Vec<&SourceNode> = scheduled_sources.iter()
             .filter(|s| s.source_type == SourceType::Web)
             .copied()
             .collect();
@@ -292,9 +292,13 @@ impl Scout {
 
         let mut all_urls: Vec<String> = Vec::new();
 
-        // 1. Tavily searches (parallel, 5 at a time)
-        info!(queries = tavily_sources.len(), "Starting web searches...");
-        let search_results: Vec<_> = stream::iter(tavily_sources.iter().map(|source| {
+        // Phase 1: Resolve query sources → URLs
+        // 1a. API-based queries (Tavily) — parallel, 5 at a time
+        let api_queries: Vec<&&SourceNode> = query_sources.iter()
+            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .collect();
+        info!(queries = api_queries.len(), "Starting Tavily searches...");
+        let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
             let query_str = source.canonical_value.clone();
             async move {
                 (query_str.clone(), self.searcher.search(&query_str, 5).await)
@@ -317,9 +321,28 @@ impl Scout {
             }
         }
 
-        // 2. Web sources (curated + discovered)
-        info!(count = web_sources.len(), "Adding web sources...");
-        for source in &web_sources {
+        // 1b. HTML-based queries — scrape raw HTML, extract links by pattern
+        let html_queries: Vec<&&SourceNode> = query_sources.iter()
+            .filter(|s| s.source_type.link_pattern().is_some())
+            .collect();
+        info!(queries = html_queries.len(), "Resolving HTML query sources...");
+        for source in &html_queries {
+            if let (Some(url), Some(pattern)) = (&source.url, source.source_type.link_pattern()) {
+                match self.scraper.scrape_raw(url).await {
+                    Ok(html) if !html.is_empty() => {
+                        let links = scraper::extract_links_by_pattern(&html, url, pattern);
+                        info!(url = url.as_str(), links = links.len(), "Query resolved");
+                        all_urls.extend(links);
+                    }
+                    Ok(_) => warn!(url = url.as_str(), "Empty HTML from query source"),
+                    Err(e) => warn!(url = url.as_str(), error = %e, "Query scrape failed"),
+                }
+            }
+        }
+
+        // Phase 2: Add page source URLs directly
+        info!(count = page_sources.len(), "Adding page sources...");
+        for source in &page_sources {
             if let Some(ref url) = source.url {
                 all_urls.push(url.clone());
             }

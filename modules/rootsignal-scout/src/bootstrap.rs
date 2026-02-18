@@ -132,7 +132,8 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         Ok(queries)
     }
 
-    /// Generate standard platform sources for the city (Reddit, GoFundMe, Eventbrite, etc.)
+    /// Generate standard platform sources for the city (Reddit, GoFundMe, Eventbrite, VolunteerMatch, etc.)
+    /// Eventbrite/VolunteerMatch/GoFundMe are query sources — they produce URLs, not content.
     fn generate_platform_sources(&self) -> Vec<SourceNode> {
         let slug = &self.city_node.slug;
         let city_name = &self.city_node.name;
@@ -169,19 +170,19 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         };
 
         let mut sources = vec![
-            make(SourceType::Web, &format!(
+            make(SourceType::EventbriteQuery, &format!(
                 "https://www.eventbrite.com/d/united-states--{}/community/",
                 city_name_encoded
             )),
-            make(SourceType::Web, &format!(
+            make(SourceType::EventbriteQuery, &format!(
                 "https://www.eventbrite.com/d/united-states--{}/volunteer/",
                 city_name_encoded
             )),
-            make(SourceType::Web, &format!(
+            make(SourceType::VolunteerMatchQuery, &format!(
                 "https://www.volunteermatch.org/search?l={}&k=&v=true",
                 city_name_encoded
             )),
-            make(SourceType::Web, &format!(
+            make(SourceType::GoFundMeQuery, &format!(
                 "https://www.gofundme.com/discover/search?q={}&location={}",
                 slug, city_name_encoded
             )),

@@ -274,6 +274,30 @@ mod tests {
         assert_eq!(SourceType::from_url("https://www.startribune.com/article"), SourceType::Web);
     }
 
+    #[test]
+    fn infer_eventbrite() {
+        assert_eq!(
+            SourceType::from_url("https://www.eventbrite.com/d/united-states--Minneapolis/community/"),
+            SourceType::EventbriteQuery
+        );
+    }
+
+    #[test]
+    fn infer_gofundme() {
+        assert_eq!(
+            SourceType::from_url("https://www.gofundme.com/discover/search?q=minneapolis"),
+            SourceType::GoFundMeQuery
+        );
+    }
+
+    #[test]
+    fn infer_volunteermatch() {
+        assert_eq!(
+            SourceType::from_url("https://www.volunteermatch.org/search?l=Minneapolis"),
+            SourceType::VolunteerMatchQuery
+        );
+    }
+
     // --- canonical_value_from_url tests ---
 
     #[test]
