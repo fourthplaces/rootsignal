@@ -5,6 +5,7 @@ use rootsignal_common::CityNode;
 use rootsignal_graph::GraphClient;
 
 use crate::checks::auto_fix;
+use crate::issues::IssueStore;
 use crate::notify::backend::NotifyBackend;
 use crate::state::SupervisorState;
 use crate::types::SupervisorStats;
@@ -13,6 +14,7 @@ use crate::types::SupervisorStats;
 pub struct Supervisor {
     client: GraphClient,
     state: SupervisorState,
+    issues: IssueStore,
     city: CityNode,
     notifier: Box<dyn NotifyBackend>,
 }
@@ -24,9 +26,11 @@ impl Supervisor {
         notifier: Box<dyn NotifyBackend>,
     ) -> Self {
         let state = SupervisorState::new(client.clone(), city.slug.clone());
+        let issues = IssueStore::new(client.clone());
         Self {
             client,
             state,
+            issues,
             city,
             notifier,
         }
@@ -62,7 +66,12 @@ impl Supervisor {
             "Supervisor checking window"
         );
 
-        // Phase 1: Auto-fix checks (deterministic, safe to run anytime)
+        // Expire stale issues (>30 days old)
+        if let Err(e) = self.issues.expire_stale_issues().await {
+            warn!(error = %e, "Failed to expire stale issues");
+        }
+
+        // Auto-fix checks (deterministic, safe to run anytime)
         stats.auto_fix = auto_fix::run_auto_fixes(
             &self.client,
             self.city.center_lat,
@@ -70,7 +79,7 @@ impl Supervisor {
         )
         .await?;
 
-        // Phase 2: Send digest
+        // Send digest notification
         if let Err(e) = self.notifier.send_digest(&stats).await {
             warn!(error = %e, "Failed to send digest notification");
         }
