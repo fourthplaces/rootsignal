@@ -23,6 +23,19 @@ pub struct GeoPoint {
     pub precision: GeoPrecision,
 }
 
+/// Haversine great-circle distance between two lat/lng points in kilometers.
+pub fn haversine_km(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
+    const EARTH_RADIUS_KM: f64 = 6371.0;
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lng = (lng2 - lng1).to_radians();
+    let lat1_r = lat1.to_radians();
+    let lat2_r = lat2.to_radians();
+
+    let a = (d_lat / 2.0).sin().powi(2) + lat1_r.cos() * lat2_r.cos() * (d_lng / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().asin();
+    EARTH_RADIUS_KM * c
+}
+
 // --- Enums ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -374,15 +387,36 @@ pub struct ClusterSnapshot {
     pub run_at: DateTime<Utc>,
 }
 
+// --- City Node (graph-backed city configuration) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CityNode {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub geo_terms: Vec<String>,
+    pub active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 // --- Source Types (for emergent source discovery) ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceType {
     Web,
     Instagram,
     Facebook,
     Reddit,
+    TavilyQuery,
+    TikTok,
+    Twitter,
+    GoFundMe,
+    EventbriteSearch,
+    Bluesky,
 }
 
 impl std::fmt::Display for SourceType {
@@ -392,6 +426,29 @@ impl std::fmt::Display for SourceType {
             SourceType::Instagram => write!(f, "instagram"),
             SourceType::Facebook => write!(f, "facebook"),
             SourceType::Reddit => write!(f, "reddit"),
+            SourceType::TavilyQuery => write!(f, "tavily_query"),
+            SourceType::TikTok => write!(f, "tiktok"),
+            SourceType::Twitter => write!(f, "twitter"),
+            SourceType::GoFundMe => write!(f, "gofundme"),
+            SourceType::EventbriteSearch => write!(f, "eventbrite_search"),
+            SourceType::Bluesky => write!(f, "bluesky"),
+        }
+    }
+}
+
+impl SourceType {
+    pub fn from_str_loose(s: &str) -> Self {
+        match s {
+            "instagram" => Self::Instagram,
+            "facebook" => Self::Facebook,
+            "reddit" => Self::Reddit,
+            "tavily_query" => Self::TavilyQuery,
+            "tiktok" => Self::TikTok,
+            "twitter" => Self::Twitter,
+            "gofundme" => Self::GoFundMe,
+            "eventbrite_search" => Self::EventbriteSearch,
+            "bluesky" => Self::Bluesky,
+            _ => Self::Web,
         }
     }
 }
@@ -407,6 +464,12 @@ pub enum DiscoveryMethod {
     SignalReference,
     /// Discovered via topic/hashtag search on social platforms
     HashtagDiscovery,
+    /// Generated during cold start bootstrap
+    ColdStart,
+    /// Discovered from tension-seeded follow-up queries
+    TensionSeed,
+    /// Submitted by a human via the submission endpoint
+    HumanSubmission,
 }
 
 impl std::fmt::Display for DiscoveryMethod {
@@ -416,15 +479,24 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::GapAnalysis => write!(f, "gap_analysis"),
             DiscoveryMethod::SignalReference => write!(f, "signal_reference"),
             DiscoveryMethod::HashtagDiscovery => write!(f, "hashtag_discovery"),
+            DiscoveryMethod::ColdStart => write!(f, "cold_start"),
+            DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
+            DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
         }
     }
 }
 
 /// A tracked source in the graph — either curated (from seed list) or discovered.
+/// Identity is `canonical_key` = `city_slug:source_type:canonical_value`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceNode {
     pub id: Uuid,
-    pub url: String,
+    /// Unique identity: `city_slug:source_type:canonical_value`.
+    pub canonical_key: String,
+    /// The handle/query/URL that identifies this source within its type.
+    pub canonical_value: String,
+    /// URL for web/social sources. None for query-type sources (TavilyQuery).
+    pub url: Option<String>,
     pub source_type: SourceType,
     pub discovery_method: DiscoveryMethod,
     pub city: String,
@@ -436,6 +508,28 @@ pub struct SourceNode {
     pub consecutive_empty_runs: u32,
     pub active: bool,
     pub gap_context: Option<String>,
+    /// Source weight (0.0-1.0), drives scrape priority. Default 0.5.
+    pub weight: f64,
+    /// Learned scrape interval in hours.
+    pub cadence_hours: Option<u32>,
+    /// Rolling average signals per scrape.
+    pub avg_signals_per_scrape: f64,
+    /// Cumulative API cost in cents.
+    pub total_cost_cents: u64,
+    /// Cost of last scrape in cents.
+    pub last_cost_cents: u64,
+    /// JSON string of signal type breakdown: `{"tension": N, "ask": N, ...}`.
+    pub taxonomy_stats: Option<String>,
+}
+
+/// A human-submitted link with an optional reason for investigation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmissionNode {
+    pub id: Uuid,
+    pub url: String,
+    pub reason: Option<String>,
+    pub city: String,
+    pub submitted_at: DateTime<Utc>,
 }
 
 /// A blocked source URL pattern that should never be re-discovered.
@@ -564,5 +658,25 @@ mod tests {
         assert_eq!(t.severity, Severity::Medium);
         assert!(t.category.is_none());
         assert!(t.what_would_help.is_none());
+    }
+
+    #[test]
+    fn haversine_sf_to_oakland() {
+        // SF to Oakland is ~13km
+        let dist = haversine_km(37.7749, -122.4194, 37.8044, -122.2712);
+        assert!((dist - 13.0).abs() < 2.0, "SF to Oakland should be ~13km, got {dist}");
+    }
+
+    #[test]
+    fn haversine_sf_to_la() {
+        // SF to LA is ~559km
+        let dist = haversine_km(37.7749, -122.4194, 34.0522, -118.2437);
+        assert!((dist - 559.0).abs() < 10.0, "SF to LA should be ~559km, got {dist}");
+    }
+
+    #[test]
+    fn haversine_same_point_is_zero() {
+        let dist = haversine_km(44.9778, -93.265, 44.9778, -93.265);
+        assert!(dist < 0.001, "Same point should be 0km, got {dist}");
     }
 }

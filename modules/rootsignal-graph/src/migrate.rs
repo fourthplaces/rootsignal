@@ -229,19 +229,38 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Edge indexes created");
 
+    // --- City node constraints and indexes ---
+    let city_constraints = [
+        "CREATE CONSTRAINT ON (c:City) ASSERT c.id IS UNIQUE",
+        "CREATE CONSTRAINT ON (c:City) ASSERT c.slug IS UNIQUE",
+    ];
+
+    for c in &city_constraints {
+        run_ignoring_exists(g, c).await?;
+    }
+
+    run_ignoring_exists(g, "CREATE INDEX ON :City(active)").await?;
+    info!("City constraints and indexes created");
+
     // --- Source node constraints and indexes ---
     let source_constraints = [
         "CREATE CONSTRAINT ON (s:Source) ASSERT s.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (s:Source) ASSERT s.url IS UNIQUE",
+        "CREATE CONSTRAINT ON (s:Source) ASSERT s.canonical_key IS UNIQUE",
     ];
 
     for c in &source_constraints {
         run_ignoring_exists(g, c).await?;
     }
 
+    // Drop legacy url uniqueness constraint (canonical_key is the new identity)
+    drop_ignoring_missing(g, "DROP CONSTRAINT ON (s:Source) ASSERT s.url IS UNIQUE").await;
+
     let source_indexes = [
         "CREATE INDEX ON :Source(city)",
         "CREATE INDEX ON :Source(active)",
+        "CREATE INDEX ON :Source(url)",
+        "CREATE INDEX ON :Source(source_type)",
+        "CREATE INDEX ON :Source(weight)",
     ];
 
     for idx in &source_indexes {
@@ -340,4 +359,72 @@ async fn run_ignoring_exists(
             }
         }
     }
+}
+
+/// Drop a constraint/index, ignoring errors if it doesn't exist.
+async fn drop_ignoring_missing(g: &neo4rs::Graph, cypher: &str) {
+    match g.run(query(cypher)).await {
+        Ok(_) => info!("Dropped: {}", cypher.chars().take(80).collect::<String>()),
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("doesn't exist") || msg.contains("does not exist") || msg.contains("not found") {
+                warn!("Already dropped (skipped): {}", cypher.chars().take(80).collect::<String>());
+            } else {
+                warn!("Drop failed (non-fatal): {e}");
+            }
+        }
+    }
+}
+
+/// Backfill canonical_key on existing Source nodes and normalize city to slug.
+/// Idempotent — skips sources that already have canonical_key.
+pub async fn backfill_source_canonical_keys(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling source canonical keys...");
+
+    // Step 1: Normalize city names to slugs
+    let city_mappings = [
+        ("Twin Cities (Minneapolis-St. Paul, Minnesota)", "twincities"),
+        ("New York City", "nyc"),
+        ("Portland, Oregon", "portland"),
+        ("Berlin, Germany", "berlin"),
+    ];
+    for (name, slug) in &city_mappings {
+        let q = query(
+            "MATCH (s:Source) WHERE s.city = $name SET s.city = $slug"
+        )
+        .param("name", *name)
+        .param("slug", *slug);
+        match g.run(q).await {
+            Ok(_) => {}
+            Err(e) => warn!("City slug backfill failed for {name}: {e}"),
+        }
+    }
+
+    // Step 2: Generate canonical_key for sources that don't have one
+    let q = query(
+        "MATCH (s:Source) WHERE s.canonical_key IS NULL
+         SET s.canonical_key = s.city + ':' + s.source_type + ':' + s.url,
+             s.canonical_value = s.url,
+             s.weight = CASE WHEN s.weight IS NULL THEN 0.5 ELSE s.weight END,
+             s.avg_signals_per_scrape = CASE WHEN s.avg_signals_per_scrape IS NULL THEN 0.0 ELSE s.avg_signals_per_scrape END,
+             s.total_cost_cents = CASE WHEN s.total_cost_cents IS NULL THEN 0 ELSE s.total_cost_cents END,
+             s.last_cost_cents = CASE WHEN s.last_cost_cents IS NULL THEN 0 ELSE s.last_cost_cents END
+         RETURN count(s) AS updated"
+    );
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Backfilled canonical keys on existing sources");
+                }
+            }
+        }
+        Err(e) => warn!("Canonical key backfill failed (non-fatal): {e}"),
+    }
+
+    info!("Source canonical key backfill complete");
+    Ok(())
 }

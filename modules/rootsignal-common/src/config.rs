@@ -27,6 +27,16 @@ pub struct Config {
 
     // City
     pub city: String,
+
+    // City bootstrap (optional — for cold-start or explicit override)
+    pub city_name: Option<String>,
+    pub city_lat: Option<f64>,
+    pub city_lng: Option<f64>,
+    pub city_radius_km: Option<f64>,
+
+    // Budget
+    /// Daily budget limit in cents. 0 = unlimited.
+    pub daily_budget_cents: u64,
 }
 
 impl Config {
@@ -50,6 +60,11 @@ impl Config {
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
             city: String::new(),
+            city_name: None,
+            city_lat: None,
+            city_lng: None,
+            city_radius_km: None,
+            daily_budget_cents: 0,
         }
     }
 
@@ -69,6 +84,14 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
+            city_name: env::var("CITY_NAME").ok(),
+            city_lat: env::var("CITY_LAT").ok().and_then(|v| v.parse().ok()),
+            city_lng: env::var("CITY_LNG").ok().and_then(|v| v.parse().ok()),
+            city_radius_km: env::var("CITY_RADIUS_KM").ok().and_then(|v| v.parse().ok()),
+            daily_budget_cents: env::var("DAILY_BUDGET_CENTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         }
     }
 
@@ -88,6 +111,11 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
+            city_name: None,
+            city_lat: None,
+            city_lng: None,
+            city_radius_km: None,
+            daily_budget_cents: 0,
         }
     }
 
@@ -110,6 +138,11 @@ impl Config {
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
+            city_name: None,
+            city_lat: None,
+            city_lng: None,
+            city_radius_km: None,
+            daily_budget_cents: 0,
         }
     }
 }

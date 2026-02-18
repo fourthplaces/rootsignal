@@ -1,3 +1,7 @@
+use chrono::Utc;
+use rootsignal_common::{CityNode, SourceType};
+use uuid::Uuid;
+
 /// Per-city source configuration.
 pub struct CityProfile {
     pub name: &'static str,
@@ -76,6 +80,11 @@ pub fn resolve_entity(url: &str, mappings: &[EntityMapping]) -> String {
     domain
 }
 
+/// Check if a city has a compile-time profile.
+pub fn has_profile(city: &str) -> bool {
+    matches!(city, "twincities" | "nyc" | "portland" | "berlin")
+}
+
 /// Build a CityProfile for the given city key.
 /// Panics if the city is not recognized.
 pub fn city_profile(city: &str) -> CityProfile {
@@ -85,6 +94,90 @@ pub fn city_profile(city: &str) -> CityProfile {
         "portland" => portland_profile(),
         "berlin" => berlin_profile(),
         other => panic!("Unknown city: {other}. Supported: twincities, nyc, portland, berlin"),
+    }
+}
+
+/// Build a canonical key: `city_slug:source_type:canonical_value`.
+pub fn make_canonical_key(city_slug: &str, source_type: SourceType, canonical_value: &str) -> String {
+    format!("{}:{}:{}", city_slug, source_type, canonical_value)
+}
+
+/// Extract the canonical value for a source given its type and URL/identifier.
+/// For Instagram: extracts username from URL. For Reddit: extracts subreddit. Others: returns as-is.
+pub fn canonical_value_from_url(source_type: SourceType, url_or_value: &str) -> String {
+    match source_type {
+        SourceType::Instagram => {
+            // https://www.instagram.com/{username}/ → username
+            url_or_value
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(url_or_value)
+                .to_string()
+        }
+        SourceType::Reddit => {
+            // https://www.reddit.com/r/{subreddit} → subreddit
+            if let Some(idx) = url_or_value.find("/r/") {
+                url_or_value[idx + 3..]
+                    .trim_end_matches('/')
+                    .split('/')
+                    .next()
+                    .unwrap_or(url_or_value)
+                    .to_string()
+            } else {
+                url_or_value.to_string()
+            }
+        }
+        SourceType::TikTok => {
+            // https://www.tiktok.com/@{username} → username
+            url_or_value
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(url_or_value)
+                .trim_start_matches('@')
+                .to_string()
+        }
+        SourceType::Twitter => {
+            // https://twitter.com/{handle} or https://x.com/{handle} → handle
+            url_or_value
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(url_or_value)
+                .trim_start_matches('@')
+                .to_string()
+        }
+        // Web, Facebook, TavilyQuery, GoFundMe, EventbriteSearch, Bluesky: use as-is
+        _ => url_or_value.to_string(),
+    }
+}
+
+/// Convert a CityProfile into a CityNode for graph storage.
+/// Uses the city slug to derive defaults; radius_km can be overridden via config.
+pub fn city_node_from_profile(slug: &str, profile: &CityProfile, radius_km_override: Option<f64>) -> CityNode {
+    let radius_km = radius_km_override.unwrap_or_else(|| default_radius_km(slug));
+    CityNode {
+        id: Uuid::new_v4(),
+        name: profile.name.to_string(),
+        slug: slug.to_string(),
+        center_lat: profile.default_lat,
+        center_lng: profile.default_lng,
+        radius_km,
+        geo_terms: profile.geo_terms.iter().map(|s| s.to_string()).collect(),
+        active: true,
+        created_at: Utc::now(),
+    }
+}
+
+/// Default radius in km for known cities. Falls back to 30km.
+fn default_radius_km(slug: &str) -> f64 {
+    match slug {
+        "twincities" => 30.0,
+        "nyc" => 25.0,
+        "portland" => 20.0,
+        "berlin" => 20.0,
+        _ => 30.0,
     }
 }
 

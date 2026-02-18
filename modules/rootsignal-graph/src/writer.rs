@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, ClusterSnapshot, DiscoveryMethod, EditionNode, EvidenceNode,
+    ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EditionNode, EvidenceNode,
     EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode,
     SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
@@ -1095,15 +1095,95 @@ impl GraphWriter {
         Ok(None)
     }
 
+    // --- City operations ---
+
+    /// Create or update a City node. MERGE on slug for idempotency.
+    pub async fn upsert_city(&self, city: &CityNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (c:City {slug: $slug})
+             ON CREATE SET
+                c.id = $id,
+                c.name = $name,
+                c.center_lat = $center_lat,
+                c.center_lng = $center_lng,
+                c.radius_km = $radius_km,
+                c.geo_terms = $geo_terms,
+                c.active = $active,
+                c.created_at = datetime($created_at)
+             ON MATCH SET
+                c.name = $name,
+                c.center_lat = $center_lat,
+                c.center_lng = $center_lng,
+                c.radius_km = $radius_km,
+                c.geo_terms = $geo_terms,
+                c.active = $active"
+        )
+        .param("id", city.id.to_string())
+        .param("slug", city.slug.as_str())
+        .param("name", city.name.as_str())
+        .param("center_lat", city.center_lat)
+        .param("center_lng", city.center_lng)
+        .param("radius_km", city.radius_km)
+        .param("geo_terms", city.geo_terms.clone())
+        .param("active", city.active)
+        .param("created_at", memgraph_datetime(&city.created_at));
+
+        self.client.graph.run(q).await?;
+        info!(slug = city.slug.as_str(), name = city.name.as_str(), "City node upserted");
+        Ok(())
+    }
+
+    /// Get a City node by slug. Returns None if not found.
+    pub async fn get_city(&self, slug: &str) -> Result<Option<CityNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (c:City {slug: $slug})
+             RETURN c.id AS id, c.name AS name, c.slug AS slug,
+                    c.center_lat AS center_lat, c.center_lng AS center_lng,
+                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
+                    c.active AS active, c.created_at AS created_at"
+        )
+        .param("slug", slug);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => return Ok(None),
+            };
+
+            let created_at_str: String = row.get("created_at").unwrap_or_default();
+            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+                .map(|ndt| ndt.and_utc())
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(Some(CityNode {
+                id,
+                name: row.get("name").unwrap_or_default(),
+                slug: row.get("slug").unwrap_or_default(),
+                center_lat: row.get("center_lat").unwrap_or(0.0),
+                center_lng: row.get("center_lng").unwrap_or(0.0),
+                radius_km: row.get("radius_km").unwrap_or(0.0),
+                geo_terms: row.get("geo_terms").unwrap_or_default(),
+                active: row.get("active").unwrap_or(true),
+                created_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     // --- Source operations (emergent source discovery) ---
 
     /// Create or update a Source node in the graph.
-    /// Uses MERGE on url to be idempotent (safe for seeding curated sources every run).
+    /// Uses MERGE on canonical_key to be idempotent (safe for seeding curated sources every run).
     pub async fn upsert_source(&self, source: &SourceNode) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MERGE (s:Source {url: $url})
+            "MERGE (s:Source {canonical_key: $canonical_key})
              ON CREATE SET
                 s.id = $id,
+                s.canonical_value = $canonical_value,
+                s.url = $url,
                 s.source_type = $source_type,
                 s.discovery_method = $discovery_method,
                 s.city = $city,
@@ -1112,12 +1192,19 @@ impl GraphWriter {
                 s.signals_corroborated = $signals_corroborated,
                 s.consecutive_empty_runs = $consecutive_empty_runs,
                 s.active = $active,
-                s.gap_context = $gap_context
+                s.gap_context = $gap_context,
+                s.weight = $weight,
+                s.avg_signals_per_scrape = $avg_signals_per_scrape,
+                s.total_cost_cents = $total_cost_cents,
+                s.last_cost_cents = $last_cost_cents
              ON MATCH SET
-                s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END"
+                s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
+                s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
         )
         .param("id", source.id.to_string())
-        .param("url", source.url.as_str())
+        .param("canonical_key", source.canonical_key.as_str())
+        .param("canonical_value", source.canonical_value.as_str())
+        .param("url", source.url.clone().unwrap_or_default())
         .param("source_type", source.source_type.to_string())
         .param("discovery_method", source.discovery_method.to_string())
         .param("city", source.city.as_str())
@@ -1126,24 +1213,64 @@ impl GraphWriter {
         .param("signals_corroborated", source.signals_corroborated as i64)
         .param("consecutive_empty_runs", source.consecutive_empty_runs as i64)
         .param("active", source.active)
-        .param("gap_context", source.gap_context.clone().unwrap_or_default());
+        .param("gap_context", source.gap_context.clone().unwrap_or_default())
+        .param("weight", source.weight)
+        .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
+        .param("total_cost_cents", source.total_cost_cents as i64)
+        .param("last_cost_cents", source.last_cost_cents as i64);
 
         self.client.graph.run(q).await?;
         Ok(())
     }
 
-    /// Get all active sources for a city.
+    /// Create a Submission node and link it to its associated Source.
+    pub async fn upsert_submission(
+        &self,
+        submission: &rootsignal_common::SubmissionNode,
+        source_canonical_key: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "CREATE (sub:Submission {
+                id: $id,
+                url: $url,
+                reason: $reason,
+                city: $city,
+                submitted_at: datetime($submitted_at)
+            })
+            WITH sub
+            MATCH (s:Source {canonical_key: $canonical_key})
+            MERGE (sub)-[:SUBMITTED_FOR]->(s)"
+        )
+        .param("id", submission.id.to_string())
+        .param("url", submission.url.as_str())
+        .param("reason", submission.reason.clone().unwrap_or_default())
+        .param("city", submission.city.as_str())
+        .param("submitted_at", memgraph_datetime(&submission.submitted_at))
+        .param("canonical_key", source_canonical_key);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Get all active sources for a city (by slug).
     pub async fn get_active_sources(&self, city: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {city: $city, active: true})
-             RETURN s.id AS id, s.url AS url, s.source_type AS source_type,
+             RETURN s.id AS id, s.canonical_key AS canonical_key,
+                    s.canonical_value AS canonical_value, s.url AS url,
+                    s.source_type AS source_type,
                     s.discovery_method AS discovery_method, s.city AS city,
                     s.created_at AS created_at, s.last_scraped AS last_scraped,
                     s.last_produced_signal AS last_produced_signal,
                     s.signals_produced AS signals_produced,
                     s.signals_corroborated AS signals_corroborated,
                     s.consecutive_empty_runs AS consecutive_empty_runs,
-                    s.active AS active, s.gap_context AS gap_context"
+                    s.active AS active, s.gap_context AS gap_context,
+                    s.weight AS weight, s.cadence_hours AS cadence_hours,
+                    s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                    s.total_cost_cents AS total_cost_cents,
+                    s.last_cost_cents AS last_cost_cents,
+                    s.taxonomy_stats AS taxonomy_stats"
         )
         .param("city", city);
 
@@ -1157,42 +1284,54 @@ impl GraphWriter {
             };
 
             let source_type_str: String = row.get("source_type").unwrap_or_default();
-            let source_type = match source_type_str.as_str() {
-                "instagram" => SourceType::Instagram,
-                "facebook" => SourceType::Facebook,
-                "reddit" => SourceType::Reddit,
-                _ => SourceType::Web,
-            };
+            let source_type = SourceType::from_str_loose(&source_type_str);
 
             let discovery_str: String = row.get("discovery_method").unwrap_or_default();
             let discovery_method = match discovery_str.as_str() {
                 "gap_analysis" => DiscoveryMethod::GapAnalysis,
                 "signal_reference" => DiscoveryMethod::SignalReference,
                 "hashtag_discovery" => DiscoveryMethod::HashtagDiscovery,
+                "cold_start" => DiscoveryMethod::ColdStart,
+                "tension_seed" => DiscoveryMethod::TensionSeed,
+                "human_submission" => DiscoveryMethod::HumanSubmission,
                 _ => DiscoveryMethod::Curated,
             };
 
-            let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                .map(|ndt| ndt.and_utc())
-                .unwrap_or_else(|_| Utc::now());
+            let created_at = parse_memgraph_datetime_opt(&row.get::<String>("created_at").unwrap_or_default())
+                .unwrap_or_else(Utc::now);
+
+            let last_scraped = row.get::<String>("last_scraped").ok()
+                .and_then(|s| parse_memgraph_datetime_opt(&s));
+            let last_produced_signal = row.get::<String>("last_produced_signal").ok()
+                .and_then(|s| parse_memgraph_datetime_opt(&s));
 
             let gap_context: String = row.get("gap_context").unwrap_or_default();
+            let url: String = row.get("url").unwrap_or_default();
+            let taxonomy_stats: String = row.get("taxonomy_stats").unwrap_or_default();
+            let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
 
             sources.push(SourceNode {
                 id,
-                url: row.get("url").unwrap_or_default(),
+                canonical_key: row.get("canonical_key").unwrap_or_default(),
+                canonical_value: row.get("canonical_value").unwrap_or_default(),
+                url: if url.is_empty() { None } else { Some(url) },
                 source_type,
                 discovery_method,
                 city: row.get("city").unwrap_or_default(),
                 created_at,
-                last_scraped: None, // TODO: parse if needed
-                last_produced_signal: None,
+                last_scraped,
+                last_produced_signal,
                 signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
                 signals_corroborated: row.get::<i64>("signals_corroborated").unwrap_or(0) as u32,
                 consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0) as u32,
                 active: row.get("active").unwrap_or(true),
                 gap_context: if gap_context.is_empty() { None } else { Some(gap_context) },
+                weight: row.get("weight").unwrap_or(0.5),
+                cadence_hours: if cadence > 0 { Some(cadence as u32) } else { None },
+                avg_signals_per_scrape: row.get("avg_signals_per_scrape").unwrap_or(0.0),
+                total_cost_cents: row.get::<i64>("total_cost_cents").unwrap_or(0) as u64,
+                last_cost_cents: row.get::<i64>("last_cost_cents").unwrap_or(0) as u64,
+                taxonomy_stats: if taxonomy_stats.is_empty() { None } else { Some(taxonomy_stats) },
             });
         }
 
@@ -1203,33 +1342,74 @@ impl GraphWriter {
     /// Updates last_scraped, signals_produced, consecutive_empty_runs.
     pub async fn record_source_scrape(
         &self,
-        source_url: &str,
+        canonical_key: &str,
         signals_produced: u32,
         now: DateTime<Utc>,
     ) -> Result<(), neo4rs::Error> {
         if signals_produced > 0 {
             let q = query(
-                "MATCH (s:Source {url: $url})
+                "MATCH (s:Source {canonical_key: $key})
                  SET s.last_scraped = datetime($now),
                      s.last_produced_signal = datetime($now),
                      s.signals_produced = s.signals_produced + $count,
                      s.consecutive_empty_runs = 0"
             )
-            .param("url", source_url)
+            .param("key", canonical_key)
             .param("now", memgraph_datetime(&now))
             .param("count", signals_produced as i64);
             self.client.graph.run(q).await?;
         } else {
             let q = query(
-                "MATCH (s:Source {url: $url})
+                "MATCH (s:Source {canonical_key: $key})
                  SET s.last_scraped = datetime($now),
                      s.consecutive_empty_runs = s.consecutive_empty_runs + 1"
             )
-            .param("url", source_url)
+            .param("key", canonical_key)
             .param("now", memgraph_datetime(&now));
             self.client.graph.run(q).await?;
         }
         Ok(())
+    }
+
+    /// Update weight and cadence for a source based on computed metrics.
+    pub async fn update_source_weight(
+        &self,
+        canonical_key: &str,
+        weight: f64,
+        cadence_hours: u32,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {canonical_key: $key})
+             SET s.weight = $weight, s.cadence_hours = $cadence"
+        )
+        .param("key", canonical_key)
+        .param("weight", weight)
+        .param("cadence", cadence_hours as i64);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Count tension signals produced by a specific source.
+    pub async fn count_source_tensions(
+        &self,
+        canonical_key: &str,
+    ) -> Result<u32, neo4rs::Error> {
+        // Look up URL from canonical_key, then count Tension nodes with matching source_url
+        let q = query(
+            "MATCH (s:Source {canonical_key: $key})
+             WITH s.url AS url, s.canonical_value AS cv
+             OPTIONAL MATCH (t:Tension)
+             WHERE t.source_url = url OR t.source_url CONTAINS cv
+             RETURN count(t) AS cnt"
+        )
+        .param("key", canonical_key);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("cnt").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
     }
 
     /// Deactivate sources that have had too many consecutive empty runs.
@@ -1492,6 +1672,53 @@ impl GraphWriter {
 
         self.client.graph.run(q).await?;
         Ok(())
+    }
+
+    /// Get recent tension titles and what_would_help for discovery queries.
+    pub async fn get_recent_tensions(&self, limit: u32) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             RETURN t.title AS title, t.what_would_help AS help
+             ORDER BY t.extracted_at DESC
+             LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let title: String = row.get("title").unwrap_or_default();
+            let help: String = row.get("help").unwrap_or_default();
+            if !title.is_empty() {
+                results.push((title, if help.is_empty() { None } else { Some(help) }));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get actors with their domains and social URLs for source discovery.
+    pub async fn get_actors_with_domains(
+        &self,
+        city: &str,
+    ) -> Result<Vec<(String, Vec<String>, Vec<String>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {city: $city})
+             WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
+             RETURN a.name AS name, a.domains AS domains, a.social_urls AS social_urls"
+        )
+        .param("city", city);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let name: String = row.get("name").unwrap_or_default();
+            let domains: Vec<String> = row.get("domains").unwrap_or_default();
+            let social_urls: Vec<String> = row.get("social_urls").unwrap_or_default();
+            if !name.is_empty() && (!domains.is_empty() || !social_urls.is_empty()) {
+                results.push((name, domains, social_urls));
+            }
+        }
+        Ok(results)
     }
 
     /// Get active tensions for response mapping.
@@ -1787,4 +2014,15 @@ fn memgraph_datetime(dt: &DateTime<Utc>) -> String {
 /// Public version of memgraph_datetime for use by other modules (e.g. cluster.rs).
 pub fn memgraph_datetime_pub(dt: &DateTime<Utc>) -> String {
     memgraph_datetime(dt)
+}
+
+/// Parse a Memgraph datetime string back into a DateTime<Utc>.
+/// Returns None for empty strings or parse failures.
+fn parse_memgraph_datetime_opt(s: &str) -> Option<DateTime<Utc>> {
+    if s.is_empty() {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .map(|ndt| ndt.and_utc())
+        .ok()
 }
