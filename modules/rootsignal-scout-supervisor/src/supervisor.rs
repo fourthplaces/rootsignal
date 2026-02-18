@@ -5,7 +5,7 @@ use rootsignal_common::CityNode;
 use rootsignal_graph::GraphClient;
 
 use crate::budget::BudgetTracker;
-use crate::checks::{auto_fix, llm, triage};
+use crate::checks::{auto_fix, echo, llm, triage};
 use crate::feedback::source_penalty;
 use crate::issues::IssueStore;
 use crate::notify::backend::NotifyBackend;
@@ -154,6 +154,21 @@ impl Supervisor {
             }
         } else {
             info!("Scout is running, deferring feedback writes to next run");
+        }
+
+        // Phase 6: Echo detection — score stories for single-source flooding
+        match echo::detect_echoes(&self.client, 0.7).await {
+            Ok(echo_stats) => {
+                stats.echoes_flagged = echo_stats.echoes_flagged;
+                if echo_stats.stories_scored > 0 {
+                    info!(
+                        scored = echo_stats.stories_scored,
+                        flagged = echo_stats.echoes_flagged,
+                        "Echo detection complete"
+                    );
+                }
+            }
+            Err(e) => warn!(error = %e, "Failed to run echo detection"),
         }
 
         // Send digest notification
