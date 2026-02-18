@@ -1653,7 +1653,7 @@ impl GraphWriter {
         explanation: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event)
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event OR resp:Ask)
              MATCH (t:Tension {id: $tension_id})
              MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
         )

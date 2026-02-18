@@ -128,13 +128,16 @@ Scout is the automated civic intelligence collection engine for Root Signal. It 
 │                           NEO4J / MEMGRAPH                              │
 │                                                                         │
 │  Nodes:                          Relationships:                         │
-│  ┌─────────┐ ┌─────────┐       Signal ──EVIDENCED_BY──▶ Evidence       │
-│  │ Event   │ │ Give    │       Signal ──MENTIONS──▶ Actor              │
-│  │ Ask     │ │ Notice  │       Give/Event ──RESPONDS_TO──▶ Ask/Tension │
-│  │ Tension │ │ Evidence│       Signal ──MEMBER_OF──▶ Story             │
-│  │ Actor   │ │ Story   │       Source ──PRODUCED──▶ Signal              │
-│  │ Source  │ │ Lock    │                                                │
-│  └─────────┘ └─────────┘       Indices:                                │
+│  ┌─────────┐ ┌──────────┐     Signal ──SOURCED_FROM──▶ Evidence        │
+│  │ Event   │ │ Give     │     Actor ──ACTED_IN──▶ Signal               │
+│  │ Ask     │ │ Notice   │     Give/Event/Ask ──RESPONDS_TO──▶ Tension  │
+│  │ Tension │ │ Evidence │     Story ──CONTAINS──▶ Signal               │
+│  │ Actor   │ │ Story    │     Story ──EVOLVED_FROM──▶ Story            │
+│  │ Source  │ │ Edition  │     Edition ──FEATURES──▶ Story              │
+│  │ Submit. │ │ Lock     │     Signal ──SIMILAR_TO──▶ Signal            │
+│  └─────────┘ └──────────┘     Submission ──SUBMITTED_FOR──▶ Source     │
+│                                                                         │
+│                                Indices:                                │
 │                                  - Vector (1024-dim per signal)         │
 │                                  - Content hash + URL (dedup)           │
 │                                  - Title + type (global dedup)          │
