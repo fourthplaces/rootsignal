@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::templates::build_page;
+use super::layout::Layout;
+use crate::templates::render_to_html;
 
 #[allow(non_snake_case)]
 #[component]
@@ -12,76 +13,75 @@ fn QualityDashboard(
     confidence: Vec<(String, u64)>,
 ) -> Element {
     rsx! {
-        div { class: "container",
-            h2 { style: "margin-bottom:16px;", "Quality Dashboard (Internal)" }
-            div { style: "display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px;",
-                div { class: "node-card", style: "text-align:center;",
-                    div { style: "font-size:36px;font-weight:700;color:#1565c0;", "{total_count}" }
-                    div { style: "font-size:13px;color:#888;", "Total Signals" }
-                }
-                div { class: "node-card", style: "text-align:center;",
-                    div { style: "font-size:36px;font-weight:700;color:#2e7d32;", "{type_count}" }
-                    div { style: "font-size:13px;color:#888;", "Signal Types" }
-                }
-            }
-
-            // Signal Type Breakdown
-            div { class: "node-card",
-                h3 { style: "margin-bottom:12px;", "Signal Type Breakdown" }
-                table { style: "width:100%;font-size:14px;",
-                    thead {
-                        tr {
-                            th { style: "text-align:left;", "Type" }
-                            th { style: "text-align:right;", "Count" }
-                        }
+        Layout { title: "Quality Dashboard".to_string(), active_page: "quality".to_string(),
+            div { class: "max-w-4xl mx-auto p-6",
+                h2 { class: "text-xl font-semibold mb-4", "Quality Dashboard (Internal)" }
+                div { class: "grid grid-cols-2 gap-4 mb-6",
+                    div { class: "bg-white border border-gray-200 rounded-lg p-4 text-center",
+                        div { class: "text-4xl font-bold text-blue-700", "{total_count}" }
+                        div { class: "text-sm text-gray-400", "Total Signals" }
                     }
-                    tbody {
-                        for (label, count) in by_type.iter() {
+                    div { class: "bg-white border border-gray-200 rounded-lg p-4 text-center",
+                        div { class: "text-4xl font-bold text-green-700", "{type_count}" }
+                        div { class: "text-sm text-gray-400", "Signal Types" }
+                    }
+                }
+
+                div { class: "bg-white border border-gray-200 rounded-lg p-4 mb-3",
+                    h3 { class: "font-semibold mb-3", "Signal Type Breakdown" }
+                    table { class: "w-full text-sm",
+                        thead {
                             tr {
-                                td { "{label}" }
-                                td { style: "text-align:right;", "{count}" }
+                                th { class: "text-left pb-2 text-gray-500", "Type" }
+                                th { class: "text-right pb-2 text-gray-500", "Count" }
+                            }
+                        }
+                        tbody {
+                            for (label, count) in by_type.iter() {
+                                tr {
+                                    td { class: "py-1", "{label}" }
+                                    td { class: "text-right py-1", "{count}" }
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Freshness Distribution
-            div { class: "node-card",
-                h3 { style: "margin-bottom:12px;", "Freshness Distribution" }
-                table { style: "width:100%;font-size:14px;",
-                    thead {
-                        tr {
-                            th { style: "text-align:left;", "Period" }
-                            th { style: "text-align:right;", "Count" }
-                        }
-                    }
-                    tbody {
-                        for (label, count) in freshness.iter() {
+                div { class: "bg-white border border-gray-200 rounded-lg p-4 mb-3",
+                    h3 { class: "font-semibold mb-3", "Freshness Distribution" }
+                    table { class: "w-full text-sm",
+                        thead {
                             tr {
-                                td { "{label}" }
-                                td { style: "text-align:right;", "{count}" }
+                                th { class: "text-left pb-2 text-gray-500", "Period" }
+                                th { class: "text-right pb-2 text-gray-500", "Count" }
+                            }
+                        }
+                        tbody {
+                            for (label, count) in freshness.iter() {
+                                tr {
+                                    td { class: "py-1", "{label}" }
+                                    td { class: "text-right py-1", "{count}" }
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Confidence Distribution
-            div { class: "node-card",
-                h3 { style: "margin-bottom:12px;", "Confidence Distribution" }
-                table { style: "width:100%;font-size:14px;",
-                    thead {
-                        tr {
-                            th { style: "text-align:left;", "Tier" }
-                            th { style: "text-align:right;", "Count" }
-                        }
-                    }
-                    tbody {
-                        for (label, count) in confidence.iter() {
+                div { class: "bg-white border border-gray-200 rounded-lg p-4 mb-3",
+                    h3 { class: "font-semibold mb-3", "Confidence Distribution" }
+                    table { class: "w-full text-sm",
+                        thead {
                             tr {
-                                td { "{label}" }
-                                td { style: "text-align:right;", "{count}" }
+                                th { class: "text-left pb-2 text-gray-500", "Tier" }
+                                th { class: "text-right pb-2 text-gray-500", "Count" }
+                            }
+                        }
+                        tbody {
+                            for (label, count) in confidence.iter() {
+                                tr {
+                                    td { class: "py-1", "{label}" }
+                                    td { class: "text-right py-1", "{count}" }
+                                }
                             }
                         }
                     }
@@ -103,5 +103,5 @@ pub fn render_quality(
         QualityDashboardProps { total_count, type_count, by_type, freshness, confidence },
     );
     dom.rebuild_in_place();
-    build_page("Quality Dashboard", &dioxus::ssr::render(&dom))
+    render_to_html(&dom)
 }

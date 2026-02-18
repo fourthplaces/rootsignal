@@ -26,7 +26,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     info!("UUID uniqueness constraints created");
 
     // --- Existence (NOT NULL) constraints ---
-    // Memgraph supports these for free (Neo4j required Enterprise).
+    // Memgraph supports these natively.
     let existence = [
         // Event
         "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.sensitivity)",

@@ -29,7 +29,7 @@ modules/
   rootsignal-scout/            Scout agent — scraping, extraction, investigation, geo-filtering
   rootsignal-scout-supervisor/ Supervisor — auto-fixes, health checks, notifications
   rootsignal-api/              GraphQL API (async-graphql + DataLoaders)
-  rootsignal-web/              Axum SSR web server, graph queries, templates
+  rootsignal-admin/            Admin dashboard — Axum SSR, graph queries, templates
   rootsignal-editions/         Curated thematic signal collections
   ai-client/                   Provider-agnostic LLM client (Claude, OpenAI, OpenRouter)
   apify-client/                Social media scraping via Apify (Instagram, Facebook, Reddit)

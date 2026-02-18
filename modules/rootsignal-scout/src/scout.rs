@@ -15,7 +15,7 @@ use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SocialAccount, SocialPlatform,
     SocialPost, SocialScraper, TavilySearcher, WebSearcher,
 };
-use crate::sources::{self, CityProfile};
+use crate::sources;
 
 /// Stats from a scout run.
 #[derive(Debug, Default)]
@@ -129,7 +129,6 @@ pub struct Scout {
     searcher: Box<dyn WebSearcher>,
     social: Box<dyn SocialScraper>,
     anthropic_api_key: String,
-    profile: CityProfile,
     city_node: CityNode,
     budget: BudgetTracker,
 }
@@ -141,12 +140,10 @@ impl Scout {
         voyage_api_key: &str,
         tavily_api_key: &str,
         apify_api_key: &str,
-        city: &str,
         city_node: CityNode,
         daily_budget_cents: u64,
     ) -> Result<Self> {
-        let profile = sources::city_profile(city);
-        info!(city = profile.name, "Initializing scout");
+        info!(city = city_node.name.as_str(), "Initializing scout");
         let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
             warn!("APIFY_API_KEY not set, skipping social media scraping");
             Box::new(NoopSocialScraper)
@@ -162,7 +159,6 @@ impl Scout {
             searcher: Box::new(TavilySearcher::new(tavily_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            profile,
             city_node,
             budget: BudgetTracker::new(daily_budget_cents),
         })
@@ -177,10 +173,8 @@ impl Scout {
         searcher: Box<dyn WebSearcher>,
         social: Box<dyn SocialScraper>,
         anthropic_api_key: &str,
-        city: &str,
+        city_node: CityNode,
     ) -> Self {
-        let profile = sources::city_profile(city);
-        let city_node = sources::city_node_from_profile(city, &profile, None);
         Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
@@ -190,7 +184,6 @@ impl Scout {
             searcher,
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            profile,
             city_node,
             budget: BudgetTracker::new(0), // Unlimited for tests
         }
@@ -213,84 +206,6 @@ impl Scout {
         result
     }
 
-    /// Seed all curated sources from CityProfile as Source nodes in the graph.
-    /// Idempotent — uses MERGE on canonical_key, so safe to call every run.
-    async fn seed_curated_sources(&self) {
-        let now = Utc::now();
-        let slug = &self.city_node.slug;
-
-        let mut all_sources: Vec<SourceNode> = Vec::new();
-
-        // Helper to build a SourceNode with canonical_key
-        let make_source = |source_type: SourceType, url_or_value: &str, url: Option<String>| {
-            let cv = sources::canonical_value_from_url(source_type, url_or_value);
-            let ck = sources::make_canonical_key(slug, source_type, &cv);
-            SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck,
-                canonical_value: cv,
-                url,
-                source_type,
-                discovery_method: DiscoveryMethod::Curated,
-                city: slug.clone(),
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: None,
-                weight: 0.5,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                total_cost_cents: 0,
-                last_cost_cents: 0,
-                taxonomy_stats: None,
-                quality_penalty: 1.0,
-            }
-        };
-
-        // Web sources
-        for url in &self.profile.curated_sources {
-            all_sources.push(make_source(SourceType::Web, url, Some(url.to_string())));
-        }
-
-        // Instagram
-        for username in &self.profile.instagram_accounts {
-            let url = format!("https://www.instagram.com/{username}/");
-            all_sources.push(make_source(SourceType::Instagram, &url, Some(url.clone())));
-        }
-
-        // Facebook
-        for page_url in &self.profile.facebook_pages {
-            all_sources.push(make_source(SourceType::Facebook, page_url, Some(page_url.to_string())));
-        }
-
-        // Reddit
-        for sub_url in &self.profile.reddit_subreddits {
-            all_sources.push(make_source(SourceType::Reddit, sub_url, Some(sub_url.to_string())));
-        }
-
-        // Tavily queries — stored as Source nodes so they get weight/cadence tracking
-        for query in &self.profile.tavily_queries {
-            all_sources.push(make_source(SourceType::TavilyQuery, query, None));
-        }
-
-        let total = all_sources.len();
-        let mut seeded = 0u32;
-        for source in &all_sources {
-            match self.writer.upsert_source(source).await {
-                Ok(_) => seeded += 1,
-                Err(e) => {
-                    let label = source.url.as_deref().unwrap_or(&source.canonical_value);
-                    warn!(source = label, error = %e, "Failed to seed source");
-                }
-            }
-        }
-        info!(seeded, total, "Curated sources seeded");
-    }
-
     async fn run_inner(&self) -> Result<ScoutStats> {
         let mut stats = ScoutStats::default();
 
@@ -309,9 +224,6 @@ impl Scout {
             }
             Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
         }
-
-        // Seed curated sources as Source nodes (idempotent — MERGE on canonical_key)
-        self.seed_curated_sources().await;
 
         // Load all active sources from graph (curated + discovered)
         let all_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
@@ -552,12 +464,7 @@ impl Scout {
         // 5. Clustering — build similarity edges, run Leiden, create/update stories
         // (Always runs — no API calls, just graph math)
         info!("Starting clustering...");
-        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = self
-            .profile
-            .entity_mappings
-            .iter()
-            .map(|m| m.to_owned())
-            .collect();
+        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
 
         let clusterer = Clusterer::new(
             self.graph_client.clone(),
@@ -771,7 +678,8 @@ impl Scout {
         const MAX_NEW_ACCOUNTS: usize = 5;
         const POSTS_PER_SEARCH: u32 = 20;
 
-        let topics = &self.profile.discovery_topics;
+        // Discovery topics will be a future graph-driven feature
+        let topics: Vec<String> = Vec::new();
         if topics.is_empty() {
             return;
         }
@@ -780,7 +688,7 @@ impl Scout {
 
         // Search topics across platforms
         let search_topics: Vec<_> = topics.iter().take(MAX_HASHTAG_SEARCHES).collect();
-        let hashtags: Vec<&str> = search_topics.iter().map(|t| **t).collect();
+        let hashtags: Vec<&str> = search_topics.iter().map(|t| t.as_str()).collect();
 
         let discovered_posts = match self.social.search_hashtags(&hashtags, POSTS_PER_SEARCH).await {
             Ok(posts) => posts,
@@ -940,13 +848,8 @@ impl Scout {
         let url = sanitize_url(url);
         stats.signals_extracted += nodes.len() as u32;
 
-        // Build owned entity mappings for source diversity computation
-        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = self
-            .profile
-            .entity_mappings
-            .iter()
-            .map(|m| m.to_owned())
-            .collect();
+        // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
+        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
 
         // Score quality, set confidence, and apply sanitized URL
         for node in &mut nodes {

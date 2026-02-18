@@ -19,7 +19,9 @@ use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::Config;
 use rootsignal_graph::{GraphClient, GraphWriter, PublicGraphReader};
+use twilio::TwilioService;
 
+mod auth;
 mod components;
 mod graphql;
 mod pages;
@@ -32,8 +34,9 @@ pub struct AppState {
     pub schema: ApiSchema,
     pub reader: PublicGraphReader,
     pub writer: GraphWriter,
-    pub admin_username: String,
-    pub admin_password: String,
+    pub graph_client: GraphClient,
+    pub config: Config,
+    pub twilio: Option<TwilioService>,
     pub city: String,
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
 }
@@ -58,21 +61,41 @@ async fn main() -> Result<()> {
     let config = Config::web_from_env();
 
     let client =
-        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
+        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
             .await?;
+
+    rootsignal_graph::migrate::migrate(&client)
+        .await
+        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
 
     let reader = Arc::new(PublicGraphReader::new(client.clone()));
     let schema = build_schema(reader.clone());
 
     let host = std::env::var("API_HOST").unwrap_or_else(|_| config.web_host.clone());
-    let port = std::env::var("API_PORT").unwrap_or_else(|_| config.web_port.to_string());
+    let port = std::env::var("API_PORT")
+        .or_else(|_| std::env::var("PORT"))
+        .unwrap_or_else(|_| config.web_port.to_string());
+
+    // Clone client for the scout interval (before moving into AppState)
+    let scout_client = client.clone();
+
+    let twilio = if !config.twilio_account_sid.is_empty() {
+        Some(TwilioService::new(twilio::TwilioOptions {
+            account_sid: config.twilio_account_sid.clone(),
+            auth_token: config.twilio_auth_token.clone(),
+            service_id: config.twilio_service_id.clone(),
+        }))
+    } else {
+        None
+    };
 
     let state = Arc::new(AppState {
         schema,
         reader: PublicGraphReader::new(client.clone()),
-        writer: GraphWriter::new(client),
-        admin_username: config.admin_username,
-        admin_password: config.admin_password,
+        writer: GraphWriter::new(client.clone()),
+        graph_client: client,
+        config: config.clone(),
+        twilio,
         city: config.city.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
     });
@@ -82,10 +105,19 @@ async fn main() -> Result<()> {
         .route("/graphql", get(graphiql).post(graphql_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
-        // Admin pages (Dioxus SSR)
+        // Auth (no session required)
+        .route("/admin/login", get(pages::login_page).post(pages::login_submit))
+        .route("/admin/verify", post(pages::verify_submit))
+        .route("/admin/logout", get(pages::logout))
+        // Admin pages (session required via AdminSession extractor)
         .route("/admin", get(pages::map_page))
         .route("/admin/nodes", get(pages::nodes_page))
         .route("/admin/nodes/{id}", get(pages::node_detail_page))
+        .route("/admin/stories", get(pages::stories_page))
+        .route("/admin/stories/{id}", get(pages::story_detail_page))
+        .route("/admin/cities", get(pages::cities_page).post(pages::create_city))
+        .route("/admin/cities/{slug}", get(pages::city_detail_page))
+        .route("/admin/cities/{slug}/scout", post(pages::run_city_scout))
         .route("/admin/quality", get(pages::quality_dashboard))
         // REST API
         .route("/api/nodes/near", get(rest::api_nodes_near))
@@ -105,6 +137,9 @@ async fn main() -> Result<()> {
         .route("/api/editions/latest", get(rest::api_edition_latest))
         .route("/api/editions/{id}", get(rest::api_edition_detail))
         .route("/api/submit", post(rest::submit::api_submit))
+        // Scout
+        .route("/api/scout/run", post(rest::scout::scout_run_handler))
+        .route("/api/scout/status", get(rest::scout::scout_status))
         .with_state(state)
         // CORS
         .layer(
@@ -133,6 +168,25 @@ async fn main() -> Result<()> {
                     )
                 }),
         );
+
+    // Start scout interval loop if configured
+    let scout_interval: u64 = std::env::var("SCOUT_INTERVAL_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if scout_interval > 0
+        && !config.anthropic_api_key.is_empty()
+        && !config.voyage_api_key.is_empty()
+        && !config.tavily_api_key.is_empty()
+    {
+        rest::scout::start_scout_interval(
+            scout_client,
+            config.clone(),
+            scout_interval,
+        );
+    } else if scout_interval > 0 {
+        info!("SCOUT_INTERVAL_HOURS={scout_interval} but API keys not set — scout interval disabled");
+    }
 
     let addr = format!("{host}:{port}");
     info!("Root Signal API starting on {addr}");

@@ -5,6 +5,7 @@
 
 pub mod queries;
 
+use rootsignal_common::CityNode;
 use rootsignal_graph::testutil::memgraph_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
@@ -15,7 +16,25 @@ use rootsignal_scout::fixtures::{
 };
 use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
 use rootsignal_scout::scout::{Scout, ScoutStats};
-use rootsignal_scout::sources;
+
+/// Default test city node (Twin Cities).
+fn default_city_node() -> CityNode {
+    CityNode {
+        id: uuid::Uuid::new_v4(),
+        name: "Twin Cities (Minneapolis-St. Paul, Minnesota)".to_string(),
+        slug: "twincities".to_string(),
+        center_lat: 44.9778,
+        center_lng: -93.2650,
+        radius_km: 30.0,
+        geo_terms: vec![
+            "Minneapolis".to_string(), "St. Paul".to_string(), "Saint Paul".to_string(),
+            "Twin Cities".to_string(), "Minnesota".to_string(), "Hennepin".to_string(),
+            "Ramsey".to_string(), "MN".to_string(), "Mpls".to_string(),
+        ],
+        active: true,
+        created_at: chrono::Utc::now(),
+    }
+}
 
 /// Owns a Memgraph container and API keys for the lifetime of a test.
 /// The container handle is type-erased to avoid leaking testcontainers types.
@@ -61,7 +80,7 @@ impl TestContext {
     pub fn scout(&self) -> ScoutBuilder<'_> {
         ScoutBuilder {
             ctx: self,
-            city: "twincities",
+            city_node: default_city_node(),
             web_content: String::new(),
             search_results: Vec::new(),
             social_posts: Vec::new(),
@@ -74,7 +93,7 @@ impl TestContext {
 /// Builder for configuring what data a scout run sees.
 pub struct ScoutBuilder<'a> {
     ctx: &'a TestContext,
-    city: &'a str,
+    city_node: CityNode,
     web_content: String,
     search_results: Vec<SearchResult>,
     social_posts: Vec<SocialPost>,
@@ -83,8 +102,8 @@ pub struct ScoutBuilder<'a> {
 }
 
 impl<'a> ScoutBuilder<'a> {
-    pub fn with_city(mut self, city: &'a str) -> Self {
-        self.city = city;
+    pub fn with_city(mut self, city_node: CityNode) -> Self {
+        self.city_node = city_node;
         self
     }
 
@@ -142,7 +161,7 @@ impl<'a> ScoutBuilder<'a> {
 
     /// Build the Scout and run a full cycle. Returns stats.
     pub async fn run(self) -> ScoutStats {
-        let profile = sources::city_profile(self.city);
+        let city_node = self.city_node;
 
         let searcher: Box<dyn WebSearcher> = match self.searcher_override {
             Some(s) => s,
@@ -158,16 +177,16 @@ impl<'a> ScoutBuilder<'a> {
             self.ctx.client.clone(),
             Box::new(Extractor::new(
                 &self.ctx.anthropic_key,
-                profile.name,
-                profile.default_lat,
-                profile.default_lng,
+                &city_node.name,
+                city_node.center_lat,
+                city_node.center_lng,
             )),
             Box::new(Embedder::new(&self.ctx.voyage_key)),
             Box::new(FixtureScraper::new(&self.web_content)),
             searcher,
             social,
             &self.ctx.anthropic_key,
-            self.city,
+            city_node,
         );
 
         scout.run().await.expect("Scout run failed")

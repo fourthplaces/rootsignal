@@ -1,7 +1,19 @@
 use dioxus::prelude::*;
 
 use super::{EvidenceView, NodeView, ResponseView};
-use crate::templates::build_page;
+use super::layout::Layout;
+use crate::templates::render_to_html;
+
+fn badge_classes(type_class: &str) -> &'static str {
+    match type_class {
+        "event" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-blue-50 text-blue-800",
+        "give" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-green-50 text-green-800",
+        "ask" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-orange-50 text-orange-800",
+        "notice" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-purple-50 text-purple-800",
+        "tension" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-red-50 text-red-800",
+        _ => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-gray-100 text-gray-600",
+    }
+}
 
 fn source_label(url: &str) -> String {
     if url.contains("instagram.com/p/") || url.contains("instagram.com/reel/") {
@@ -40,131 +52,124 @@ fn SignalDetail(
     };
 
     rsx! {
-        div { class: "container",
-            a { href: "/admin/nodes", style: "font-size:13px;color:#0066cc;text-decoration:none;",
-                "\u{2190} Back to signals"
-            }
-            div { class: "node-card", style: "margin-top:12px;",
-                span { class: "badge badge-{node.type_class}", "{node.type_label}" }
-                h2 { style: "margin:8px 0;", "{node.title}" }
-                p { class: "summary", style: "font-size:15px;", "{node.summary}" }
-
-                // Limited verification banner
-                if node.confidence < 0.6 {
-                    div { class: "limited-banner",
-                        "This signal has limited verification. It may be incomplete or not yet corroborated by multiple sources."
-                    }
+        Layout { title: node.title.clone(), active_page: "signals".to_string(),
+            div { class: "max-w-4xl mx-auto p-6",
+                a { href: "/admin/nodes", class: "text-sm text-blue-600 no-underline",
+                    "\u{2190} Back to signals"
                 }
+                div { class: "bg-white border border-gray-200 rounded-lg p-4 mt-3",
+                    span { class: badge_classes(&node.type_class), "{node.type_label}" }
+                    h2 { class: "text-xl font-semibold my-2", "{node.title}" }
+                    p { class: "text-gray-500 text-[15px]", "{node.summary}" }
 
-                // Tension-specific sections
-                if let Some(cat) = &node.tension_category {
-                    span { class: "badge", style: "background:#fce4ec;color:#c62828;margin-right:8px;",
-                        "{cat}"
+                    if node.confidence < 0.6 {
+                        div { class: "bg-amber-50 border border-amber-200 px-3 py-2 rounded text-sm text-amber-800 mt-3",
+                            "This signal has limited verification. It may be incomplete or not yet corroborated by multiple sources."
+                        }
                     }
-                }
-                if let Some(help) = &node.tension_what_would_help {
-                    div { style: "background:#fff3e0;border-left:3px solid #e65100;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:14px;color:#333;",
-                        strong { "What would help: " }
-                        "{help}"
-                    }
-                }
 
-                // Action section
-                if !node.action_url.is_empty() {
-                    a {
-                        href: "{node.action_url}",
-                        class: "action-btn",
-                        target: "_blank",
-                        rel: "noopener",
-                        style: "margin:12px 0;display:inline-block;",
-                        "Take Action"
+                    if let Some(cat) = &node.tension_category {
+                        span { class: "inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase bg-red-50 text-red-800 mr-2 mt-2",
+                            "{cat}"
+                        }
                     }
-                } else {
-                    p { style: "font-size:13px;color:#888;margin:12px 0;padding:8px;background:#f5f5f5;border-radius:4px;",
-                        "This is context \u{2014} here\u{2019}s what\u{2019}s happening in your community."
+                    if let Some(help) = &node.tension_what_would_help {
+                        div { class: "bg-orange-50 border-l-[3px] border-orange-600 px-3.5 py-2.5 my-3 rounded text-sm text-gray-700",
+                            strong { "What would help: " }
+                            "{help}"
+                        }
                     }
-                }
 
-                // Detail metadata
-                dl { class: "detail-meta",
-                    dt { "Last verified" }
-                    dd { "{node.last_confirmed}" }
-                    dt { "Corroboration" }
-                    dd { "{corr_label}" }
-                    dt { "Completeness" }
-                    dd { "{node.completeness_label}" }
-                }
+                    if !node.action_url.is_empty() {
+                        a {
+                            href: "{node.action_url}",
+                            class: "inline-block px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-800 no-underline my-3",
+                            target: "_blank",
+                            rel: "noopener",
+                            "Take Action"
+                        }
+                    } else {
+                        p { class: "text-sm text-gray-400 my-3 p-2 bg-gray-50 rounded",
+                            "This is context \u{2014} here\u{2019}s what\u{2019}s happening in your community."
+                        }
+                    }
 
-                // Evidence section
-                if !evidence.is_empty() {
-                    div { class: "evidence-list",
-                        h4 { "Sources" }
-                        for ev in evidence.iter() {
-                            {
-                                let label = source_label(&ev.source_url);
-                                rsx! {
-                                    a { href: "{ev.source_url}", target: "_blank", rel: "noopener",
-                                        "{label}"
-                                    }
-                                }
-                            }
-                            // Relevance badge
-                            if let Some(rel) = &ev.relevance {
+                    dl { class: "grid grid-cols-2 gap-2 my-4 text-sm",
+                        dt { class: "text-gray-400", "Last verified" }
+                        dd { class: "text-gray-700", "{node.last_confirmed}" }
+                        dt { class: "text-gray-400", "Corroboration" }
+                        dd { class: "text-gray-700", "{corr_label}" }
+                        dt { class: "text-gray-400", "Completeness" }
+                        dd { class: "text-gray-700", "{node.completeness_label}" }
+                    }
+
+                    if !evidence.is_empty() {
+                        div { class: "mt-3 pt-3 border-t border-gray-100",
+                            h4 { class: "text-sm text-gray-500 mb-1.5", "Sources" }
+                            for ev in evidence.iter() {
                                 {
-                                    let color = match rel.as_str() {
-                                        "contradicting" => "#c62828",
-                                        "direct" => "#2e7d32",
-                                        _ => "#795548",
-                                    };
+                                    let label = source_label(&ev.source_url);
                                     rsx! {
-                                        span { style: "font-size:11px;font-weight:600;color:{color};margin-left:6px;",
-                                            "{rel}"
+                                        a { href: "{ev.source_url}", target: "_blank", rel: "noopener",
+                                            class: "text-sm text-blue-600 block mb-1",
+                                            "{label}"
                                         }
                                     }
                                 }
-                            }
-                            // Confidence percentage
-                            if let Some(c) = ev.evidence_confidence {
-                                if c > 0.0 {
+                                if let Some(rel) = &ev.relevance {
                                     {
-                                        let pct = (c * 100.0).round() as u32;
+                                        let color = match rel.as_str() {
+                                            "contradicting" => "text-red-800",
+                                            "direct" => "text-green-800",
+                                            _ => "text-amber-800",
+                                        };
                                         rsx! {
-                                            span { style: "font-size:11px;color:#999;margin-left:4px;",
-                                                "({pct}%)"
+                                            span { class: "text-xs font-semibold {color} ml-1.5",
+                                                "{rel}"
                                             }
                                         }
                                     }
                                 }
-                            }
-                            // Snippet
-                            if let Some(snippet) = &ev.snippet {
-                                p { style: "font-size:12px;color:#666;margin:2px 0 8px 0;line-height:1.4;",
-                                    "{snippet}"
+                                if let Some(c) = ev.evidence_confidence {
+                                    if c > 0.0 {
+                                        {
+                                            let pct = (c * 100.0).round() as u32;
+                                            rsx! {
+                                                span { class: "text-xs text-gray-400 ml-1",
+                                                    "({pct}%)"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(snippet) = &ev.snippet {
+                                    p { class: "text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed",
+                                        "{snippet}"
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Responses section
-                if !responses.is_empty() {
-                    div { style: "margin-top:16px;padding-top:12px;border-top:1px solid #eee;",
-                        h4 { style: "font-size:13px;color:#666;margin-bottom:8px;", "Responses" }
-                        for r in responses.iter() {
-                            {
-                                let strength_pct = (r.match_strength * 100.0).round() as u32;
-                                rsx! {
-                                    a {
-                                        href: "/admin/nodes/{r.id}",
-                                        style: "display:block;padding:10px 12px;margin-bottom:6px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;text-decoration:none;color:#1a1a1a;",
-                                        span { class: "badge badge-{r.type_class}", style: "margin-right:8px;",
-                                            "{r.type_label}"
-                                        }
-                                        span { style: "font-size:14px;", "{r.title}" }
-                                        span { style: "font-size:11px;color:#999;margin-left:6px;", "{strength_pct}% match" }
-                                        if !r.explanation.is_empty() {
-                                            div { style: "font-size:12px;color:#666;margin-top:4px;padding-left:4px;",
-                                                "{r.explanation}"
+                    if !responses.is_empty() {
+                        div { class: "mt-4 pt-3 border-t border-gray-100",
+                            h4 { class: "text-sm text-gray-500 mb-2", "Responses" }
+                            for r in responses.iter() {
+                                {
+                                    let strength_pct = (r.match_strength * 100.0).round() as u32;
+                                    rsx! {
+                                        a {
+                                            href: "/admin/nodes/{r.id}",
+                                            class: "block p-3 mb-1.5 bg-gray-50 border border-gray-200 rounded-md no-underline text-gray-900",
+                                            span { class: "{badge_classes(&r.type_class)} mr-2",
+                                                "{r.type_label}"
+                                            }
+                                            span { class: "text-sm", "{r.title}" }
+                                            span { class: "text-xs text-gray-400 ml-1.5", "{strength_pct}% match" }
+                                            if !r.explanation.is_empty() {
+                                                div { class: "text-xs text-gray-500 mt-1 pl-1",
+                                                    "{r.explanation}"
+                                                }
                                             }
                                         }
                                     }
@@ -183,11 +188,10 @@ pub fn render_signal_detail(
     evidence: Vec<EvidenceView>,
     responses: Vec<ResponseView>,
 ) -> String {
-    let title = node.title.clone();
     let mut dom = VirtualDom::new_with_props(
         SignalDetail,
         SignalDetailProps { node, evidence, responses },
     );
     dom.rebuild_in_place();
-    build_page(&title, &dioxus::ssr::render(&dom))
+    render_to_html(&dom)
 }

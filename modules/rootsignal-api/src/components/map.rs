@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::templates::build_page;
+use super::layout::Layout;
+use crate::templates::render_to_html;
 
 #[allow(non_snake_case)]
 fn MapPage() -> Element {
@@ -42,16 +43,18 @@ loadMarkers();
 "#;
 
     rsx! {
-        div { style: "padding:0;max-width:none;",
-            div { id: "map", style: "height:calc(100vh - 56px);border-radius:0;border:none;" }
+        Layout { title: "Map".to_string(), active_page: "map".to_string(),
+            div {
+                div { id: "map", class: "h-screen w-full" }
+            }
+            script { src: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" }
+            script { dangerous_inner_html: map_script }
         }
-        script { src: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" }
-        script { dangerous_inner_html: map_script }
     }
 }
 
 pub fn render_map() -> String {
     let mut dom = VirtualDom::new(MapPage);
     dom.rebuild_in_place();
-    build_page("Map", &dioxus::ssr::render(&dom))
+    render_to_html(&dom)
 }

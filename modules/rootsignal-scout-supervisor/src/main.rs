@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
 
     // Connect to Memgraph
     let client =
-        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
+        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
             .await?;
 
     // Run migrations (idempotent)

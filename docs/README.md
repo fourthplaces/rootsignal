@@ -63,7 +63,7 @@ Architectural exploration. The canonical brainstorm supersedes earlier versions.
 
 | Document | Status | Description |
 |----------|--------|-------------|
-| [Civic Intelligence System Architecture](brainstorms/2026-02-16-civic-intelligence-system-architecture-brainstorm.md) | canonical | **The architecture document.** Agent swarm, Neo4j graph, phased rollout |
+| [Civic Intelligence System Architecture](brainstorms/2026-02-16-civic-intelligence-system-architecture-brainstorm.md) | canonical | **The architecture document.** Agent swarm, Memgraph graph, phased rollout |
 | [Civic Tension Search Engine Architecture](brainstorms/2026-02-16-civic-tension-search-engine-architecture-brainstorm.md) | superseded | Earlier architecture focused on tension-only |
 | [Civic Tension Search Engine](brainstorms/2026-02-16-civic-tension-search-engine-brainstorm.md) | superseded | Initial concept brainstorm |
 | [Anti-Fragile Signal](brainstorms/2026-02-17-anti-fragile-signal-brainstorm.md) | draft | Letting truth emerge under pressure |

@@ -1,5 +1,7 @@
 target/
-dev/cli/target/
 .git/
 docs/
 *.md
+.env
+.env.*
+Dockerfile.dev

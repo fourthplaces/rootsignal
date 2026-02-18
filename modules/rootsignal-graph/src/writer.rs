@@ -1210,6 +1210,47 @@ impl GraphWriter {
         }
     }
 
+    /// List all cities, ordered by name.
+    pub async fn list_cities(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (c:City)
+             RETURN c.id AS id, c.name AS name, c.slug AS slug,
+                    c.center_lat AS center_lat, c.center_lng AS center_lng,
+                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
+                    c.active AS active, c.created_at AS created_at
+             ORDER BY c.name"
+        );
+
+        let mut cities = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let created_at_str: String = row.get("created_at").unwrap_or_default();
+            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+                .map(|ndt| ndt.and_utc())
+                .unwrap_or_else(|_| Utc::now());
+
+            cities.push(CityNode {
+                id,
+                name: row.get("name").unwrap_or_default(),
+                slug: row.get("slug").unwrap_or_default(),
+                center_lat: row.get("center_lat").unwrap_or(0.0),
+                center_lng: row.get("center_lng").unwrap_or(0.0),
+                radius_km: row.get("radius_km").unwrap_or(0.0),
+                geo_terms: row.get("geo_terms").unwrap_or_default(),
+                active: row.get("active").unwrap_or(true),
+                created_at,
+            });
+        }
+
+        Ok(cities)
+    }
+
     // --- Source operations (emergent source discovery) ---
 
     /// Create or update a Source node in the graph.

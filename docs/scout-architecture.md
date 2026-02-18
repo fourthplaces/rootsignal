@@ -87,7 +87,7 @@ Scout is the automated civic intelligence collection engine for Root Signal. It 
 │  │           │            0.92 (cross-src)          │                │  │
 │  │           └──────────────┬──────────────────────┘                │  │
 │  │           ┌──────────────▼──────────────────────┐                │  │
-│  │           │  Neo4j Vector Index                  │                │  │
+│  │           │  Memgraph Vector Index                │                │  │
 │  │           │  threshold: 0.85 / 0.92             │                │  │
 │  │           └──────────────┬──────────────────────┘                │  │
 │  │                          │                                        │  │

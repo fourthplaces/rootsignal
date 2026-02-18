@@ -1,3 +1,4 @@
+pub mod scout;
 pub mod submit;
 
 use std::sync::Arc;

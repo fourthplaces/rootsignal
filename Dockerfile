@@ -1,19 +1,29 @@
-FROM rust:1.89-slim-bookworm AS builder
-
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-
+# -- Stage 1: compute recipe (dependency lockfile) --
+FROM rust:1.89-slim-bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
-COPY . .
-RUN cargo build --release --bin api --bin scout
 
+# -- Stage 2: capture dependency recipe --
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -- Stage 3: build dependencies (cached unless Cargo.toml/lock change) --
+FROM chef AS builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# -- Stage 4: build the api binary --
+COPY . .
+RUN cargo build --release --bin api
+
+# -- Stage 5: minimal runtime image --
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/scout /usr/local/bin/scout
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 
-WORKDIR /app
-ENV WEB_HOST=0.0.0.0
-ENV WEB_PORT=3000
+ENV API_HOST=0.0.0.0
 EXPOSE 3000
 CMD ["api"]

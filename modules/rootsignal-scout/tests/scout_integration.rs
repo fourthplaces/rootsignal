@@ -10,9 +10,24 @@
 mod harness;
 
 use harness::{search_result, TestContext};
+use rootsignal_common::CityNode;
 use rootsignal_scout::fixtures::{
     CorpusSearcher, ScenarioSearcher, ScenarioSocialScraper,
 };
+
+fn city_node(name: &str, slug: &str, lat: f64, lng: f64, radius_km: f64, geo_terms: &[&str]) -> CityNode {
+    CityNode {
+        id: uuid::Uuid::new_v4(),
+        name: name.to_string(),
+        slug: slug.to_string(),
+        center_lat: lat,
+        center_lng: lng,
+        radius_km,
+        geo_terms: geo_terms.iter().map(|s| s.to_string()).collect(),
+        active: true,
+        created_at: chrono::Utc::now(),
+    }
+}
 use rootsignal_scout::scraper::SocialPost;
 
 // ---------------------------------------------------------------------------
@@ -271,7 +286,7 @@ async fn portland_content_with_portland_profile() {
 
     let stats = ctx
         .scout()
-        .with_city("portland")
+        .with_city(city_node("Portland, Oregon", "portland", 45.5152, -122.6784, 20.0, &["Portland", "Oregon", "Multnomah", "OR"]))
         .with_web_content(include_str!("fixtures/portland_bike_repair.txt"))
         .with_search_results(vec![search_result(
             "https://communitycyclingcenter.org/clinics",
@@ -299,7 +314,7 @@ async fn nyc_mutual_aid_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city("nyc")
+        .with_city(city_node("New York City", "nyc", 40.7128, -74.0060, 25.0, &["New York", "NYC", "Brooklyn", "Manhattan", "Queens", "Bronx", "NY"]))
         .with_web_content(include_str!("fixtures/nyc_mutual_aid.txt"))
         .with_search_results(vec![search_result(
             "https://crownheightsmutualaid.org/update",
@@ -327,7 +342,7 @@ async fn berlin_german_language_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city("berlin")
+        .with_city(city_node("Berlin, Germany", "berlin", 52.5200, 13.4050, 20.0, &["Berlin", "Kreuzberg", "Neukölln", "Friedrichshain", "Mitte"]))
         .with_web_content(include_str!("fixtures/berlin_neighborhood_council.txt"))
         .with_search_results(vec![search_result(
             "https://neukoelln-nord.de/quartiersrat",
@@ -473,7 +488,7 @@ async fn nyc_community_discussion_extracts_responses() {
 
     let stats = ctx
         .scout()
-        .with_city("nyc")
+        .with_city(city_node("New York City", "nyc", 40.7128, -74.0060, 25.0, &["New York", "NYC", "Brooklyn", "Manhattan", "Queens", "Bronx", "NY"]))
         .with_web_content(include_str!("fixtures/nyc_noise_complaint_discussion.txt"))
         .with_search_results(vec![search_result(
             "https://reddit.com/r/CrownHeights/comments/xyz789",

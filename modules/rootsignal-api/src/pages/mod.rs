@@ -2,27 +2,139 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use tracing::warn;
 use uuid::Uuid;
 
-use rootsignal_common::NodeType;
+use rootsignal_common::{CityNode, NodeType};
 use rootsignal_graph::PublicGraphReader;
 
+use crate::auth::{self, AdminSession};
 use crate::components::{
-    evidence_to_view, node_to_view, render_map, render_quality, render_signal_detail,
-    render_signals_list, tension_response_to_view, EvidenceView, NodeView, ResponseView,
+    evidence_to_view, node_to_view, render_cities, render_city_detail, render_login, render_map,
+    render_quality, render_signal_detail, render_signals_list, render_stories_list,
+    render_story_detail, render_verify, story_to_view, tension_response_to_view, CityView,
+    EvidenceView, NodeView, ResponseView, StoryView,
 };
 use crate::AppState;
 
-pub async fn map_page() -> impl IntoResponse {
+/// Test phone number that bypasses Twilio in development.
+const TEST_PHONE: &str = "+1234567890";
+
+// --- Auth pages (no AdminSession required) ---
+
+pub async fn login_page() -> impl IntoResponse {
+    Html(render_login(None))
+}
+
+pub async fn login_submit(
+    State(state): State<Arc<AppState>>,
+    axum::Form(form): axum::Form<LoginForm>,
+) -> Response {
+    let phone = form.phone.trim().to_string();
+
+    // Check the number is in the allowlist
+    if !state.config.admin_numbers.contains(&phone) {
+        return Html(render_login(Some("Phone number not authorized.".to_string()))).into_response();
+    }
+
+    // Test number: skip Twilio, go straight to verify
+    if phone == TEST_PHONE {
+        return Html(render_verify(phone, None)).into_response();
+    }
+
+    // Send OTP via Twilio
+    match &state.twilio {
+        Some(twilio) => match twilio.send_otp(&phone).await {
+            Ok(_) => Html(render_verify(phone, None)).into_response(),
+            Err(e) => {
+                warn!(error = e, phone = %phone, "Failed to send OTP");
+                Html(render_login(Some(format!("Failed to send code: {e}")))).into_response()
+            }
+        },
+        None => {
+            // No Twilio configured — show error
+            Html(render_login(Some(
+                "SMS not configured. Set TWILIO_* env vars.".to_string(),
+            )))
+            .into_response()
+        }
+    }
+}
+
+pub async fn verify_submit(
+    State(state): State<Arc<AppState>>,
+    axum::Form(form): axum::Form<VerifyForm>,
+) -> Response {
+    let phone = form.phone.trim().to_string();
+    let code = form.code.trim().to_string();
+
+    // Check allowlist again
+    if !state.config.admin_numbers.contains(&phone) {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    // Test number: accept any 6-digit code
+    let verified = if phone == TEST_PHONE {
+        code.len() == 6 && code.chars().all(|c| c.is_ascii_digit())
+    } else {
+        match &state.twilio {
+            Some(twilio) => twilio.verify_otp(&phone, &code).await.is_ok(),
+            None => false,
+        }
+    };
+
+    if verified {
+        let cookie = auth::session_cookie(&phone, &state.config.admin_password);
+        Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header("location", "/admin")
+            .header("set-cookie", cookie)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    } else {
+        Html(render_verify(
+            phone,
+            Some("Invalid code. Please try again.".to_string()),
+        ))
+        .into_response()
+    }
+}
+
+pub async fn logout() -> Response {
+    let cookie = auth::clear_session_cookie();
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("location", "/admin/login")
+        .header("set-cookie", cookie)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+#[derive(serde::Deserialize)]
+pub struct LoginForm {
+    pub phone: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct VerifyForm {
+    pub phone: String,
+    pub code: String,
+}
+
+// --- Protected admin pages (AdminSession required) ---
+
+pub async fn map_page(_session: AdminSession) -> impl IntoResponse {
     Html(render_map())
 }
 
-pub async fn nodes_page(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn nodes_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     match state.reader.list_recent(100, None).await {
         Ok(nodes) => {
             let view_nodes: Vec<NodeView> = nodes.iter().map(node_to_view).collect();
@@ -36,6 +148,7 @@ pub async fn nodes_page(State(state): State<Arc<AppState>>) -> impl IntoResponse
 }
 
 pub async fn node_detail_page(
+    _session: AdminSession,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -60,7 +173,10 @@ pub async fn node_detail_page(
             } else {
                 Vec::new()
             };
-            (StatusCode::OK, Html(render_signal_detail(view, ev_views, response_views)))
+            (
+                StatusCode::OK,
+                Html(render_signal_detail(view, ev_views, response_views)),
+            )
         }
         Ok(None) => (StatusCode::NOT_FOUND, Html("Signal not found".to_string())),
         Err(e) => {
@@ -73,38 +189,366 @@ pub async fn node_detail_page(
     }
 }
 
-pub async fn quality_dashboard(
+pub async fn stories_page(
+    _session: AdminSession,
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // Basic auth check
-    if let Some(auth) = headers.get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth.to_str() {
-            if auth_str.starts_with("Basic ") {
-                let decoded = base64_decode(&auth_str[6..]);
-                if let Some(creds) = decoded {
-                    let expected = format!("{}:{}", state.admin_username, state.admin_password);
-                    if creds == expected {
-                        return match render_quality_page(&state.reader).await {
-                            Ok(html) => (StatusCode::OK, [("content-type", "text/html")], html)
-                                .into_response(),
-                            Err(e) => {
-                                warn!(error = %e, "Failed to render quality dashboard");
-                                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                            }
-                        };
-                    }
-                }
-            }
+    match state.reader.top_stories_by_energy(50, None).await {
+        Ok(stories) => {
+            let story_ids: Vec<uuid::Uuid> = stories.iter().map(|s| s.id).collect();
+            let ev_counts = state
+                .reader
+                .story_evidence_counts(&story_ids)
+                .await
+                .unwrap_or_default();
+            let views: Vec<StoryView> = stories
+                .iter()
+                .map(|s| {
+                    let ec = ev_counts
+                        .iter()
+                        .find(|(id, _)| *id == s.id)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0);
+                    story_to_view(s, ec)
+                })
+                .collect();
+            Html(render_stories_list(views))
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load stories");
+            Html("<h1>Error loading stories</h1>".to_string())
         }
     }
+}
 
-    Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(header::WWW_AUTHENTICATE, "Basic realm=\"admin\"")
-        .body(axum::body::Body::from("Unauthorized"))
-        .unwrap()
-        .into_response()
+pub async fn story_detail_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, Html("Invalid ID".to_string())),
+    };
+
+    match state.reader.get_story_with_signals(uuid).await {
+        Ok(Some((story, signals))) => {
+            let story_ids = vec![story.id];
+            let ev_counts = state
+                .reader
+                .story_evidence_counts(&story_ids)
+                .await
+                .unwrap_or_default();
+            let ec = ev_counts
+                .first()
+                .map(|(_, c)| *c)
+                .unwrap_or(0);
+            let story_view = story_to_view(&story, ec);
+            let signal_views: Vec<NodeView> = signals.iter().map(node_to_view).collect();
+            (
+                StatusCode::OK,
+                Html(render_story_detail(story_view, signal_views)),
+            )
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Html("Story not found".to_string())),
+        Err(e) => {
+            warn!(error = %e, "Failed to load story detail");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html("Error loading story".to_string()),
+            )
+        }
+    }
+}
+
+pub async fn cities_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Check if scout is currently running
+    let scout_running = match state.writer.acquire_scout_lock().await {
+        Ok(true) => {
+            let _ = state.writer.release_scout_lock().await;
+            false
+        }
+        Ok(false) => true,
+        Err(_) => false,
+    };
+
+    match state.writer.list_cities().await {
+        Ok(cities) => {
+            let views: Vec<CityView> = cities
+                .iter()
+                .map(|c| CityView {
+                    name: c.name.clone(),
+                    slug: c.slug.clone(),
+                    center_lat: c.center_lat,
+                    center_lng: c.center_lng,
+                    radius_km: c.radius_km,
+                    geo_terms: c.geo_terms.join(", "),
+                    active: c.active,
+                    scout_running,
+                })
+                .collect();
+            Html(render_cities(views))
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load cities");
+            Html("<h1>Error loading cities</h1>".to_string())
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct CityDetailQuery {
+    #[serde(default = "default_tab")]
+    pub tab: String,
+}
+
+fn default_tab() -> String {
+    "signals".to_string()
+}
+
+pub async fn city_detail_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+    Query(params): Query<CityDetailQuery>,
+) -> impl IntoResponse {
+    let city = match state.writer.get_city(&slug).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return (StatusCode::NOT_FOUND, Html("City not found".to_string())),
+        Err(e) => {
+            warn!(error = %e, "Failed to load city");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html("Error loading city".to_string()),
+            );
+        }
+    };
+
+    let scout_running = match state.writer.acquire_scout_lock().await {
+        Ok(true) => {
+            let _ = state.writer.release_scout_lock().await;
+            false
+        }
+        Ok(false) => true,
+        Err(_) => false,
+    };
+
+    let city_view = CityView {
+        name: city.name.clone(),
+        slug: city.slug.clone(),
+        center_lat: city.center_lat,
+        center_lng: city.center_lng,
+        radius_km: city.radius_km,
+        geo_terms: city.geo_terms.join(", "),
+        active: city.active,
+        scout_running,
+    };
+
+    let tab = if params.tab == "stories" {
+        "stories".to_string()
+    } else {
+        "signals".to_string()
+    };
+
+    let signals = if tab == "signals" {
+        state
+            .reader
+            .list_recent(100, None)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(node_to_view)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let stories = if tab == "stories" {
+        let raw = state
+            .reader
+            .top_stories_by_energy(50, None)
+            .await
+            .unwrap_or_default();
+        let story_ids: Vec<uuid::Uuid> = raw.iter().map(|s| s.id).collect();
+        let ev_counts = state
+            .reader
+            .story_evidence_counts(&story_ids)
+            .await
+            .unwrap_or_default();
+        raw.iter()
+            .map(|s| {
+                let ec = ev_counts
+                    .iter()
+                    .find(|(id, _)| *id == s.id)
+                    .map(|(_, c)| *c)
+                    .unwrap_or(0);
+                story_to_view(s, ec)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    (
+        StatusCode::OK,
+        Html(render_city_detail(city_view, tab, signals, stories)),
+    )
+}
+
+pub async fn create_city(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    axum::Form(form): axum::Form<CreateCityForm>,
+) -> impl IntoResponse {
+    let location = form.location.trim().to_string();
+    if location.is_empty() {
+        warn!("Empty location submitted");
+        return Redirect::to("/admin/cities");
+    }
+
+    // Geocode via Nominatim
+    let geocode_result = geocode_location(&location).await;
+    let (lat, lon, display_name) = match geocode_result {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(location = location.as_str(), error = %e, "Geocoding failed");
+            return Redirect::to("/admin/cities");
+        }
+    };
+
+    // Derive slug: lowercase, non-alphanum → hyphens, dedupe hyphens
+    let slug: String = location
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    // Derive geo_terms from comma-split parts of the location
+    let geo_terms: Vec<String> = location
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let city = CityNode {
+        id: Uuid::new_v4(),
+        name: display_name,
+        slug,
+        center_lat: lat,
+        center_lng: lon,
+        radius_km: 30.0,
+        geo_terms,
+        active: true,
+        created_at: chrono::Utc::now(),
+    };
+
+    if let Err(e) = state.writer.upsert_city(&city).await {
+        warn!(error = %e, "Failed to create city");
+        return Redirect::to("/admin/cities");
+    }
+
+    // Run cold-start bootstrapper (non-fatal if API keys missing)
+    let writer = rootsignal_graph::GraphWriter::new(state.graph_client.clone());
+    let searcher = rootsignal_scout::scraper::TavilySearcher::new(&state.config.tavily_api_key);
+    let bootstrapper = rootsignal_scout::bootstrap::ColdStartBootstrapper::new(
+        &writer,
+        &searcher,
+        &state.config.anthropic_api_key,
+        city,
+    );
+    match bootstrapper.run().await {
+        Ok(n) => tracing::info!(sources = n, "Bootstrap complete for new city"),
+        Err(e) => warn!(error = %e, "Bootstrap failed (non-fatal, sources can be added later)"),
+    }
+
+    Redirect::to("/admin/cities")
+}
+
+pub async fn run_city_scout(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    // Check API keys
+    if state.config.anthropic_api_key.is_empty()
+        || state.config.voyage_api_key.is_empty()
+        || state.config.tavily_api_key.is_empty()
+    {
+        warn!("Scout API keys not configured");
+        return Redirect::to("/admin/cities");
+    }
+
+    // Check if already running
+    let already_running = match state.writer.acquire_scout_lock().await {
+        Ok(true) => {
+            let _ = state.writer.release_scout_lock().await;
+            false
+        }
+        Ok(false) => true,
+        Err(_) => false,
+    };
+
+    if !already_running {
+        crate::rest::scout::spawn_scout_run(
+            state.graph_client.clone(),
+            state.config.clone(),
+            slug,
+        );
+    }
+
+    Redirect::to("/admin/cities")
+}
+
+#[derive(serde::Deserialize)]
+struct NominatimResult {
+    lat: String,
+    lon: String,
+    display_name: String,
+}
+
+async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://nominatim.openstreetmap.org/search")
+        .query(&[("q", location), ("format", "json"), ("limit", "1")])
+        .header("User-Agent", "rootsignal/1.0")
+        .send()
+        .await?;
+
+    let results: Vec<NominatimResult> = resp.json().await?;
+    let first = results
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No geocoding results for '{}'", location))?;
+
+    let lat: f64 = first.lat.parse()?;
+    let lon: f64 = first.lon.parse()?;
+    Ok((lat, lon, first.display_name))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateCityForm {
+    pub location: String,
+}
+
+pub async fn quality_dashboard(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match render_quality_page(&state.reader).await {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to render quality dashboard");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn render_quality_page(reader: &PublicGraphReader) -> Result<String> {
@@ -128,36 +572,10 @@ async fn render_quality_page(reader: &PublicGraphReader) -> Result<String> {
     ))
 }
 
-fn base64_decode(input: &str) -> Option<String> {
-    let bytes = base64_decode_bytes(input)?;
-    String::from_utf8(bytes).ok()
-}
-
-fn base64_decode_bytes(input: &str) -> Option<Vec<u8>> {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let input = input.trim_end_matches('=');
-    let mut output = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-
-    for &b in input.as_bytes() {
-        let val = TABLE.iter().position(|&c| c == b)? as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            output.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-
-    Some(output)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::components::{EvidenceView, NodeView, ResponseView};
-    use crate::components::{render_signal_detail};
+    use crate::components::render_signal_detail;
 
     fn make_node_view(type_label: &str, type_class: &str, title: &str) -> NodeView {
         NodeView {
@@ -248,7 +666,7 @@ mod tests {
         let html = render_signal_detail(node, vec![], responses);
         assert!(html.contains("Responses"), "should show Responses heading");
         assert!(html.contains("Volunteer shuttle service"), "should show response title");
-        assert!(html.contains("badge-give"), "should show response type badge");
+        assert!(html.contains("bg-green-50"), "should show response type badge");
         assert!(html.contains("75% match"), "should show match strength");
         assert!(html.contains("Addresses the need directly"), "should show explanation");
     }

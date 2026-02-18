@@ -1,14 +1,25 @@
-use rootsignal_common::{EvidenceNode, Node, NodeType, TensionResponse};
+use rootsignal_common::{EvidenceNode, Node, NodeType, StoryNode, TensionResponse};
 
+pub mod cities;
+pub mod city_detail;
+pub mod layout;
+pub mod login;
 pub mod map;
 pub mod quality;
 pub mod signal_detail;
 pub mod signals_list;
+pub mod stories_detail;
+pub mod stories_list;
 
+pub use cities::{render_cities, CityView};
+pub use city_detail::render_city_detail;
+pub use login::{render_login, render_verify};
 pub use map::render_map;
 pub use quality::render_quality;
 pub use signal_detail::render_signal_detail;
 pub use signals_list::render_signals_list;
+pub use stories_detail::render_story_detail;
+pub use stories_list::render_stories_list;
 
 // --- View Models ---
 
@@ -47,6 +58,54 @@ pub struct ResponseView {
     pub type_class: String,
     pub match_strength: f64,
     pub explanation: String,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct StoryView {
+    pub id: String,
+    pub headline: String,
+    pub summary: String,
+    pub signal_count: u32,
+    pub source_count: u32,
+    pub status: String,
+    pub dominant_type: String,
+    pub arc: Option<String>,
+    pub category: Option<String>,
+    pub energy: f64,
+    pub velocity: f64,
+    pub last_updated: String,
+    pub lede: Option<String>,
+    pub narrative: Option<String>,
+    pub evidence_count: u32,
+}
+
+pub fn story_to_view(story: &StoryNode, evidence_count: u32) -> StoryView {
+    let days = (chrono::Utc::now() - story.last_updated).num_days();
+    let last_updated = if days == 0 {
+        "today".to_string()
+    } else if days == 1 {
+        "yesterday".to_string()
+    } else {
+        format!("{days} days ago")
+    };
+
+    StoryView {
+        id: story.id.to_string(),
+        headline: story.headline.clone(),
+        summary: story.summary.clone(),
+        signal_count: story.signal_count,
+        source_count: story.source_count,
+        status: story.status.clone(),
+        dominant_type: story.dominant_type.clone(),
+        arc: story.arc.clone(),
+        category: story.category.clone(),
+        energy: story.energy,
+        velocity: story.velocity,
+        last_updated,
+        lede: story.lede.clone(),
+        narrative: story.narrative.clone(),
+        evidence_count,
+    }
 }
 
 pub fn node_to_view(node: &Node) -> NodeView {

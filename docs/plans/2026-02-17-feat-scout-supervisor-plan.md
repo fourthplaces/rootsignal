@@ -168,7 +168,7 @@ One supervisor instance per city (same model as scout). `SupervisorState`, `Extr
 1. Add `modules/rootsignal-scout-supervisor` to workspace `Cargo.toml`
 2. Scaffold crate structure (`main.rs`, `lib.rs`, module stubs)
 3. Add `Config::supervisor_from_env()` to `rootsignal-common`
-   - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` (required)
+   - `MEMGRAPH_URI`, `MEMGRAPH_USER`, `MEMGRAPH_PASSWORD` (required)
    - `ANTHROPIC_API_KEY` (required)
    - `CITY` (optional, default `"twincities"`)
    - `SLACK_WEBHOOK_URL` (optional)

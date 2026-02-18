@@ -4,7 +4,7 @@ use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::{CityNode, Config};
 use rootsignal_graph::{cause_heat::compute_cause_heat, migrate::{migrate, backfill_source_diversity, backfill_source_canonical_keys}, GraphClient, GraphWriter};
-use rootsignal_scout::{bootstrap, scout::Scout, scraper::TavilySearcher, sources};
+use rootsignal_scout::{bootstrap, scout::Scout, scraper::TavilySearcher};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,16 +19,13 @@ async fn main() -> Result<()> {
     let config = Config::scout_from_env();
     config.log_redacted();
 
-    // Connect to Neo4j
+    // Connect to Memgraph
     let client =
-        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
+        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
             .await?;
 
     // Run migrations
     migrate(&client).await?;
-
-    // Determine if this city has a compile-time profile
-    let has_profile = sources::has_profile(&config.city);
 
     // Load or seed CityNode from graph
     let writer = GraphWriter::new(client.clone());
@@ -37,25 +34,14 @@ async fn main() -> Result<()> {
             info!(slug = node.slug.as_str(), name = node.name.as_str(), "Loaded city from graph");
             node
         }
-        None if has_profile => {
-            info!(city = config.city.as_str(), "No CityNode found, seeding from compile-time profile");
-            let profile = sources::city_profile(&config.city);
-            let node = sources::city_node_from_profile(
-                &config.city,
-                &profile,
-                config.city_radius_km,
-            );
-            writer.upsert_city(&node).await?;
-            node
-        }
         None => {
-            // Cold start — no compile-time profile, create from env vars
+            // Cold start — create from env vars + bootstrap
             let city_name = config.city_name.as_deref()
                 .unwrap_or(&config.city);
             let center_lat = config.city_lat
-                .expect("CITY_LAT required for cold start (no compile-time profile)");
+                .expect("CITY_LAT required for cold start (no city in graph)");
             let center_lng = config.city_lng
-                .expect("CITY_LNG required for cold start (no compile-time profile)");
+                .expect("CITY_LNG required for cold start (no city in graph)");
             let radius_km = config.city_radius_km.unwrap_or(30.0);
 
             info!(
@@ -95,39 +81,22 @@ async fn main() -> Result<()> {
     // Backfill canonical keys on existing Source nodes (idempotent migration)
     backfill_source_canonical_keys(&client).await?;
 
-    // Backfill source diversity for existing signals (uses entity mappings from profile if available)
-    if has_profile {
-        let profile = sources::city_profile(&config.city);
-        let entity_mappings: Vec<_> = profile.entity_mappings.iter().map(|m| m.to_owned()).collect();
-        backfill_source_diversity(&client, &entity_mappings).await?;
-    } else {
-        // Cold-start cities have no entity mappings yet — skip diversity backfill
-        info!("Skipping source diversity backfill (no entity mappings for cold-start city)");
-    }
+    // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
+    backfill_source_diversity(&client, &[]).await?;
 
     // Create and run scout
-    if has_profile {
-        let scout = Scout::new(
-            client.clone(),
-            &config.anthropic_api_key,
-            &config.voyage_api_key,
-            &config.tavily_api_key,
-            &config.apify_api_key,
-            &config.city,
-            city_node,
-            config.daily_budget_cents,
-        )?;
+    let scout = Scout::new(
+        client.clone(),
+        &config.anthropic_api_key,
+        &config.voyage_api_key,
+        &config.tavily_api_key,
+        &config.apify_api_key,
+        city_node,
+        config.daily_budget_cents,
+    )?;
 
-        let stats = scout.run().await?;
-        info!("Scout run complete. {stats}");
-    } else {
-        // Cold-start city — use a minimal Scout with empty profile
-        // For now, the bootstrapped sources are in the graph;
-        // the normal scout loop will process them on the next run
-        // after the profile is established
-        info!("Cold-start city bootstrapped. Sources are in the graph for the next run.");
-        info!("To enable full scout loop, add a city profile or run again.");
-    }
+    let stats = scout.run().await?;
+    info!("Scout run complete. {stats}");
 
     // Compute cause heat (cross-story signal boosting via embedding similarity)
     compute_cause_heat(&client, 0.7).await?;
