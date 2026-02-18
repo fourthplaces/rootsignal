@@ -29,8 +29,8 @@
         <dl class="detail-meta">
             <dt>Last verified</dt>
             <dd>{{ node.last_confirmed }}</dd>
-            <dt>Source trust</dt>
-            <dd>{{ node.source_trust_label }}</dd>
+            <dt>Source diversity</dt>
+            <dd>{{ node.source_diversity }} unique source{% if node.source_diversity != 1 %}s{% endif %}</dd>
             <dt>Corroboration</dt>
             <dd>Confirmed by {{ node.corroboration_count }} source{% if node.corroboration_count != 1 %}s{% endif %}</dd>
             <dt>Completeness</dt>

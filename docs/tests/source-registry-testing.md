@@ -110,32 +110,26 @@ echo "MATCH (s:Source) RETURN s.source_type AS type, s.discovery_method AS metho
 - All sources typed as "web" — source_type assignment in seed_curated_sources is broken
 - Any source with discovery_method other than "curated" — mislabeling
 
-## 6. Trust Score Correctness
+## 6. Source Diversity and Trust
 
-Trust scores should match the TLD-based heuristic from `source_trust()`.
-
-```bash
-# .gov sources should have trust 0.9
-echo "MATCH (s:Source) WHERE s.url CONTAINS '.gov' RETURN s.url, s.trust LIMIT 5;" | $MG
-
-# .org sources should have trust 0.8
-echo "MATCH (s:Source) WHERE s.url CONTAINS '.org' AND NOT s.url CONTAINS '.gov' RETURN s.url, s.trust LIMIT 5;" | $MG
-
-# Instagram sources should have trust 0.3
-echo "MATCH (s:Source) WHERE s.source_type = 'instagram' RETURN s.url, s.trust LIMIT 5;" | $MG
-```
-
-**Pass:** Trust values match the heuristic in `sources.rs:source_trust()`.
-
-**Fail:** All trusts are the same value, or trust doesn't match expected TLD-based score.
-
-Also verify trust = initial_trust (no drift before any trust adjustment logic exists):
+Trust is no longer a TLD-based score. Trust is evidence — measured by source diversity
+(how many independent entities have produced evidence for a signal) and external ratio
+(what fraction of evidence comes from sources other than the signal's originating entity).
 
 ```bash
-echo "MATCH (s:Source) WHERE s.trust <> s.initial_trust RETURN s.url, s.trust, s.initial_trust;" | $MG
+# Signals with high source diversity (multiple independent entities)
+echo "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) AND n.source_diversity > 1 RETURN n.title, n.source_diversity, n.external_ratio LIMIT 10;" | $MG
+
+# Stories with high type diversity (triangulated)
+echo "MATCH (s:Story) RETURN s.headline, s.type_diversity, s.entity_count, s.status ORDER BY s.type_diversity DESC LIMIT 10;" | $MG
+
+# Echo stories (type_diversity = 1 with 5+ signals)
+echo "MATCH (s:Story) WHERE s.status = 'echo' RETURN s.headline, s.signal_count, s.type_diversity;" | $MG
 ```
 
-Must return empty.
+**Pass:** Source diversity reflects actual distinct entity sources. Stories with multiple signal types are "confirmed". Single-type high-volume clusters are "echo".
+
+**Fail:** All source_diversity = 1 (corroboration not working), or all stories "confirmed" regardless of type diversity.
 
 ## 7. Dead Source Deactivation
 
@@ -214,7 +208,7 @@ docker compose run --rm scout 2>&1 | tee /tmp/scout-source-test.log
 | `seeded=0` | Memgraph connection issue or MERGE syntax error |
 | Source count doubles on re-run | MERGE not matching on url, or url uniqueness constraint missing |
 | Sources from wrong city appear | city field not being set or get_active_sources not filtering |
-| All trust scores identical | source_trust() not being called per-URL during seeding |
+| All source_diversity = 1 | Corroboration not detecting cross-source matches |
 | Curated sources deactivated | deactivate_dead_sources not excluding discovery_method='curated' |
 | "Source registry stats" missing from logs | get_source_stats query failing silently |
 | Existing validation checks fail | Source seeding accidentally modified pipeline behavior |

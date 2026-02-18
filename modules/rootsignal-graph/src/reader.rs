@@ -49,13 +49,14 @@ impl PublicGraphReader {
 
             let cypher = format!(
                 "MATCH (n:{label})
+                 OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
                  WHERE n.lat <> 0.0
                    AND n.lat >= $min_lat AND n.lat <= $max_lat
                    AND n.lng >= $min_lng AND n.lng <= $max_lng
                    AND n.confidence >= $min_confidence
                    {expiry}
                  RETURN n
-                 ORDER BY n.cause_heat DESC, n.confidence DESC, n.last_confirmed_active DESC
+                 ORDER BY coalesce(s.type_diversity, 0) DESC, n.cause_heat DESC, n.confidence DESC, n.last_confirmed_active DESC
                  LIMIT 200",
                 expiry = expiry_clause(*nt),
             );
@@ -114,7 +115,8 @@ impl PublicGraphReader {
         Ok(None)
     }
 
-    /// List recent signals, ordered by freshness. Returns fuzzed coordinates.
+    /// List recent signals, ordered by triangulation then cause_heat.
+    /// Signals in well-triangulated stories surface first. Returns fuzzed coordinates.
     pub async fn list_recent(
         &self,
         limit: u32,
@@ -124,16 +126,18 @@ impl PublicGraphReader {
             .map(|t| t.to_vec())
             .unwrap_or_else(|| vec![NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension]);
 
-        let mut results = Vec::new();
+        // Carry (node, story_type_diversity) for cross-type sorting
+        let mut ranked: Vec<(Node, i64)> = Vec::new();
 
         for nt in &types {
             let label = node_type_label(*nt);
             let cypher = format!(
                 "MATCH (n:{label})
+                 OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
                  WHERE n.confidence >= $min_confidence
                    {expiry}
-                 RETURN n
-                 ORDER BY n.cause_heat DESC, n.last_confirmed_active DESC
+                 RETURN n, coalesce(s.type_diversity, 0) AS story_triangulation
+                 ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
                  LIMIT $limit",
                 expiry = expiry_clause(*nt),
             );
@@ -144,20 +148,23 @@ impl PublicGraphReader {
 
             let mut stream = self.client.graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
+                let tri: i64 = row.get("story_triangulation").unwrap_or(0);
                 if let Some(node) = row_to_node(&row, *nt) {
                     if passes_display_filter(&node) {
-                        results.push(fuzz_node(node));
+                        ranked.push((fuzz_node(node), tri));
                     }
                 }
             }
         }
 
-        // Sort all results by cause_heat descending, then by recency
-        results.sort_by(|a, b| {
-            let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
-            let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
-            b_heat.partial_cmp(&a_heat)
-                .unwrap_or(std::cmp::Ordering::Equal)
+        // Sort: triangulation (story type diversity) first, then cause_heat, then recency
+        ranked.sort_by(|(a, a_tri), (b, b_tri)| {
+            b_tri.cmp(a_tri)
+                .then_with(|| {
+                    let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+                    let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+                    b_heat.partial_cmp(&a_heat).unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .then_with(|| {
                     let a_time = a.meta().map(|m| m.last_confirmed_active);
                     let b_time = b.meta().map(|m| m.last_confirmed_active);
@@ -165,8 +172,8 @@ impl PublicGraphReader {
                 })
         });
 
-        results.truncate(limit as usize);
-        Ok(results)
+        ranked.truncate(limit as usize);
+        Ok(ranked.into_iter().map(|(node, _)| node).collect())
     }
 
     // --- Story queries ---
