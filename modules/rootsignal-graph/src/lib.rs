@@ -16,7 +16,10 @@ pub use cluster::Clusterer;
 pub use reader::PublicGraphReader;
 pub use similarity::SimilarityBuilder;
 pub use synthesizer::Synthesizer;
-pub use writer::{DuplicateMatch, GraphWriter, InvestigationTarget, ReapStats, SourceStats};
+pub use writer::{
+    DuplicateMatch, GraphWriter, InvestigationTarget, ReapStats, SignalTypeCounts, SourceBrief,
+    SourceStats, StoryBrief, UnmetTension,
+};
 
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).
 pub use neo4rs::query;

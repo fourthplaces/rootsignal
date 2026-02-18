@@ -1,11 +1,20 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
+use schemars::JsonSchema;
+use serde::{Deserialize, de};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use ai_client::claude::Claude;
 use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::{GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief, UnmetTension};
 
+use crate::budget::{BudgetTracker, OperationCost};
 use crate::sources;
+
+const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+const MAX_CURIOSITY_QUERIES: usize = 7;
 
 /// Stats from a discovery run.
 #[derive(Debug, Default)]
@@ -26,17 +35,242 @@ impl std::fmt::Display for DiscoveryStats {
     }
 }
 
+// --- Discovery Briefing ---
+
+/// Assembled from graph queries — everything the LLM needs to decide where to look next.
+#[derive(Debug, Clone)]
+pub struct DiscoveryBriefing {
+    pub tensions: Vec<UnmetTension>,
+    pub stories: Vec<StoryBrief>,
+    pub signal_counts: SignalTypeCounts,
+    pub successes: Vec<SourceBrief>,
+    pub failures: Vec<SourceBrief>,
+    pub existing_queries: Vec<String>,
+    pub city_name: String,
+}
+
+impl DiscoveryBriefing {
+    /// True when the graph is too sparse for LLM discovery to be useful.
+    pub fn is_cold_start(&self) -> bool {
+        self.tensions.len() < 3 && self.stories.is_empty()
+    }
+
+    /// Render the briefing as structured natural language for the LLM.
+    pub fn format_prompt(&self) -> String {
+        let mut out = String::with_capacity(4096);
+
+        // Tensions
+        let unmet: Vec<_> = self.tensions.iter().filter(|t| t.unmet).collect();
+        let met: Vec<_> = self.tensions.iter().filter(|t| !t.unmet).collect();
+
+        if !unmet.is_empty() {
+            out.push_str("## UNMET TENSIONS (no response found)\n");
+            for (i, t) in unmet.iter().enumerate() {
+                let help = t.what_would_help.as_deref().unwrap_or("unknown");
+                out.push_str(&format!(
+                    "{}. [{}] \"{}\" — What would help: {}\n",
+                    i + 1,
+                    t.severity.to_uppercase(),
+                    t.title,
+                    help,
+                ));
+            }
+            out.push('\n');
+        }
+
+        if !met.is_empty() {
+            out.push_str("## TENSIONS WITH RESPONSES (lower priority)\n");
+            for (i, t) in met.iter().enumerate() {
+                let help = t.what_would_help.as_deref().unwrap_or("unknown");
+                out.push_str(&format!(
+                    "{}. [{}] \"{}\" — What would help: {}\n",
+                    i + 1,
+                    t.severity.to_uppercase(),
+                    t.title,
+                    help,
+                ));
+            }
+            out.push('\n');
+        }
+
+        // Stories
+        if !self.stories.is_empty() {
+            out.push_str("## STORY LANDSCAPE\n");
+            for (i, s) in self.stories.iter().enumerate() {
+                let arc = s.arc.as_deref().unwrap_or("unknown");
+                out.push_str(&format!(
+                    "{}. \"{}\" — {}, energy={:.1}, {} signals, types: {}, {} sources\n",
+                    i + 1,
+                    s.headline,
+                    arc,
+                    s.energy,
+                    s.signal_count,
+                    s.dominant_type,
+                    s.source_count,
+                ));
+            }
+            out.push('\n');
+        }
+
+        // Signal balance
+        let sc = &self.signal_counts;
+        out.push_str("## SIGNAL BALANCE\n");
+        out.push_str(&format!(
+            "Events: {} | Gives: {} | Asks: {} | Notices: {} | Tensions: {}\n",
+            sc.events, sc.gives, sc.asks, sc.notices, sc.tensions,
+        ));
+        // Annotate significant imbalances
+        let total = sc.events + sc.gives + sc.asks + sc.notices + sc.tensions;
+        if total > 5 {
+            if sc.tensions > 0 && sc.gives < sc.tensions / 3 {
+                out.push_str("→ Give signals significantly underrepresented relative to tensions.\n");
+            }
+            if sc.asks > 0 && sc.gives < sc.asks / 2 {
+                out.push_str("→ Few Give signals to match the Ask signals.\n");
+            }
+        }
+        out.push('\n');
+
+        // Past discovery results
+        if !self.successes.is_empty() || !self.failures.is_empty() {
+            out.push_str("## PAST DISCOVERY RESULTS\n");
+            if !self.successes.is_empty() {
+                out.push_str("Worked well:\n");
+                for s in &self.successes {
+                    let reason = s.gap_context.as_deref().unwrap_or("unknown");
+                    out.push_str(&format!(
+                        "- \"{}\" → {} signals, weight {:.1} (reason: {})\n",
+                        s.canonical_value, s.signals_produced, s.weight, reason,
+                    ));
+                }
+            }
+            if !self.failures.is_empty() {
+                out.push_str("Didn't work:\n");
+                for f in &self.failures {
+                    let reason = f.gap_context.as_deref().unwrap_or("unknown");
+                    out.push_str(&format!(
+                        "- \"{}\" → {} signals, {} empty runs (reason: {})\n",
+                        f.canonical_value, f.signals_produced, f.consecutive_empty_runs, reason,
+                    ));
+                }
+            }
+            out.push('\n');
+        }
+
+        // Existing queries
+        if !self.existing_queries.is_empty() {
+            out.push_str("## EXISTING QUERIES (do not duplicate)\n");
+            for q in &self.existing_queries {
+                out.push_str(&format!("- {}\n", q));
+            }
+            out.push('\n');
+        }
+
+        out
+    }
+}
+
+// --- LLM Structured Output Types ---
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoveryPlan {
+    #[serde(default, deserialize_with = "deserialize_queries")]
+    pub queries: Vec<DiscoveryQuery>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoveryQuery {
+    /// The Tavily search query
+    pub query: String,
+    /// Why this query — what gap it fills
+    pub reasoning: String,
+    /// Gap type: "unmet_tension", "low_type_diversity", "emerging_thread",
+    /// "signal_imbalance", "novel_angle"
+    pub gap_type: String,
+    /// Related tension title, if applicable
+    pub related_tension: Option<String>,
+}
+
+/// Handle LLM returning queries as either a proper JSON array, a stringified JSON array, or null.
+fn deserialize_queries<'de, D>(deserializer: D) -> Result<Vec<DiscoveryQuery>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(de::Error::custom)
+        }
+        serde_json::Value::String(ref s) => {
+            serde_json::from_str(s).map_err(de::Error::custom)
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Err(de::Error::custom("queries must be an array, JSON string, or null")),
+    }
+}
+
+// --- LLM Prompts ---
+
+fn discovery_system_prompt(city_name: &str) -> String {
+    format!(
+        "You are the curiosity engine for a civic intelligence scout monitoring {city_name}.\n\
+         \n\
+         Your job: decide WHERE TO LOOK NEXT to fill gaps in what the scout knows.\n\
+         \n\
+         You receive a briefing about what the scout has learned — tensions without responses,\n\
+         emerging stories, signal imbalances, and the track record of your past suggestions.\n\
+         \n\
+         Generate 3-7 targeted web search queries. Prioritize:\n\
+         1. RESPONSE RESOURCES for unmet tensions (highest priority)\n\
+         2. MISSING SIGNAL TYPES for stories with low type diversity\n\
+         3. EMERGING THREADS that deserve deeper investigation\n\
+         4. NOVEL ANGLES that existing sources aren't covering\n\
+         \n\
+         Query quality guidelines:\n\
+         - Include \"{city_name}\" or neighborhood names — local results only\n\
+         - Target organizations, programs, resources — not news articles about problems\n\
+         - Avoid queries similar to ones that previously failed\n\
+         - Be specific: \"affordable housing waitlist programs {city_name}\" not \"housing crisis\"\n\
+         \n\
+         For each query, explain your reasoning — why this search, what gap it fills."
+    )
+}
+
+fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
+    format!(
+        "Here is the current state of the {city_name} civic signal graph. Analyze the gaps \
+         and generate discovery queries.\n\n{briefing}"
+    )
+}
+
+// --- SourceDiscoverer ---
+
 /// Discovers new sources from existing graph data.
 pub struct SourceDiscoverer<'a> {
     writer: &'a GraphWriter,
     city_slug: String,
+    city_name: String,
+    claude: Option<Claude>,
+    budget: &'a BudgetTracker,
 }
 
 impl<'a> SourceDiscoverer<'a> {
-    pub fn new(writer: &'a GraphWriter, city_slug: &str) -> Self {
+    pub fn new(
+        writer: &'a GraphWriter,
+        city_slug: &str,
+        city_name: &str,
+        anthropic_api_key: Option<&str>,
+        budget: &'a BudgetTracker,
+    ) -> Self {
+        let claude = anthropic_api_key
+            .filter(|k| !k.is_empty())
+            .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
             writer,
             city_slug: city_slug.to_string(),
+            city_name: city_name.to_string(),
+            claude,
+            budget,
         }
     }
 
@@ -47,8 +281,8 @@ impl<'a> SourceDiscoverer<'a> {
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
         self.discover_from_actors(&mut stats).await;
 
-        // 2. Coverage gap analysis — identify under-covered areas
-        self.discover_from_gaps(&mut stats).await;
+        // 2. LLM-driven curiosity engine (with mechanical fallback)
+        self.discover_from_curiosity(&mut stats).await;
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
             info!("{stats}");
@@ -74,10 +308,10 @@ impl<'a> SourceDiscoverer<'a> {
                 return;
             }
         };
-        let existing_urls: std::collections::HashSet<String> = existing.iter()
+        let existing_urls: HashSet<String> = existing.iter()
             .filter_map(|s| s.url.as_ref().cloned())
             .collect();
-        let existing_keys: std::collections::HashSet<String> = existing.iter()
+        let existing_keys: HashSet<String> = existing.iter()
             .map(|s| s.canonical_key.clone())
             .collect();
 
@@ -188,8 +422,162 @@ impl<'a> SourceDiscoverer<'a> {
         }
     }
 
-    /// Coverage gap analysis — generate targeted queries for under-covered tensions.
-    async fn discover_from_gaps(&self, stats: &mut DiscoveryStats) {
+    /// LLM-driven curiosity engine with mechanical fallback.
+    async fn discover_from_curiosity(&self, stats: &mut DiscoveryStats) {
+        // Guard: no Claude client → mechanical fallback
+        let claude = match &self.claude {
+            Some(c) => c,
+            None => {
+                self.discover_from_gaps_mechanical(stats).await;
+                return;
+            }
+        };
+
+        // Guard: no budget → mechanical fallback
+        if self.budget.is_active() && !self.budget.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY) {
+            info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
+            self.discover_from_gaps_mechanical(stats).await;
+            return;
+        }
+
+        // Build briefing from graph queries
+        let briefing = match self.build_briefing().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "Failed to build discovery briefing, falling back to mechanical");
+                self.discover_from_gaps_mechanical(stats).await;
+                return;
+            }
+        };
+
+        // Cold-start check
+        if briefing.is_cold_start() {
+            info!("Cold start detected (< 3 tensions, 0 stories), using mechanical discovery");
+            self.discover_from_gaps_mechanical(stats).await;
+            return;
+        }
+
+        // LLM call
+        let formatted = briefing.format_prompt();
+        let system = discovery_system_prompt(&self.city_name);
+        let user = discovery_user_prompt(&self.city_name, &formatted);
+
+        let plan: DiscoveryPlan = match claude.extract(HAIKU_MODEL, &system, &user).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(error = %e, "LLM discovery failed, falling back to mechanical");
+                self.discover_from_gaps_mechanical(stats).await;
+                return;
+            }
+        };
+
+        // Record budget spend after successful response
+        self.budget.spend(OperationCost::CLAUDE_HAIKU_DISCOVERY);
+
+        // Create sources from plan
+        let existing_queries: HashSet<String> = briefing.existing_queries.iter()
+            .map(|q| q.to_lowercase())
+            .collect();
+
+        let now = Utc::now();
+        for dq in plan.queries.into_iter().take(MAX_CURIOSITY_QUERIES) {
+            let query_lower = dq.query.to_lowercase();
+
+            // Dedup: check substring overlap with existing queries
+            let is_dup = existing_queries.iter().any(|q| {
+                q.contains(&query_lower) || query_lower.contains(q.as_str())
+            });
+            if is_dup {
+                stats.duplicates_skipped += 1;
+                continue;
+            }
+
+            let cv = dq.query.clone();
+            let ck = sources::make_canonical_key(&self.city_slug, SourceType::TavilyQuery, &cv);
+
+            let gap_context = format!(
+                "Curiosity: {} | Gap: {} | Related: {}",
+                dq.reasoning,
+                dq.gap_type,
+                dq.related_tension.as_deref().unwrap_or("none"),
+            );
+
+            let source = SourceNode {
+                id: Uuid::new_v4(),
+                canonical_key: ck,
+                canonical_value: cv,
+                url: None,
+                source_type: SourceType::TavilyQuery,
+                discovery_method: DiscoveryMethod::GapAnalysis,
+                city: self.city_slug.clone(),
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: Some(gap_context),
+                weight: 0.3,
+                cadence_hours: None,
+                avg_signals_per_scrape: 0.0,
+                total_cost_cents: 0,
+                last_cost_cents: 0,
+                taxonomy_stats: None,
+                quality_penalty: 1.0,
+            };
+
+            match self.writer.upsert_source(&source).await {
+                Ok(_) => {
+                    stats.gap_sources += 1;
+                    info!(
+                        query = dq.query.as_str(),
+                        reasoning = dq.reasoning.as_str(),
+                        gap_type = dq.gap_type.as_str(),
+                        "LLM discovery: created query source"
+                    );
+                }
+                Err(e) => warn!(error = %e, "Failed to create LLM discovery source"),
+            }
+        }
+    }
+
+    /// Build a DiscoveryBriefing from graph queries.
+    async fn build_briefing(&self) -> anyhow::Result<DiscoveryBriefing> {
+        let tensions = self.writer.get_unmet_tensions(10).await
+            .map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
+
+        let stories = self.writer.get_story_landscape(8).await
+            .map_err(|e| anyhow::anyhow!("get_story_landscape: {e}"))?;
+
+        let signal_counts = self.writer.get_signal_type_counts(&self.city_slug).await
+            .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
+
+        let (successes, failures) = self.writer.get_discovery_performance(&self.city_slug).await
+            .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
+
+        // Get existing TavilyQuery sources for dedup
+        let existing = self.writer.get_active_sources(&self.city_slug).await
+            .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
+        let existing_queries: Vec<String> = existing.iter()
+            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .map(|s| s.canonical_value.clone())
+            .collect();
+
+        Ok(DiscoveryBriefing {
+            tensions,
+            stories,
+            signal_counts,
+            successes,
+            failures,
+            existing_queries,
+            city_name: self.city_name.clone(),
+        })
+    }
+
+    /// Mechanical template-based gap analysis — the original discovery method.
+    /// Used as fallback when LLM is unavailable, budget is exhausted, or on cold start.
+    async fn discover_from_gaps_mechanical(&self, stats: &mut DiscoveryStats) {
         // Get tensions and existing source types to find gaps
         let tensions = match self.writer.get_recent_tensions(20).await {
             Ok(t) => t,
@@ -211,7 +599,7 @@ impl<'a> SourceDiscoverer<'a> {
             }
         };
 
-        let existing_queries: std::collections::HashSet<String> = existing.iter()
+        let existing_queries: HashSet<String> = existing.iter()
             .filter(|s| s.source_type == SourceType::TavilyQuery)
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
@@ -277,3 +665,463 @@ impl<'a> SourceDiscoverer<'a> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Helper builders ---
+
+    fn make_tension(title: &str, severity: &str, what_would_help: Option<&str>, unmet: bool) -> UnmetTension {
+        UnmetTension {
+            title: title.to_string(),
+            severity: severity.to_string(),
+            what_would_help: what_would_help.map(|s| s.to_string()),
+            category: None,
+            unmet,
+        }
+    }
+
+    fn make_story(headline: &str, arc: &str, energy: f64, signal_count: u32, dominant_type: &str, source_count: u32) -> StoryBrief {
+        StoryBrief {
+            headline: headline.to_string(),
+            arc: Some(arc.to_string()),
+            energy,
+            signal_count,
+            type_diversity: 2,
+            dominant_type: dominant_type.to_string(),
+            source_count,
+        }
+    }
+
+    fn make_source_brief(cv: &str, signals: u32, weight: f64, empty_runs: u32, context: &str, active: bool) -> SourceBrief {
+        SourceBrief {
+            canonical_value: cv.to_string(),
+            signals_produced: signals,
+            weight,
+            consecutive_empty_runs: empty_runs,
+            gap_context: Some(context.to_string()),
+            active,
+        }
+    }
+
+    fn make_briefing() -> DiscoveryBriefing {
+        DiscoveryBriefing {
+            tensions: vec![
+                make_tension("Northside food desert growing", "high", Some("grocery co-op, food shelf expansion"), true),
+                make_tension("Youth mental health crisis", "critical", Some("crisis counselors, peer support"), true),
+                make_tension("Housing affordability declining", "medium", Some("affordable housing programs"), false),
+            ],
+            stories: vec![
+                make_story("Downtown bike lane conflict", "Emerging", 0.7, 3, "Tension+Notice", 2),
+                make_story("Encampment clearance on 3rd Ave", "Growing", 0.9, 8, "Tension+Ask+Notice", 4),
+            ],
+            signal_counts: SignalTypeCounts {
+                events: 23,
+                gives: 8,
+                asks: 15,
+                notices: 12,
+                tensions: 31,
+            },
+            successes: vec![
+                make_source_brief("affordable housing programs Minneapolis", 12, 0.8, 0, "unmet tension housing", true),
+            ],
+            failures: vec![
+                make_source_brief("youth mentorship programs Minneapolis", 0, 0.3, 10, "emerging thread youth services", false),
+            ],
+            existing_queries: vec![
+                "affordable housing programs Minneapolis".to_string(),
+                "food shelf locations Minneapolis".to_string(),
+            ],
+            city_name: "Minneapolis".to_string(),
+        }
+    }
+
+    // --- A. Briefing Construction & Formatting ---
+
+    #[test]
+    fn briefing_format_includes_all_sections() {
+        let briefing = make_briefing();
+        let prompt = briefing.format_prompt();
+
+        assert!(prompt.contains("## UNMET TENSIONS"), "Missing UNMET TENSIONS section");
+        assert!(prompt.contains("## TENSIONS WITH RESPONSES"), "Missing TENSIONS WITH RESPONSES section");
+        assert!(prompt.contains("## STORY LANDSCAPE"), "Missing STORY LANDSCAPE section");
+        assert!(prompt.contains("## SIGNAL BALANCE"), "Missing SIGNAL BALANCE section");
+        assert!(prompt.contains("## PAST DISCOVERY RESULTS"), "Missing PAST DISCOVERY RESULTS section");
+        assert!(prompt.contains("## EXISTING QUERIES"), "Missing EXISTING QUERIES section");
+
+        // Tensions include severity and what_would_help
+        assert!(prompt.contains("[HIGH]"), "Missing severity tag");
+        assert!(prompt.contains("grocery co-op"), "Missing what_would_help text");
+
+        // Stories include arc and energy
+        assert!(prompt.contains("Emerging"), "Missing story arc");
+        assert!(prompt.contains("energy=0.7"), "Missing story energy");
+
+        // Signal balance line
+        assert!(prompt.contains("Events: 23"), "Missing event count");
+        assert!(prompt.contains("Tensions: 31"), "Missing tension count");
+
+        // Past results
+        assert!(prompt.contains("Worked well:"), "Missing successes header");
+        assert!(prompt.contains("Didn't work:"), "Missing failures header");
+        assert!(prompt.contains("12 signals"), "Missing success signal count");
+        assert!(prompt.contains("10 empty runs"), "Missing failure empty runs");
+
+        // Existing queries
+        assert!(prompt.contains("affordable housing programs Minneapolis"), "Missing existing query");
+    }
+
+    #[test]
+    fn briefing_format_under_token_limit() {
+        // Build a maximally-full briefing
+        let mut briefing = make_briefing();
+        for i in 0..10 {
+            briefing.tensions.push(make_tension(
+                &format!("Tension number {} with a reasonably long title here", i),
+                "high",
+                Some(&format!("help text for tension {} that is moderately long", i)),
+                i % 2 == 0,
+            ));
+        }
+        for i in 0..8 {
+            briefing.stories.push(make_story(
+                &format!("Story number {} about something happening in the city", i),
+                "Growing",
+                0.5 + i as f64 * 0.05,
+                i + 2,
+                "Tension+Notice",
+                i + 1,
+            ));
+        }
+        for i in 0..5 {
+            briefing.successes.push(make_source_brief(
+                &format!("successful query number {} Minneapolis", i),
+                i + 1,
+                0.5 + i as f64 * 0.1,
+                0,
+                &format!("reason for success {}", i),
+                true,
+            ));
+        }
+        for i in 0..5 {
+            briefing.failures.push(make_source_brief(
+                &format!("failed query number {} Minneapolis", i),
+                0,
+                0.2,
+                i + 3,
+                &format!("reason for failure {}", i),
+                false,
+            ));
+        }
+        for i in 0..15 {
+            briefing.existing_queries.push(format!("existing query {} Minneapolis", i));
+        }
+
+        let prompt = briefing.format_prompt();
+        // ~4K tokens ≈ 16K chars — ensure we stay within Haiku's comfort zone
+        assert!(
+            prompt.len() < 16_000,
+            "Briefing prompt is {} chars, expected < 16,000",
+            prompt.len()
+        );
+    }
+
+    #[test]
+    fn briefing_cold_start_with_no_tensions() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![],
+            stories: vec![],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        assert!(briefing.is_cold_start());
+    }
+
+    #[test]
+    fn briefing_cold_start_with_few_tensions() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![
+                make_tension("Tension 1", "low", None, true),
+                make_tension("Tension 2", "medium", None, true),
+            ],
+            stories: vec![],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        assert!(briefing.is_cold_start(), "2 tensions + 0 stories should be cold start");
+    }
+
+    #[test]
+    fn briefing_not_cold_start_with_enough_data() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![
+                make_tension("T1", "low", None, true),
+                make_tension("T2", "medium", None, true),
+                make_tension("T3", "high", None, true),
+                make_tension("T4", "high", None, false),
+                make_tension("T5", "critical", None, true),
+            ],
+            stories: vec![
+                make_story("S1", "Emerging", 0.5, 3, "Tension", 2),
+                make_story("S2", "Growing", 0.8, 6, "Ask", 3),
+            ],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        assert!(!briefing.is_cold_start());
+    }
+
+    // --- B. Feedback Loop (Critical) ---
+
+    #[test]
+    fn briefing_surfaces_successful_discoveries() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![make_tension("T1", "high", None, true); 3],
+            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![
+                make_source_brief(
+                    "affordable housing programs Minneapolis",
+                    12,
+                    0.8,
+                    0,
+                    "Curiosity: unmet tension food insecurity | Gap: unmet_tension | Related: food desert",
+                    true,
+                ),
+                make_source_brief(
+                    "community health clinics Northside",
+                    7,
+                    0.6,
+                    0,
+                    "Curiosity: gap in health coverage | Gap: unmet_tension | Related: health access",
+                    true,
+                ),
+            ],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("affordable housing programs Minneapolis"));
+        assert!(prompt.contains("12 signals"));
+        assert!(prompt.contains("weight 0.8"));
+        assert!(prompt.contains("unmet tension food insecurity"));
+    }
+
+    #[test]
+    fn briefing_surfaces_failed_discoveries() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![make_tension("T1", "high", None, true); 3],
+            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![
+                make_source_brief(
+                    "youth mentorship programs Minneapolis",
+                    0,
+                    0.3,
+                    10,
+                    "Curiosity: emerging thread youth services | Gap: emerging_thread",
+                    false,
+                ),
+            ],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("youth mentorship programs Minneapolis"));
+        assert!(prompt.contains("0 signals"));
+        assert!(prompt.contains("10 empty runs"));
+        assert!(prompt.contains("emerging thread youth services"));
+    }
+
+    #[test]
+    fn briefing_separates_successes_from_failures() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![make_tension("T1", "high", None, true); 3],
+            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![
+                make_source_brief("good query", 10, 0.7, 0, "worked", true),
+            ],
+            failures: vec![
+                make_source_brief("bad query", 0, 0.2, 8, "failed", false),
+            ],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        let prompt = briefing.format_prompt();
+
+        // Find positions of sections
+        let worked_pos = prompt.find("Worked well:").expect("Missing Worked well");
+        let didnt_pos = prompt.find("Didn't work:").expect("Missing Didn't work");
+        let good_pos = prompt.find("good query").expect("Missing good query");
+        let bad_pos = prompt.find("bad query").expect("Missing bad query");
+
+        // Good query appears after "Worked well" and before "Didn't work"
+        assert!(good_pos > worked_pos && good_pos < didnt_pos, "Success in wrong section");
+        // Bad query appears after "Didn't work"
+        assert!(bad_pos > didnt_pos, "Failure in wrong section");
+    }
+
+    #[test]
+    fn briefing_includes_unmet_vs_met_tension_distinction() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![
+                make_tension("Unmet tension A", "high", Some("help A"), true),
+                make_tension("Met tension B", "medium", Some("help B"), false),
+            ],
+            stories: vec![],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        let prompt = briefing.format_prompt();
+
+        assert!(prompt.contains("## UNMET TENSIONS"), "Missing UNMET section");
+        assert!(prompt.contains("## TENSIONS WITH RESPONSES"), "Missing RESPONDED section");
+
+        // Unmet tensions in the UNMET section
+        let unmet_pos = prompt.find("## UNMET TENSIONS").unwrap();
+        let met_pos = prompt.find("## TENSIONS WITH RESPONSES").unwrap();
+        let unmet_a_pos = prompt.find("Unmet tension A").unwrap();
+        let met_b_pos = prompt.find("Met tension B").unwrap();
+
+        assert!(unmet_a_pos > unmet_pos && unmet_a_pos < met_pos, "Unmet tension in wrong section");
+        assert!(met_b_pos > met_pos, "Met tension in wrong section");
+    }
+
+    #[test]
+    fn briefing_signal_imbalance_annotation() {
+        let briefing = DiscoveryBriefing {
+            tensions: vec![make_tension("T1", "high", None, true); 3],
+            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            signal_counts: SignalTypeCounts {
+                events: 10,
+                gives: 3,
+                asks: 12,
+                notices: 8,
+                tensions: 31,
+            },
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+        };
+        let prompt = briefing.format_prompt();
+        assert!(
+            prompt.contains("Give signals significantly underrepresented"),
+            "Missing imbalance annotation. Prompt:\n{prompt}"
+        );
+    }
+
+    // --- C. Discovery Plan Deserialization ---
+
+    #[test]
+    fn discovery_plan_deserializes_valid_json() {
+        let json = r#"{"queries": [
+            {"query": "mutual aid Minneapolis", "reasoning": "unmet tension", "gap_type": "unmet_tension", "related_tension": "food desert"},
+            {"query": "tenant rights org Minneapolis", "reasoning": "low type diversity", "gap_type": "low_type_diversity", "related_tension": null}
+        ]}"#;
+        let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.queries.len(), 2);
+        assert_eq!(plan.queries[0].query, "mutual aid Minneapolis");
+        assert!(plan.queries[0].related_tension.is_some());
+        assert!(plan.queries[1].related_tension.is_none());
+    }
+
+    #[test]
+    fn discovery_plan_handles_null_queries() {
+        let json = r#"{"queries": null}"#;
+        let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
+        assert!(plan.queries.is_empty());
+    }
+
+    #[test]
+    fn discovery_plan_handles_stringified_array() {
+        let json = r#"{"queries": "[{\"query\": \"test\", \"reasoning\": \"r\", \"gap_type\": \"unmet_tension\", \"related_tension\": null}]"}"#;
+        let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.queries.len(), 1);
+    }
+
+    // --- D. Source Creation from Plan ---
+
+    #[test]
+    fn gap_context_captures_llm_reasoning() {
+        let reasoning = "unmet tension: food insecurity needs resources";
+        let gap_type = "unmet_tension";
+        let related = Some("Northside food desert");
+        let context = format!(
+            "Curiosity: {} | Gap: {} | Related: {}",
+            reasoning, gap_type, related.unwrap_or("none"),
+        );
+        assert!(context.contains("food insecurity"));
+        assert!(context.contains("unmet_tension"));
+        assert!(context.contains("Northside food desert"));
+    }
+
+    #[test]
+    fn max_queries_capped_at_seven() {
+        let queries: Vec<DiscoveryQuery> = (0..10)
+            .map(|i| DiscoveryQuery {
+                query: format!("test query {i}"),
+                reasoning: "test".to_string(),
+                gap_type: "unmet_tension".to_string(),
+                related_tension: None,
+            })
+            .collect();
+        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), 7);
+    }
+
+    #[test]
+    fn dedup_catches_substring_matches() {
+        let existing: HashSet<String> = ["affordable housing minneapolis".to_string()].into();
+        let new_query = "affordable housing minneapolis programs";
+        let is_dup = existing.iter().any(|q| {
+            q.contains(new_query) || new_query.contains(q.as_str())
+        });
+        assert!(is_dup, "Substring dedup should catch this");
+    }
+
+    #[test]
+    fn dedup_allows_novel_queries() {
+        let existing: HashSet<String> = ["affordable housing minneapolis".to_string()].into();
+        let new_query = "tenant rights legal aid minneapolis";
+        let is_dup = existing.iter().any(|q| {
+            q.contains(new_query) || new_query.contains(q.as_str())
+        });
+        assert!(!is_dup, "Novel query should pass dedup");
+    }
+
+    // --- E. Degradation Path ---
+
+    #[test]
+    fn budget_constant_exists() {
+        assert_eq!(OperationCost::CLAUDE_HAIKU_DISCOVERY, 1);
+    }
+
+    #[test]
+    fn exhausted_budget_blocks_discovery() {
+        let tracker = BudgetTracker::new(1);
+        tracker.spend(1);
+        assert!(!tracker.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY));
+    }
+
+    #[test]
+    fn unlimited_budget_allows_discovery() {
+        let tracker = BudgetTracker::new(0);
+        assert!(tracker.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY));
+    }
+}

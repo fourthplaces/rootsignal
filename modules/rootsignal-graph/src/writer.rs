@@ -1803,6 +1803,178 @@ impl GraphWriter {
         Ok(results)
     }
 
+    // --- Discovery briefing queries ---
+
+    /// Get tensions ordered by: unmet first, then by severity. Includes response coverage.
+    pub async fn get_unmet_tensions(&self, limit: u32) -> Result<Vec<UnmetTension>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
+             OPTIONAL MATCH (resp)-[:RESPONDS_TO]->(t)
+             WITH t, count(resp) AS response_count
+             RETURN t.title AS title, t.severity AS severity,
+                    t.what_would_help AS what_would_help, t.category AS category,
+                    response_count = 0 AS unmet
+             ORDER BY response_count ASC, t.severity DESC
+             LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let title: String = row.get("title").unwrap_or_default();
+            if title.is_empty() {
+                continue;
+            }
+            results.push(UnmetTension {
+                title,
+                severity: row.get("severity").unwrap_or_default(),
+                what_would_help: {
+                    let h: String = row.get("what_would_help").unwrap_or_default();
+                    if h.is_empty() { None } else { Some(h) }
+                },
+                category: {
+                    let c: String = row.get("category").unwrap_or_default();
+                    if c.is_empty() { None } else { Some(c) }
+                },
+                unmet: row.get("unmet").unwrap_or(true),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Recent stories by energy — gives the LLM a sense of what narratives are forming.
+    pub async fn get_story_landscape(&self, limit: u32) -> Result<Vec<StoryBrief>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE datetime(s.last_updated) >= datetime() - duration('P14D')
+             RETURN s.headline AS headline, s.arc AS arc, s.energy AS energy,
+                    s.signal_count AS signal_count, s.type_diversity AS type_diversity,
+                    s.dominant_type AS dominant_type, s.source_count AS source_count
+             ORDER BY s.energy DESC LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            results.push(StoryBrief {
+                headline: row.get("headline").unwrap_or_default(),
+                arc: {
+                    let a: String = row.get("arc").unwrap_or_default();
+                    if a.is_empty() { None } else { Some(a) }
+                },
+                energy: row.get("energy").unwrap_or(0.0),
+                signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                type_diversity: row.get::<i64>("type_diversity").unwrap_or(0) as u32,
+                dominant_type: row.get("dominant_type").unwrap_or_default(),
+                source_count: row.get::<i64>("source_count").unwrap_or(0) as u32,
+            });
+        }
+        Ok(results)
+    }
+
+    /// Aggregate counts of each active signal type. Reveals systemic imbalances.
+    pub async fn get_signal_type_counts(&self, _city: &str) -> Result<SignalTypeCounts, neo4rs::Error> {
+        let mut counts = SignalTypeCounts::default();
+
+        for (label, field) in &[
+            ("Event", "events"),
+            ("Give", "gives"),
+            ("Ask", "asks"),
+            ("Notice", "notices"),
+            ("Tension", "tensions"),
+        ] {
+            let q = query(&format!(
+                "MATCH (n:{label})
+                 WHERE datetime(n.last_confirmed_active) >= datetime() - duration('P30D')
+                 RETURN count(n) AS cnt"
+            ));
+            let mut stream = self.client.graph.execute(q).await?;
+            if let Some(row) = stream.next().await? {
+                let cnt = row.get::<i64>("cnt").unwrap_or(0) as u32;
+                match *field {
+                    "events" => counts.events = cnt,
+                    "gives" => counts.gives = cnt,
+                    "asks" => counts.asks = cnt,
+                    "notices" => counts.notices = cnt,
+                    "tensions" => counts.tensions = cnt,
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(counts)
+    }
+
+    /// Top successful and bottom failed LLM-discovered sources.
+    /// Returns (successes, failures) filtered to gap_analysis/tension_seed discovery methods.
+    pub async fn get_discovery_performance(
+        &self,
+        city: &str,
+    ) -> Result<(Vec<SourceBrief>, Vec<SourceBrief>), neo4rs::Error> {
+        // Top 5 successful: active, signals_produced > 0, ordered by weight DESC
+        let q = query(
+            "MATCH (s:Source {city: $city, active: true})
+             WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
+               AND s.signals_produced > 0
+             RETURN s.canonical_value AS cv, s.signals_produced AS sp,
+                    s.weight AS weight, s.consecutive_empty_runs AS cer,
+                    s.gap_context AS gc, s.active AS active
+             ORDER BY s.weight DESC
+             LIMIT 5"
+        )
+        .param("city", city);
+
+        let mut successes = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            successes.push(SourceBrief {
+                canonical_value: row.get("cv").unwrap_or_default(),
+                signals_produced: row.get::<i64>("sp").unwrap_or(0) as u32,
+                weight: row.get("weight").unwrap_or(0.0),
+                consecutive_empty_runs: row.get::<i64>("cer").unwrap_or(0) as u32,
+                gap_context: {
+                    let gc: String = row.get("gc").unwrap_or_default();
+                    if gc.is_empty() { None } else { Some(gc) }
+                },
+                active: row.get("active").unwrap_or(true),
+            });
+        }
+
+        // Bottom 5 failures: deactivated or 3+ consecutive empty runs
+        let q = query(
+            "MATCH (s:Source {city: $city})
+             WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
+               AND (s.active = false OR s.consecutive_empty_runs >= 3)
+             RETURN s.canonical_value AS cv, s.signals_produced AS sp,
+                    s.weight AS weight, s.consecutive_empty_runs AS cer,
+                    s.gap_context AS gc, s.active AS active
+             ORDER BY s.consecutive_empty_runs DESC
+             LIMIT 5"
+        )
+        .param("city", city);
+
+        let mut failures = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            failures.push(SourceBrief {
+                canonical_value: row.get("cv").unwrap_or_default(),
+                signals_produced: row.get::<i64>("sp").unwrap_or(0) as u32,
+                weight: row.get("weight").unwrap_or(0.0),
+                consecutive_empty_runs: row.get::<i64>("cer").unwrap_or(0) as u32,
+                gap_context: {
+                    let gc: String = row.get("gc").unwrap_or_default();
+                    if gc.is_empty() { None } else { Some(gc) }
+                },
+                active: row.get("active").unwrap_or(true),
+            });
+        }
+
+        Ok((successes, failures))
+    }
+
     /// Get active tensions for response mapping.
     pub async fn get_active_tensions(&self) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
         let q = query(
@@ -2033,6 +2205,51 @@ pub struct DuplicateMatch {
     pub node_type: NodeType,
     pub source_url: String,
     pub similarity: f64,
+}
+
+// --- Discovery briefing types ---
+
+/// A tension with its response coverage status.
+#[derive(Debug, Clone)]
+pub struct UnmetTension {
+    pub title: String,
+    pub severity: String,
+    pub what_would_help: Option<String>,
+    pub category: Option<String>,
+    pub unmet: bool,
+}
+
+/// A brief summary of a story for the discovery briefing.
+#[derive(Debug, Clone)]
+pub struct StoryBrief {
+    pub headline: String,
+    pub arc: Option<String>,
+    pub energy: f64,
+    pub signal_count: u32,
+    pub type_diversity: u32,
+    pub dominant_type: String,
+    pub source_count: u32,
+}
+
+/// Aggregate counts of each signal type.
+#[derive(Debug, Clone, Default)]
+pub struct SignalTypeCounts {
+    pub events: u32,
+    pub gives: u32,
+    pub asks: u32,
+    pub notices: u32,
+    pub tensions: u32,
+}
+
+/// A brief summary of a source for discovery performance tracking.
+#[derive(Debug, Clone)]
+pub struct SourceBrief {
+    pub canonical_value: String,
+    pub signals_produced: u32,
+    pub weight: f64,
+    pub consecutive_empty_runs: u32,
+    pub gap_context: Option<String>,
+    pub active: bool,
 }
 
 /// A signal that warrants investigation.
