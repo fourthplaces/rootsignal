@@ -663,7 +663,7 @@ async fn api_submit(
     }
 
     let city = body.city.as_deref().unwrap_or(&state.city).to_string();
-    let source_type = infer_source_type(&url);
+    let source_type = SourceType::from_url(&url);
     let canonical_value = canonical_value_from_url(source_type, &url);
     let canonical_key = format!("{}:{}:{}", city, source_type, canonical_value);
 
@@ -724,25 +724,6 @@ async fn api_submit(
         })),
     )
         .into_response()
-}
-
-/// Infer SourceType from a URL (mirrors discovery.rs logic).
-fn infer_source_type(url: &str) -> SourceType {
-    if url.contains("instagram.com") {
-        SourceType::Instagram
-    } else if url.contains("facebook.com") {
-        SourceType::Facebook
-    } else if url.contains("reddit.com") {
-        SourceType::Reddit
-    } else if url.contains("tiktok.com") {
-        SourceType::TikTok
-    } else if url.contains("twitter.com") || url.contains("x.com") {
-        SourceType::Twitter
-    } else if url.contains("bsky.app") {
-        SourceType::Bluesky
-    } else {
-        SourceType::Web
-    }
 }
 
 /// Extract the canonical value from a URL for deduplication.
@@ -1065,42 +1046,42 @@ mod tests {
 
     #[test]
     fn infer_instagram() {
-        assert_eq!(infer_source_type("https://www.instagram.com/mpls_mutual_aid"), SourceType::Instagram);
+        assert_eq!(SourceType::from_url("https://www.instagram.com/mpls_mutual_aid"), SourceType::Instagram);
     }
 
     #[test]
     fn infer_facebook() {
-        assert_eq!(infer_source_type("https://facebook.com/somepage"), SourceType::Facebook);
+        assert_eq!(SourceType::from_url("https://facebook.com/somepage"), SourceType::Facebook);
     }
 
     #[test]
     fn infer_reddit() {
-        assert_eq!(infer_source_type("https://reddit.com/r/Minneapolis"), SourceType::Reddit);
+        assert_eq!(SourceType::from_url("https://reddit.com/r/Minneapolis"), SourceType::Reddit);
     }
 
     #[test]
     fn infer_tiktok() {
-        assert_eq!(infer_source_type("https://www.tiktok.com/@someuser"), SourceType::TikTok);
+        assert_eq!(SourceType::from_url("https://www.tiktok.com/@someuser"), SourceType::TikTok);
     }
 
     #[test]
     fn infer_twitter() {
-        assert_eq!(infer_source_type("https://twitter.com/user"), SourceType::Twitter);
+        assert_eq!(SourceType::from_url("https://twitter.com/user"), SourceType::Twitter);
     }
 
     #[test]
     fn infer_x_dot_com() {
-        assert_eq!(infer_source_type("https://x.com/user"), SourceType::Twitter);
+        assert_eq!(SourceType::from_url("https://x.com/user"), SourceType::Twitter);
     }
 
     #[test]
     fn infer_bluesky() {
-        assert_eq!(infer_source_type("https://bsky.app/profile/someone"), SourceType::Bluesky);
+        assert_eq!(SourceType::from_url("https://bsky.app/profile/someone"), SourceType::Bluesky);
     }
 
     #[test]
     fn infer_plain_web() {
-        assert_eq!(infer_source_type("https://www.startribune.com/article"), SourceType::Web);
+        assert_eq!(SourceType::from_url("https://www.startribune.com/article"), SourceType::Web);
     }
 
     // --- canonical_value_from_url tests ---

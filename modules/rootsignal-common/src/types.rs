@@ -451,6 +451,25 @@ impl SourceType {
             _ => Self::Web,
         }
     }
+
+    /// Infer SourceType from a URL based on known platform domains.
+    pub fn from_url(url: &str) -> Self {
+        if url.contains("instagram.com") {
+            Self::Instagram
+        } else if url.contains("facebook.com") {
+            Self::Facebook
+        } else if url.contains("reddit.com") {
+            Self::Reddit
+        } else if url.contains("tiktok.com") {
+            Self::TikTok
+        } else if url.contains("twitter.com") || url.contains("x.com") {
+            Self::Twitter
+        } else if url.contains("bsky.app") {
+            Self::Bluesky
+        } else {
+            Self::Web
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

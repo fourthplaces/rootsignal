@@ -602,7 +602,7 @@ impl Scout {
         // 7. Source discovery — find new sources from actors, gaps, references
         // (No API calls for actor/gap discovery, just graph reads + writes)
         let discoverer = crate::discovery::SourceDiscoverer::new(
-            &self.writer, &self.city_node.slug, &self.anthropic_api_key,
+            &self.writer, &self.city_node.slug,
         );
         let discovery_stats = discoverer.run().await;
         if discovery_stats.actor_sources + discovery_stats.gap_sources > 0 {

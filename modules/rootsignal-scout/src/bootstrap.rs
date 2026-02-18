@@ -14,7 +14,7 @@ use crate::sources;
 /// performs a news sweep, and creates initial Source nodes.
 pub struct ColdStartBootstrapper<'a> {
     writer: &'a GraphWriter,
-    searcher: &'a dyn WebSearcher,
+    _searcher: &'a dyn WebSearcher,
     anthropic_api_key: String,
     city_node: CityNode,
 }
@@ -28,7 +28,7 @@ impl<'a> ColdStartBootstrapper<'a> {
     ) -> Self {
         Self {
             writer,
-            searcher,
+            _searcher: searcher,
             anthropic_api_key: anthropic_api_key.to_string(),
             city_node,
         }
@@ -201,7 +201,6 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 pub async fn tension_seed_queries(
     writer: &GraphWriter,
     city_node: &CityNode,
-    anthropic_api_key: &str,
 ) -> Result<Vec<SourceNode>> {
     // Get existing tensions from the graph
     let tensions = writer.get_recent_tensions(10).await.unwrap_or_default();

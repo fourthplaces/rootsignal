@@ -1,4 +1,3 @@
-use anyhow::Result;
 use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -31,15 +30,13 @@ impl std::fmt::Display for DiscoveryStats {
 pub struct SourceDiscoverer<'a> {
     writer: &'a GraphWriter,
     city_slug: String,
-    anthropic_api_key: String,
 }
 
 impl<'a> SourceDiscoverer<'a> {
-    pub fn new(writer: &'a GraphWriter, city_slug: &str, anthropic_api_key: &str) -> Self {
+    pub fn new(writer: &'a GraphWriter, city_slug: &str) -> Self {
         Self {
             writer,
             city_slug: city_slug.to_string(),
-            anthropic_api_key: anthropic_api_key.to_string(),
         }
     }
 
@@ -146,7 +143,7 @@ impl<'a> SourceDiscoverer<'a> {
                     continue;
                 }
 
-                let source_type = infer_source_type(social_url);
+                let source_type = SourceType::from_url(social_url);
                 let cv = sources::canonical_value_from_url(source_type, social_url);
                 let ck = sources::make_canonical_key(&self.city_slug, source_type, &cv);
                 if existing_keys.contains(&ck) {
@@ -277,21 +274,3 @@ impl<'a> SourceDiscoverer<'a> {
     }
 }
 
-/// Infer SourceType from a URL.
-fn infer_source_type(url: &str) -> SourceType {
-    if url.contains("instagram.com") {
-        SourceType::Instagram
-    } else if url.contains("facebook.com") {
-        SourceType::Facebook
-    } else if url.contains("reddit.com") {
-        SourceType::Reddit
-    } else if url.contains("tiktok.com") {
-        SourceType::TikTok
-    } else if url.contains("twitter.com") || url.contains("x.com") {
-        SourceType::Twitter
-    } else if url.contains("bsky.app") {
-        SourceType::Bluesky
-    } else {
-        SourceType::Web
-    }
-}
