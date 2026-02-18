@@ -6,7 +6,6 @@ members = [
     "modules/rootsignal-common",
     "modules/rootsignal-graph",
     "modules/rootsignal-scout",
-    "modules/rootsignal-web",
     "modules/rootsignal-editions",
     "modules/rootsignal-scout-supervisor",
     "modules/rootsignal-api",

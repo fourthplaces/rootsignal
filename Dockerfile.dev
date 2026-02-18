@@ -1,4 +1,4 @@
-FROM rust:1.88-slim-bookworm
+FROM rust:1.89-slim-bookworm
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev chromium && rm -rf /var/lib/apt/lists/*
 ENV CHROME_BIN=/usr/bin/chromium
@@ -6,4 +6,4 @@ RUN cargo install cargo-watch --locked
 
 WORKDIR /app
 EXPOSE 3000
-CMD ["cargo", "watch", "-x", "run --bin web"]
+CMD ["cargo", "watch", "-x", "run --bin api"]

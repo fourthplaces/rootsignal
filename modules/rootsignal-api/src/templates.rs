@@ -45,7 +45,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 <body>
 <div class="header">
     <h1>Root Signal</h1>
-    <nav><a href="/">Map</a><a href="/nodes">Signals</a></nav>
+    <nav><a href="/admin">Map</a><a href="/admin/nodes">Signals</a></nav>
 </div>
 {content}
 </body>
