@@ -704,3 +704,124 @@ async fn same_source_does_not_inflate_corroboration() {
     assert_eq!(corr, 1, "corroboration_count should be 1 after one real cross-source, got {corr}");
     assert_eq!(ev_cnt, 2, "should have 2 evidence nodes (1 same-source + 1 cross-source), got {ev_cnt}");
 }
+
+// ---------------------------------------------------------------------------
+// Test 12: deduplicate_evidence migration cleans up legacy duplicate evidence
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn deduplicate_evidence_migration() {
+    let (_container, client) = setup().await;
+
+    // Create a signal with corroboration_count already inflated
+    let signal_id = Uuid::new_v4();
+    let now = memgraph_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let cypher = format!(
+        "CREATE (n:Event {{
+            id: $id, title: 'Inflated signal', summary: 'test',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 13, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://source-a.org',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: '', starts_at: null, ends_at: null,
+            action_url: '', organizer: '', is_recurring: false,
+            lat: 44.9778, lng: -93.2650,
+            embedding: {emb}
+        }})"
+    );
+    let q = query(&cypher)
+        .param("id", signal_id.to_string())
+        .param("now", now.clone());
+    client.inner().run(q).await.expect("create signal");
+
+    // Simulate the bug: manually CREATE 14 evidence nodes from the same source URL
+    // (bypassing the MERGE safety net to reproduce legacy data)
+    for i in 0..14 {
+        let ev_id = Uuid::new_v4();
+        let q = query(
+            "MATCH (n:Event {id: $signal_id})
+             CREATE (ev:Evidence {
+                 id: $ev_id,
+                 source_url: 'https://source-a.org',
+                 retrieved_at: datetime($now),
+                 content_hash: $hash,
+                 snippet: '',
+                 relevance: '',
+                 evidence_confidence: 0.0
+             })
+             CREATE (n)-[:SOURCED_FROM]->(ev)"
+        )
+        .param("signal_id", signal_id.to_string())
+        .param("ev_id", ev_id.to_string())
+        .param("now", now.clone())
+        .param("hash", format!("hash_{i}"));
+        client.inner().run(q).await.expect("create duplicate evidence");
+    }
+
+    // Also add 1 legitimate cross-source evidence
+    let cross_ev_id = Uuid::new_v4();
+    let q = query(
+        "MATCH (n:Event {id: $signal_id})
+         CREATE (ev:Evidence {
+             id: $ev_id,
+             source_url: 'https://independent.org',
+             retrieved_at: datetime($now),
+             content_hash: 'cross_hash',
+             snippet: '',
+             relevance: '',
+             evidence_confidence: 0.0
+         })
+         CREATE (n)-[:SOURCED_FROM]->(ev)"
+    )
+    .param("signal_id", signal_id.to_string())
+    .param("ev_id", cross_ev_id.to_string())
+    .param("now", now);
+    client.inner().run(q).await.expect("create cross-source evidence");
+
+    // Verify the mess: 15 evidence nodes, corroboration_count = 13
+    let q = query(
+        "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+    )
+    .param("id", signal_id.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
+    assert_eq!(ev_cnt, 15, "pre-migration: should have 15 evidence nodes, got {ev_cnt}");
+
+    // Run the dedup migration
+    rootsignal_graph::migrate::deduplicate_evidence(&client)
+        .await
+        .expect("deduplicate_evidence failed");
+
+    // After migration: should have 2 evidence nodes (1 per unique source_url)
+    // and corroboration_count = 1 (2 evidence - 1 = 1 real corroboration)
+    let q = query(
+        "MATCH (n:Event {id: $id})
+         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+    )
+    .param("id", signal_id.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+
+    let corr: i64 = row.get("corr").expect("no corr");
+    let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
+    assert_eq!(ev_cnt, 2, "post-migration: should have 2 evidence nodes (1 per source), got {ev_cnt}");
+    assert_eq!(corr, 1, "post-migration: corroboration_count should be 1 (2 sources - 1), got {corr}");
+
+    // Verify the distinct source URLs are correct
+    let q = query(
+        "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN ev.source_url AS url ORDER BY url"
+    )
+    .param("id", signal_id.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut urls = Vec::new();
+    while let Some(row) = stream.next().await.expect("stream error") {
+        let url: String = row.get("url").expect("no url");
+        urls.push(url);
+    }
+    assert_eq!(urls, vec!["https://independent.org", "https://source-a.org"]);
+}

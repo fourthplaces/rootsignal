@@ -220,6 +220,10 @@ fn twincities_profile() -> CityProfile {
             "Minneapolis housing advocacy tenant rights",
             "Twin Cities affordable housing homelessness services",
             "Twin Cities mutual aid network community support 2026",
+            // Public safety and policing
+            "Minneapolis community safety policing accountability 2026",
+            "Twin Cities police community oversight meeting",
+            "Minneapolis St Paul neighborhood safety initiative",
             // Community news sources
             "site:sahanjournal.com Minneapolis St Paul community",
             "site:minnpost.com community events resources",
@@ -280,6 +284,14 @@ fn twincities_profile() -> CityProfile {
             // Watershed districts (ecological stewardship)
             "https://www.minnehahacreek.org/events",
             "https://www.capitolregionwd.org/events/",
+            // Public safety / policing / community safety
+            "https://www.mpd150.com/",
+            "https://www.cuapb.org/",
+            "https://www.minneapolismn.gov/government/departments/community-safety/",
+            "https://www.stpaul.gov/departments/police/community-partnerships",
+            "https://www.safetybeyondpolicing.com/",
+            "https://www.pillarsmn.org/",
+            "https://www.mncompass.org/topics/safety",
         ],
         instagram_accounts: vec![
             "handsontwincities",

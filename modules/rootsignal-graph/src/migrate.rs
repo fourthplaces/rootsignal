@@ -272,6 +272,12 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     run_ignoring_exists(g, "CREATE CONSTRAINT ON (b:BlockedSource) ASSERT b.url_pattern IS UNIQUE").await?;
     info!("BlockedSource constraint created");
 
+    // --- Deduplicate evidence + recompute corroboration ---
+    deduplicate_evidence(client).await?;
+
+    // --- Backfill event dates: clean up string/empty dates ---
+    backfill_event_dates(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -374,6 +380,90 @@ async fn drop_ignoring_missing(g: &neo4rs::Graph, cypher: &str) {
             }
         }
     }
+}
+
+/// Deduplicate evidence nodes: for each (signal, source_url) pair, keep one evidence
+/// node and delete the rest. Then recompute corroboration_count from actual unique
+/// evidence edges. Fixes inflated metrics from same-source re-scrapes.
+/// Idempotent — safe to run on every migration (no-ops when no duplicates exist).
+pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Deduplicating evidence nodes...");
+
+    // Step 1: For each (signal, source_url) with multiple evidence nodes, delete extras.
+    // Keeps evs[0] (arbitrary but stable), deletes evs[1..].
+    let dedup_q = query(
+        "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+         WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+         WITH n, ev.source_url AS src, collect(ev) AS evs
+         WHERE size(evs) > 1
+         UNWIND evs[1..] AS dup
+         DETACH DELETE dup
+         RETURN count(dup) AS deleted"
+    );
+
+    match g.execute(dedup_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted duplicate evidence nodes");
+                }
+            }
+        }
+        Err(e) => warn!("Evidence dedup failed (non-fatal): {e}"),
+    }
+
+    // Step 2: Recompute corroboration_count = (evidence_count - 1) for all signals.
+    // After dedup, each evidence node = one unique source URL.
+    // The original source isn't a corroboration, so subtract 1.
+    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        let recount_q = query(&format!(
+            "MATCH (n:{label})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             WITH n, count(ev) AS ev_count
+             SET n.corroboration_count = CASE WHEN ev_count > 0 THEN ev_count - 1 ELSE 0 END"
+        ));
+
+        match g.run(recount_q).await {
+            Ok(_) => {}
+            Err(e) => warn!("Corroboration recount for {label} failed (non-fatal): {e}"),
+        }
+    }
+
+    info!("Evidence dedup and corroboration recount complete");
+    Ok(())
+}
+
+/// Backfill event dates: null out empty strings, fix scrape-timestamp-as-event-date,
+/// and convert remaining string-typed dates to proper datetime values.
+/// Idempotent — safe to run on every migration.
+pub async fn backfill_event_dates(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling event dates...");
+
+    let steps = [
+        // Null out empty strings
+        "MATCH (e:Event) WHERE e.starts_at = '' SET e.starts_at = null",
+        "MATCH (e:Event) WHERE e.ends_at = '' SET e.ends_at = null",
+        // Null out starts_at that equals extracted_at (scrape timestamp mistaken for event date)
+        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND e.starts_at = e.extracted_at SET e.starts_at = null",
+        // Convert remaining string-typed dates to datetime
+        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND valueType(e.starts_at) = 'STRING' SET e.starts_at = datetime(e.starts_at)",
+        "MATCH (e:Event) WHERE e.ends_at IS NOT NULL AND valueType(e.ends_at) = 'STRING' SET e.ends_at = datetime(e.ends_at)",
+    ];
+
+    for step in &steps {
+        match g.run(query(step)).await {
+            Ok(_) => {}
+            Err(e) => warn!("Event date backfill step failed (non-fatal): {e}"),
+        }
+    }
+
+    info!("Event date backfill complete");
+    Ok(())
 }
 
 /// Backfill canonical_key on existing Source nodes and normalize city to slug.

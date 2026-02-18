@@ -63,8 +63,8 @@ impl GraphWriter {
                 last_confirmed_active: datetime($last_confirmed_active),
 
                 location_name: $location_name,
-                starts_at: $starts_at,
-                ends_at: $ends_at,
+                starts_at: CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
+                ends_at: CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                 action_url: $action_url,
                 organizer: $organizer,
                 is_recurring: $is_recurring,
@@ -365,13 +365,19 @@ impl GraphWriter {
     }
 
     /// Create an Evidence node and link it to a signal node via SOURCED_FROM edge.
+    ///
+    /// **Idempotent:** Uses MERGE on (signal)-[:SOURCED_FROM]->(Evidence {source_url}).
+    /// If evidence from this source_url already exists for this signal, updates the
+    /// content_hash and retrieved_at instead of creating a duplicate. This is the
+    /// safety net that prevents evidence pile-up from dynamic pages.
     pub async fn create_evidence(
         &self,
         evidence: &EvidenceNode,
         signal_node_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
-        // Create evidence node and link to the signal node.
-        // Use multiple OPTIONAL MATCHes + COALESCE to find the target across labels.
+        // Find the target signal across all labels, then MERGE evidence by source_url.
+        // ON CREATE: set all fields on the new Evidence node.
+        // ON MATCH: update hash + timestamp (page content changed but same source).
         let q = query(
             "OPTIONAL MATCH (e:Event {id: $signal_id})
             OPTIONAL MATCH (g:Give {id: $signal_id})
@@ -380,16 +386,17 @@ impl GraphWriter {
             OPTIONAL MATCH (t:Tension {id: $signal_id})
             WITH coalesce(e, g, a, nc, t) AS n
             WHERE n IS NOT NULL
-            CREATE (ev:Evidence {
-                id: $ev_id,
-                source_url: $source_url,
-                retrieved_at: datetime($retrieved_at),
-                content_hash: $content_hash,
-                snippet: $snippet,
-                relevance: $relevance,
-                evidence_confidence: $evidence_confidence
-            })
-            CREATE (n)-[:SOURCED_FROM]->(ev)",
+            MERGE (n)-[:SOURCED_FROM]->(ev:Evidence {source_url: $source_url})
+            ON CREATE SET
+                ev.id = $ev_id,
+                ev.retrieved_at = datetime($retrieved_at),
+                ev.content_hash = $content_hash,
+                ev.snippet = $snippet,
+                ev.relevance = $relevance,
+                ev.evidence_confidence = $evidence_confidence
+            ON MATCH SET
+                ev.retrieved_at = datetime($retrieved_at),
+                ev.content_hash = $content_hash",
         )
         .param("ev_id", evidence.id.to_string())
         .param("source_url", evidence.source_url.as_str())
@@ -399,6 +406,36 @@ impl GraphWriter {
         .param("relevance", evidence.relevance.clone().unwrap_or_default())
         .param("evidence_confidence", evidence.evidence_confidence.unwrap_or(0.0) as f64)
         .param("signal_id", signal_node_id.to_string());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Refresh a signal's `last_confirmed_active` timestamp without incrementing
+    /// corroboration metrics. Used for same-source re-scrapes where the signal
+    /// is confirmed still active but no new independent source was found.
+    pub async fn refresh_signal(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+        now: DateTime<Utc>,
+    ) -> Result<(), neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(()),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             SET n.last_confirmed_active = datetime($now)",
+            label
+        ))
+        .param("id", signal_id.to_string())
+        .param("now", memgraph_datetime(&now));
 
         self.client.graph.run(q).await?;
         Ok(())

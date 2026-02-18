@@ -347,6 +347,6 @@ LIMIT 20;
 | Geographic | WORKS | Bounding box queries work |
 | Corroboration | WORKS | source_diversity ranking works |
 | Need-to-resource matching | PARTIAL | Cartesian product, no semantic match |
-| Time-based | BROKEN | starts_at is scrape time, not event time |
-| Actor queries | BROKEN | PARTICIPATED_IN edges missing |
+| Time-based | FIXED | starts_at stored as datetime; backfill cleans legacy data |
+| Actor queries | WORKS | Uses ACTED_IN edge (not PARTICIPATED_IN) — 78 edges |
 | Stories/narratives | PARTIAL | Only 2 stories, clustering needs tuning |
