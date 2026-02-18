@@ -11,6 +11,8 @@ pub mod signals_list;
 pub mod stories_detail;
 pub mod stories_list;
 
+pub mod sources;
+
 pub use cities::{render_cities, CityView};
 pub use city_detail::render_city_detail;
 pub use login::{render_login, render_verify};
@@ -18,6 +20,7 @@ pub use map::render_map;
 pub use quality::render_quality;
 pub use signal_detail::render_signal_detail;
 pub use signals_list::render_signals_list;
+pub use sources::{SourceView, SchedulePreview, ScheduledSourceView};
 pub use stories_detail::render_story_detail;
 pub use stories_list::render_stories_list;
 

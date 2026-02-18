@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 
-use super::{CityView, NodeView, StoryView};
+use super::{CityView, NodeView, StoryView, SourceView, SchedulePreview};
 use super::layout::Layout;
+use super::sources::render_sources_tab;
 use crate::templates::render_to_html;
 
 fn signal_badge_classes(type_class: &str) -> &'static str {
@@ -40,9 +41,12 @@ fn CityDetail(
     tab: String,
     signals: Vec<NodeView>,
     stories: Vec<StoryView>,
+    sources: Vec<SourceView>,
+    schedule: Option<SchedulePreview>,
 ) -> Element {
     let signals_active = tab == "signals";
     let stories_active = tab == "stories";
+    let sources_active = tab == "sources";
 
     let tab_active = "px-4 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600";
     let tab_inactive = "px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 border-b-2 border-transparent";
@@ -118,6 +122,11 @@ fn CityDetail(
                         href: "/admin/cities/{city.slug}?tab=stories",
                         class: if stories_active { tab_active } else { tab_inactive },
                         "Stories"
+                    }
+                    a {
+                        href: "/admin/cities/{city.slug}?tab=sources",
+                        class: if sources_active { tab_active } else { tab_inactive },
+                        "Sources"
                     }
                 }
 
@@ -221,6 +230,12 @@ fn CityDetail(
                         }
                     }
                 }
+
+                if sources_active {
+                    if let Some(sched) = schedule {
+                        { render_sources_tab(city.slug.clone(), sources, sched) }
+                    }
+                }
             }
         }
     }
@@ -231,10 +246,12 @@ pub fn render_city_detail(
     tab: String,
     signals: Vec<NodeView>,
     stories: Vec<StoryView>,
+    sources: Vec<SourceView>,
+    schedule: Option<SchedulePreview>,
 ) -> String {
     let mut dom = VirtualDom::new_with_props(
         CityDetail,
-        CityDetailProps { city, tab, signals, stories },
+        CityDetailProps { city, tab, signals, stories, sources, schedule },
     );
     dom.rebuild_in_place();
     render_to_html(&dom)

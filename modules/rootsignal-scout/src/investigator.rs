@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::EvidenceNode;
-use rootsignal_graph::{GraphWriter, InvestigationTarget};
+use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::scraper::WebSearcher;
 
@@ -30,15 +30,16 @@ pub struct InvestigationStats {
     pub targets_failed: u32,
     pub evidence_created: u32,
     pub tavily_queries_used: u32,
+    pub confidence_adjustments: u32,
 }
 
 impl std::fmt::Display for InvestigationStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Investigation: {} targets found, {} investigated, {} failed, {} evidence created, {} Tavily queries",
+            "Investigation: {} targets found, {} investigated, {} failed, {} evidence created, {} Tavily queries, {} confidence adjustments",
             self.targets_found, self.targets_investigated, self.targets_failed,
-            self.evidence_created, self.tavily_queries_used,
+            self.evidence_created, self.tavily_queries_used, self.confidence_adjustments,
         )
     }
 }
@@ -159,6 +160,11 @@ impl<'a> Investigator<'a> {
                         evidence_count,
                         "Signal investigated"
                     );
+
+                    // Revise confidence based on accumulated evidence
+                    if evidence_count > 0 {
+                        self.revise_confidence(target, &mut stats).await;
+                    }
                 }
                 Err(e) => {
                     stats.targets_failed += 1;
@@ -305,6 +311,83 @@ impl<'a> Investigator<'a> {
 
         Ok(evidence_count)
     }
+
+    /// Revise signal confidence based on accumulated evidence.
+    async fn revise_confidence(&self, target: &InvestigationTarget, stats: &mut InvestigationStats) {
+        let evidence = match self.writer.get_evidence_summary(target.signal_id, target.node_type).await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(signal_id = %target.signal_id, error = %e, "Failed to get evidence summary for confidence revision");
+                return;
+            }
+        };
+
+        if evidence.is_empty() {
+            return;
+        }
+
+        let adjustment = compute_confidence_adjustment(&evidence);
+        if adjustment.abs() < f32::EPSILON {
+            return;
+        }
+
+        let old_confidence = match self.writer.get_signal_confidence(target.signal_id, target.node_type).await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(signal_id = %target.signal_id, error = %e, "Failed to read signal confidence");
+                return;
+            }
+        };
+
+        let new_confidence = (old_confidence + adjustment).clamp(0.1, 1.0);
+        if (new_confidence - old_confidence).abs() < f32::EPSILON {
+            return;
+        }
+
+        if let Err(e) = self.writer.update_signal_confidence(target.signal_id, target.node_type, new_confidence).await {
+            warn!(signal_id = %target.signal_id, error = %e, "Failed to update signal confidence");
+            return;
+        }
+
+        stats.confidence_adjustments += 1;
+        info!(
+            signal_id = %target.signal_id,
+            old_confidence,
+            new_confidence,
+            adjustment,
+            evidence_count = evidence.len(),
+            "Signal confidence revised"
+        );
+    }
+}
+
+/// Compute confidence adjustment from evidence.
+/// Contradiction hits harder than confirmation helps.
+pub fn compute_confidence_adjustment(evidence: &[EvidenceSummary]) -> f32 {
+    let mut direct_boost = 0.0f32;
+    let mut supporting_boost = 0.0f32;
+    let mut contradicting_penalty = 0.0f32;
+
+    for e in evidence {
+        match e.relevance.as_str() {
+            "DIRECT" if e.confidence >= 0.7 => {
+                direct_boost += 0.05;
+            }
+            "SUPPORTING" if e.confidence >= 0.5 => {
+                supporting_boost += 0.02;
+            }
+            "CONTRADICTING" if e.confidence >= 0.7 => {
+                contradicting_penalty += 0.10;
+            }
+            _ => {}
+        }
+    }
+
+    // Cap positive contributions, no cap on contradictions
+    direct_boost = direct_boost.min(0.15);
+    supporting_boost = supporting_boost.min(0.06);
+
+    direct_boost + supporting_boost - contradicting_penalty
 }
 
 /// Extract domain from a URL for same-domain filtering.
@@ -323,4 +406,72 @@ fn content_hash(content: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn evidence(relevance: &str, confidence: f32) -> EvidenceSummary {
+        EvidenceSummary {
+            relevance: relevance.to_string(),
+            confidence,
+        }
+    }
+
+    #[test]
+    fn confidence_adjustment_direct_evidence_boosts() {
+        // 3 DIRECT at 0.8 → +0.05 * 3 = +0.15 (capped at 0.15)
+        let evidence = vec![
+            evidence("DIRECT", 0.8),
+            evidence("DIRECT", 0.8),
+            evidence("DIRECT", 0.8),
+        ];
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!((adj - 0.15).abs() < 0.001, "Expected +0.15, got {adj}");
+    }
+
+    #[test]
+    fn confidence_adjustment_contradicting_reduces() {
+        // 2 CONTRADICTING at 0.9 → -0.10 * 2 = -0.20
+        let evidence = vec![
+            evidence("CONTRADICTING", 0.9),
+            evidence("CONTRADICTING", 0.9),
+        ];
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!((adj - (-0.20)).abs() < 0.001, "Expected -0.20, got {adj}");
+    }
+
+    #[test]
+    fn confidence_adjustment_mixed_evidence() {
+        // 1 DIRECT (0.8) + 1 CONTRADICTING (0.9) → +0.05 - 0.10 = -0.05
+        let evidence = vec![
+            evidence("DIRECT", 0.8),
+            evidence("CONTRADICTING", 0.9),
+        ];
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!((adj - (-0.05)).abs() < 0.001, "Expected -0.05, got {adj}");
+    }
+
+    #[test]
+    fn confidence_adjustment_low_confidence_ignored() {
+        // DIRECT at 0.3 → below 0.7 threshold, no adjustment
+        let evidence = vec![evidence("DIRECT", 0.3)];
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!(adj.abs() < 0.001, "Expected 0, got {adj}");
+    }
+
+    #[test]
+    fn confidence_adjustment_clamped_to_bounds() {
+        // 10 CONTRADICTING at 0.9 → -1.0, but clamped to [0.1, 1.0] at usage site
+        let evidence: Vec<_> = (0..10).map(|_| evidence("CONTRADICTING", 0.9)).collect();
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!(adj < -0.5, "Expected large negative, got {adj}");
+
+        // Verify clamping works at usage site
+        let old_confidence = 0.7f32;
+        let new_confidence = (old_confidence + adj).clamp(0.1, 1.0);
+        assert!(new_confidence >= 0.1, "Clamped confidence below 0.1: {new_confidence}");
+        assert!(new_confidence <= 1.0, "Clamped confidence above 1.0: {new_confidence}");
+    }
 }

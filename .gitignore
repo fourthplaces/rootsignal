@@ -32,3 +32,4 @@ Thumbs.db
 *.profdata
 lcov.info
 tarpaulin-report.html
+certs

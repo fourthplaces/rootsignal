@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use ai_client::claude::Claude;
 use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType};
-use rootsignal_graph::{GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief, UnmetTension};
+use rootsignal_graph::{
+    ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
+    UnmetTension,
+};
 
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::sources;
@@ -47,6 +50,8 @@ pub struct DiscoveryBriefing {
     pub failures: Vec<SourceBrief>,
     pub existing_queries: Vec<String>,
     pub city_name: String,
+    pub gap_type_stats: Vec<GapTypeStats>,
+    pub extraction_yield: Vec<ExtractionYield>,
 }
 
 impl DiscoveryBriefing {
@@ -151,6 +156,64 @@ impl DiscoveryBriefing {
                     out.push_str(&format!(
                         "- \"{}\" → {} signals, {} empty runs (reason: {})\n",
                         f.canonical_value, f.signals_produced, f.consecutive_empty_runs, reason,
+                    ));
+                }
+            }
+            out.push('\n');
+        }
+
+        // Strategy performance
+        if !self.gap_type_stats.is_empty() {
+            out.push_str("## STRATEGY PERFORMANCE\n");
+            for g in &self.gap_type_stats {
+                let pct = if g.total_sources > 0 {
+                    (g.successful_sources as f64 / g.total_sources as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                out.push_str(&format!(
+                    "- {}: {}/{} sources successful ({}%), avg weight {:.2}\n",
+                    g.gap_type, g.successful_sources, g.total_sources, pct, g.avg_weight,
+                ));
+                if g.total_sources >= 5 && g.successful_sources == 0 {
+                    out.push_str(&format!(
+                        "→ WARNING: \"{}\" strategy has 0% success rate across {} attempts. Consider avoiding.\n",
+                        g.gap_type, g.total_sources,
+                    ));
+                }
+            }
+            out.push('\n');
+        }
+
+        // Extraction yield
+        if !self.extraction_yield.is_empty() {
+            out.push_str("## EXTRACTION YIELD\n");
+            for y in &self.extraction_yield {
+                let survival_pct = if y.extracted > 0 {
+                    (y.survived as f64 / y.extracted as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                out.push_str(&format!(
+                    "- {}: {} extracted, {} survived ({}%), {} corroborated, {} contradicted\n",
+                    y.source_type, y.extracted, y.survived, survival_pct,
+                    y.corroborated, y.contradicted,
+                ));
+                if y.extracted >= 10 && survival_pct < 50 {
+                    out.push_str(&format!(
+                        "→ {} survival rate below 50% — signals from this source type are frequently reaped.\n",
+                        y.source_type,
+                    ));
+                }
+                let contradiction_pct = if y.extracted > 0 {
+                    (y.contradicted as f64 / y.extracted as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                if y.extracted >= 10 && contradiction_pct >= 20 {
+                    out.push_str(&format!(
+                        "→ {} has high contradiction rate ({}%) — evidence frequently disputes these signals.\n",
+                        y.source_type, contradiction_pct,
                     ));
                 }
             }
@@ -556,6 +619,12 @@ impl<'a> SourceDiscoverer<'a> {
         let (successes, failures) = self.writer.get_discovery_performance(&self.city_slug).await
             .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
 
+        let gap_type_stats = self.writer.get_gap_type_stats(&self.city_slug).await
+            .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
+
+        let extraction_yield = self.writer.get_extraction_yield(&self.city_slug).await
+            .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
+
         // Get existing TavilyQuery sources for dedup
         let existing = self.writer.get_active_sources(&self.city_slug).await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
@@ -572,6 +641,8 @@ impl<'a> SourceDiscoverer<'a> {
             failures,
             existing_queries,
             city_name: self.city_name.clone(),
+            gap_type_stats,
+            extraction_yield,
         })
     }
 
@@ -733,6 +804,8 @@ mod tests {
                 "food shelf locations Minneapolis".to_string(),
             ],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         }
     }
 
@@ -837,6 +910,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         assert!(briefing.is_cold_start());
     }
@@ -854,6 +929,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         assert!(briefing.is_cold_start(), "2 tensions + 0 stories should be cold start");
     }
@@ -877,6 +954,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         assert!(!briefing.is_cold_start());
     }
@@ -910,6 +989,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(prompt.contains("affordable housing programs Minneapolis"));
@@ -937,6 +1018,8 @@ mod tests {
             ],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(prompt.contains("youth mentorship programs Minneapolis"));
@@ -959,6 +1042,8 @@ mod tests {
             ],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         let prompt = briefing.format_prompt();
 
@@ -987,6 +1072,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         let prompt = briefing.format_prompt();
 
@@ -1019,6 +1106,8 @@ mod tests {
             failures: vec![],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(
@@ -1123,5 +1212,113 @@ mod tests {
     fn unlimited_budget_allows_discovery() {
         let tracker = BudgetTracker::new(0);
         assert!(tracker.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY));
+    }
+
+    // --- F. Feedback Loop: Strategy Performance ---
+
+    #[test]
+    fn briefing_format_includes_strategy_performance() {
+        let mut briefing = make_briefing();
+        briefing.gap_type_stats = vec![
+            GapTypeStats {
+                gap_type: "unmet_tension".to_string(),
+                total_sources: 10,
+                successful_sources: 7,
+                avg_weight: 0.65,
+            },
+            GapTypeStats {
+                gap_type: "novel_angle".to_string(),
+                total_sources: 5,
+                successful_sources: 1,
+                avg_weight: 0.20,
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("## STRATEGY PERFORMANCE"), "Missing STRATEGY PERFORMANCE section");
+        assert!(prompt.contains("unmet_tension: 7/10 sources successful (70%)"), "Missing unmet_tension stats");
+        assert!(prompt.contains("novel_angle: 1/5 sources successful (20%)"), "Missing novel_angle stats");
+    }
+
+    #[test]
+    fn briefing_strategy_warns_on_zero_success() {
+        let mut briefing = make_briefing();
+        briefing.gap_type_stats = vec![
+            GapTypeStats {
+                gap_type: "novel_angle".to_string(),
+                total_sources: 5,
+                successful_sources: 0,
+                avg_weight: 0.20,
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(
+            prompt.contains("WARNING: \"novel_angle\" strategy has 0% success rate across 5 attempts"),
+            "Missing zero-success warning. Prompt:\n{prompt}"
+        );
+    }
+
+    // --- G. Feedback Loop: Extraction Yield ---
+
+    #[test]
+    fn briefing_format_includes_extraction_yield() {
+        let mut briefing = make_briefing();
+        briefing.extraction_yield = vec![
+            ExtractionYield {
+                source_type: "web".to_string(),
+                extracted: 142,
+                survived: 118,
+                corroborated: 23,
+                contradicted: 2,
+            },
+            ExtractionYield {
+                source_type: "tavily_query".to_string(),
+                extracted: 67,
+                survived: 31,
+                corroborated: 4,
+                contradicted: 8,
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("## EXTRACTION YIELD"), "Missing EXTRACTION YIELD section");
+        assert!(prompt.contains("web: 142 extracted, 118 survived (83%)"), "Missing web yield stats");
+        assert!(prompt.contains("tavily_query: 67 extracted, 31 survived (46%)"), "Missing tavily yield stats");
+    }
+
+    #[test]
+    fn briefing_extraction_yield_annotates_low_survival() {
+        let mut briefing = make_briefing();
+        briefing.extraction_yield = vec![
+            ExtractionYield {
+                source_type: "tavily_query".to_string(),
+                extracted: 67,
+                survived: 31,
+                corroborated: 4,
+                contradicted: 0,
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(
+            prompt.contains("tavily_query survival rate below 50%"),
+            "Missing low survival annotation. Prompt:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn briefing_extraction_yield_annotates_high_contradiction() {
+        let mut briefing = make_briefing();
+        briefing.extraction_yield = vec![
+            ExtractionYield {
+                source_type: "tavily_query".to_string(),
+                extracted: 50,
+                survived: 40,
+                corroborated: 4,
+                contradicted: 15,
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(
+            prompt.contains("tavily_query has high contradiction rate (30%)"),
+            "Missing high contradiction annotation. Prompt:\n{prompt}"
+        );
     }
 }

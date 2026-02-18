@@ -2161,6 +2161,231 @@ impl GraphWriter {
         Ok(())
     }
 
+    // --- Feedback loop methods ---
+
+    /// Update a signal's confidence value. Same label-dispatch as mark_investigated.
+    pub async fn update_signal_confidence(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+        new_confidence: f32,
+    ) -> Result<(), neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(()),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             SET n.confidence = $confidence",
+            label
+        ))
+        .param("id", signal_id.to_string())
+        .param("confidence", new_confidence as f64);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Read current confidence for a signal. Returns 0.5 if not found.
+    pub async fn get_signal_confidence(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+    ) -> Result<f32, neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(0.5),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             RETURN n.confidence AS confidence",
+            label
+        ))
+        .param("id", signal_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let conf: f64 = row.get("confidence").unwrap_or(0.5);
+            return Ok(conf as f32);
+        }
+        Ok(0.5)
+    }
+
+    /// Get all evidence linked to a signal via SOURCED_FROM.
+    pub async fn get_evidence_summary(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+    ) -> Result<Vec<EvidenceSummary>, neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Event => "Event",
+            NodeType::Give => "Give",
+            NodeType::Ask => "Ask",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(Vec::new()),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})-[:SOURCED_FROM]->(ev:Evidence)
+             RETURN ev.relevance AS relevance, ev.evidence_confidence AS confidence",
+            label
+        ))
+        .param("id", signal_id.to_string());
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let relevance: String = row.get("relevance").unwrap_or_default();
+            let confidence: f64 = row.get("confidence").unwrap_or(0.0);
+            if !relevance.is_empty() {
+                results.push(EvidenceSummary {
+                    relevance,
+                    confidence: confidence as f32,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get gap_type strategy stats for discovery sources in a city.
+    /// Parses gap_type from gap_context ("... | Gap: <type> | ...") in Rust.
+    pub async fn get_gap_type_stats(&self, city: &str) -> Result<Vec<GapTypeStats>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city})
+             WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
+               AND s.gap_context IS NOT NULL
+             RETURN s.gap_context AS gc, s.signals_produced AS sp, s.weight AS weight"
+        )
+        .param("city", city);
+
+        let mut map: std::collections::HashMap<String, (u32, u32, f64)> = std::collections::HashMap::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let gc: String = row.get("gc").unwrap_or_default();
+            let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
+            let weight: f64 = row.get("weight").unwrap_or(0.0);
+
+            // Parse gap_type from "... | Gap: <type> | ..."
+            let gap_type = gc.find("| Gap: ")
+                .and_then(|start| {
+                    let after = &gc[start + 7..];
+                    let end = after.find(" |").unwrap_or(after.len());
+                    let gt = after[..end].trim();
+                    if gt.is_empty() { None } else { Some(gt.to_string()) }
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let entry = map.entry(gap_type).or_insert((0, 0, 0.0));
+            entry.0 += 1; // total
+            if sp > 0 { entry.1 += 1; } // successful
+            entry.2 += weight; // sum of weights
+        }
+
+        let mut results: Vec<GapTypeStats> = map.into_iter()
+            .map(|(gap_type, (total, successful, weight_sum))| {
+                GapTypeStats {
+                    gap_type,
+                    total_sources: total,
+                    successful_sources: successful,
+                    avg_weight: if total > 0 { weight_sum / total as f64 } else { 0.0 },
+                }
+            })
+            .collect();
+        results.sort_by(|a, b| b.total_sources.cmp(&a.total_sources));
+        Ok(results)
+    }
+
+    /// Get extraction yield metrics grouped by source_type for a city.
+    pub async fn get_extraction_yield(&self, city: &str) -> Result<Vec<ExtractionYield>, neo4rs::Error> {
+        // Base metrics from Source nodes
+        let q = query(
+            "MATCH (s:Source {city: $city})
+             WHERE s.active = true
+             RETURN s.source_type AS st, s.signals_produced AS sp,
+                    s.signals_corroborated AS sc, s.url AS url"
+        )
+        .param("city", city);
+
+        let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> = std::collections::HashMap::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let st: String = row.get("st").unwrap_or_default();
+            let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
+            let sc: i64 = row.get::<i64>("sc").unwrap_or(0);
+            let url: String = row.get("url").unwrap_or_default();
+
+            let entry = type_map.entry(st).or_insert((0, 0, Vec::new()));
+            entry.0 += sp as u32; // extracted
+            entry.1 += sc as u32; // corroborated
+            if !url.is_empty() {
+                entry.2.push(url);
+            }
+        }
+
+        let mut results = Vec::new();
+        for (source_type, (extracted, corroborated, urls)) in &type_map {
+            // Count survived signals (still in graph) per source type via source_url
+            let mut survived = 0u32;
+            if !urls.is_empty() {
+                for url in urls {
+                    let q = query(
+                        "MATCH (n)
+                         WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+                           AND n.source_url = $url
+                         RETURN count(n) AS cnt"
+                    )
+                    .param("url", url.as_str());
+
+                    let mut stream = self.client.graph.execute(q).await?;
+                    if let Some(row) = stream.next().await? {
+                        survived += row.get::<i64>("cnt").unwrap_or(0) as u32;
+                    }
+                }
+            }
+
+            // Count contradicted signals per source type
+            let mut contradicted = 0u32;
+            if !urls.is_empty() {
+                for url in urls {
+                    let q = query(
+                        "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence {relevance: 'CONTRADICTING'})
+                         WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+                           AND n.source_url = $url
+                         RETURN count(DISTINCT n) AS cnt"
+                    )
+                    .param("url", url.as_str());
+
+                    let mut stream = self.client.graph.execute(q).await?;
+                    if let Some(row) = stream.next().await? {
+                        contradicted += row.get::<i64>("cnt").unwrap_or(0) as u32;
+                    }
+                }
+            }
+
+            results.push(ExtractionYield {
+                source_type: source_type.clone(),
+                extracted: *extracted,
+                survived,
+                corroborated: *corroborated,
+                contradicted,
+            });
+        }
+
+        results.sort_by(|a, b| b.extracted.cmp(&a.extracted));
+        Ok(results)
+    }
+
     /// Get the snapshot entity count from 7 days ago for velocity calculation.
     /// Velocity is driven by entity diversity growth — a flood from one source doesn't move the needle.
     pub async fn get_snapshot_entity_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
@@ -2250,6 +2475,32 @@ pub struct SourceBrief {
     pub consecutive_empty_runs: u32,
     pub gap_context: Option<String>,
     pub active: bool,
+}
+
+/// Evidence linked to a signal — used for confidence revision.
+#[derive(Debug, Clone)]
+pub struct EvidenceSummary {
+    pub relevance: String,    // "DIRECT", "SUPPORTING", "CONTRADICTING"
+    pub confidence: f32,
+}
+
+/// Aggregated stats for a gap_type strategy.
+#[derive(Debug, Clone)]
+pub struct GapTypeStats {
+    pub gap_type: String,
+    pub total_sources: u32,
+    pub successful_sources: u32,  // signals_produced > 0
+    pub avg_weight: f64,
+}
+
+/// Extraction yield metrics grouped by source_type.
+#[derive(Debug, Clone)]
+pub struct ExtractionYield {
+    pub source_type: String,
+    pub extracted: u32,      // from Source.signals_produced
+    pub survived: u32,       // count of signals still in graph
+    pub corroborated: u32,   // from Source.signals_corroborated
+    pub contradicted: u32,   // signals with CONTRADICTING evidence
 }
 
 /// A signal that warrants investigation.

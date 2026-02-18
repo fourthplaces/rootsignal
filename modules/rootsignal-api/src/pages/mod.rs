@@ -18,7 +18,8 @@ use crate::components::{
     evidence_to_view, node_to_view, render_cities, render_city_detail, render_login, render_map,
     render_quality, render_signal_detail, render_signals_list, render_stories_list,
     render_story_detail, render_verify, story_to_view, tension_response_to_view, CityView,
-    EvidenceView, NodeView, ResponseView, StoryView,
+    EvidenceView, NodeView, ResponseView, SchedulePreview, ScheduledSourceView, SourceView,
+    StoryView,
 };
 use crate::rest::submit::check_rate_limit;
 use crate::AppState;
@@ -383,10 +384,10 @@ pub async fn city_detail_page(
         scout_running,
     };
 
-    let tab = if params.tab == "stories" {
-        "stories".to_string()
-    } else {
-        "signals".to_string()
+    let tab = match params.tab.as_str() {
+        "stories" => "stories".to_string(),
+        "sources" => "sources".to_string(),
+        _ => "signals".to_string(),
     };
 
     let signals = if tab == "signals" {
@@ -428,9 +429,115 @@ pub async fn city_detail_page(
         Vec::new()
     };
 
+    let (sources, schedule) = if tab == "sources" {
+        match state.writer.get_active_sources(&slug).await {
+            Ok(raw_sources) => {
+                let now = chrono::Utc::now();
+
+                // Build source views
+                let source_views: Vec<SourceView> = raw_sources
+                    .iter()
+                    .map(|s| {
+                        let effective_weight = s.weight * s.quality_penalty;
+                        let cadence = s.cadence_hours.unwrap_or_else(|| {
+                            rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
+                        });
+                        SourceView {
+                            canonical_key: s.canonical_key.clone(),
+                            canonical_value: s.canonical_value.clone(),
+                            url: s.url.clone(),
+                            source_type: s.source_type.to_string(),
+                            is_query: s.source_type.is_query(),
+                            discovery_method: s.discovery_method.to_string(),
+                            weight: s.weight,
+                            quality_penalty: s.quality_penalty,
+                            effective_weight,
+                            cadence_hours: cadence,
+                            signals_produced: s.signals_produced,
+                            signals_corroborated: s.signals_corroborated,
+                            consecutive_empty_runs: s.consecutive_empty_runs,
+                            last_scraped: s.last_scraped.map(|t| format_relative_time(t, now)),
+                            last_produced_signal: s.last_produced_signal.map(|t| format_relative_time(t, now)),
+                            gap_context: s.gap_context.clone(),
+                        }
+                    })
+                    .collect();
+
+                // Run scheduler dry-run
+                let scheduler = rootsignal_scout::scheduler::SourceScheduler::new();
+                let result = scheduler.schedule(&raw_sources, now);
+
+                let scheduled_views: Vec<ScheduledSourceView> = result
+                    .scheduled
+                    .iter()
+                    .filter_map(|ss| {
+                        raw_sources.iter().find(|s| s.canonical_key == ss.canonical_key).map(|s| {
+                            let effective_weight = s.weight * s.quality_penalty;
+                            let cadence = s.cadence_hours.unwrap_or_else(|| {
+                                rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
+                            });
+                            ScheduledSourceView {
+                                canonical_value: s.canonical_value.clone(),
+                                source_type: s.source_type.to_string(),
+                                is_query: s.source_type.is_query(),
+                                reason: match ss.reason {
+                                    rootsignal_scout::scheduler::ScheduleReason::Cadence => "Cadence".to_string(),
+                                    rootsignal_scout::scheduler::ScheduleReason::NeverScraped => "Never scraped".to_string(),
+                                    rootsignal_scout::scheduler::ScheduleReason::Exploration => "Exploration".to_string(),
+                                },
+                                weight: effective_weight,
+                                cadence_hours: cadence,
+                                last_scraped: s.last_scraped.map(|t| format_relative_time(t, now)),
+                                hours_until_due: None,
+                            }
+                        })
+                    })
+                    .collect();
+
+                let exploration_views: Vec<ScheduledSourceView> = result
+                    .exploration
+                    .iter()
+                    .filter_map(|ss| {
+                        raw_sources.iter().find(|s| s.canonical_key == ss.canonical_key).map(|s| {
+                            let effective_weight = s.weight * s.quality_penalty;
+                            let cadence = s.cadence_hours.unwrap_or_else(|| {
+                                rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
+                            });
+                            ScheduledSourceView {
+                                canonical_value: s.canonical_value.clone(),
+                                source_type: s.source_type.to_string(),
+                                is_query: s.source_type.is_query(),
+                                reason: "Exploration".to_string(),
+                                weight: effective_weight,
+                                cadence_hours: cadence,
+                                last_scraped: s.last_scraped.map(|t| format_relative_time(t, now)),
+                                hours_until_due: None,
+                            }
+                        })
+                    })
+                    .collect();
+
+                let preview = SchedulePreview {
+                    total_sources: raw_sources.len(),
+                    skipped_count: result.skipped,
+                    scheduled: scheduled_views,
+                    exploration: exploration_views,
+                };
+
+                (source_views, Some(preview))
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load sources");
+                (Vec::new(), None)
+            }
+        }
+    } else {
+        (Vec::new(), None)
+    };
+
     (
         StatusCode::OK,
-        Html(render_city_detail(city_view, tab, signals, stories)),
+        Html(render_city_detail(city_view, tab, signals, stories, sources, schedule)),
     )
 }
 
@@ -598,6 +705,22 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 #[derive(serde::Deserialize)]
 pub struct CreateCityForm {
     pub location: String,
+}
+
+fn format_relative_time(t: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let hours = (now - t).num_hours();
+    if hours < 1 {
+        "just now".to_string()
+    } else if hours < 24 {
+        format!("{hours}h ago")
+    } else {
+        let days = hours / 24;
+        if days == 1 {
+            "yesterday".to_string()
+        } else {
+            format!("{days}d ago")
+        }
+    }
 }
 
 pub async fn quality_dashboard(
