@@ -23,6 +23,12 @@ fn memgraph_dt(dt: &chrono::DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
+fn dummy_embedding() -> String {
+    let mut parts = vec!["0.1".to_string()];
+    parts.extend(std::iter::repeat("0.0".to_string()).take(1023));
+    format!("[{}]", parts.join(","))
+}
+
 /// Helper: create a signal node of a given type with minimal required properties.
 async fn create_signal(
     client: &GraphClient,
@@ -34,6 +40,7 @@ async fn create_signal(
     cause_heat: f64,
 ) {
     let now = memgraph_dt(&Utc::now());
+    let emb = dummy_embedding();
     let cypher = format!(
         "CREATE (n:{label} {{
             id: $id,
@@ -52,7 +59,7 @@ async fn create_signal(
             location_name: '',
             lat: 44.9778,
             lng: -93.2650,
-            embedding: [0.1, 0.2, 0.3]
+            embedding: {emb}
         }})"
     );
 
