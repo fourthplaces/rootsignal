@@ -680,6 +680,14 @@ impl Scout {
                 };
                 let post_count = posts.len();
 
+                // Format a post header including the specific post URL when available.
+                let post_header = |i: usize, p: &SocialPost| -> String {
+                    match &p.url {
+                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
+                        None => format!("--- Post {} ---\n{}", i + 1, p.content),
+                    }
+                };
+
                 if is_reddit {
                     // Reddit: batch posts 10 at a time for extraction
                     let batches: Vec<_> = posts.chunks(10).collect();
@@ -689,7 +697,7 @@ impl Scout {
                         let combined_text: String = batch
                             .iter()
                             .enumerate()
-                            .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
+                            .map(|(i, p)| post_header(i, p))
                             .collect::<Vec<_>>()
                             .join("\n\n");
                         if combined_text.is_empty() {
@@ -713,7 +721,7 @@ impl Scout {
                     let combined_text: String = posts
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
+                        .map(|(i, p)| post_header(i, p))
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     if combined_text.is_empty() {
@@ -829,11 +837,14 @@ impl Scout {
                 continue;
             }
 
-            // Concatenate post content for extraction
+            // Concatenate post content for extraction, including post URLs
             let combined_text: String = posts
                 .iter()
                 .enumerate()
-                .map(|(i, p)| format!("--- Post {} ---\n{}", i + 1, p.content))
+                .map(|(i, p)| match &p.url {
+                    Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
+                    None => format!("--- Post {} ---\n{}", i + 1, p.content),
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
@@ -1085,14 +1096,38 @@ impl Scout {
             let key = (normalize_title(node.title()), node.node_type());
             if let Some((existing_id, existing_url)) = global_matches.get(&key) {
                 if *existing_url != url {
+                    // Cross-source: different URL confirms the same signal — real corroboration
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
                         existing_source = existing_url.as_str(),
                         new_source = url.as_str(),
-                        "Global title+type match, corroborating"
+                        "Global title+type match from different source, corroborating"
                     );
                     self.writer.corroborate(*existing_id, node.node_type(), now, &entity_mappings).await?;
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
+                    };
+                    self.writer.create_evidence(&evidence, *existing_id).await?;
+                    stats.signals_deduplicated += 1;
+                    continue;
+                } else {
+                    // Same-source re-scrape: signal already exists from this URL.
+                    // Refresh to prove it's still active, but don't inflate corroboration.
+                    // create_evidence uses MERGE so it updates the existing evidence hash.
+                    info!(
+                        existing_id = %existing_id,
+                        title = node.title(),
+                        source = url.as_str(),
+                        "Same-source title match, refreshing (no corroboration)"
+                    );
+                    self.writer.refresh_signal(*existing_id, node.node_type(), now).await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
@@ -1160,13 +1195,38 @@ impl Scout {
                 embed_cache.find_match(&embedding, 0.85)
             {
                 let is_same_source = cached_url == url;
-                if is_same_source || sim >= 0.92 {
+                if is_same_source {
+                    // Same-source re-extraction: refresh only, don't inflate corroboration
                     info!(
                         existing_id = %cached_id,
                         similarity = sim,
                         title = node.title(),
                         source = "cache",
-                        "Duplicate found in embedding cache, corroborating"
+                        "Same-source duplicate in cache, refreshing (no corroboration)"
+                    );
+                    self.writer.refresh_signal(cached_id, cached_type, now).await?;
+
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
+                    };
+                    self.writer.create_evidence(&evidence, cached_id).await?;
+
+                    stats.signals_deduplicated += 1;
+                    continue;
+                } else if sim >= 0.92 {
+                    // Cross-source corroboration: different URL, high confidence match
+                    info!(
+                        existing_id = %cached_id,
+                        similarity = sim,
+                        title = node.title(),
+                        source = "cache",
+                        "Cross-source duplicate in cache, corroborating"
                     );
                     self.writer.corroborate(cached_id, cached_type, now, &entity_mappings).await?;
 
@@ -1191,7 +1251,34 @@ impl Scout {
                 Ok(Some(dup)) => {
                     let dominated_url = sanitize_url(&dup.source_url);
                     let is_same_source = dominated_url == url;
-                    if is_same_source || dup.similarity >= 0.92 {
+                    if is_same_source {
+                        // Same-source re-scrape: refresh only, don't inflate corroboration
+                        info!(
+                            existing_id = %dup.id,
+                            similarity = dup.similarity,
+                            title = node.title(),
+                            source = "graph",
+                            "Same-source duplicate in graph, refreshing (no corroboration)"
+                        );
+                        self.writer.refresh_signal(dup.id, dup.node_type, now).await?;
+
+                        let evidence = EvidenceNode {
+                            id: Uuid::new_v4(),
+                            source_url: url.clone(),
+                            retrieved_at: now,
+                            content_hash: content_hash_str.clone(),
+                            snippet: node.meta().map(|m| m.summary.clone()),
+                            relevance: None,
+                            evidence_confidence: None,
+                        };
+                        self.writer.create_evidence(&evidence, dup.id).await?;
+
+                        embed_cache.add(embedding, dup.id, dup.node_type, dominated_url);
+
+                        stats.signals_deduplicated += 1;
+                        continue;
+                    } else if dup.similarity >= 0.92 {
+                        // Cross-source corroboration: different URL, high confidence match
                         let cross_type = dup.node_type != node_type;
                         info!(
                             existing_id = %dup.id,
@@ -1199,7 +1286,7 @@ impl Scout {
                             title = node.title(),
                             cross_type,
                             source = "graph",
-                            "Duplicate found, corroborating"
+                            "Cross-source duplicate in graph, corroborating"
                         );
                         self.writer.corroborate(dup.id, dup.node_type, now, &entity_mappings).await?;
 
@@ -1214,7 +1301,6 @@ impl Scout {
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
-                        // Also add to cache so future batches can find this
                         embed_cache.add(embedding, dup.id, dup.node_type, dominated_url);
 
                         stats.signals_deduplicated += 1;

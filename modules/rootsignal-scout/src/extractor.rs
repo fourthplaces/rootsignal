@@ -61,6 +61,9 @@ pub struct ExtractedSignal {
     pub content_date: Option<String>,
     /// Organizations, groups, or individuals mentioned in the signal
     pub mentioned_actors: Option<Vec<String>>,
+    /// The specific source URL this signal was extracted from (e.g. a specific post URL).
+    /// When extracting from multiple posts, return the URL of the post this signal came from.
+    pub source_url: Option<String>,
     /// What response would address this tension (for Tension signals)
     pub what_would_help: Option<String>,
 }
@@ -176,6 +179,15 @@ impl Extractor {
 
             let mentioned_actors = signal.mentioned_actors.unwrap_or_default();
 
+            // Use the LLM-returned source_url when present (specific post URL),
+            // falling back to the page-level source_url.
+            let effective_source_url = signal
+                .source_url
+                .as_deref()
+                .filter(|u| !u.is_empty())
+                .unwrap_or(source_url)
+                .to_string();
+
             let meta = NodeMeta {
                 id: Uuid::new_v4(),
                 title: signal.title.clone(),
@@ -186,7 +198,7 @@ impl Extractor {
                 corroboration_count: 0,
                 location,
                 location_name: signal.location_name.clone(),
-                source_url: source_url.to_string(),
+                source_url: effective_source_url.clone(),
                 extracted_at: now,
                 last_confirmed_active: now,
                 source_diversity: 1,
@@ -214,7 +226,7 @@ impl Extractor {
                         ends_at,
                         action_url: signal
                             .action_url
-                            .unwrap_or_else(|| source_url.to_string()),
+                            .unwrap_or(effective_source_url),
                         organizer: signal.organizer,
                         is_recurring: signal.is_recurring.unwrap_or(false),
                     })
@@ -223,7 +235,7 @@ impl Extractor {
                     meta,
                     action_url: signal
                         .action_url
-                        .unwrap_or_else(|| source_url.to_string()),
+                        .unwrap_or(effective_source_url),
                     availability: signal.availability.unwrap_or_else(|| "Contact for details".to_string()),
                     is_ongoing: signal.is_ongoing.unwrap_or(true),
                 }),
@@ -359,6 +371,10 @@ If a page describes only a problem with no actionable response, return an empty 
 - category: "housing", "safety", "equity", "infrastructure", "environment", "governance", "health"
 - what_would_help: What response would address this tension (e.g. "affordable housing policy", "community oversight board")
 
+## Source URL
+- When extracting from multiple posts (e.g. "--- Post 1 (https://...) ---"), set source_url to the specific post URL the signal came from
+- This lets readers navigate directly to the original post, not just the profile
+
 ## Action URLs
 - Include the most relevant action URL (registration, donation, event page)
 - If none exists, use the source page URL
@@ -421,6 +437,7 @@ mod tests {
             content_date: None,
             mentioned_actors: None,
             what_would_help: Some("affordable housing policy".to_string()),
+            source_url: None,
         };
 
         assert_eq!(signal.signal_type, "tension");

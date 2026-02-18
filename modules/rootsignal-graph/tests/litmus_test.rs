@@ -12,7 +12,8 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_graph::{query, GraphClient};
+use rootsignal_common::EvidenceNode;
+use rootsignal_graph::{query, GraphClient, GraphWriter};
 
 /// Spin up a fresh Memgraph container and run migrations.
 async fn setup() -> (impl std::any::Any, GraphClient) {
@@ -473,4 +474,233 @@ async fn cross_type_topic_search() {
     let types: Vec<&str> = results.iter().map(|(t, _)| t.as_str()).collect();
     assert!(types.contains(&"Ask"), "should include Ask");
     assert!(types.contains(&"Give"), "should include Give");
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: Same-source evidence is idempotent (MERGE, not CREATE)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn same_source_no_duplicate_evidence() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create a signal
+    let signal_id = Uuid::new_v4();
+    create_signal(&client, "Event", signal_id, "Cleanup day", "https://source-a.org").await;
+
+    // Create evidence from URL A — first time
+    let ev1 = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-a.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_v1".to_string(),
+        snippet: Some("First scrape".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev1, signal_id).await.expect("create evidence 1");
+
+    // Create evidence from URL A again — simulates re-scrape with changed content
+    let ev2 = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-a.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_v2".to_string(),
+        snippet: Some("Second scrape".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev2, signal_id).await.expect("create evidence 2");
+
+    // Call it a third time for good measure
+    let ev3 = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-a.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_v3".to_string(),
+        snippet: Some("Third scrape".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev3, signal_id).await.expect("create evidence 3");
+
+    // Should have exactly 1 evidence node, not 3
+    let q = query(
+        "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN count(ev) AS cnt, ev.content_hash AS hash"
+    )
+    .param("id", signal_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+
+    let cnt: i64 = row.get("cnt").expect("no cnt");
+    let hash: String = row.get("hash").expect("no hash");
+
+    assert_eq!(cnt, 1, "should have exactly 1 evidence node from same source, got {cnt}");
+    assert_eq!(hash, "hash_v3", "content_hash should be updated to latest scrape");
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Cross-source evidence creates separate nodes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cross_source_creates_new_evidence() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let signal_id = Uuid::new_v4();
+    create_signal(&client, "Event", signal_id, "Community meeting", "https://source-a.org").await;
+
+    // Evidence from URL A
+    let ev_a = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-a.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_a".to_string(),
+        snippet: Some("Source A".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev_a, signal_id).await.expect("create evidence A");
+
+    // Evidence from URL B — different source, should create a new evidence node
+    let ev_b = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-b.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_b".to_string(),
+        snippet: Some("Source B".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev_b, signal_id).await.expect("create evidence B");
+
+    // Evidence from URL C — third independent source
+    let ev_c = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://source-c.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_c".to_string(),
+        snippet: Some("Source C".to_string()),
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev_c, signal_id).await.expect("create evidence C");
+
+    // Should have 3 evidence nodes (one per source)
+    let q = query(
+        "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN count(ev) AS cnt"
+    )
+    .param("id", signal_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+
+    let cnt: i64 = row.get("cnt").expect("no cnt");
+    assert_eq!(cnt, 3, "should have 3 evidence nodes from 3 different sources, got {cnt}");
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: Same-source refresh does not inflate corroboration_count
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn same_source_does_not_inflate_corroboration() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let signal_id = Uuid::new_v4();
+    create_signal(&client, "Event", signal_id, "Annual parade", "https://parade.org").await;
+
+    // Initial evidence
+    let ev = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://parade.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "hash_v1".to_string(),
+        snippet: None,
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev, signal_id).await.expect("create evidence");
+
+    // Simulate 5 same-source re-scrapes: refresh_signal (not corroborate) + create_evidence (MERGE)
+    for i in 0..5 {
+        writer
+            .refresh_signal(signal_id, rootsignal_common::NodeType::Event, Utc::now())
+            .await
+            .expect("refresh failed");
+
+        let ev = EvidenceNode {
+            id: Uuid::new_v4(),
+            source_url: "https://parade.org".to_string(),
+            retrieved_at: Utc::now(),
+            content_hash: format!("hash_v{}", i + 2),
+            snippet: None,
+            relevance: None,
+            evidence_confidence: None,
+        };
+        writer.create_evidence(&ev, signal_id).await.expect("create evidence");
+    }
+
+    // corroboration_count should still be 0 (initial value, never incremented)
+    let q = query(
+        "MATCH (n:Event {id: $id})
+         RETURN n.corroboration_count AS corr"
+    )
+    .param("id", signal_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let corr: i64 = row.get("corr").expect("no corr");
+    assert_eq!(corr, 0, "corroboration_count should stay 0 after same-source refreshes, got {corr}");
+
+    // Should still have exactly 1 evidence node
+    let q = query(
+        "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN count(ev) AS cnt"
+    )
+    .param("id", signal_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let cnt: i64 = row.get("cnt").expect("no cnt");
+    assert_eq!(cnt, 1, "should have exactly 1 evidence node after 5 same-source refreshes, got {cnt}");
+
+    // Now simulate a REAL cross-source corroboration
+    let entity_mappings = vec![];
+    writer
+        .corroborate(signal_id, rootsignal_common::NodeType::Event, Utc::now(), &entity_mappings)
+        .await
+        .expect("corroborate failed");
+
+    let ev_cross = EvidenceNode {
+        id: Uuid::new_v4(),
+        source_url: "https://independent-news.org".to_string(),
+        retrieved_at: Utc::now(),
+        content_hash: "cross_hash".to_string(),
+        snippet: None,
+        relevance: None,
+        evidence_confidence: None,
+    };
+    writer.create_evidence(&ev_cross, signal_id).await.expect("cross-source evidence");
+
+    // Now corroboration_count should be 1, evidence count should be 2
+    let q = query(
+        "MATCH (n:Event {id: $id})
+         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+    )
+    .param("id", signal_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let corr: i64 = row.get("corr").expect("no corr");
+    let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
+    assert_eq!(corr, 1, "corroboration_count should be 1 after one real cross-source, got {corr}");
+    assert_eq!(ev_cnt, 2, "should have 2 evidence nodes (1 same-source + 1 cross-source), got {ev_cnt}");
 }
