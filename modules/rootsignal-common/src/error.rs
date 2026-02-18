@@ -2,8 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RootSignalError {
-    #[error("Memgraph error: {0}")]
-    Memgraph(String),
+    #[error("Database error: {0}")]
+    Database(String),
 
     #[error("Extraction error: {0}")]
     Extraction(String),

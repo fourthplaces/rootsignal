@@ -61,7 +61,7 @@ impl SupervisorState {
 
     /// Update the last_run watermark. Creates the state node if it doesn't exist.
     pub async fn update_last_run(&self, dt: &DateTime<Utc>) -> Result<(), neo4rs::Error> {
-        let ts = rootsignal_graph::writer::memgraph_datetime_pub(dt);
+        let ts = rootsignal_graph::writer::format_datetime_pub(dt);
 
         let q = query(
             "MERGE (s:SupervisorState {city: $city})

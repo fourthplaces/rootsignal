@@ -46,7 +46,7 @@ async fn fix_orphaned_evidence(client: &GraphClient) -> Result<u64, neo4rs::Erro
 
 /// Delete ACTED_IN edges where either the Actor or Signal node is missing.
 async fn fix_orphaned_acted_in_edges(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    // In Memgraph, DETACH DELETE removes edges with the node, so truly orphaned
+    // DETACH DELETE removes edges with the node, so truly orphaned
     // edges shouldn't exist. But partial transaction failures could leave them.
     // Check for Actor nodes with no remaining signal connections and clean up.
     let q = query(

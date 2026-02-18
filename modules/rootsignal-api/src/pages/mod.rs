@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
 use axum::{
     extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
@@ -11,15 +10,19 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{CityNode, NodeType};
-use rootsignal_graph::PublicGraphReader;
 
 use crate::auth::{self, AdminSession};
 use crate::components::{
     evidence_to_view, node_to_view, render_cities, render_city_detail, render_login, render_map,
-    render_quality, render_signal_detail, render_signals_list, render_stories_list,
-    render_story_detail, render_verify, story_to_view, tension_response_to_view, CityView,
-    EvidenceView, NodeView, ResponseView, SchedulePreview, ScheduledSourceView, SourceView,
-    StoryView,
+    render_signal_detail, render_signals_list, render_stories_list,
+    render_story_detail, render_verify, story_to_view, tension_response_to_view,
+    render_dashboard, render_actors_list, render_actor_detail, render_editions_list,
+    render_edition_detail, build_signal_volume_chart, build_signal_type_chart,
+    build_horizontal_bar_chart, build_bar_chart, build_source_weight_chart,
+    source_weight_buckets, DashboardData, TensionRow, SourceRow, YieldRow, GapRow,
+    ActorView, EditionView,
+    CityView, EvidenceView, NodeView, ResponseView, SchedulePreview, ScheduledSourceView,
+    SourceView, StoryView,
 };
 use crate::rest::submit::check_rate_limit;
 use crate::AppState;
@@ -302,21 +305,26 @@ pub async fn cities_page(
     _session: AdminSession,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // Check if scout is currently running
-    let scout_running = match state.writer.acquire_scout_lock().await {
-        Ok(true) => {
-            let _ = state.writer.release_scout_lock().await;
-            false
-        }
-        Ok(false) => true,
-        Err(_) => false,
-    };
-
     match state.writer.list_cities().await {
         Ok(cities) => {
-            let views: Vec<CityView> = cities
-                .iter()
-                .map(|c| CityView {
+            let slugs: Vec<String> = cities.iter().map(|c| c.slug.clone()).collect();
+            let counts = state.writer.get_city_counts(&slugs).await.unwrap_or_default();
+
+            let now = chrono::Utc::now();
+            let mut views = Vec::new();
+            for c in &cities {
+                let (source_count, signal_count) = counts
+                    .iter()
+                    .find(|(s, _, _)| s == &c.slug)
+                    .map(|(_, src, sig)| (*src, *sig))
+                    .unwrap_or((0, 0));
+
+                let scout_running = state.writer.is_scout_running(&c.slug).await.unwrap_or(false);
+                let sources_due = state.writer.count_due_sources(&c.slug).await.unwrap_or(0);
+
+                let last_scout_completed = c.last_scout_completed_at.map(|t| format_relative_time(t, now));
+
+                views.push(CityView {
                     name: c.name.clone(),
                     slug: c.slug.clone(),
                     center_lat: c.center_lat,
@@ -325,8 +333,12 @@ pub async fn cities_page(
                     geo_terms: c.geo_terms.join(", "),
                     active: c.active,
                     scout_running,
-                })
-                .collect();
+                    source_count,
+                    signal_count,
+                    last_scout_completed,
+                    sources_due,
+                });
+            }
             Html(render_cities(views))
         }
         Err(e) => {
@@ -364,14 +376,10 @@ pub async fn city_detail_page(
         }
     };
 
-    let scout_running = match state.writer.acquire_scout_lock().await {
-        Ok(true) => {
-            let _ = state.writer.release_scout_lock().await;
-            false
-        }
-        Ok(false) => true,
-        Err(_) => false,
-    };
+    let scout_running = state.writer.is_scout_running(&slug).await.unwrap_or(false);
+    let sources_due = state.writer.count_due_sources(&slug).await.unwrap_or(0);
+    let now = chrono::Utc::now();
+    let last_scout_completed = city.last_scout_completed_at.map(|t| format_relative_time(t, now));
 
     let city_view = CityView {
         name: city.name.clone(),
@@ -382,6 +390,10 @@ pub async fn city_detail_page(
         geo_terms: city.geo_terms.join(", "),
         active: city.active,
         scout_running,
+        source_count: 0,
+        signal_count: 0,
+        last_scout_completed,
+        sources_due,
     };
 
     let tab = match params.tab.as_str() {
@@ -393,7 +405,7 @@ pub async fn city_detail_page(
     let signals = if tab == "signals" {
         state
             .reader
-            .list_recent(100, None)
+            .list_recent_for_city(&slug, 100)
             .await
             .unwrap_or_default()
             .iter()
@@ -406,7 +418,7 @@ pub async fn city_detail_page(
     let stories = if tab == "stories" {
         let raw = state
             .reader
-            .top_stories_by_energy(50, None)
+            .top_stories_for_city(&slug, 50)
             .await
             .unwrap_or_default();
         let story_ids: Vec<uuid::Uuid> = raw.iter().map(|s| s.id).collect();
@@ -590,6 +602,7 @@ pub async fn create_city(
         geo_terms,
         active: true,
         created_at: chrono::Utc::now(),
+        last_scout_completed_at: None,
     };
 
     if let Err(e) = state.writer.upsert_city(&city).await {
@@ -630,7 +643,7 @@ pub async fn reset_scout_lock(
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
     info!(city = slug.as_str(), "Scout lock reset requested by admin");
-    if let Err(e) = state.writer.release_scout_lock().await {
+    if let Err(e) = state.writer.release_scout_lock(&slug).await {
         warn!(error = %e, "Failed to release scout lock");
     }
     Redirect::to(&format!("/admin/cities/{slug}"))
@@ -650,15 +663,8 @@ pub async fn run_city_scout(
         return Redirect::to("/admin/cities");
     }
 
-    // Check if already running
-    let already_running = match state.writer.acquire_scout_lock().await {
-        Ok(true) => {
-            let _ = state.writer.release_scout_lock().await;
-            false
-        }
-        Ok(false) => true,
-        Err(_) => false,
-    };
+    // Check if already running for this city
+    let already_running = state.writer.is_scout_running(&slug).await.unwrap_or(false);
 
     if !already_running {
         crate::rest::scout::spawn_scout_run(
@@ -725,36 +731,368 @@ fn format_relative_time(t: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<
 
 pub async fn quality_dashboard(
     _session: AdminSession,
+) -> impl IntoResponse {
+    Redirect::to("/admin/dashboard")
+}
+
+pub async fn dashboard_page(
+    _session: AdminSession,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    match render_quality_page(&state.reader).await {
-        Ok(html) => Html(html).into_response(),
+    let city = &state.city;
+
+    // Parallel DB calls
+    let (
+        total_signals,
+        story_count,
+        actor_count,
+        by_type,
+        freshness,
+        confidence,
+        signal_volume,
+        story_arcs,
+        story_categories,
+        tensions,
+        discovery,
+        yield_data,
+        gap_stats,
+        sources,
+        all_cities,
+    ) = tokio::join!(
+        state.reader.total_count(),
+        state.reader.story_count(),
+        state.reader.actor_count(),
+        state.reader.count_by_type(),
+        state.reader.freshness_distribution(),
+        state.reader.confidence_distribution(),
+        state.reader.signal_volume_by_day(),
+        state.reader.story_count_by_arc(),
+        state.reader.story_count_by_category(),
+        state.writer.get_unmet_tensions(20),
+        state.writer.get_discovery_performance(city),
+        state.writer.get_extraction_yield(city),
+        state.writer.get_gap_type_stats(city),
+        state.writer.get_active_sources(city),
+        state.writer.list_cities(),
+    );
+
+    let total_signals = total_signals.unwrap_or(0);
+    let total_stories = story_count.unwrap_or(0);
+    let total_actors = actor_count.unwrap_or(0);
+    let by_type = by_type.unwrap_or_default();
+    let freshness = freshness.unwrap_or_default();
+    let confidence = confidence.unwrap_or_default();
+    let signal_volume = signal_volume.unwrap_or_default();
+    let story_arcs = story_arcs.unwrap_or_default();
+    let story_categories = story_categories.unwrap_or_default();
+    let tensions = tensions.unwrap_or_default();
+    let (top_sources, bottom_sources) = discovery.unwrap_or_default();
+    let yield_data = yield_data.unwrap_or_default();
+    let gap_stats = gap_stats.unwrap_or_default();
+    let sources = sources.unwrap_or_default();
+
+    let active_sources = sources.iter().filter(|s| s.active).count();
+    let total_source_count = sources.len();
+
+    // Compute source weight buckets
+    let weights: Vec<f64> = sources.iter().map(|s| s.weight * s.quality_penalty).collect();
+    let weight_buckets = source_weight_buckets(&weights);
+
+    // Build chart JSON
+    let signal_volume_json = build_signal_volume_chart(&signal_volume);
+    let by_type_strs: Vec<(String, u64)> = by_type.iter().map(|(t, c)| (format!("{t}"), *c)).collect();
+    let signal_type_json = build_signal_type_chart(&by_type_strs);
+    let story_arc_json = build_horizontal_bar_chart("chart-story-arc", &story_arcs, "#10b981");
+    let story_category_json = build_horizontal_bar_chart("chart-story-category", &story_categories, "#6366f1");
+    let freshness_json = build_bar_chart("chart-freshness", &freshness, "#3b82f6");
+    let confidence_json = build_bar_chart("chart-confidence", &confidence, "#f59e0b");
+    let source_weight_json = build_source_weight_chart(&weight_buckets);
+
+    // Build table rows
+    let unmet_tensions: Vec<TensionRow> = tensions
+        .iter()
+        .filter(|t| t.unmet)
+        .map(|t| TensionRow {
+            title: t.title.clone(),
+            severity: t.severity.clone(),
+            category: t.category.clone().unwrap_or_default(),
+            what_would_help: t.what_would_help.clone().unwrap_or_default(),
+        })
+        .collect();
+
+    let top_source_rows: Vec<SourceRow> = top_sources
+        .iter()
+        .take(5)
+        .map(|s| SourceRow {
+            name: s.canonical_value.clone(),
+            signals: s.signals_produced,
+            weight: s.weight,
+            empty_runs: s.consecutive_empty_runs,
+        })
+        .collect();
+
+    let bottom_source_rows: Vec<SourceRow> = bottom_sources
+        .iter()
+        .take(5)
+        .map(|s| SourceRow {
+            name: s.canonical_value.clone(),
+            signals: s.signals_produced,
+            weight: s.weight,
+            empty_runs: s.consecutive_empty_runs,
+        })
+        .collect();
+
+    let yield_rows: Vec<YieldRow> = yield_data
+        .iter()
+        .map(|y| YieldRow {
+            source_type: y.source_type.clone(),
+            extracted: y.extracted,
+            survived: y.survived,
+            corroborated: y.corroborated,
+            contradicted: y.contradicted,
+        })
+        .collect();
+
+    let gap_rows: Vec<GapRow> = gap_stats
+        .iter()
+        .map(|g| GapRow {
+            gap_type: g.gap_type.clone(),
+            total: g.total_sources,
+            successful: g.successful_sources,
+            avg_weight: g.avg_weight,
+        })
+        .collect();
+
+    // Build per-city scout status rows
+    use crate::components::ScoutStatusRow;
+    let now = chrono::Utc::now();
+    let all_cities = all_cities.unwrap_or_default();
+    let mut scout_status_rows = Vec::new();
+    for c in &all_cities {
+        let running = state.writer.is_scout_running(&c.slug).await.unwrap_or(false);
+        let due = state.writer.count_due_sources(&c.slug).await.unwrap_or(0);
+        let last_scouted = c.last_scout_completed_at.map(|t| format_relative_time(t, now));
+        scout_status_rows.push(ScoutStatusRow {
+            city_name: c.name.clone(),
+            city_slug: c.slug.clone(),
+            last_scouted,
+            sources_due: due,
+            running,
+        });
+    }
+
+    let data = DashboardData {
+        total_signals,
+        total_stories,
+        total_actors,
+        active_sources,
+        total_sources: total_source_count,
+        unmet_tension_count: unmet_tensions.len(),
+        signal_volume_json,
+        signal_type_json,
+        story_arc_json,
+        story_category_json,
+        freshness_json,
+        confidence_json,
+        source_weight_json,
+        unmet_tensions,
+        top_sources: top_source_rows,
+        bottom_sources: bottom_source_rows,
+        extraction_yield: yield_rows,
+        gap_stats: gap_rows,
+        scout_status: scout_status_rows,
+    };
+
+    Html(render_dashboard(data)).into_response()
+}
+
+// --- Actors pages ---
+
+pub async fn actors_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.reader.actors_active_in_area(&state.city, 200).await {
+        Ok(actors) => {
+            let views: Vec<ActorView> = actors
+                .iter()
+                .map(|a| {
+                    let days = (chrono::Utc::now() - a.last_active).num_days();
+                    let last_active = if days == 0 {
+                        "today".to_string()
+                    } else if days == 1 {
+                        "yesterday".to_string()
+                    } else {
+                        format!("{days}d ago")
+                    };
+                    ActorView {
+                        id: a.id.to_string(),
+                        name: a.name.clone(),
+                        actor_type: format!("{:?}", a.actor_type),
+                        signal_count: a.signal_count,
+                        last_active,
+                        domains: a.domains.join(", "),
+                        city: a.city.clone(),
+                        description: a.description.clone(),
+                        typical_roles: a.typical_roles.join(", "),
+                    }
+                })
+                .collect();
+            Html(render_actors_list(views))
+        }
         Err(e) => {
-            warn!(error = %e, "Failed to render quality dashboard");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            warn!(error = %e, "Failed to load actors");
+            Html("<h1>Error loading actors</h1>".to_string())
         }
     }
 }
 
-async fn render_quality_page(reader: &PublicGraphReader) -> Result<String> {
-    let total_count = reader.total_count().await.unwrap_or(0);
-    let by_type = reader.count_by_type().await.unwrap_or_default();
-    let freshness = reader.freshness_distribution().await.unwrap_or_default();
-    let confidence = reader.confidence_distribution().await.unwrap_or_default();
-    let type_count = by_type.iter().filter(|(_, c)| *c > 0).count();
+pub async fn actor_detail_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, Html("Invalid ID".to_string())),
+    };
 
-    let by_type_strs: Vec<(String, u64)> = by_type
-        .iter()
-        .map(|(t, c)| (format!("{t}"), *c))
-        .collect();
+    match state.reader.actor_detail(uuid).await {
+        Ok(Some(actor)) => {
+            let stories = state
+                .reader
+                .actor_stories(uuid, 50)
+                .await
+                .unwrap_or_default();
 
-    Ok(render_quality(
-        total_count,
-        type_count,
-        by_type_strs,
-        freshness,
-        confidence,
-    ))
+            let story_ids: Vec<uuid::Uuid> = stories.iter().map(|s| s.id).collect();
+            let ev_counts = state
+                .reader
+                .story_evidence_counts(&story_ids)
+                .await
+                .unwrap_or_default();
+
+            let days = (chrono::Utc::now() - actor.last_active).num_days();
+            let last_active = if days == 0 {
+                "today".to_string()
+            } else if days == 1 {
+                "yesterday".to_string()
+            } else {
+                format!("{days}d ago")
+            };
+
+            let actor_view = ActorView {
+                id: actor.id.to_string(),
+                name: actor.name.clone(),
+                actor_type: format!("{:?}", actor.actor_type),
+                signal_count: actor.signal_count,
+                last_active,
+                domains: actor.domains.join(", "),
+                city: actor.city.clone(),
+                description: actor.description.clone(),
+                typical_roles: actor.typical_roles.join(", "),
+            };
+
+            let story_views: Vec<StoryView> = stories
+                .iter()
+                .map(|s| {
+                    let ec = ev_counts
+                        .iter()
+                        .find(|(sid, _)| *sid == s.id)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0);
+                    story_to_view(s, ec)
+                })
+                .collect();
+
+            (StatusCode::OK, Html(render_actor_detail(actor_view, story_views)))
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Html("Actor not found".to_string())),
+        Err(e) => {
+            warn!(error = %e, "Failed to load actor detail");
+            (StatusCode::INTERNAL_SERVER_ERROR, Html("Error loading actor".to_string()))
+        }
+    }
+}
+
+// --- Editions pages ---
+
+pub async fn editions_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.reader.list_editions(&state.city, 50).await {
+        Ok(editions) => {
+            let views: Vec<EditionView> = editions
+                .iter()
+                .map(|e| {
+                    EditionView {
+                        id: e.id.to_string(),
+                        period: e.period.clone(),
+                        story_count: e.story_count,
+                        signal_count: e.new_signal_count,
+                        generated_at: e.generated_at.format("%Y-%m-%d %H:%M").to_string(),
+                        editorial_summary: e.editorial_summary.clone(),
+                    }
+                })
+                .collect();
+            Html(render_editions_list(views))
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load editions");
+            Html("<h1>Error loading editions</h1>".to_string())
+        }
+    }
+}
+
+pub async fn edition_detail_page(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, Html("Invalid ID".to_string())),
+    };
+
+    match state.reader.edition_detail(uuid).await {
+        Ok(Some((edition, stories))) => {
+            let edition_view = EditionView {
+                id: edition.id.to_string(),
+                period: edition.period.clone(),
+                story_count: edition.story_count,
+                signal_count: edition.new_signal_count,
+                generated_at: edition.generated_at.format("%Y-%m-%d %H:%M").to_string(),
+                editorial_summary: edition.editorial_summary.clone(),
+            };
+
+            let story_ids: Vec<uuid::Uuid> = stories.iter().map(|s| s.id).collect();
+            let ev_counts = state
+                .reader
+                .story_evidence_counts(&story_ids)
+                .await
+                .unwrap_or_default();
+
+            let story_views: Vec<StoryView> = stories
+                .iter()
+                .map(|s| {
+                    let ec = ev_counts
+                        .iter()
+                        .find(|(sid, _)| *sid == s.id)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0);
+                    story_to_view(s, ec)
+                })
+                .collect();
+
+            (StatusCode::OK, Html(render_edition_detail(edition_view, story_views)))
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Html("Edition not found".to_string())),
+        Err(e) => {
+            warn!(error = %e, "Failed to load edition detail");
+            (StatusCode::INTERNAL_SERVER_ERROR, Html("Error loading edition".to_string()))
+        }
+    }
 }
 
 #[cfg(test)]

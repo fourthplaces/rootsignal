@@ -22,9 +22,9 @@ async fn main() -> Result<()> {
     let config = Config::supervisor_from_env();
     config.log_redacted();
 
-    // Connect to Memgraph
+    // Connect to Neo4j
     let client =
-        GraphClient::connect(&config.memgraph_uri, &config.memgraph_user, &config.memgraph_password)
+        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
             .await?;
 
     // Run migrations (idempotent)

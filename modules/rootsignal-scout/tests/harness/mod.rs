@@ -1,12 +1,16 @@
-//! Test harness for integration tests with real LLM calls and real Memgraph.
+//! Test harness for integration tests with real LLM calls and real Neo4j.
 //!
 //! Fakes the *data sources* (web pages, search results, social posts).
-//! Uses real Claude, real Voyage embeddings, real Memgraph.
+//! Uses real Claude, real Voyage embeddings, real Neo4j.
 
+pub mod audit;
 pub mod queries;
+pub mod sim_adapter;
+
+use std::sync::Arc;
 
 use rootsignal_common::CityNode;
-use rootsignal_graph::testutil::memgraph_container;
+use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::Extractor;
@@ -16,6 +20,9 @@ use rootsignal_scout::fixtures::{
 };
 use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
 use rootsignal_scout::scout::{Scout, ScoutStats};
+use simweb::{SimulatedWeb, World};
+
+use sim_adapter::{SimPageAdapter, SimSearchAdapter, SimSocialAdapter};
 
 /// Default test city node (Twin Cities).
 fn default_city_node() -> CityNode {
@@ -33,10 +40,11 @@ fn default_city_node() -> CityNode {
         ],
         active: true,
         created_at: chrono::Utc::now(),
+        last_scout_completed_at: None,
     }
 }
 
-/// Owns a Memgraph container and API keys for the lifetime of a test.
+/// Owns a Neo4j container and API keys for the lifetime of a test.
 /// The container handle is type-erased to avoid leaking testcontainers types.
 pub struct TestContext {
     _container: Box<dyn std::any::Any + Send>,
@@ -46,13 +54,13 @@ pub struct TestContext {
 }
 
 impl TestContext {
-    /// Spin up Memgraph and validate API keys are present.
+    /// Spin up Neo4j and validate API keys are present.
     /// Returns `None` if keys are missing (test should be skipped).
     pub async fn try_new() -> Option<Self> {
         let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
         let voyage_key = std::env::var("VOYAGE_API_KEY").ok()?;
 
-        let (container, client) = memgraph_container().await;
+        let (container, client) = neo4j_container().await;
 
         rootsignal_graph::migrate::migrate(&client)
             .await
@@ -74,6 +82,25 @@ impl TestContext {
     /// Create a GraphWriter for direct graph manipulation in tests.
     pub fn writer(&self) -> GraphWriter {
         GraphWriter::new(self.client.clone())
+    }
+
+    /// Create a Scout wired to a SimulatedWeb for fuzzy integration tests.
+    pub fn sim_scout(&self, sim: Arc<SimulatedWeb>, city_node: CityNode) -> Scout {
+        Scout::with_deps(
+            self.client.clone(),
+            Box::new(Extractor::new(
+                &self.anthropic_key,
+                &city_node.name,
+                city_node.center_lat,
+                city_node.center_lng,
+            )),
+            Box::new(Embedder::new(&self.voyage_key)),
+            Box::new(SimPageAdapter::new(sim.clone())),
+            Box::new(SimSearchAdapter::new(sim.clone())),
+            Box::new(SimSocialAdapter::new(sim)),
+            &self.anthropic_key,
+            city_node,
+        )
     }
 
     /// Start building a scout run against this context's graph.
@@ -190,6 +217,22 @@ impl<'a> ScoutBuilder<'a> {
         );
 
         scout.run().await.expect("Scout run failed")
+    }
+}
+
+/// Convert a simweb World geography to a CityNode for Scout.
+pub fn city_node_for(world: &World) -> CityNode {
+    CityNode {
+        id: uuid::Uuid::new_v4(),
+        name: format!("{}, {}", world.geography.city, world.geography.state_or_region),
+        slug: world.geography.city.to_lowercase().replace(' ', "-"),
+        center_lat: world.geography.center_lat,
+        center_lng: world.geography.center_lng,
+        radius_km: 30.0,
+        geo_terms: world.geography.local_terms.clone(),
+        active: true,
+        created_at: chrono::Utc::now(),
+        last_scout_completed_at: None,
     }
 }
 

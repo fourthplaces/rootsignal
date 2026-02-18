@@ -19,6 +19,13 @@ const MIN_CONNECTED_SIGNALS: u64 = 10;
 /// If |old ∩ new| / |old| >= this, it's the same story evolving.
 const CONTAINMENT_THRESHOLD: f64 = 0.5;
 
+/// Leiden resolution parameter. Higher values produce finer-grained communities.
+/// 1.0 = default, 1.5 = finer-grained (prevents mega-clusters).
+const LEIDEN_GAMMA: f64 = 1.5;
+
+/// Maximum community size. Communities exceeding this are skipped (mega-cluster guard).
+const MAX_COMMUNITY_SIZE: usize = 30;
+
 /// Orchestrates the full clustering pipeline:
 /// 1. Build similarity edges
 /// 2. Run Leiden community detection
@@ -284,17 +291,42 @@ impl Clusterer {
         Ok(0)
     }
 
-    /// Run Leiden community detection on the SIMILAR_TO subgraph.
+    /// Run Leiden community detection on the SIMILAR_TO subgraph via Neo4j GDS.
+    ///
+    /// Three-step approach:
+    /// 1. Project the in-memory graph
+    /// 2. Run Leiden with tunable resolution (gamma)
+    /// 3. Drop the projection
     async fn run_leiden(&self) -> Result<Vec<Community>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        // Step 1: Project the graph into GDS
+        // Drop any stale projection first (idempotent)
+        let _ = g.run(query("CALL gds.graph.drop('signals', false)")).await;
+
+        g.run(query(
+            "CALL gds.graph.project(
+                'signals',
+                ['Event', 'Give', 'Ask', 'Notice', 'Tension'],
+                {SIMILAR_TO: {properties: 'weight', orientation: 'UNDIRECTED'}}
+            )"
+        )).await?;
+
+        // Step 2: Run Leiden with tunable resolution
         let q = query(
-            "CALL leiden_community_detection.get('weight', 1.0)
-             YIELD node, community_id
-             RETURN node.id AS signal_id, community_id"
-        );
+            "CALL gds.leiden.stream('signals', {
+                relationshipWeightProperty: 'weight',
+                gamma: $gamma,
+                randomSeed: 42
+            })
+            YIELD nodeId, communityId
+            RETURN gds.util.asNode(nodeId).id AS signal_id, communityId AS community_id"
+        )
+        .param("gamma", LEIDEN_GAMMA);
 
         let mut communities_map: HashMap<i64, Vec<String>> = HashMap::new();
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = g.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let signal_id: String = row.get("signal_id").unwrap_or_default();
             let community_id: i64 = row.get("community_id").unwrap_or(-1);
@@ -306,10 +338,28 @@ impl Clusterer {
             }
         }
 
-        Ok(communities_map
+        // Step 3: Drop the projection
+        let _ = g.run(query("CALL gds.graph.drop('signals')")).await;
+
+        // Filter out mega-clusters
+        let communities: Vec<Community> = communities_map
             .into_iter()
-            .map(|(id, signal_ids)| Community { _id: id, signal_ids })
-            .collect())
+            .filter_map(|(id, signal_ids)| {
+                if signal_ids.len() > MAX_COMMUNITY_SIZE {
+                    warn!(
+                        community_id = id,
+                        size = signal_ids.len(),
+                        max = MAX_COMMUNITY_SIZE,
+                        "Skipping mega-cluster (exceeds max community size)"
+                    );
+                    None
+                } else {
+                    Some(Community { _id: id, signal_ids })
+                }
+            })
+            .collect();
+
+        Ok(communities)
     }
 
     /// Generate headline + summary for a new cluster using LLM.
@@ -441,7 +491,7 @@ Respond in this exact JSON format:
         )
         .param("id", story.id.to_string())
         .param("signal_count", story.signal_count as i64)
-        .param("last_updated", crate::writer::memgraph_datetime_pub(&story.last_updated))
+        .param("last_updated", crate::writer::format_datetime_pub(&story.last_updated))
         .param("dominant_type", story.dominant_type.as_str())
 
         .param("sensitivity", story.sensitivity.as_str())

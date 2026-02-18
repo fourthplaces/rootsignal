@@ -34,3 +34,4 @@ futures = { workspace = true }
 
 [dev-dependencies]
 rootsignal-graph = { workspace = true, features = ["test-utils"] }
+simweb = { workspace = true }

@@ -198,7 +198,7 @@ fn docker_submenu(ctx: &AppContext) -> Result<()> {
         "Follow logs",
         "Status",
         "Shell into container",
-        "Memgraph console",
+        "Neo4j console",
         "← Back",
     ];
 

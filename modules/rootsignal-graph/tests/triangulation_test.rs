@@ -3,7 +3,7 @@
 //! These tests verify that story status, energy, and signal ranking
 //! correctly incorporate type_diversity (triangulation).
 //!
-//! Requirements: Docker (for Memgraph via testcontainers)
+//! Requirements: Docker (for Neo4j via testcontainers)
 //!
 //! Run with: cargo test -p rootsignal-graph --features test-utils --test triangulation_test
 
@@ -14,12 +14,12 @@ use uuid::Uuid;
 
 use rootsignal_graph::{query, GraphClient, PublicGraphReader};
 
-/// Spin up a fresh Memgraph container for each test.
+/// Spin up a fresh Neo4j container for each test.
 async fn setup() -> (impl std::any::Any, GraphClient) {
-    rootsignal_graph::testutil::memgraph_container().await
+    rootsignal_graph::testutil::neo4j_container().await
 }
 
-fn memgraph_dt(dt: &chrono::DateTime<Utc>) -> String {
+fn neo4j_dt(dt: &chrono::DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
@@ -39,7 +39,7 @@ async fn create_signal(
     confidence: f64,
     cause_heat: f64,
 ) {
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
         "CREATE (n:{label} {{
@@ -86,7 +86,7 @@ async fn create_story_with_signals(
     energy: f64,
     signal_ids: &[(Uuid, &str)], // (id, label)
 ) {
-    let now = memgraph_dt(&Utc::now());
+    let now = neo4j_dt(&Utc::now());
     let q = query(
         "CREATE (s:Story {
             id: $id,

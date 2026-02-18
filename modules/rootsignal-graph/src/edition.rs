@@ -114,7 +114,7 @@ impl EditionGenerator {
         end: &DateTime<Utc>,
     ) -> Result<u32, neo4rs::Error> {
         use neo4rs::query;
-        use crate::writer::memgraph_datetime_pub;
+        use crate::writer::format_datetime_pub;
 
         let q = query(
             "MATCH (n)
@@ -123,8 +123,8 @@ impl EditionGenerator {
                AND datetime(n.extracted_at) <= datetime($end)
              RETURN count(n) AS cnt"
         )
-        .param("start", memgraph_datetime_pub(start))
-        .param("end", memgraph_datetime_pub(end));
+        .param("start", format_datetime_pub(start))
+        .param("end", format_datetime_pub(end));
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {

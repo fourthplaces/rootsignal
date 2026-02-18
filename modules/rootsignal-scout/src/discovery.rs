@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use ai_client::claude::Claude;
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType};
+use rootsignal_common::{DiscoveryMethod, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
     UnmetTension,
@@ -423,6 +423,7 @@ impl<'a> SourceDiscoverer<'a> {
                     last_cost_cents: 0,
                     taxonomy_stats: None,
                     quality_penalty: 1.0,
+                    source_role: SourceRole::default(),
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -472,6 +473,7 @@ impl<'a> SourceDiscoverer<'a> {
                     last_cost_cents: 0,
                     taxonomy_stats: None,
                     quality_penalty: 1.0,
+                    source_role: SourceRole::default(),
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -565,6 +567,15 @@ impl<'a> SourceDiscoverer<'a> {
                 dq.related_tension.as_deref().unwrap_or("none"),
             );
 
+            // Assign source role based on gap type:
+            // - unmet_tension: seeking responses TO a tension → Response
+            // - signal_imbalance: depends on what's underrepresented, default Mixed
+            // - everything else: Mixed
+            let source_role = match dq.gap_type.as_str() {
+                "unmet_tension" => SourceRole::Response,
+                _ => SourceRole::Mixed,
+            };
+
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
@@ -588,6 +599,7 @@ impl<'a> SourceDiscoverer<'a> {
                 last_cost_cents: 0,
                 taxonomy_stats: None,
                 quality_penalty: 1.0,
+                source_role,
             };
 
             match self.writer.upsert_source(&source).await {
@@ -722,6 +734,8 @@ impl<'a> SourceDiscoverer<'a> {
                 last_cost_cents: 0,
                 taxonomy_stats: None,
                 quality_penalty: 1.0,
+                // Mechanical gap queries seek responses to tensions
+                source_role: SourceRole::Response,
             };
 
             match self.writer.upsert_source(&source).await {

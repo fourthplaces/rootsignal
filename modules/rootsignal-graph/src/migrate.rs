@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use crate::GraphClient;
 
 /// Run idempotent schema migrations: constraints, indexes.
-/// Memgraph does not support IF NOT EXISTS — we ignore "already exists" errors.
+/// Uses Neo4j 5+ syntax with IF NOT EXISTS for idempotent operations.
 pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
@@ -12,66 +12,63 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- UUID uniqueness constraints ---
     let constraints = [
-        "CREATE CONSTRAINT ON (n:Event) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:Give) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:Ask) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:Notice) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:Tension) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:Evidence) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (n:Event) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT give_id_unique IF NOT EXISTS FOR (n:Give) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT ask_id_unique IF NOT EXISTS FOR (n:Ask) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT notice_id_unique IF NOT EXISTS FOR (n:Notice) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT tension_id_unique IF NOT EXISTS FOR (n:Tension) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT evidence_id_unique IF NOT EXISTS FOR (n:Evidence) REQUIRE n.id IS UNIQUE",
     ];
 
     for c in &constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
     info!("UUID uniqueness constraints created");
 
     // --- Existence (NOT NULL) constraints ---
-    // Memgraph supports these natively.
     let existence = [
         // Event
-        "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.sensitivity)",
-        "CREATE CONSTRAINT ON (n:Event) ASSERT EXISTS (n.confidence)",
+        "CREATE CONSTRAINT event_sensitivity_exists IF NOT EXISTS FOR (n:Event) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT event_confidence_exists IF NOT EXISTS FOR (n:Event) REQUIRE n.confidence IS NOT NULL",
         // Give
-        "CREATE CONSTRAINT ON (n:Give) ASSERT EXISTS (n.sensitivity)",
-        "CREATE CONSTRAINT ON (n:Give) ASSERT EXISTS (n.confidence)",
+        "CREATE CONSTRAINT give_sensitivity_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT give_confidence_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.confidence IS NOT NULL",
         // Ask
-        "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.sensitivity)",
-        "CREATE CONSTRAINT ON (n:Ask) ASSERT EXISTS (n.confidence)",
+        "CREATE CONSTRAINT ask_sensitivity_exists IF NOT EXISTS FOR (n:Ask) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT ask_confidence_exists IF NOT EXISTS FOR (n:Ask) REQUIRE n.confidence IS NOT NULL",
         // Notice
-        "CREATE CONSTRAINT ON (n:Notice) ASSERT EXISTS (n.sensitivity)",
-        "CREATE CONSTRAINT ON (n:Notice) ASSERT EXISTS (n.confidence)",
+        "CREATE CONSTRAINT notice_sensitivity_exists IF NOT EXISTS FOR (n:Notice) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT notice_confidence_exists IF NOT EXISTS FOR (n:Notice) REQUIRE n.confidence IS NOT NULL",
         // Tension
-        "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.sensitivity)",
-        "CREATE CONSTRAINT ON (n:Tension) ASSERT EXISTS (n.confidence)",
+        "CREATE CONSTRAINT tension_sensitivity_exists IF NOT EXISTS FOR (n:Tension) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT tension_confidence_exists IF NOT EXISTS FOR (n:Tension) REQUIRE n.confidence IS NOT NULL",
     ];
 
     for e in &existence {
-        run_ignoring_exists(g, e).await?;
+        g.run(query(e)).await?;
     }
     info!("Existence constraints created");
 
     // --- Property indexes (lat/lng for bounding box queries) ---
     let indexes = [
-        "CREATE INDEX ON :Event(lat)",
-        "CREATE INDEX ON :Event(lng)",
-        "CREATE INDEX ON :Give(lat)",
-        "CREATE INDEX ON :Give(lng)",
-        "CREATE INDEX ON :Ask(lat)",
-        "CREATE INDEX ON :Ask(lng)",
-        "CREATE INDEX ON :Notice(lat)",
-        "CREATE INDEX ON :Notice(lng)",
-        "CREATE INDEX ON :Tension(lat)",
-        "CREATE INDEX ON :Tension(lng)",
+        "CREATE INDEX event_lat IF NOT EXISTS FOR (n:Event) ON (n.lat)",
+        "CREATE INDEX event_lng IF NOT EXISTS FOR (n:Event) ON (n.lng)",
+        "CREATE INDEX give_lat IF NOT EXISTS FOR (n:Give) ON (n.lat)",
+        "CREATE INDEX give_lng IF NOT EXISTS FOR (n:Give) ON (n.lng)",
+        "CREATE INDEX ask_lat IF NOT EXISTS FOR (n:Ask) ON (n.lat)",
+        "CREATE INDEX ask_lng IF NOT EXISTS FOR (n:Ask) ON (n.lng)",
+        "CREATE INDEX notice_lat IF NOT EXISTS FOR (n:Notice) ON (n.lat)",
+        "CREATE INDEX notice_lng IF NOT EXISTS FOR (n:Notice) ON (n.lng)",
+        "CREATE INDEX tension_lat IF NOT EXISTS FOR (n:Tension) ON (n.lat)",
+        "CREATE INDEX tension_lng IF NOT EXISTS FOR (n:Tension) ON (n.lng)",
     ];
 
     for idx in &indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Property indexes created");
 
     // --- Backfill lat/lng from point() locations, then drop point() property ---
-    // neo4rs can't deserialize nodes that contain point() values (Memgraph serialization quirk),
-    // so we store lat/lng as plain floats and remove the point() property entirely.
     let backfill = [
         "MATCH (n:Event) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Give) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
@@ -91,211 +88,202 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Source diversity indexes ---
     let diversity_indexes = [
-        "CREATE INDEX ON :Event(source_diversity)",
-        "CREATE INDEX ON :Give(source_diversity)",
-        "CREATE INDEX ON :Ask(source_diversity)",
-        "CREATE INDEX ON :Notice(source_diversity)",
-        "CREATE INDEX ON :Tension(source_diversity)",
+        "CREATE INDEX event_source_diversity IF NOT EXISTS FOR (n:Event) ON (n.source_diversity)",
+        "CREATE INDEX give_source_diversity IF NOT EXISTS FOR (n:Give) ON (n.source_diversity)",
+        "CREATE INDEX ask_source_diversity IF NOT EXISTS FOR (n:Ask) ON (n.source_diversity)",
+        "CREATE INDEX notice_source_diversity IF NOT EXISTS FOR (n:Notice) ON (n.source_diversity)",
+        "CREATE INDEX tension_source_diversity IF NOT EXISTS FOR (n:Tension) ON (n.source_diversity)",
     ];
 
     for idx in &diversity_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Source diversity indexes created");
 
     // --- Cause heat indexes ---
     let heat_indexes = [
-        "CREATE INDEX ON :Event(cause_heat)",
-        "CREATE INDEX ON :Give(cause_heat)",
-        "CREATE INDEX ON :Ask(cause_heat)",
-        "CREATE INDEX ON :Notice(cause_heat)",
-        "CREATE INDEX ON :Tension(cause_heat)",
+        "CREATE INDEX event_cause_heat IF NOT EXISTS FOR (n:Event) ON (n.cause_heat)",
+        "CREATE INDEX give_cause_heat IF NOT EXISTS FOR (n:Give) ON (n.cause_heat)",
+        "CREATE INDEX ask_cause_heat IF NOT EXISTS FOR (n:Ask) ON (n.cause_heat)",
+        "CREATE INDEX notice_cause_heat IF NOT EXISTS FOR (n:Notice) ON (n.cause_heat)",
+        "CREATE INDEX tension_cause_heat IF NOT EXISTS FOR (n:Tension) ON (n.cause_heat)",
     ];
 
     for idx in &heat_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Cause heat indexes created");
 
     // --- Full-text indexes ---
     let fulltext = [
-        "CREATE TEXT INDEX event_text ON :Event(title, summary)",
-        "CREATE TEXT INDEX give_text ON :Give(title, summary)",
-        "CREATE TEXT INDEX ask_text ON :Ask(title, summary)",
-        "CREATE TEXT INDEX notice_text ON :Notice(title, summary)",
-        "CREATE TEXT INDEX tension_text ON :Tension(title, summary)",
+        "CREATE FULLTEXT INDEX event_text IF NOT EXISTS FOR (n:Event) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX give_text IF NOT EXISTS FOR (n:Give) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX ask_text IF NOT EXISTS FOR (n:Ask) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX notice_text IF NOT EXISTS FOR (n:Notice) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX tension_text IF NOT EXISTS FOR (n:Tension) ON EACH [n.title, n.summary]",
     ];
 
     for f in &fulltext {
-        run_ignoring_exists(g, f).await?;
+        g.run(query(f)).await?;
     }
     info!("Full-text indexes created");
 
     // --- Vector indexes (1024-dim for Voyage embeddings) ---
     let vector = [
-        r#"CREATE VECTOR INDEX event_embedding ON :Event(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
-        r#"CREATE VECTOR INDEX give_embedding ON :Give(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
-        r#"CREATE VECTOR INDEX ask_embedding ON :Ask(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
-        r#"CREATE VECTOR INDEX notice_embedding ON :Notice(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
-        r#"CREATE VECTOR INDEX tension_embedding ON :Tension(embedding) WITH CONFIG {"dimension": 1024, "capacity": 100000, "metric": "cos"}"#,
+        "CREATE VECTOR INDEX event_embedding IF NOT EXISTS FOR (n:Event) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX give_embedding IF NOT EXISTS FOR (n:Give) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX ask_embedding IF NOT EXISTS FOR (n:Ask) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX notice_embedding IF NOT EXISTS FOR (n:Notice) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX tension_embedding IF NOT EXISTS FOR (n:Tension) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
     ];
 
     for v in &vector {
-        run_ignoring_exists(g, v).await?;
+        g.run(query(v)).await?;
     }
     info!("Vector indexes created");
 
     // --- Story and ClusterSnapshot constraints ---
     let story_constraints = [
-        "CREATE CONSTRAINT ON (n:Story) ASSERT n.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (n:ClusterSnapshot) ASSERT n.id IS UNIQUE",
+        "CREATE CONSTRAINT story_id_unique IF NOT EXISTS FOR (n:Story) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT clustersnapshot_id_unique IF NOT EXISTS FOR (n:ClusterSnapshot) REQUIRE n.id IS UNIQUE",
     ];
 
     for c in &story_constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
     info!("Story/ClusterSnapshot constraints created");
 
     // --- Story indexes ---
     let story_indexes = [
-        "CREATE INDEX ON :Story(energy)",
-        "CREATE INDEX ON :Story(status)",
-        "CREATE INDEX ON :Story(last_updated)",
+        "CREATE INDEX story_energy IF NOT EXISTS FOR (n:Story) ON (n.energy)",
+        "CREATE INDEX story_status IF NOT EXISTS FOR (n:Story) ON (n.status)",
+        "CREATE INDEX story_last_updated IF NOT EXISTS FOR (n:Story) ON (n.last_updated)",
     ];
 
     for idx in &story_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Story indexes created");
 
     // --- Story synthesis indexes ---
     let synthesis_indexes = [
-        "CREATE INDEX ON :Story(arc)",
-        "CREATE INDEX ON :Story(category)",
+        "CREATE INDEX story_arc IF NOT EXISTS FOR (n:Story) ON (n.arc)",
+        "CREATE INDEX story_category IF NOT EXISTS FOR (n:Story) ON (n.category)",
     ];
 
     for idx in &synthesis_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Story synthesis indexes created");
 
     // --- Actor constraints and indexes ---
     let actor_constraints = [
-        "CREATE CONSTRAINT ON (a:Actor) ASSERT a.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (a:Actor) ASSERT a.entity_id IS UNIQUE",
+        "CREATE CONSTRAINT actor_id_unique IF NOT EXISTS FOR (a:Actor) REQUIRE a.id IS UNIQUE",
+        "CREATE CONSTRAINT actor_entity_id_unique IF NOT EXISTS FOR (a:Actor) REQUIRE a.entity_id IS UNIQUE",
     ];
 
     for c in &actor_constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
 
     let actor_indexes = [
-        "CREATE INDEX ON :Actor(name)",
-        "CREATE INDEX ON :Actor(city)",
+        "CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)",
+        "CREATE INDEX actor_city IF NOT EXISTS FOR (a:Actor) ON (a.city)",
     ];
 
     for idx in &actor_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Actor constraints and indexes created");
 
     // --- Edition constraints and indexes ---
-    let edition_constraints = [
-        "CREATE CONSTRAINT ON (e:Edition) ASSERT e.id IS UNIQUE",
-    ];
-
-    for c in &edition_constraints {
-        run_ignoring_exists(g, c).await?;
-    }
+    g.run(query("CREATE CONSTRAINT edition_id_unique IF NOT EXISTS FOR (e:Edition) REQUIRE e.id IS UNIQUE")).await?;
 
     let edition_indexes = [
-        "CREATE INDEX ON :Edition(city)",
-        "CREATE INDEX ON :Edition(period)",
+        "CREATE INDEX edition_city IF NOT EXISTS FOR (e:Edition) ON (e.city)",
+        "CREATE INDEX edition_period IF NOT EXISTS FOR (e:Edition) ON (e.period)",
     ];
 
     for idx in &edition_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Edition constraints and indexes created");
 
     // --- Edge index for SIMILAR_TO weight ---
-    // Memgraph supports edge indexes on properties
-    let edge_indexes = [
-        "CREATE INDEX ON :SIMILAR_TO(weight)",
-    ];
-
-    for idx in &edge_indexes {
-        run_ignoring_exists(g, idx).await?;
-    }
+    g.run(query("CREATE INDEX similar_to_weight IF NOT EXISTS FOR ()-[r:SIMILAR_TO]-() ON (r.weight)")).await?;
     info!("Edge indexes created");
 
     // --- City node constraints and indexes ---
     let city_constraints = [
-        "CREATE CONSTRAINT ON (c:City) ASSERT c.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (c:City) ASSERT c.slug IS UNIQUE",
+        "CREATE CONSTRAINT city_id_unique IF NOT EXISTS FOR (c:City) REQUIRE c.id IS UNIQUE",
+        "CREATE CONSTRAINT city_slug_unique IF NOT EXISTS FOR (c:City) REQUIRE c.slug IS UNIQUE",
     ];
 
     for c in &city_constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
 
-    run_ignoring_exists(g, "CREATE INDEX ON :City(active)").await?;
+    g.run(query("CREATE INDEX city_active IF NOT EXISTS FOR (c:City) ON (c.active)")).await?;
     info!("City constraints and indexes created");
 
     // --- Source node constraints and indexes ---
     let source_constraints = [
-        "CREATE CONSTRAINT ON (s:Source) ASSERT s.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (s:Source) ASSERT s.canonical_key IS UNIQUE",
+        "CREATE CONSTRAINT source_id_unique IF NOT EXISTS FOR (s:Source) REQUIRE s.id IS UNIQUE",
+        "CREATE CONSTRAINT source_canonical_key_unique IF NOT EXISTS FOR (s:Source) REQUIRE s.canonical_key IS UNIQUE",
     ];
 
     for c in &source_constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
 
     // Drop legacy url uniqueness constraint (canonical_key is the new identity)
-    drop_ignoring_missing(g, "DROP CONSTRAINT ON (s:Source) ASSERT s.url IS UNIQUE").await;
+    drop_constraint_if_exists(g, "source_url_unique").await;
 
     let source_indexes = [
-        "CREATE INDEX ON :Source(city)",
-        "CREATE INDEX ON :Source(active)",
-        "CREATE INDEX ON :Source(url)",
-        "CREATE INDEX ON :Source(source_type)",
-        "CREATE INDEX ON :Source(weight)",
+        "CREATE INDEX source_city IF NOT EXISTS FOR (s:Source) ON (s.city)",
+        "CREATE INDEX source_active IF NOT EXISTS FOR (s:Source) ON (s.active)",
+        "CREATE INDEX source_url IF NOT EXISTS FOR (s:Source) ON (s.url)",
+        "CREATE INDEX source_type IF NOT EXISTS FOR (s:Source) ON (s.source_type)",
+        "CREATE INDEX source_weight IF NOT EXISTS FOR (s:Source) ON (s.weight)",
     ];
 
     for idx in &source_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Source constraints and indexes created");
 
     // --- BlockedSource constraint ---
-    run_ignoring_exists(g, "CREATE CONSTRAINT ON (b:BlockedSource) ASSERT b.url_pattern IS UNIQUE").await?;
+    g.run(query("CREATE CONSTRAINT blockedsource_url_pattern_unique IF NOT EXISTS FOR (b:BlockedSource) REQUIRE b.url_pattern IS UNIQUE")).await?;
     info!("BlockedSource constraint created");
 
     // --- Supervisor node constraints and indexes ---
     let supervisor_constraints = [
-        "CREATE CONSTRAINT ON (s:SupervisorState) ASSERT s.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (r:ExtractionRule) ASSERT r.id IS UNIQUE",
-        "CREATE CONSTRAINT ON (v:ValidationIssue) ASSERT v.id IS UNIQUE",
+        "CREATE CONSTRAINT supervisorstate_id_unique IF NOT EXISTS FOR (s:SupervisorState) REQUIRE s.id IS UNIQUE",
+        "CREATE CONSTRAINT extractionrule_id_unique IF NOT EXISTS FOR (r:ExtractionRule) REQUIRE r.id IS UNIQUE",
+        "CREATE CONSTRAINT validationissue_id_unique IF NOT EXISTS FOR (v:ValidationIssue) REQUIRE v.id IS UNIQUE",
     ];
 
     for c in &supervisor_constraints {
-        run_ignoring_exists(g, c).await?;
+        g.run(query(c)).await?;
     }
 
     let supervisor_indexes = [
-        "CREATE INDEX ON :ValidationIssue(status)",
-        "CREATE INDEX ON :ValidationIssue(city)",
-        "CREATE INDEX ON :ValidationIssue(target_id)",
-        "CREATE INDEX ON :ExtractionRule(city)",
-        "CREATE INDEX ON :ExtractionRule(approved)",
-        "CREATE INDEX ON :SupervisorState(city)",
+        "CREATE INDEX validationissue_status IF NOT EXISTS FOR (v:ValidationIssue) ON (v.status)",
+        "CREATE INDEX validationissue_city IF NOT EXISTS FOR (v:ValidationIssue) ON (v.city)",
+        "CREATE INDEX validationissue_target_id IF NOT EXISTS FOR (v:ValidationIssue) ON (v.target_id)",
+        "CREATE INDEX extractionrule_city IF NOT EXISTS FOR (r:ExtractionRule) ON (r.city)",
+        "CREATE INDEX extractionrule_approved IF NOT EXISTS FOR (r:ExtractionRule) ON (r.approved)",
+        "CREATE INDEX supervisorstate_city IF NOT EXISTS FOR (s:SupervisorState) ON (s.city)",
     ];
 
     for idx in &supervisor_indexes {
-        run_ignoring_exists(g, idx).await?;
+        g.run(query(idx)).await?;
     }
     info!("Supervisor constraints and indexes created");
+
+    // --- Source role index ---
+    g.run(query("CREATE INDEX source_role IF NOT EXISTS FOR (s:Source) ON (s.source_role)")).await?;
+    info!("Source role index created");
 
     // --- Reclassify query sources: web → *_query for listing pages ---
     reclassify_query_sources(client).await?;
@@ -305,6 +293,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Backfill event dates: clean up string/empty dates ---
     backfill_event_dates(client).await?;
+
+    // --- Backfill source_role on existing Source nodes ---
+    backfill_source_roles(client).await?;
 
     info!("Schema migration complete");
     Ok(())
@@ -437,37 +428,12 @@ pub async fn backfill_source_diversity(
     Ok(())
 }
 
-/// Run a Cypher statement, ignoring errors that indicate the constraint/index already exists.
-async fn run_ignoring_exists(
-    g: &neo4rs::Graph,
-    cypher: &str,
-) -> Result<(), neo4rs::Error> {
-    match g.run(query(cypher)).await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("already exists") || msg.contains("equivalent") {
-                warn!("Already exists (skipped): {}", cypher.chars().take(80).collect::<String>());
-                Ok(())
-            } else {
-                Err(e)
-            }
-        }
-    }
-}
-
-/// Drop a constraint/index, ignoring errors if it doesn't exist.
-async fn drop_ignoring_missing(g: &neo4rs::Graph, cypher: &str) {
-    match g.run(query(cypher)).await {
-        Ok(_) => info!("Dropped: {}", cypher.chars().take(80).collect::<String>()),
-        Err(e) => {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("doesn't exist") || msg.contains("does not exist") || msg.contains("not found") {
-                warn!("Already dropped (skipped): {}", cypher.chars().take(80).collect::<String>());
-            } else {
-                warn!("Drop failed (non-fatal): {e}");
-            }
-        }
+/// Drop a constraint by name if it exists (Neo4j 5+ syntax).
+async fn drop_constraint_if_exists(g: &neo4rs::Graph, name: &str) {
+    let cypher = format!("DROP CONSTRAINT {name} IF EXISTS");
+    match g.run(query(&cypher)).await {
+        Ok(_) => info!("Dropped constraint (if existed): {name}"),
+        Err(e) => warn!("Drop constraint {name} failed (non-fatal): {e}"),
     }
 }
 
@@ -539,9 +505,9 @@ pub async fn backfill_event_dates(client: &GraphClient) -> Result<(), neo4rs::Er
         "MATCH (e:Event) WHERE e.ends_at = '' SET e.ends_at = null",
         // Null out starts_at that equals extracted_at (scrape timestamp mistaken for event date)
         "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND e.starts_at = e.extracted_at SET e.starts_at = null",
-        // Convert remaining string-typed dates to datetime
-        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND valueType(e.starts_at) = 'STRING' SET e.starts_at = datetime(e.starts_at)",
-        "MATCH (e:Event) WHERE e.ends_at IS NOT NULL AND valueType(e.ends_at) = 'STRING' SET e.ends_at = datetime(e.ends_at)",
+        // Convert remaining string-typed dates to datetime (Neo4j 5.11+ type predicate syntax)
+        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND e.starts_at IS :: STRING SET e.starts_at = datetime(e.starts_at)",
+        "MATCH (e:Event) WHERE e.ends_at IS NOT NULL AND e.ends_at IS :: STRING SET e.ends_at = datetime(e.ends_at)",
     ];
 
     for step in &steps {
@@ -605,5 +571,129 @@ pub async fn backfill_source_canonical_keys(client: &GraphClient) -> Result<(), 
     }
 
     info!("Source canonical key backfill complete");
+    Ok(())
+}
+
+/// Backfill `source_role` on existing Source nodes using heuristic classification.
+/// Idempotent — only touches nodes where source_role IS NULL.
+///
+/// Heuristics:
+/// - Reddit, forums, news → tension
+/// - Nonprofit .org, EventbriteQuery, VolunteerMatchQuery → response
+/// - Discovery sources with gap_context containing "response"/"resource" → response
+/// - Discovery sources with gap_context containing "tension"/"problem" → tension
+/// - Everything else → mixed
+pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling source roles...");
+
+    // Step 1: Reddit / forums / news → tension
+    let tension_q = query(
+        "MATCH (s:Source) WHERE s.source_role IS NULL AND \
+         (s.source_type = 'reddit' OR \
+          s.url CONTAINS 'reddit.com' OR \
+          s.url CONTAINS 'nextdoor.com' OR \
+          s.url CONTAINS 'startribune.com' OR \
+          s.url CONTAINS 'minnpost.com') \
+         SET s.source_role = 'tension' \
+         RETURN count(s) AS updated"
+    );
+    match g.execute(tension_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Classified tension sources");
+                }
+            }
+        }
+        Err(e) => warn!("Tension source classification failed (non-fatal): {e}"),
+    }
+
+    // Step 2: Eventbrite, VolunteerMatch, GoFundMe, .org nonprofits → response
+    let response_q = query(
+        "MATCH (s:Source) WHERE s.source_role IS NULL AND \
+         (s.source_type = 'eventbrite_query' OR \
+          s.source_type = 'volunteermatch_query' OR \
+          s.source_type = 'gofundme_query' OR \
+          (s.url IS NOT NULL AND s.url ENDS WITH '.org' AND s.source_type = 'web') OR \
+          (s.url IS NOT NULL AND s.url CONTAINS '.org/' AND s.source_type = 'web')) \
+         SET s.source_role = 'response' \
+         RETURN count(s) AS updated"
+    );
+    match g.execute(response_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Classified response sources");
+                }
+            }
+        }
+        Err(e) => warn!("Response source classification failed (non-fatal): {e}"),
+    }
+
+    // Step 3: Discovery sources — classify by gap_context keywords
+    let gap_response_q = query(
+        "MATCH (s:Source) WHERE s.source_role IS NULL AND s.gap_context IS NOT NULL AND \
+         (toLower(s.gap_context) CONTAINS 'response' OR \
+          toLower(s.gap_context) CONTAINS 'resource' OR \
+          toLower(s.gap_context) CONTAINS 'volunteer' OR \
+          toLower(s.gap_context) CONTAINS 'program') \
+         SET s.source_role = 'response' \
+         RETURN count(s) AS updated"
+    );
+    match g.execute(gap_response_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Classified gap-response sources");
+                }
+            }
+        }
+        Err(e) => warn!("Gap-response classification failed (non-fatal): {e}"),
+    }
+
+    let gap_tension_q = query(
+        "MATCH (s:Source) WHERE s.source_role IS NULL AND s.gap_context IS NOT NULL AND \
+         (toLower(s.gap_context) CONTAINS 'tension' OR \
+          toLower(s.gap_context) CONTAINS 'problem' OR \
+          toLower(s.gap_context) CONTAINS 'complaint') \
+         SET s.source_role = 'tension' \
+         RETURN count(s) AS updated"
+    );
+    match g.execute(gap_tension_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Classified gap-tension sources");
+                }
+            }
+        }
+        Err(e) => warn!("Gap-tension classification failed (non-fatal): {e}"),
+    }
+
+    // Step 4: Everything remaining → mixed
+    let mixed_q = query(
+        "MATCH (s:Source) WHERE s.source_role IS NULL \
+         SET s.source_role = 'mixed' \
+         RETURN count(s) AS updated"
+    );
+    match g.execute(mixed_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Classified remaining sources as mixed");
+                }
+            }
+        }
+        Err(e) => warn!("Mixed source classification failed (non-fatal): {e}"),
+    }
+
+    info!("Source role backfill complete");
     Ok(())
 }

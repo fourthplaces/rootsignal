@@ -1,11 +1,13 @@
 use rootsignal_common::{EvidenceNode, Node, NodeType, StoryNode, TensionResponse};
 
+pub mod actors;
 pub mod cities;
 pub mod city_detail;
+pub mod dashboard;
+pub mod editions;
 pub mod layout;
 pub mod login;
 pub mod map;
-pub mod quality;
 pub mod signal_detail;
 pub mod signals_list;
 pub mod stories_detail;
@@ -13,11 +15,18 @@ pub mod stories_list;
 
 pub mod sources;
 
+pub use actors::{render_actors_list, render_actor_detail, ActorView};
 pub use cities::{render_cities, CityView};
 pub use city_detail::render_city_detail;
+pub use dashboard::{
+    render_dashboard, build_signal_volume_chart, build_signal_type_chart,
+    build_horizontal_bar_chart, build_bar_chart, build_source_weight_chart,
+    source_weight_buckets, DashboardData, TensionRow, SourceRow, YieldRow, GapRow,
+    ScoutStatusRow,
+};
+pub use editions::{render_editions_list, render_edition_detail, EditionView};
 pub use login::{render_login, render_verify};
 pub use map::render_map;
-pub use quality::render_quality;
 pub use signal_detail::render_signal_detail;
 pub use signals_list::render_signals_list;
 pub use sources::{SourceView, SchedulePreview, ScheduledSourceView};

@@ -3,10 +3,10 @@ use std::env;
 /// Application configuration loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
-    // Memgraph (bolt protocol via neo4rs driver)
-    pub memgraph_uri: String,
-    pub memgraph_user: String,
-    pub memgraph_password: String,
+    // Neo4j (bolt protocol via neo4rs driver)
+    pub neo4j_uri: String,
+    pub neo4j_user: String,
+    pub neo4j_password: String,
 
     // AI providers
     pub anthropic_api_key: String,
@@ -54,9 +54,9 @@ impl Config {
     /// Panics with a clear message if required vars are missing.
     pub fn from_env() -> Self {
         Self {
-            memgraph_uri: required_env("MEMGRAPH_URI"),
-            memgraph_user: required_env("MEMGRAPH_USER"),
-            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             tavily_api_key: required_env("TAVILY_API_KEY"),
@@ -85,9 +85,9 @@ impl Config {
     /// Load config for scout (no web server or admin fields needed).
     pub fn scout_from_env() -> Self {
         Self {
-            memgraph_uri: required_env("MEMGRAPH_URI"),
-            memgraph_user: required_env("MEMGRAPH_USER"),
-            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             tavily_api_key: required_env("TAVILY_API_KEY"),
@@ -113,12 +113,12 @@ impl Config {
         }
     }
 
-    /// Load config for edition generation (Memgraph + Anthropic + city).
+    /// Load config for edition generation (Neo4j + Anthropic + city).
     pub fn editions_from_env() -> Self {
         Self {
-            memgraph_uri: required_env("MEMGRAPH_URI"),
-            memgraph_user: required_env("MEMGRAPH_USER"),
-            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
             tavily_api_key: String::new(),
@@ -141,12 +141,12 @@ impl Config {
         }
     }
 
-    /// Load config for the scout supervisor (Memgraph + Anthropic + city + notifications).
+    /// Load config for the scout supervisor (Neo4j + Anthropic + city + notifications).
     pub fn supervisor_from_env() -> Self {
         Self {
-            memgraph_uri: required_env("MEMGRAPH_URI"),
-            memgraph_user: required_env("MEMGRAPH_USER"),
-            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
             tavily_api_key: String::new(),
@@ -183,9 +183,9 @@ impl Config {
             .collect();
 
         Self {
-            memgraph_uri: required_env("MEMGRAPH_URI"),
-            memgraph_user: required_env("MEMGRAPH_USER"),
-            memgraph_password: required_env("MEMGRAPH_PASSWORD"),
+            neo4j_uri: required_env("NEO4J_URI"),
+            neo4j_user: required_env("NEO4J_USER"),
+            neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             voyage_api_key: env::var("VOYAGE_API_KEY").unwrap_or_default(),
             tavily_api_key: env::var("TAVILY_API_KEY").unwrap_or_default(),
@@ -216,9 +216,9 @@ impl Config {
     /// Log the first 8 characters of each sensitive env var for debugging.
     pub fn log_redacted(&self) {
         let vars = [
-            ("MEMGRAPH_URI", &self.memgraph_uri),
-            ("MEMGRAPH_USER", &self.memgraph_user),
-            ("MEMGRAPH_PASSWORD", &self.memgraph_password),
+            ("NEO4J_URI", &self.neo4j_uri),
+            ("NEO4J_USER", &self.neo4j_user),
+            ("NEO4J_PASSWORD", &self.neo4j_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
             ("TAVILY_API_KEY", &self.tavily_api_key),

@@ -3,7 +3,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceType};
+use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::GraphWriter;
 
 use crate::scraper::WebSearcher;
@@ -71,6 +71,7 @@ impl<'a> ColdStartBootstrapper<'a> {
                 last_cost_cents: 0,
                 taxonomy_stats: None,
                 quality_penalty: 1.0,
+                source_role: SourceRole::default(),
             };
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
@@ -166,6 +167,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 last_cost_cents: 0,
                 taxonomy_stats: None,
                 quality_penalty: 1.0,
+                source_role: SourceRole::default(),
             }
         };
 
@@ -248,6 +250,7 @@ pub async fn tension_seed_queries(
             last_cost_cents: 0,
             taxonomy_stats: None,
             quality_penalty: 1.0,
+            source_role: SourceRole::default(),
         });
     }
 

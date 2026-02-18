@@ -400,6 +400,7 @@ pub struct CityNode {
     pub geo_terms: Vec<String>,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    pub last_scout_completed_at: Option<DateTime<Utc>>,
 }
 
 // --- Source Types (for emergent source discovery) ---
@@ -535,6 +536,39 @@ impl std::fmt::Display for DiscoveryMethod {
     }
 }
 
+/// What kind of signals a source tends to surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceRole {
+    /// Surfaces problems (forums, complaint boards, news).
+    Tension,
+    /// Surfaces responses (nonprofits, service directories, event calendars).
+    Response,
+    /// Produces both tensions and responses (general community pages, social media).
+    #[default]
+    Mixed,
+}
+
+impl std::fmt::Display for SourceRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceRole::Tension => write!(f, "tension"),
+            SourceRole::Response => write!(f, "response"),
+            SourceRole::Mixed => write!(f, "mixed"),
+        }
+    }
+}
+
+impl SourceRole {
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "tension" => SourceRole::Tension,
+            "response" => SourceRole::Response,
+            _ => SourceRole::Mixed,
+        }
+    }
+}
+
 /// A tracked source in the graph — either curated (from seed list) or discovered.
 /// Identity is `canonical_key` = `city_slug:source_type:canonical_value`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,6 +605,8 @@ pub struct SourceNode {
     pub taxonomy_stats: Option<String>,
     /// Quality penalty from supervisor (0.0-1.0, default 1.0). Multiplied with weight.
     pub quality_penalty: f64,
+    /// What kind of signals this source tends to surface.
+    pub source_role: SourceRole,
 }
 
 /// A human-submitted link with an optional reason for investigation.

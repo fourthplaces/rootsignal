@@ -42,7 +42,7 @@ impl PublicGraphReader {
 
         for nt in &types {
             let label = node_type_label(*nt);
-            // Use bounding box on plain lat/lng properties to avoid Memgraph point() serialization issues.
+            // Use bounding box on plain lat/lng properties.
             // ~1 degree lat ≈ 111km, 1 degree lng ≈ 111km * cos(lat)
             let lat_delta = radius_km / 111.0;
             let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
@@ -202,6 +202,68 @@ impl PublicGraphReader {
             }
         }
 
+        Ok(results)
+    }
+
+    /// List recent signals scoped to a city.
+    pub async fn list_recent_for_city(
+        &self,
+        city: &str,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let mut all: Vec<Node> = Vec::new();
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+            let label = node_type_label(*nt);
+            let cypher = format!(
+                "MATCH (n:{label})
+                 WHERE n.city = $city
+                 RETURN n
+                 ORDER BY n.last_confirmed_active DESC
+                 LIMIT $limit"
+            );
+            let q = query(&cypher)
+                .param("city", city)
+                .param("limit", limit as i64);
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                if let Some(node) = row_to_node(&row, *nt) {
+                    all.push(node);
+                }
+            }
+        }
+        // Sort by recency, truncate
+        all.sort_by(|a, b| {
+            let a_time = a.meta().map(|m| m.last_confirmed_active);
+            let b_time = b.meta().map(|m| m.last_confirmed_active);
+            b_time.cmp(&a_time)
+        });
+        all.truncate(limit as usize);
+        Ok(all)
+    }
+
+    /// Top stories by energy, scoped to a city.
+    pub async fn top_stories_for_city(
+        &self,
+        city: &str,
+        limit: u32,
+    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.city = $city
+             RETURN s
+             ORDER BY s.energy DESC
+             LIMIT $limit"
+        )
+        .param("city", city)
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(story) = row_to_story(&row) {
+                results.push(story);
+            }
+        }
         Ok(results)
     }
 
@@ -715,6 +777,100 @@ impl PublicGraphReader {
     pub async fn total_count(&self) -> Result<u64, neo4rs::Error> {
         let counts = self.count_by_type().await?;
         Ok(counts.iter().map(|(_, c)| c).sum())
+    }
+
+    /// Signal volume by day for last 30 days, grouped by type.
+    /// Returns Vec<(date_string, event, give, ask, notice, tension)>.
+    pub async fn signal_volume_by_day(&self) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, neo4rs::Error> {
+        let q = query(
+            "WITH date(datetime() - duration('P30D')) AS cutoff
+             UNWIND range(0, 29) AS offset
+             WITH date(datetime() - duration('P' + toString(offset) + 'D')) AS day
+             OPTIONAL MATCH (e:Event) WHERE date(e.extracted_at) = day
+             WITH day, count(e) AS events
+             OPTIONAL MATCH (g:Give) WHERE date(g.extracted_at) = day
+             WITH day, events, count(g) AS gives
+             OPTIONAL MATCH (a:Ask) WHERE date(a.extracted_at) = day
+             WITH day, events, gives, count(a) AS asks
+             OPTIONAL MATCH (n:Notice) WHERE date(n.extracted_at) = day
+             WITH day, events, gives, asks, count(n) AS notices
+             OPTIONAL MATCH (t:Tension) WHERE date(t.extracted_at) = day
+             RETURN toString(day) AS day, events, gives, asks, notices, count(t) AS tensions
+             ORDER BY day"
+        );
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let day: String = row.get("day").unwrap_or_default();
+            let events: i64 = row.get("events").unwrap_or(0);
+            let gives: i64 = row.get("gives").unwrap_or(0);
+            let asks: i64 = row.get("asks").unwrap_or(0);
+            let notices: i64 = row.get("notices").unwrap_or(0);
+            let tensions: i64 = row.get("tensions").unwrap_or(0);
+            results.push((day, events as u64, gives as u64, asks as u64, notices as u64, tensions as u64));
+        }
+        Ok(results)
+    }
+
+    /// Story count grouped by arc (30-day window).
+    pub async fn story_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.last_updated >= datetime() - duration('P30D')
+             RETURN coalesce(s.arc, 'unknown') AS arc, count(s) AS cnt
+             ORDER BY cnt DESC"
+        );
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let arc: String = row.get("arc").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((arc, cnt as u64));
+        }
+        Ok(results)
+    }
+
+    /// Story count grouped by category (30-day window).
+    pub async fn story_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.last_updated >= datetime() - duration('P30D')
+             RETURN coalesce(s.category, 'uncategorized') AS category, count(s) AS cnt
+             ORDER BY cnt DESC"
+        );
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let category: String = row.get("category").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((category, cnt as u64));
+        }
+        Ok(results)
+    }
+
+    /// Total story count.
+    pub async fn story_count(&self) -> Result<u64, neo4rs::Error> {
+        let q = query("MATCH (s:Story) RETURN count(s) AS cnt");
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            return Ok(cnt as u64);
+        }
+        Ok(0)
+    }
+
+    /// Total actor count.
+    pub async fn actor_count(&self) -> Result<u64, neo4rs::Error> {
+        let q = query("MATCH (a:Actor) RETURN count(a) AS cnt");
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            return Ok(cnt as u64);
+        }
+        Ok(0)
     }
 
     // --- Batch queries for DataLoaders ---

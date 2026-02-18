@@ -148,7 +148,7 @@ pub enum DockerCommand {
         service: Option<String>,
     },
 
-    /// Run mgconsole in the memgraph container
+    /// Run cypher-shell in the neo4j container
     Cypher,
 
     /// Run scout to discover civic signals
@@ -516,20 +516,18 @@ fn run_shell(ctx: &AppContext, service: Option<String>) -> Result<()> {
 }
 
 fn run_cypher(ctx: &AppContext) -> Result<()> {
-    ctx.print_header("Connecting to Memgraph");
+    ctx.print_header("Connecting to Neo4j");
 
     let mut cmd = docker_compose(ctx);
     cmd.args([
         "exec",
-        "memgraph",
-        "mgconsole",
-        "--host", "127.0.0.1",
-        "--port", "7687",
-        "--username", "memgraph",
-        "--password", "rootsignal",
+        "neo4j",
+        "cypher-shell",
+        "-u", "neo4j",
+        "-p", "rootsignal",
     ]);
 
-    let status = cmd.status().context("Failed to connect to Memgraph")?;
+    let status = cmd.status().context("Failed to connect to Neo4j")?;
 
     if !status.success() {
         anyhow::bail!("cypher-shell exited with error");

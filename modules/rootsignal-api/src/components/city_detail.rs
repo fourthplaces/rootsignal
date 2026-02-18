@@ -78,6 +78,28 @@ fn CityDetail(
                                     span { "Terms: {city.geo_terms}" }
                                 }
                             }
+                            div { class: "flex gap-3 text-xs text-gray-400 mt-1",
+                                if let Some(last) = &city.last_scout_completed {
+                                    span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold",
+                                        "Last scout: {last}"
+                                    }
+                                } else {
+                                    span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-400 font-semibold",
+                                        "Never scouted"
+                                    }
+                                }
+                                if city.sources_due > 0 {
+                                    {
+                                        let due = city.sources_due;
+                                        let s = if due != 1 { "s" } else { "" };
+                                        rsx! {
+                                            span { class: "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold",
+                                                "{due} source{s} due"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         div { class: "flex gap-2 items-center",
                             if city.scout_running {
