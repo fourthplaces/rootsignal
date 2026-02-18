@@ -1233,7 +1233,8 @@ impl GraphWriter {
                 s.weight = $weight,
                 s.avg_signals_per_scrape = $avg_signals_per_scrape,
                 s.total_cost_cents = $total_cost_cents,
-                s.last_cost_cents = $last_cost_cents
+                s.last_cost_cents = $last_cost_cents,
+                s.quality_penalty = $quality_penalty
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                 s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1254,7 +1255,8 @@ impl GraphWriter {
         .param("weight", source.weight)
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("total_cost_cents", source.total_cost_cents as i64)
-        .param("last_cost_cents", source.last_cost_cents as i64);
+        .param("last_cost_cents", source.last_cost_cents as i64)
+        .param("quality_penalty", source.quality_penalty);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1307,7 +1309,8 @@ impl GraphWriter {
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
                     s.total_cost_cents AS total_cost_cents,
                     s.last_cost_cents AS last_cost_cents,
-                    s.taxonomy_stats AS taxonomy_stats"
+                    s.taxonomy_stats AS taxonomy_stats,
+                    s.quality_penalty AS quality_penalty"
         )
         .param("city", city);
 
@@ -1369,6 +1372,7 @@ impl GraphWriter {
                 total_cost_cents: row.get::<i64>("total_cost_cents").unwrap_or(0) as u64,
                 last_cost_cents: row.get::<i64>("last_cost_cents").unwrap_or(0) as u64,
                 taxonomy_stats: if taxonomy_stats.is_empty() { None } else { Some(taxonomy_stats) },
+                quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
             });
         }
 

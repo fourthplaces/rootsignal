@@ -70,6 +70,7 @@ impl<'a> ColdStartBootstrapper<'a> {
                 total_cost_cents: 0,
                 last_cost_cents: 0,
                 taxonomy_stats: None,
+                quality_penalty: 1.0,
             };
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
@@ -163,6 +164,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 total_cost_cents: 0,
                 last_cost_cents: 0,
                 taxonomy_stats: None,
+                quality_penalty: 1.0,
             }
         };
 
@@ -244,6 +246,7 @@ pub async fn tension_seed_queries(
             total_cost_cents: 0,
             last_cost_cents: 0,
             taxonomy_stats: None,
+            quality_penalty: 1.0,
         });
     }
 

@@ -6,6 +6,7 @@ use rootsignal_graph::GraphClient;
 
 use crate::budget::BudgetTracker;
 use crate::checks::{auto_fix, llm, triage};
+use crate::feedback::source_penalty;
 use crate::issues::IssueStore;
 use crate::notify::backend::NotifyBackend;
 use crate::state::SupervisorState;
@@ -135,6 +136,25 @@ impl Supervisor {
             llm_budget_remaining = budget.remaining(),
             "LLM budget summary"
         );
+
+        // Phase 5: Feedback — apply quality penalties to sources with open issues
+        if !self.state.is_scout_running().await? {
+            match source_penalty::apply_source_penalties(&self.client).await {
+                Ok(penalty_stats) => {
+                    stats.sources_penalized = penalty_stats.sources_penalized;
+                    info!(penalized = penalty_stats.sources_penalized, "Applied source penalties");
+                }
+                Err(e) => warn!(error = %e, "Failed to apply source penalties"),
+            }
+
+            // Reset penalties for sources whose issues are all resolved
+            match source_penalty::reset_resolved_penalties(&self.client).await {
+                Ok(count) => stats.sources_reset = count,
+                Err(e) => warn!(error = %e, "Failed to reset resolved penalties"),
+            }
+        } else {
+            info!("Scout is running, deferring feedback writes to next run");
+        }
 
         // Send digest notification
         if let Err(e) = self.notifier.send_digest(&stats).await {

@@ -157,7 +157,19 @@ async fn node_detail_page(
         Ok(Some((node, evidence))) => {
             let view = node_to_view(&node);
             let ev_views: Vec<EvidenceView> = evidence.iter().map(evidence_to_view).collect();
-            (StatusCode::OK, Html(render_node_detail(&view, &ev_views)))
+            let response_views: Vec<NodeView> = if node.node_type() == NodeType::Tension {
+                state
+                    .reader
+                    .tension_responses(uuid)
+                    .await
+                    .unwrap_or_default()
+                    .iter()
+                    .map(node_to_view)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (StatusCode::OK, Html(render_node_detail(&view, &ev_views, &response_views)))
         }
         Ok(None) => (StatusCode::NOT_FOUND, Html("Signal not found".to_string())),
         Err(e) => {
@@ -691,6 +703,7 @@ async fn api_submit(
         total_cost_cents: 0,
         last_cost_cents: 0,
         taxonomy_stats: None,
+        quality_penalty: 1.0,
     };
 
     if let Err(e) = state.writer.upsert_source(&source).await {

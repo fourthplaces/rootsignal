@@ -247,6 +247,7 @@ impl Scout {
                 total_cost_cents: 0,
                 last_cost_cents: 0,
                 taxonomy_stats: None,
+                quality_penalty: 1.0,
             }
         };
 
@@ -508,7 +509,7 @@ impl Scout {
         for source in &all_sources {
             let tension_count = self.writer.count_source_tensions(&source.canonical_key).await.unwrap_or(0);
             let scrape_count = source.signals_produced.max(1); // approximate from cumulative
-            let new_weight = crate::scheduler::compute_weight(
+            let base_weight = crate::scheduler::compute_weight(
                 source.signals_produced,
                 source.signals_corroborated,
                 scrape_count,
@@ -516,6 +517,8 @@ impl Scout {
                 source.last_produced_signal,
                 now,
             );
+            // Apply supervisor quality penalty (1.0 = no penalty, <1.0 = penalized)
+            let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
             let cadence = crate::scheduler::cadence_hours_for_weight(new_weight);
             if let Err(e) = self.writer.update_source_weight(&source.canonical_key, new_weight, cadence).await {
                 warn!(canonical_key = source.canonical_key.as_str(), error = %e, "Failed to update source weight");
@@ -898,6 +901,7 @@ impl Scout {
                 total_cost_cents: 0,
                 last_cost_cents: 0,
                 taxonomy_stats: None,
+                quality_penalty: 1.0,
             };
 
             *source_signal_counts.entry(ck).or_default() += produced;

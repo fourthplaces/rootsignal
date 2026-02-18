@@ -539,6 +539,8 @@ pub struct SourceNode {
     pub last_cost_cents: u64,
     /// JSON string of signal type breakdown: `{"tension": N, "ask": N, ...}`.
     pub taxonomy_stats: Option<String>,
+    /// Quality penalty from supervisor (0.0-1.0, default 1.0). Multiplied with weight.
+    pub quality_penalty: f64,
 }
 
 /// A human-submitted link with an optional reason for investigation.

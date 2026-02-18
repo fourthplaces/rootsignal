@@ -104,14 +104,17 @@ pub struct SupervisorStats {
     pub signals_checked: u64,
     pub stories_checked: u64,
     pub issues_created: u64,
+    pub sources_penalized: u64,
+    pub sources_reset: u64,
 }
 
 impl fmt::Display for SupervisorStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "signals_checked={} stories_checked={} issues_created={} {}",
-            self.signals_checked, self.stories_checked, self.issues_created, self.auto_fix,
+            "signals_checked={} stories_checked={} issues_created={} sources_penalized={} sources_reset={} {}",
+            self.signals_checked, self.stories_checked, self.issues_created,
+            self.sources_penalized, self.sources_reset, self.auto_fix,
         )
     }
 }

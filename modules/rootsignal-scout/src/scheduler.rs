@@ -246,6 +246,7 @@ mod tests {
             total_cost_cents: 0,
             last_cost_cents: 0,
             taxonomy_stats: None,
+            quality_penalty: 1.0,
         }
     }
 
