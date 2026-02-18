@@ -8,6 +8,8 @@ members = [
     "modules/rootsignal-scout",
     "modules/rootsignal-web",
     "modules/rootsignal-editions",
+    "modules/rootsignal-scout-supervisor",
+    "modules/rootsignal-api",
 ]
 resolver = "2"
 
@@ -44,6 +46,10 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Neo4j
 neo4rs = "0.8"
+
+# GraphQL
+async-graphql = { version = "7", features = ["chrono", "uuid", "dataloader"] }
+async-graphql-axum = "7"
 
 # Web framework
 axum = "0.8"
