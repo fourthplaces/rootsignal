@@ -35,7 +35,7 @@ pub struct Clusterer {
 
 /// A community detected by Leiden.
 struct Community {
-    id: i64,
+    _id: i64,
     signal_ids: Vec<String>,
 }
 
@@ -308,7 +308,7 @@ impl Clusterer {
 
         Ok(communities_map
             .into_iter()
-            .map(|(id, signal_ids)| Community { id, signal_ids })
+            .map(|(id, signal_ids)| Community { _id: id, signal_ids })
             .collect())
     }
 
@@ -404,7 +404,7 @@ Respond in this exact JSON format:
                 let lng: Option<f64> = row.get("lng").ok().and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
 
                 results.push(SignalMeta {
-                    id,
+                    _id: id,
                     title,
                     summary,
                     source_url,
@@ -669,7 +669,7 @@ Respond in this exact JSON format:
 
 /// Signal metadata for clustering operations.
 struct SignalMeta {
-    id: String,
+    _id: String,
     title: String,
     summary: String,
     source_url: String,
