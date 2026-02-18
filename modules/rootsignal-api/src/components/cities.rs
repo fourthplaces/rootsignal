@@ -75,10 +75,24 @@ fn CitiesList(cities: Vec<CityView>) -> Element {
                                 span { "Terms: {city.geo_terms}" }
                             }
                         }
-                        div { class: "mt-2",
+                        div { class: "mt-2 flex gap-2 items-center",
                             if city.scout_running {
                                 span { class: "inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 px-3 py-1 rounded",
-                                    "Scout running…"
+                                    "Scout running\u{2026}"
+                                }
+                                form { method: "POST", action: "/admin/cities/{city.slug}/scout/stop", class: "inline",
+                                    button {
+                                        r#type: "submit",
+                                        class: "px-3 py-1 bg-red-600 text-white rounded text-xs cursor-pointer hover:bg-red-800",
+                                        "Stop"
+                                    }
+                                }
+                                form { method: "POST", action: "/admin/cities/{city.slug}/scout/reset", class: "inline",
+                                    button {
+                                        r#type: "submit",
+                                        class: "px-3 py-1 border border-gray-300 text-gray-600 rounded text-xs cursor-pointer hover:bg-gray-100",
+                                        "Reset Lock"
+                                    }
                                 }
                             } else {
                                 form { method: "POST", action: "/admin/cities/{city.slug}/scout", class: "inline",

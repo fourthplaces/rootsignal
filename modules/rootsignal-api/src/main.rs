@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub twilio: Option<TwilioService>,
     pub city: String,
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    pub scout_cancel: Arc<AtomicBool>,
 }
 
 async fn graphql_handler(
@@ -98,6 +100,7 @@ async fn main() -> Result<()> {
         twilio,
         city: config.city.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
+        scout_cancel: Arc::new(AtomicBool::new(false)),
     });
 
     let app = Router::new()
@@ -118,6 +121,8 @@ async fn main() -> Result<()> {
         .route("/admin/cities", get(pages::cities_page).post(pages::create_city))
         .route("/admin/cities/{slug}", get(pages::city_detail_page))
         .route("/admin/cities/{slug}/scout", post(pages::run_city_scout))
+        .route("/admin/cities/{slug}/scout/stop", post(pages::stop_city_scout))
+        .route("/admin/cities/{slug}/scout/reset", post(pages::reset_scout_lock))
         .route("/admin/quality", get(pages::quality_dashboard))
         // REST API
         .route("/api/nodes/near", get(rest::api_nodes_near))
