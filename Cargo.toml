@@ -53,13 +53,11 @@ async-graphql-axum = "7"
 
 # Web framework
 axum = "0.8"
-askama = "0.15"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-header", "cors"] }
 tower = "0.5"
 
 # Web scraping
 spider_transformations = "2"
-firecrawl = "1"
 
 # Regex (PII detection)
 regex = "1"

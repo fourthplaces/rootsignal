@@ -13,7 +13,6 @@ pub struct Config {
     pub voyage_api_key: String,
 
     // Scraping
-    pub firecrawl_api_key: String,
     pub tavily_api_key: String,
     pub apify_api_key: String,
 
@@ -49,7 +48,6 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -76,7 +74,6 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            firecrawl_api_key: env::var("FIRECRAWL_API_KEY").unwrap_or_default(),
             tavily_api_key: required_env("TAVILY_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: String::new(),
@@ -103,7 +100,6 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
-            firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
             apify_api_key: String::new(),
             web_host: String::new(),
@@ -127,7 +123,6 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
-            firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
             apify_api_key: String::new(),
             web_host: String::new(),
@@ -154,7 +149,6 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: String::new(),
             voyage_api_key: String::new(),
-            firecrawl_api_key: String::new(),
             tavily_api_key: String::new(),
             apify_api_key: String::new(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -183,7 +177,6 @@ impl Config {
             ("NEO4J_PASSWORD", &self.neo4j_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
-            ("FIRECRAWL_API_KEY", &self.firecrawl_api_key),
             ("TAVILY_API_KEY", &self.tavily_api_key),
             ("APIFY_API_KEY", &self.apify_api_key),
         ];

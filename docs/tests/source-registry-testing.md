@@ -84,10 +84,10 @@ Every Source node must have all required properties set.
 
 ```bash
 echo "MATCH (s:Source)
-WHERE s.id IS NULL OR s.url IS NULL OR s.source_type IS NULL
-   OR s.discovery_method IS NULL OR s.city IS NULL OR s.trust IS NULL
-   OR s.initial_trust IS NULL OR s.active IS NULL
-RETURN s.url, s.id IS NULL AS missing_id, s.trust IS NULL AS missing_trust;" | $MG
+WHERE s.id IS NULL OR s.canonical_key IS NULL OR s.source_type IS NULL
+   OR s.discovery_method IS NULL OR s.city IS NULL OR s.weight IS NULL
+   OR s.active IS NULL
+RETURN s.canonical_key, s.id IS NULL AS missing_id, s.weight IS NULL AS missing_weight;" | $MG
 ```
 
 Must return empty. Any rows mean upsert_source is not setting all properties.
@@ -148,12 +148,13 @@ To test the deactivation logic itself, manually set a non-curated source's conse
 # Create a fake discovered source with 10 empty runs
 echo "CREATE (s:Source {
   id: 'test-dead-source',
+  canonical_key: 'twincities:web:example.com/dead',
+  canonical_value: 'example.com/dead',
   url: 'https://example.com/dead',
   source_type: 'web',
   discovery_method: 'gap_analysis',
   city: 'Twin Cities (Minneapolis-St. Paul, Minnesota)',
-  trust: 0.5,
-  initial_trust: 0.5,
+  weight: 0.5,
   created_at: datetime(),
   signals_produced: 0,
   signals_corroborated: 0,
