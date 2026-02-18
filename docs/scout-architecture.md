@@ -1,6 +1,6 @@
 # Scout System Architecture
 
-Scout is the automated civic intelligence collection engine for Root Signal. It discovers, extracts, deduplicates, embeds, and graphs **civic signals** — actionable information about community resources, events, needs, and tensions.
+Scout is the automated community signal collection engine for Root Signal. It discovers, extracts, deduplicates, embeds, and graphs **civic signals** — actionable information about community resources, events, needs, and tensions.
 
 ## System Diagram
 

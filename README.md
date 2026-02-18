@@ -1,6 +1,8 @@
 # Root Signal
 
-A civic intelligence system. Root Signal continuously discovers civic signal across the web — volunteer shifts, mutual aid requests, environmental actions, policy changes, community tensions — builds a living knowledge graph, and makes it freely navigable. A search engine for civic life.
+Root Signal finds what your community is already building and shows you how to be part of it.
+
+It continuously discovers signal across the web — volunteer shifts, mutual aid requests, environmental actions, policy changes, community tensions — builds a living knowledge graph, and makes it freely navigable.
 
 ## Status
 
@@ -8,7 +10,7 @@ Phase 1a complete. Scout agent discovers signal, graph stores it, web surface se
 
 ## What It Does
 
-Root Signal sits between fragmented civic sources and people who want to act. The Scout agent crawls curated URLs, web search results, and social media accounts for a city, then extracts structured signals using LLMs. Signals are deduplicated across three layers (exact match, URL-scoped, vector similarity), scored for quality, and persisted into a knowledge graph.
+Root Signal sits between fragmented community sources and people who want to act. The Scout agent crawls curated URLs, web search results, and social media accounts for a city, then extracts structured signals using LLMs. Signals are deduplicated across three layers (exact match, URL-scoped, vector similarity), scored for quality, and persisted into a knowledge graph.
 
 **Five signal types:**
 

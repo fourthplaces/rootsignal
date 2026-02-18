@@ -4,7 +4,7 @@ topic: civic-intelligence-system-architecture
 supersedes: civic-tension-search-engine-architecture
 ---
 
-# Civic Intelligence System — Architecture from Scratch
+# Root Signal — Architecture from Scratch
 
 ## What This Is
 

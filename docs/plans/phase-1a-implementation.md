@@ -2,7 +2,7 @@
 
 ## Context
 
-Root Signal is a greenfield civic intelligence system. Phase 1a answers one question: **does enough actionable, fresh signal exist in the Twin Cities to make this viable?** (Milestone 1 gate: 100+ actionable signals, 70%+ fresh, 3+ signal types, 3+ audience roles.)
+Root Signal is a greenfield community signal system. Phase 1a answers one question: **does enough actionable, fresh signal exist in the Twin Cities to make this viable?** (Milestone 1 gate: 100+ actionable signals, 70%+ fresh, 3+ signal types, 3+ audience roles.)
 
 This plan was pressure-tested against all vision docs. v1 had 6 critical safety violations, 3 scope problems, and 4 principle violations. This version fixes them by building safety architecture first and narrowing scope to what Milestone 1 actually requires.
 
