@@ -40,20 +40,62 @@ pub async fn api_submit(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<SubmitRequest>,
 ) -> impl IntoResponse {
-    // Validate URL
+    // Validate URL: parse, enforce scheme, reject private/loopback IPs, enforce max length
     let url = body.url.trim().to_string();
-    if url.is_empty() || (!url.starts_with("http://") && !url.starts_with("https://")) {
+    if url.len() > 2048 {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "Invalid URL — must start with http:// or https://"})),
+            Json(serde_json::json!({"error": "URL too long (max 2048 characters)"})),
         )
             .into_response();
+    }
+    let parsed_url = match url::Url::parse(&url) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid URL"})),
+            )
+                .into_response();
+        }
+    };
+    if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "URL must use http or https scheme"})),
+        )
+            .into_response();
+    }
+    // Block private/loopback IPs to prevent SSRF
+    if let Some(host) = parsed_url.host_str() {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if ip.is_loopback() || is_private_ip(ip) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "URLs pointing to private/loopback addresses are not allowed"})),
+                )
+                    .into_response();
+            }
+        }
+        // Block common internal hostnames
+        let lower = host.to_lowercase();
+        if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "URLs pointing to internal hosts are not allowed"})),
+            )
+                .into_response();
+        }
     }
 
     // Rate limit: 10 submissions per hour per IP
     let ip = addr.ip();
     {
         let mut limiter = state.rate_limiter.lock().await;
+        // Periodically prune empty entries to prevent unbounded HashMap growth
+        if limiter.len() > 1000 {
+            prune_empty_entries(&mut limiter);
+        }
         let entries = limiter.entry(ip).or_default();
         if !check_rate_limit(entries, Instant::now(), RATE_LIMIT_PER_HOUR) {
             return (
@@ -117,7 +159,8 @@ pub async fn api_submit(
         }
     }
 
-    info!(url, city, reason = reason.as_deref().unwrap_or(""), "Human submission received");
+    // Log submission without verbatim reason (may contain PII)
+    info!(url, city, has_reason = reason.is_some(), "Human submission received");
 
     (
         StatusCode::ACCEPTED,
@@ -127,6 +170,32 @@ pub async fn api_submit(
         })),
     )
         .into_response()
+}
+
+/// Check if an IP address is in a private range (RFC 1918 / RFC 4193).
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_link_local()
+                || v4.octets()[0] == 10
+                || (v4.octets()[0] == 172 && (16..=31).contains(&v4.octets()[1]))
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 168)
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254) // metadata endpoint
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Prune empty entries from the rate limiter HashMap to prevent unbounded growth.
+pub fn prune_empty_entries(limiter: &mut std::collections::HashMap<std::net::IpAddr, Vec<Instant>>) {
+    let cutoff = Instant::now() - std::time::Duration::from_secs(3600);
+    limiter.retain(|_, entries| {
+        entries.retain(|t| *t > cutoff);
+        !entries.is_empty()
+    });
 }
 
 /// Extract the canonical value from a URL for deduplication.

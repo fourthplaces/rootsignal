@@ -3568,6 +3568,7 @@ dependencies = [
  "async-graphql",
  "async-graphql-axum",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dioxus",
  "hex",
@@ -3585,6 +3586,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "twilio",
+ "url",
  "uuid",
 ]
 

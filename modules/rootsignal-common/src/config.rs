@@ -44,6 +44,9 @@ pub struct Config {
 
     // Admin phone numbers (E.164) allowed to authenticate
     pub admin_numbers: Vec<String>,
+
+    // Session signing secret (separate from admin_password)
+    pub session_secret: String,
 }
 
 impl Config {
@@ -65,6 +68,7 @@ impl Config {
                 .expect("WEB_PORT must be a number"),
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
+            session_secret: String::new(),
             city: String::new(),
             city_name: None,
             city_lat: None,
@@ -92,6 +96,7 @@ impl Config {
             web_port: 0,
             admin_username: String::new(),
             admin_password: String::new(),
+            session_secret: String::new(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
             city_name: env::var("CITY_NAME").ok(),
             city_lat: env::var("CITY_LAT").ok().and_then(|v| v.parse().ok()),
@@ -122,6 +127,7 @@ impl Config {
             web_port: 0,
             admin_username: String::new(),
             admin_password: String::new(),
+            session_secret: String::new(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
             city_name: None,
             city_lat: None,
@@ -149,6 +155,7 @@ impl Config {
             web_port: 0,
             admin_username: String::new(),
             admin_password: String::new(),
+            session_secret: String::new(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
             city_name: None,
             city_lat: None,
@@ -190,6 +197,7 @@ impl Config {
                 .expect("WEB_PORT must be a number"),
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
+            session_secret: env::var("SESSION_SECRET").unwrap_or_default(),
             city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
             city_name: None,
             city_lat: None,

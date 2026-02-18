@@ -8,12 +8,24 @@ use axum::{
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+use rootsignal_common::Config;
+
 use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
 const COOKIE_NAME: &str = "rs_session";
 const SESSION_DURATION_SECS: i64 = 7 * 24 * 3600; // 7 days
+
+/// Return the session signing secret. Prefers SESSION_SECRET env var;
+/// falls back to admin_password (for dev compatibility).
+pub fn session_secret(config: &Config) -> &str {
+    if config.session_secret.is_empty() {
+        &config.admin_password
+    } else {
+        &config.session_secret
+    }
+}
 
 /// Authenticated admin session. Extract this in handlers that require auth.
 /// If the session cookie is missing or invalid, returns a redirect to /admin/login.
@@ -39,7 +51,7 @@ impl FromRequestParts<Arc<AppState>> for AdminSession {
         let session_value = parse_cookie(cookie_header, COOKIE_NAME);
 
         if let Some(value) = session_value {
-            if let Some(phone) = verify_session(&value, &app_state.config.admin_password) {
+            if let Some(phone) = verify_session(&value, session_secret(&app_state.config)) {
                 return Ok(AdminSession { phone });
             }
         }
@@ -58,10 +70,12 @@ pub fn create_session(phone: &str, secret: &str) -> String {
 }
 
 /// Build the Set-Cookie header value.
+/// In release builds, adds `Secure` flag to prevent transmission over HTTP.
 pub fn session_cookie(phone: &str, secret: &str) -> String {
     let value = create_session(phone, secret);
+    let secure = if cfg!(debug_assertions) { "" } else { "; Secure" };
     format!(
-        "{COOKIE_NAME}={value}; Path=/admin; HttpOnly; SameSite=Lax; Max-Age={SESSION_DURATION_SECS}"
+        "{COOKIE_NAME}={value}; Path=/admin; HttpOnly; SameSite=Lax; Max-Age={SESSION_DURATION_SECS}{secure}"
     )
 }
 
@@ -105,7 +119,7 @@ fn sign(payload: &str, secret: &str) -> String {
 }
 
 /// Constant-time comparison to prevent timing attacks.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
