@@ -182,7 +182,7 @@ async fn main() -> Result<()> {
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("content-security-policy"),
-            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"),
+            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("strict-transport-security"),
