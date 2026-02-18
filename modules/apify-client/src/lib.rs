@@ -32,7 +32,7 @@ const TIKTOK_SCRAPER: &str = "GdWCkxBtKWOsKjdch";
 const GOFUNDME_SCRAPER: &str = "RDZ33qDF65SRiTnxx";
 
 /// Actor ID for trudax/reddit-scraper.
-const REDDIT_SCRAPER: &str = "5JJqHHsNJCMzCEWgA";
+const REDDIT_SCRAPER: &str = "FgJtjDwJCLhRH9saM";
 
 pub struct ApifyClient {
     client: reqwest::Client,
