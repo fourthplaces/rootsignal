@@ -75,7 +75,7 @@ fn discovery_badge(method: &str) -> &'static str {
 fn reason_badge(reason: &str) -> &'static str {
     match reason {
         "Cadence" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-800",
-        "Never scraped" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-800",
+        "Never scraped" | "New" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-800",
         "Exploration" => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800",
         _ => "inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600",
     }
@@ -150,7 +150,7 @@ fn SourcesTab(
                                 th { class: "pb-2 pr-3", "Reason" }
                                 th { class: "pb-2 pr-3", "Weight" }
                                 th { class: "pb-2 pr-3", "Cadence" }
-                                th { class: "pb-2", "Last scraped" }
+                                th { class: "pb-2", "Last run" }
                             }
                         }
                         tbody {
@@ -273,18 +273,28 @@ fn render_source_card(src: &SourceView, _city_slug: &str) -> Element {
                 }
             }
             div { class: "flex gap-4 text-xs text-gray-400 mt-2",
-                span { "{src.signals_produced} signals" }
-                if src.signals_corroborated > 0 {
-                    span { "{src.signals_corroborated} corroborated" }
-                }
-                span { "cadence {src.cadence_hours}h" }
-                if let Some(ref last) = src.last_scraped {
-                    span { "scraped {last}" }
+                if src.is_query {
+                    span { "{src.signals_produced} URLs produced" }
+                    span { "cadence {src.cadence_hours}h" }
+                    if let Some(ref last) = src.last_scraped {
+                        span { "queried {last}" }
+                    } else {
+                        span { "never queried" }
+                    }
                 } else {
-                    span { "never scraped" }
-                }
-                if let Some(ref last) = src.last_produced_signal {
-                    span { "last signal {last}" }
+                    span { "{src.signals_produced} signals" }
+                    if src.signals_corroborated > 0 {
+                        span { "{src.signals_corroborated} corroborated" }
+                    }
+                    span { "cadence {src.cadence_hours}h" }
+                    if let Some(ref last) = src.last_scraped {
+                        span { "scraped {last}" }
+                    } else {
+                        span { "never scraped" }
+                    }
+                    if let Some(ref last) = src.last_produced_signal {
+                        span { "last signal {last}" }
+                    }
                 }
             }
         }

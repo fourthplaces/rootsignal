@@ -482,7 +482,7 @@ pub async fn city_detail_page(
                                 is_query: s.source_type.is_query(),
                                 reason: match ss.reason {
                                     rootsignal_scout::scheduler::ScheduleReason::Cadence => "Cadence".to_string(),
-                                    rootsignal_scout::scheduler::ScheduleReason::NeverScraped => "Never scraped".to_string(),
+                                    rootsignal_scout::scheduler::ScheduleReason::NeverScraped => "New".to_string(),
                                     rootsignal_scout::scheduler::ScheduleReason::Exploration => "Exploration".to_string(),
                                 },
                                 weight: effective_weight,
