@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -7,16 +7,18 @@ use futures::stream::{self, StreamExt};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, DiscoveryMethod, EvidenceNode, Node, NodeType, SourceNode, SourceType};
-use rootsignal_graph::{Clusterer, GraphWriter, GraphClient};
+use rootsignal_common::{
+    CityNode, DiscoveryMethod, EvidenceNode, Node, NodeType, SourceNode, SourceType,
+};
+use rootsignal_graph::{Clusterer, GraphClient, GraphWriter};
 
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::{Embedder, TextEmbedder};
 use crate::extractor::{Extractor, ResourceTag, SignalExtractor};
 use crate::quality;
 use crate::scraper::{
-    self, NoopSocialScraper, PageScraper, SocialAccount, SocialPlatform,
-    SocialPost, SocialScraper, SerperSearcher, WebSearcher,
+    self, NoopSocialScraper, PageScraper, SerperSearcher, SocialAccount, SocialPlatform,
+    SocialPost, SocialScraper, WebSearcher,
 };
 use crate::sources;
 
@@ -65,14 +67,37 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "  Tension: {}", self.by_type[4])?;
         let total = self.signals_stored.max(1);
         writeln!(f, "\nFreshness:")?;
-        writeln!(f, "  < 7 days:   {} ({:.0}%)", self.fresh_7d, self.fresh_7d as f64 / total as f64 * 100.0)?;
-        writeln!(f, "  7-30 days:  {} ({:.0}%)", self.fresh_30d, self.fresh_30d as f64 / total as f64 * 100.0)?;
-        writeln!(f, "  30-90 days: {} ({:.0}%)", self.fresh_90d, self.fresh_90d as f64 / total as f64 * 100.0)?;
+        writeln!(
+            f,
+            "  < 7 days:   {} ({:.0}%)",
+            self.fresh_7d,
+            self.fresh_7d as f64 / total as f64 * 100.0
+        )?;
+        writeln!(
+            f,
+            "  7-30 days:  {} ({:.0}%)",
+            self.fresh_30d,
+            self.fresh_30d as f64 / total as f64 * 100.0
+        )?;
+        writeln!(
+            f,
+            "  30-90 days: {} ({:.0}%)",
+            self.fresh_90d,
+            self.fresh_90d as f64 / total as f64 * 100.0
+        )?;
         if self.expansion_queries_collected > 0 {
             writeln!(f, "\nSignal expansion:")?;
-            writeln!(f, "  Queries collected: {}", self.expansion_queries_collected)?;
+            writeln!(
+                f,
+                "  Queries collected: {}",
+                self.expansion_queries_collected
+            )?;
             writeln!(f, "  Sources created:   {}", self.expansion_sources_created)?;
-            writeln!(f, "  Deferred expanded: {}", self.expansion_deferred_expanded)?;
+            writeln!(
+                f,
+                "  Deferred expanded: {}",
+                self.expansion_deferred_expanded
+            )?;
         }
         Ok(())
     }
@@ -104,7 +129,9 @@ struct CacheEntry {
 
 impl EmbeddingCache {
     fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     /// Find the best match above threshold. Returns (node_id, node_type, source_url, similarity).
@@ -122,7 +149,12 @@ impl EmbeddingCache {
     }
 
     fn add(&mut self, embedding: Vec<f32>, node_id: Uuid, node_type: NodeType, source_url: String) {
-        self.entries.push(CacheEntry { embedding, node_id, node_type, source_url });
+        self.entries.push(CacheEntry {
+            embedding,
+            node_id,
+            node_type,
+            source_url,
+        });
     }
 }
 
@@ -141,8 +173,8 @@ pub struct Scout {
     writer: GraphWriter,
     extractor: Box<dyn SignalExtractor>,
     embedder: Box<dyn TextEmbedder>,
-    scraper: Box<dyn PageScraper>,
-    searcher: Box<dyn WebSearcher>,
+    scraper: Arc<dyn PageScraper>,
+    searcher: Arc<dyn WebSearcher>,
     social: Box<dyn SocialScraper>,
     anthropic_api_key: String,
     city_node: CityNode,
@@ -168,20 +200,25 @@ impl Scout {
         } else {
             Box::new(apify_client::ApifyClient::new(apify_api_key.to_string()))
         };
-        let scraper: Box<dyn PageScraper> = match std::env::var("BROWSERLESS_URL") {
+        let scraper: Arc<dyn PageScraper> = match std::env::var("BROWSERLESS_URL") {
             Ok(url) => {
                 let token = std::env::var("BROWSERLESS_TOKEN").ok();
-                Box::new(scraper::BrowserlessScraper::new(&url, token.as_deref()))
+                Arc::new(scraper::BrowserlessScraper::new(&url, token.as_deref()))
             }
-            Err(_) => Box::new(scraper::ChromeScraper::new()),
+            Err(_) => Arc::new(scraper::ChromeScraper::new()),
         };
         Ok(Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
-            extractor: Box::new(Extractor::new(anthropic_api_key, city_node.name.as_str(), city_node.center_lat, city_node.center_lng)),
+            extractor: Box::new(Extractor::new(
+                anthropic_api_key,
+                city_node.name.as_str(),
+                city_node.center_lat,
+                city_node.center_lng,
+            )),
             embedder: Box::new(Embedder::new(voyage_api_key)),
             scraper,
-            searcher: Box::new(SerperSearcher::new(serper_api_key)),
+            searcher: Arc::new(SerperSearcher::new(serper_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
             city_node,
@@ -195,8 +232,8 @@ impl Scout {
         graph_client: GraphClient,
         extractor: Box<dyn SignalExtractor>,
         embedder: Box<dyn TextEmbedder>,
-        scraper: Box<dyn PageScraper>,
-        searcher: Box<dyn WebSearcher>,
+        scraper: Arc<dyn PageScraper>,
+        searcher: Arc<dyn WebSearcher>,
         social: Box<dyn SocialScraper>,
         anthropic_api_key: &str,
         city_node: CityNode,
@@ -229,7 +266,12 @@ impl Scout {
     pub async fn run(&self) -> Result<ScoutStats> {
         // Acquire per-city lock
         let city_slug = &self.city_node.slug;
-        if !self.writer.acquire_scout_lock(city_slug).await.context("Failed to check scout lock")? {
+        if !self
+            .writer
+            .acquire_scout_lock(city_slug)
+            .await
+            .context("Failed to check scout lock")?
+        {
             anyhow::bail!("Another scout run is in progress for {}", city_slug);
         }
 
@@ -265,9 +307,15 @@ impl Scout {
         // Load all active sources from graph (curated + discovered)
         let all_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
             Ok(sources) => {
-                let curated = sources.iter().filter(|s| s.discovery_method == DiscoveryMethod::Curated).count();
+                let curated = sources
+                    .iter()
+                    .filter(|s| s.discovery_method == DiscoveryMethod::Curated)
+                    .count();
                 let discovered = sources.len() - curated;
-                info!(total = sources.len(), curated, discovered, "Loaded sources from graph");
+                info!(
+                    total = sources.len(),
+                    curated, discovered, "Loaded sources from graph"
+                );
                 sources
             }
             Err(e) => {
@@ -280,7 +328,9 @@ impl Scout {
         let now_schedule = Utc::now();
         let scheduler = crate::scheduler::SourceScheduler::new();
         let schedule = scheduler.schedule(&all_sources, now_schedule);
-        let scheduled_keys: std::collections::HashSet<String> = schedule.scheduled.iter()
+        let scheduled_keys: std::collections::HashSet<String> = schedule
+            .scheduled
+            .iter()
             .chain(schedule.exploration.iter())
             .map(|s| s.canonical_key.clone())
             .collect();
@@ -302,11 +352,13 @@ impl Scout {
         // Web query tiered scheduling — limits which WebQuery sources run this cycle.
         // Non-query sources pass through unfiltered.
         let wq_schedule = crate::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
-        let wq_scheduled_keys: std::collections::HashSet<String> = wq_schedule.scheduled.into_iter().collect();
+        let wq_scheduled_keys: std::collections::HashSet<String> =
+            wq_schedule.scheduled.into_iter().collect();
 
         // Filter all_sources to only those scheduled for this run.
         // WebQuery sources must pass BOTH the regular scheduler AND the web query scheduler.
-        let scheduled_sources: Vec<&SourceNode> = all_sources.iter()
+        let scheduled_sources: Vec<&SourceNode> = all_sources
+            .iter()
             .filter(|s| {
                 if !scheduled_keys.contains(&s.canonical_key) {
                     return false;
@@ -322,43 +374,68 @@ impl Scout {
 
         // Build URL→canonical_key lookup for mapping scrape results back to sources.
         // Mutable: scrape_phase inserts resolved WebQuery→URL mappings.
-        let mut url_to_canonical_key: std::collections::HashMap<String, String> = all_sources.iter()
-            .filter_map(|s| s.url.as_ref().map(|u| (sanitize_url(u), s.canonical_key.clone())))
+        let mut url_to_canonical_key: std::collections::HashMap<String, String> = all_sources
+            .iter()
+            .filter_map(|s| {
+                s.url
+                    .as_ref()
+                    .map(|u| (sanitize_url(u), s.canonical_key.clone()))
+            })
             .collect();
 
         let mut embed_cache = EmbeddingCache::new();
-        let mut source_signal_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut source_signal_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         let mut expansion_queries: Vec<String> = Vec::new();
 
         // ================================================================
         // Phase A: Find Problems — scrape tension + mixed sources (web + social)
         // ================================================================
         info!("=== Phase A: Find Problems ===");
-        let phase_a_sources: Vec<&SourceNode> = scheduled_sources.iter()
+        let phase_a_sources: Vec<&SourceNode> = scheduled_sources
+            .iter()
             .filter(|s| tension_phase_keys.contains(&s.canonical_key))
             .copied()
             .collect();
 
-        let mut query_api_errors = self.scrape_phase(
-            &phase_a_sources,
-            &mut url_to_canonical_key,
-            &mut stats,
-            &mut embed_cache,
-            &mut source_signal_counts,
-            &mut expansion_queries,
-        ).await;
+        let mut query_api_errors = self
+            .scrape_phase(
+                &phase_a_sources,
+                &mut url_to_canonical_key,
+                &mut stats,
+                &mut embed_cache,
+                &mut source_signal_counts,
+                &mut expansion_queries,
+            )
+            .await;
 
         // Phase A social: tension + mixed social sources
-        let phase_a_social: Vec<&SourceNode> = scheduled_sources.iter()
+        let phase_a_social: Vec<&SourceNode> = scheduled_sources
+            .iter()
             .filter(|s| {
-                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit | SourceType::Twitter | SourceType::TikTok)
-                    && tension_phase_keys.contains(&s.canonical_key)
+                matches!(
+                    s.source_type,
+                    SourceType::Instagram
+                        | SourceType::Facebook
+                        | SourceType::Reddit
+                        | SourceType::Twitter
+                        | SourceType::TikTok
+                ) && tension_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();
-        let known_city_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
+        let known_city_urls: std::collections::HashSet<String> =
+            url_to_canonical_key.keys().cloned().collect();
         if !phase_a_social.is_empty() {
-            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_a_social, &known_city_urls, &mut expansion_queries).await;
+            self.scrape_social_media(
+                &mut stats,
+                &mut embed_cache,
+                &mut source_signal_counts,
+                &phase_a_social,
+                &known_city_urls,
+                &mut expansion_queries,
+            )
+            .await;
         }
 
         self.check_cancelled()?;
@@ -373,7 +450,8 @@ impl Scout {
             &self.city_node.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
-        ).with_embedder(&*self.embedder);
+        )
+        .with_embedder(&*self.embedder);
         let (mid_discovery_stats, social_topics) = discoverer.run().await;
         if mid_discovery_stats.actor_sources + mid_discovery_stats.gap_sources > 0 {
             info!("{mid_discovery_stats}");
@@ -396,7 +474,8 @@ impl Scout {
         };
 
         // Phase B includes: originally-scheduled response sources + never-scraped fresh discovery sources
-        let phase_b_sources: Vec<&SourceNode> = fresh_sources.iter()
+        let phase_b_sources: Vec<&SourceNode> = fresh_sources
+            .iter()
             .filter(|s| {
                 response_phase_keys.contains(&s.canonical_key)
                     || (s.last_scraped.is_none() && !scheduled_keys.contains(&s.canonical_key))
@@ -406,41 +485,71 @@ impl Scout {
         // Extend URL→canonical_key with fresh sources
         for s in &fresh_sources {
             if let Some(ref url) = s.url {
-                url_to_canonical_key.entry(sanitize_url(url)).or_insert_with(|| s.canonical_key.clone());
+                url_to_canonical_key
+                    .entry(sanitize_url(url))
+                    .or_insert_with(|| s.canonical_key.clone());
             }
         }
 
         if !phase_b_sources.is_empty() {
-            info!(count = phase_b_sources.len(), "Phase B sources (response + fresh discovery)");
-            let phase_b_errors = self.scrape_phase(
-                &phase_b_sources,
-                &mut url_to_canonical_key,
-                &mut stats,
-                &mut embed_cache,
-                &mut source_signal_counts,
-                &mut expansion_queries,
-            ).await;
+            info!(
+                count = phase_b_sources.len(),
+                "Phase B sources (response + fresh discovery)"
+            );
+            let phase_b_errors = self
+                .scrape_phase(
+                    &phase_b_sources,
+                    &mut url_to_canonical_key,
+                    &mut stats,
+                    &mut embed_cache,
+                    &mut source_signal_counts,
+                    &mut expansion_queries,
+                )
+                .await;
             query_api_errors.extend(phase_b_errors);
         }
 
         // Phase B social: response social sources
-        let phase_b_social: Vec<&SourceNode> = scheduled_sources.iter()
+        let phase_b_social: Vec<&SourceNode> = scheduled_sources
+            .iter()
             .filter(|s| {
-                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit | SourceType::Twitter | SourceType::TikTok)
-                    && response_phase_keys.contains(&s.canonical_key)
+                matches!(
+                    s.source_type,
+                    SourceType::Instagram
+                        | SourceType::Facebook
+                        | SourceType::Reddit
+                        | SourceType::Twitter
+                        | SourceType::TikTok
+                ) && response_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();
-        let known_city_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
+        let known_city_urls: std::collections::HashSet<String> =
+            url_to_canonical_key.keys().cloned().collect();
         if !phase_b_social.is_empty() {
-            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_b_social, &known_city_urls, &mut expansion_queries).await;
+            self.scrape_social_media(
+                &mut stats,
+                &mut embed_cache,
+                &mut source_signal_counts,
+                &phase_b_social,
+                &known_city_urls,
+                &mut expansion_queries,
+            )
+            .await;
         }
 
         self.check_cancelled()?;
 
         {
             // Topic discovery — search social media to find new accounts
-            self.discover_from_topics(&social_topics, &mut stats, &mut embed_cache, &mut source_signal_counts, &known_city_urls).await;
+            self.discover_from_topics(
+                &social_topics,
+                &mut stats,
+                &mut embed_cache,
+                &mut source_signal_counts,
+                &known_city_urls,
+            )
+            .await;
         }
 
         // ================================================================
@@ -455,7 +564,11 @@ impl Scout {
             if query_api_errors.contains(canonical_key) {
                 continue;
             }
-            if let Err(e) = self.writer.record_source_scrape(canonical_key, *signals_produced, now).await {
+            if let Err(e) = self
+                .writer
+                .record_source_scrape(canonical_key, *signals_produced, now)
+                .await
+            {
                 warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
             }
         }
@@ -463,48 +576,73 @@ impl Scout {
         // Update source weights based on scrape results.
         // Use fresh signal counts from this run to avoid stale snapshot.
         for source in &all_sources {
-            let tension_count = self.writer.count_source_tensions(&source.canonical_key).await.unwrap_or(0);
-            let fresh_signals = source_signal_counts.get(&source.canonical_key).copied().unwrap_or(0);
+            let tension_count = self
+                .writer
+                .count_source_tensions(&source.canonical_key)
+                .await
+                .unwrap_or(0);
+            let fresh_signals = source_signal_counts
+                .get(&source.canonical_key)
+                .copied()
+                .unwrap_or(0);
             let total_signals = source.signals_produced + fresh_signals;
-            let scrape_count = if fresh_signals > 0 || source_signal_counts.contains_key(&source.canonical_key) {
-                (source.scrape_count + 1).max(1)
-            } else {
-                source.scrape_count.max(1)
-            };
+            let scrape_count =
+                if fresh_signals > 0 || source_signal_counts.contains_key(&source.canonical_key) {
+                    (source.scrape_count + 1).max(1)
+                } else {
+                    source.scrape_count.max(1)
+                };
             let base_weight = crate::scheduler::compute_weight(
                 total_signals,
                 source.signals_corroborated,
                 scrape_count,
                 tension_count,
-                if fresh_signals > 0 { Some(now) } else { source.last_produced_signal },
+                if fresh_signals > 0 {
+                    Some(now)
+                } else {
+                    source.last_produced_signal
+                },
                 now,
             );
             let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
             // Web query sources use exponential backoff based on consecutive empty runs
-            let empty_runs = if source_signal_counts.contains_key(&source.canonical_key) && fresh_signals == 0 {
-                source.consecutive_empty_runs + 1
-            } else {
-                source.consecutive_empty_runs
-            };
+            let empty_runs =
+                if source_signal_counts.contains_key(&source.canonical_key) && fresh_signals == 0 {
+                    source.consecutive_empty_runs + 1
+                } else {
+                    source.consecutive_empty_runs
+                };
             let cadence = if source.source_type == SourceType::WebQuery {
                 crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
             } else {
                 crate::scheduler::cadence_hours_for_weight(new_weight)
             };
-            if let Err(e) = self.writer.update_source_weight(&source.canonical_key, new_weight, cadence).await {
+            if let Err(e) = self
+                .writer
+                .update_source_weight(&source.canonical_key, new_weight, cadence)
+                .await
+            {
                 warn!(canonical_key = source.canonical_key.as_str(), error = %e, "Failed to update source weight");
             }
         }
 
         // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
-        match self.writer.deactivate_dead_sources(&self.city_node.slug, 10).await {
+        match self
+            .writer
+            .deactivate_dead_sources(&self.city_node.slug, 10)
+            .await
+        {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
         }
 
         // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
-        match self.writer.deactivate_dead_web_queries(&self.city_node.slug).await {
+        match self
+            .writer
+            .deactivate_dead_web_queries(&self.city_node.slug)
+            .await
+        {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),
@@ -554,108 +692,143 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // Response mapping — match Give/Event to Tensions/Asks (non-fatal)
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
-            info!("Starting response mapping...");
-            let response_mapper = rootsignal_graph::response::ResponseMapper::new(
-                self.graph_client.clone(),
-                &self.anthropic_api_key,
-            );
-            match response_mapper.map_responses().await {
-                Ok(rm_stats) => info!("{rm_stats}"),
-                Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
-            }
-        } else if self.budget.is_active() {
-            info!("Skipping response mapping (budget exhausted)");
-        }
+        // ----------------------------------------------------------------
+        // Parallel synthesis — run independent finders concurrently.
+        // Each finder targets a different slice of the graph (see pressure
+        // test in commit message) so there are no write conflicts.
+        // Story Weaving must run AFTER because it reads edges created here.
+        // ----------------------------------------------------------------
+        info!("Starting parallel synthesis (response mapping, tension linker, response finder, gathering finder, investigation)...");
 
-        self.check_cancelled()?;
-
-        // Tension linker — ask "why?" about signals without tension context
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER) {
-            info!("Starting tension linker...");
-            let tension_linker = crate::tension_linker::TensionLinker::new(
-                &self.writer,
-                &*self.searcher,
-                &*self.scraper,
-                &*self.embedder,
-                &self.anthropic_api_key,
-                self.city_node.clone(),
-            );
-            let tl_stats = tension_linker.run().await;
-            info!("{tl_stats}");
-        } else if self.budget.is_active() {
-            info!("Skipping tension linker (budget exhausted)");
-        }
-
-        self.check_cancelled()?;
-
-        // Response finder — find what diffuses known tensions
-        if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
-        ) {
-            info!("Starting response finder...");
-            let response_finder = crate::response_finder::ResponseFinder::new(
-                &self.writer,
-                &*self.searcher,
-                &*self.scraper,
-                &*self.embedder,
-                &self.anthropic_api_key,
-                self.city_node.clone(),
-            );
-            let rf_stats = response_finder.run().await;
-            info!("{rf_stats}");
-        } else if self.budget.is_active() {
-            info!("Skipping response finder (budget exhausted)");
-        }
-
-        self.check_cancelled()?;
-
-        // Gathering finder — find where people gather around tensions
-        if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
-        ) {
-            info!("Starting gathering finder...");
-            let gathering_finder = crate::gathering_finder::GatheringFinder::new(
-                &self.writer,
-                &*self.searcher,
-                &*self.scraper,
-                &*self.embedder,
-                &self.anthropic_api_key,
-                self.city_node.clone(),
-            );
-            let gf_stats = gathering_finder.run().await;
-            info!("{gf_stats}");
-        } else if self.budget.is_active() {
-            info!("Skipping gathering finder (budget exhausted)");
-        }
-
-        self.check_cancelled()?;
-
-        // Story weaving — materialize tension hubs as stories
-        info!("Starting story weaving...");
-        let weaver = rootsignal_graph::StoryWeaver::new(
-            self.graph_client.clone(),
-            &self.anthropic_api_key,
+        // Snapshot budget decisions before launching — all checks are on &self
+        let run_response_mapping = self
+            .budget
+            .has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10);
+        let run_tension_linker = self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
         );
-        let has_weave_budget = self.budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
+        let run_response_finder = self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
+        );
+        let run_gathering_finder = self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
+        );
+        let run_investigation = self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
+        );
+
+        let (rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+            // Response mapping — match Give/Event to Tensions/Asks
+            async {
+                if run_response_mapping {
+                    info!("Starting response mapping...");
+                    let response_mapper = rootsignal_graph::response::ResponseMapper::new(
+                        self.graph_client.clone(),
+                        &self.anthropic_api_key,
+                    );
+                    match response_mapper.map_responses().await {
+                        Ok(rm_stats) => info!("{rm_stats}"),
+                        Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
+                    }
+                } else if self.budget.is_active() {
+                    info!("Skipping response mapping (budget exhausted)");
+                }
+            },
+            // Tension linker — ask "why?" about signals without tension context
+            async {
+                if run_tension_linker {
+                    info!("Starting tension linker...");
+                    let tension_linker = crate::tension_linker::TensionLinker::new(
+                        &self.writer,
+                        self.searcher.clone(),
+                        self.scraper.clone(),
+                        &*self.embedder,
+                        &self.anthropic_api_key,
+                        self.city_node.clone(),
+                        self.cancelled.clone(),
+                    );
+                    let tl_stats = tension_linker.run().await;
+                    info!("{tl_stats}");
+                } else if self.budget.is_active() {
+                    info!("Skipping tension linker (budget exhausted)");
+                }
+            },
+            // Response finder — find what diffuses known tensions
+            async {
+                if run_response_finder {
+                    info!("Starting response finder...");
+                    let response_finder = crate::response_finder::ResponseFinder::new(
+                        &self.writer,
+                        self.searcher.clone(),
+                        self.scraper.clone(),
+                        &*self.embedder,
+                        &self.anthropic_api_key,
+                        self.city_node.clone(),
+                        self.cancelled.clone(),
+                    );
+                    let rf_stats = response_finder.run().await;
+                    info!("{rf_stats}");
+                } else if self.budget.is_active() {
+                    info!("Skipping response finder (budget exhausted)");
+                }
+            },
+            // Gathering finder — find where people gather around tensions
+            async {
+                if run_gathering_finder {
+                    info!("Starting gathering finder...");
+                    let gathering_finder = crate::gathering_finder::GatheringFinder::new(
+                        &self.writer,
+                        self.searcher.clone(),
+                        self.scraper.clone(),
+                        &*self.embedder,
+                        &self.anthropic_api_key,
+                        self.city_node.clone(),
+                        self.cancelled.clone(),
+                    );
+                    let gf_stats = gathering_finder.run().await;
+                    info!("{gf_stats}");
+                } else if self.budget.is_active() {
+                    info!("Skipping gathering finder (budget exhausted)");
+                }
+            },
+            // Investigation — verify signals via web search
+            async {
+                if run_investigation {
+                    info!("Starting investigation phase...");
+                    let investigator = crate::investigator::Investigator::new(
+                        &self.writer,
+                        &*self.searcher,
+                        &self.anthropic_api_key,
+                        &self.city_node.name,
+                        self.cancelled.clone(),
+                    );
+                    let investigation_stats = investigator.run().await;
+                    info!("{investigation_stats}");
+                } else if self.budget.is_active() {
+                    info!("Skipping investigation (budget exhausted)");
+                }
+            },
+        );
+
+        // Suppress unused-variable warnings for the unit results
+        let _ = (rm_result, tl_result, rf_result, gf_result, inv_result);
+
+        info!("Parallel synthesis complete");
+
+        self.check_cancelled()?;
+
+        // Story weaving — materialize tension hubs as stories.
+        // Runs after the parallel group because it reads RESPONDS_TO and
+        // DRAWN_TO edges that the finders create.
+        info!("Starting story weaving...");
+        let weaver =
+            rootsignal_graph::StoryWeaver::new(self.graph_client.clone(), &self.anthropic_api_key);
+        let has_weave_budget = self
+            .budget
+            .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
         match weaver.run(has_weave_budget).await {
             Ok(weave_stats) => info!("{weave_stats}"),
             Err(e) => warn!(error = %e, "Story weaving failed (non-fatal)"),
-        }
-
-        self.check_cancelled()?;
-
-        // Investigation (Uses web search + Claude — check budget)
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION) {
-            info!("Starting investigation phase...");
-            let investigator = crate::investigator::Investigator::new(
-                &self.writer, &*self.searcher, &self.anthropic_api_key, &self.city_node.name,
-            );
-            let investigation_stats = investigator.run().await;
-            info!("{investigation_stats}");
-        } else if self.budget.is_active() {
-            info!("Skipping investigation (budget exhausted)");
         }
 
         self.check_cancelled()?;
@@ -665,12 +838,19 @@ impl Scout {
         // ================================================================
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
-        match self.writer.get_recently_linked_signals_with_queries(&self.city_node.slug).await {
+        match self
+            .writer
+            .get_recently_linked_signals_with_queries(&self.city_node.slug)
+            .await
+        {
             Ok(deferred) => {
                 let deferred_count = deferred.len();
                 expansion_queries.extend(deferred);
                 if deferred_count > 0 {
-                    info!(deferred = deferred_count, "Deferred signal expansion queries collected");
+                    info!(
+                        deferred = deferred_count,
+                        "Deferred signal expansion queries collected"
+                    );
                 }
                 stats.expansion_deferred_expanded = deferred_count as u32;
             }
@@ -680,10 +860,18 @@ impl Scout {
         stats.expansion_queries_collected = expansion_queries.len() as u32;
 
         if !expansion_queries.is_empty() {
-            let existing = self.writer.get_active_web_queries(&self.city_node.slug).await
+            let existing = self
+                .writer
+                .get_active_web_queries(&self.city_node.slug)
+                .await
                 .unwrap_or_default();
-            let deduped: Vec<String> = expansion_queries.iter()
-                .filter(|q| !existing.iter().any(|e| jaccard_similarity(q, e) > DEDUP_JACCARD_THRESHOLD))
+            let deduped: Vec<String> = expansion_queries
+                .iter()
+                .filter(|q| {
+                    !existing
+                        .iter()
+                        .any(|e| jaccard_similarity(q, e) > DEDUP_JACCARD_THRESHOLD)
+                })
                 .cloned()
                 .take(MAX_EXPANSION_QUERIES_PER_RUN)
                 .collect();
@@ -694,7 +882,11 @@ impl Scout {
             for query_text in &deduped {
                 // Embedding-based dedup for expansion queries
                 if let Ok(embedding) = self.embedder.embed(query_text).await {
-                    match self.writer.find_similar_query(&embedding, &self.city_node.slug, 0.90).await {
+                    match self
+                        .writer
+                        .find_similar_query(&embedding, &self.city_node.slug, 0.90)
+                        .await
+                    {
                         Ok(Some((existing_ck, sim))) => {
                             info!(
                                 query = query_text.as_str(),
@@ -706,13 +898,17 @@ impl Scout {
                             continue;
                         }
                         Ok(None) => {}
-                        Err(e) => warn!(error = %e, "Expansion query dedup check failed, proceeding"),
+                        Err(e) => {
+                            warn!(error = %e, "Expansion query dedup check failed, proceeding")
+                        }
                     }
                 }
 
                 let cv = query_text.clone();
                 let ck = crate::sources::make_canonical_key(
-                    &self.city_node.slug, SourceType::WebQuery, &cv,
+                    &self.city_node.slug,
+                    SourceType::WebQuery,
+                    &cv,
                 );
                 let source = SourceNode {
                     id: Uuid::new_v4(),
@@ -729,8 +925,13 @@ impl Scout {
                     signals_corroborated: 0,
                     consecutive_empty_runs: 0,
                     active: true,
-                    gap_context: Some("Signal expansion: implied query from extracted signal".to_string()),
-                    weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::SignalExpansion, None),
+                    gap_context: Some(
+                        "Signal expansion: implied query from extracted signal".to_string(),
+                    ),
+                    weight: crate::source_finder::initial_weight_for_method(
+                        DiscoveryMethod::SignalExpansion,
+                        None,
+                    ),
                     cadence_hours: None,
                     avg_signals_per_scrape: 0.0,
                     quality_penalty: 1.0,
@@ -747,7 +948,9 @@ impl Scout {
                             }
                         }
                     }
-                    Err(e) => warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source"),
+                    Err(e) => {
+                        warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source")
+                    }
                 }
             }
             stats.expansion_sources_created = created;
@@ -769,7 +972,8 @@ impl Scout {
             &self.city_node.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
-        ).with_embedder(&*self.embedder);
+        )
+        .with_embedder(&*self.embedder);
         let (end_discovery_stats, _end_social_topics) = end_discoverer.run().await;
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
@@ -801,10 +1005,12 @@ impl Scout {
         expansion_queries: &mut Vec<String>,
     ) -> std::collections::HashSet<String> {
         // Partition by behavior type
-        let query_sources: Vec<&&SourceNode> = sources.iter()
+        let query_sources: Vec<&&SourceNode> = sources
+            .iter()
             .filter(|s| s.source_type.is_query())
             .collect();
-        let page_sources: Vec<&&SourceNode> = sources.iter()
+        let page_sources: Vec<&&SourceNode> = sources
+            .iter()
             .filter(|s| s.source_type == SourceType::Web)
             .collect();
 
@@ -813,18 +1019,27 @@ impl Scout {
         // Resolve query sources → URLs
         // Track API errors separately: queries where Serper itself failed should
         // NOT be counted as empty scrapes (the query was never executed).
-        let mut query_api_errors: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut query_api_errors: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
-        let api_queries: Vec<&&&SourceNode> = query_sources.iter()
+        let api_queries: Vec<&&&SourceNode> = query_sources
+            .iter()
             .filter(|s| s.source_type == SourceType::WebQuery)
             .collect();
         if !api_queries.is_empty() {
-            info!(queries = api_queries.len(), "Resolving web search queries...");
+            info!(
+                queries = api_queries.len(),
+                "Resolving web search queries..."
+            );
             let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
                 let query_str = source.canonical_value.clone();
                 let canonical_key = source.canonical_key.clone();
                 async move {
-                    (canonical_key, query_str.clone(), self.searcher.search(&query_str, 5).await)
+                    (
+                        canonical_key,
+                        query_str.clone(),
+                        self.searcher.search(&query_str, 5).await,
+                    )
                 }
             }))
             .buffer_unordered(5)
@@ -838,11 +1053,15 @@ impl Scout {
                         // so scrape results get attributed to the originating query.
                         for r in &results {
                             let clean = sanitize_url(&r.url);
-                            url_to_canonical_key.entry(clean).or_insert_with(|| canonical_key.clone());
+                            url_to_canonical_key
+                                .entry(clean)
+                                .or_insert_with(|| canonical_key.clone());
                         }
                         // Ensure the query source gets a source_signal_counts entry
                         // even if all its URLs end up deduped/empty (records a scrape).
-                        source_signal_counts.entry(canonical_key.clone()).or_default();
+                        source_signal_counts
+                            .entry(canonical_key.clone())
+                            .or_default();
                         for r in results {
                             phase_urls.push(r.url);
                         }
@@ -856,7 +1075,8 @@ impl Scout {
         }
 
         // HTML-based queries
-        let html_queries: Vec<&&&SourceNode> = query_sources.iter()
+        let html_queries: Vec<&&&SourceNode> = query_sources
+            .iter()
             .filter(|s| s.source_type.link_pattern().is_some())
             .collect();
         for source in &html_queries {
@@ -946,9 +1166,16 @@ impl Scout {
         // Process results
         let now = Utc::now();
         for (url, outcome) in pipeline_results {
-            let ck = url_to_canonical_key.get(&url).cloned().unwrap_or_else(|| url.clone());
+            let ck = url_to_canonical_key
+                .get(&url)
+                .cloned()
+                .unwrap_or_else(|| url.clone());
             match outcome {
-                ScrapeOutcome::New { content, nodes, resource_tags } => {
+                ScrapeOutcome::New {
+                    content,
+                    nodes,
+                    resource_tags,
+                } => {
                     // Collect implied queries from Tension + Ask nodes for immediate expansion
                     for node in &nodes {
                         if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
@@ -959,8 +1186,20 @@ impl Scout {
                     }
 
                     let signal_count_before = stats.signals_stored;
-                    let known_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
-                    match self.store_signals(&url, &content, nodes, resource_tags, stats, embed_cache, &known_urls).await {
+                    let known_urls: std::collections::HashSet<String> =
+                        url_to_canonical_key.keys().cloned().collect();
+                    match self
+                        .store_signals(
+                            &url,
+                            &content,
+                            nodes,
+                            resource_tags,
+                            stats,
+                            embed_cache,
+                            &known_urls,
+                        )
+                        .await
+                    {
                         Ok(_) => {
                             stats.urls_scraped += 1;
                             let produced = stats.signals_stored - signal_count_before;
@@ -1002,10 +1241,17 @@ impl Scout {
         known_city_urls: &std::collections::HashSet<String>,
         expansion_queries: &mut Vec<String>,
     ) {
-        use std::pin::Pin;
         use std::future::Future;
+        use std::pin::Pin;
 
-        type SocialResult = Option<(String, String, String, Vec<Node>, Vec<(Uuid, Vec<ResourceTag>)>, usize)>; // (canonical_key, source_url, combined_text, nodes, resource_tags, post_count)
+        type SocialResult = Option<(
+            String,
+            String,
+            String,
+            Vec<Node>,
+            Vec<(Uuid, Vec<ResourceTag>)>,
+            usize,
+        )>; // (canonical_key, source_url, combined_text, nodes, resource_tags, post_count)
 
         // Build uniform list of SocialAccounts from SourceNodes
         let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
@@ -1016,13 +1262,17 @@ impl Scout {
                     (SocialPlatform::Instagram, source.canonical_value.clone())
                 }
                 SourceType::Facebook => {
-                    let url = source.url.as_deref()
+                    let url = source
+                        .url
+                        .as_deref()
                         .filter(|u| !u.is_empty())
                         .unwrap_or(&source.canonical_value);
                     (SocialPlatform::Facebook, url.to_string())
                 }
                 SourceType::Reddit => {
-                    let url = source.url.as_deref()
+                    let url = source
+                        .url
+                        .as_deref()
                         .filter(|u| !u.is_empty())
                         .unwrap_or(&source.canonical_value);
                     // If identifier is just a subreddit name (e.g. "r/Minneapolis"), build a full URL
@@ -1034,31 +1284,54 @@ impl Scout {
                     };
                     (SocialPlatform::Reddit, identifier)
                 }
-                SourceType::Twitter => {
-                    (SocialPlatform::Twitter, source.canonical_value.clone())
-                }
-                SourceType::TikTok => {
-                    (SocialPlatform::TikTok, source.canonical_value.clone())
-                }
+                SourceType::Twitter => (SocialPlatform::Twitter, source.canonical_value.clone()),
+                SourceType::TikTok => (SocialPlatform::TikTok, source.canonical_value.clone()),
                 _ => continue,
             };
-            let source_url = source.url.as_deref()
+            let source_url = source
+                .url
+                .as_deref()
                 .filter(|u| !u.is_empty())
                 .unwrap_or(&source.canonical_value)
                 .to_string();
             accounts.push((
                 source.canonical_key.clone(),
                 source_url,
-                SocialAccount { platform, identifier },
+                SocialAccount {
+                    platform,
+                    identifier,
+                },
             ));
         }
 
-        let ig_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Instagram)).count();
-        let fb_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Facebook)).count();
-        let reddit_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Reddit)).count();
-        let twitter_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Twitter)).count();
-        let tiktok_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::TikTok)).count();
-        info!(ig = ig_count, fb = fb_count, reddit = reddit_count, twitter = twitter_count, tiktok = tiktok_count, "Scraping social media...");
+        let ig_count = accounts
+            .iter()
+            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Instagram))
+            .count();
+        let fb_count = accounts
+            .iter()
+            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Facebook))
+            .count();
+        let reddit_count = accounts
+            .iter()
+            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Reddit))
+            .count();
+        let twitter_count = accounts
+            .iter()
+            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Twitter))
+            .count();
+        let tiktok_count = accounts
+            .iter()
+            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::TikTok))
+            .count();
+        info!(
+            ig = ig_count,
+            fb = fb_count,
+            reddit = reddit_count,
+            twitter = twitter_count,
+            tiktok = tiktok_count,
+            "Scraping social media..."
+        );
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
@@ -1118,7 +1391,14 @@ impl Scout {
                         return None;
                     }
                     info!(source_url, posts = post_count, "Reddit scrape complete");
-                    Some((canonical_key, source_url, combined_all, all_nodes, all_resource_tags, post_count))
+                    Some((
+                        canonical_key,
+                        source_url,
+                        combined_all,
+                        all_nodes,
+                        all_resource_tags,
+                        post_count,
+                    ))
                 } else {
                     // Instagram/Facebook: combine all posts then extract
                     let combined_text: String = posts
@@ -1138,18 +1418,23 @@ impl Scout {
                         }
                     };
                     info!(source_url, posts = post_count, "Social scrape complete");
-                    Some((canonical_key, source_url, combined_text, result.nodes, result.resource_tags, post_count))
+                    Some((
+                        canonical_key,
+                        source_url,
+                        combined_text,
+                        result.nodes,
+                        result.resource_tags,
+                        post_count,
+                    ))
                 }
             }));
         }
 
-        let results: Vec<_> = stream::iter(futures)
-            .buffer_unordered(10)
-            .collect()
-            .await;
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
         for result in results.into_iter().flatten() {
-            let (canonical_key, source_url, combined_text, nodes, resource_tags, post_count) = result;
+            let (canonical_key, source_url, combined_text, nodes, resource_tags, post_count) =
+                result;
             // Collect implied queries from Tension/Ask social signals
             for node in &nodes {
                 if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
@@ -1160,7 +1445,18 @@ impl Scout {
             }
             stats.social_media_posts += post_count as u32;
             let signal_count_before = stats.signals_stored;
-            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, resource_tags, stats, embed_cache, known_city_urls).await {
+            if let Err(e) = self
+                .store_signals(
+                    &source_url,
+                    &combined_text,
+                    nodes,
+                    resource_tags,
+                    stats,
+                    embed_cache,
+                    known_city_urls,
+                )
+                .await
+            {
                 warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
             }
             let produced = stats.signals_stored - signal_count_before;
@@ -1203,7 +1499,11 @@ impl Scout {
             .collect();
 
         let mut new_accounts = 0u32;
-        let topic_strs: Vec<&str> = topics.iter().take(MAX_SOCIAL_SEARCHES).map(|t| t.as_str()).collect();
+        let topic_strs: Vec<&str> = topics
+            .iter()
+            .take(MAX_SOCIAL_SEARCHES)
+            .map(|t| t.as_str())
+            .collect();
 
         // Search each social platform with the same topics
         let platforms = [
@@ -1224,7 +1524,11 @@ impl Scout {
                 _ => continue,
             };
 
-            let discovered_posts = match self.social.search_topics(platform, &topic_strs, POSTS_PER_SEARCH).await {
+            let discovered_posts = match self
+                .social
+                .search_topics(platform, &topic_strs, POSTS_PER_SEARCH)
+                .await
+            {
                 Ok(posts) => posts,
                 Err(e) => {
                     warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");
@@ -1233,7 +1537,10 @@ impl Scout {
             };
 
             if discovered_posts.is_empty() {
-                info!(platform = platform_name, "No posts found from topic discovery");
+                info!(
+                    platform = platform_name,
+                    "No posts found from topic discovery"
+                );
                 continue;
             }
 
@@ -1304,7 +1611,18 @@ impl Scout {
 
                 // Store signals through normal pipeline
                 let signal_count_before = stats.signals_stored;
-                if let Err(e) = self.store_signals(&source_url, &combined_text, result.nodes, result.resource_tags, stats, embed_cache, known_city_urls).await {
+                if let Err(e) = self
+                    .store_signals(
+                        &source_url,
+                        &combined_text,
+                        result.nodes,
+                        result.resource_tags,
+                        stats,
+                        embed_cache,
+                        known_city_urls,
+                    )
+                    .await
+                {
                     warn!(username, error = %e, "Failed to store discovery signals");
                     continue;
                 }
@@ -1313,7 +1631,10 @@ impl Scout {
                 // Create a Source node with correct platform type
                 let cv = sources::canonical_value_from_url(*source_type, &source_url);
                 let ck = sources::make_canonical_key(&self.city_node.slug, *source_type, &cv);
-                let gap_context = format!("Topic: {}", topics.first().map(|t| t.as_str()).unwrap_or("unknown"));
+                let gap_context = format!(
+                    "Topic: {}",
+                    topics.first().map(|t| t.as_str()).unwrap_or("unknown")
+                );
                 let source = SourceNode {
                     id: Uuid::new_v4(),
                     canonical_key: ck.clone(),
@@ -1358,9 +1679,17 @@ impl Scout {
         }
 
         // GoFundMe: search campaigns → extract signals (no auto-follow)
-        let gofundme_topics: Vec<&str> = topics.iter().take(MAX_GOFUNDME_SEARCHES).map(|t| t.as_str()).collect();
+        let gofundme_topics: Vec<&str> = topics
+            .iter()
+            .take(MAX_GOFUNDME_SEARCHES)
+            .map(|t| t.as_str())
+            .collect();
         for topic in &gofundme_topics {
-            let campaigns = match self.social.search_gofundme(topic, CAMPAIGNS_PER_SEARCH).await {
+            let campaigns = match self
+                .social
+                .search_gofundme(topic, CAMPAIGNS_PER_SEARCH)
+                .await
+            {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(topic, error = %e, "GoFundMe discovery failed");
@@ -1387,7 +1716,10 @@ impl Scout {
                      Raised: ${amount:.0} of ${goal:.0} goal\n\n{desc}"
                 );
 
-                let source_url = campaign.url.as_deref().unwrap_or("https://www.gofundme.com");
+                let source_url = campaign
+                    .url
+                    .as_deref()
+                    .unwrap_or("https://www.gofundme.com");
 
                 let result = match self.extractor.extract(&content, source_url).await {
                     Ok(r) => r,
@@ -1401,7 +1733,18 @@ impl Scout {
                     continue;
                 }
 
-                if let Err(e) = self.store_signals(source_url, &content, result.nodes, result.resource_tags, stats, embed_cache, known_city_urls).await {
+                if let Err(e) = self
+                    .store_signals(
+                        source_url,
+                        &content,
+                        result.nodes,
+                        result.resource_tags,
+                        stats,
+                        embed_cache,
+                        known_city_urls,
+                    )
+                    .await
+                {
                     warn!(title, error = %e, "Failed to store GoFundMe signals");
                 }
             }
@@ -1410,8 +1753,7 @@ impl Scout {
         stats.discovery_accounts_found = new_accounts;
         info!(
             topics = topics.len(),
-            new_accounts,
-            "Social topic discovery complete"
+            new_accounts, "Social topic discovery complete"
         );
     }
 
@@ -1449,11 +1791,11 @@ impl Scout {
         let center_lat = self.city_node.center_lat;
         let center_lng = self.city_node.center_lng;
         for node in &mut nodes {
-            let is_fake = node.meta()
+            let is_fake = node
+                .meta()
                 .and_then(|m| m.location.as_ref())
                 .map(|loc| {
-                    (loc.lat - center_lat).abs() < 0.01
-                        && (loc.lng - center_lng).abs() < 0.01
+                    (loc.lat - center_lat).abs() < 0.01 && (loc.lng - center_lng).abs() < 0.01
                 })
                 .unwrap_or(false);
 
@@ -1483,11 +1825,16 @@ impl Scout {
         let mut nodes_filtered = Vec::new();
         for mut node in nodes {
             let has_coords = node.meta().and_then(|m| m.location.as_ref()).is_some();
-            let loc_name = node.meta().and_then(|m| m.location_name.as_deref()).unwrap_or("").to_string();
+            let loc_name = node
+                .meta()
+                .and_then(|m| m.location_name.as_deref())
+                .unwrap_or("")
+                .to_string();
 
             if has_coords {
                 let loc = node.meta().unwrap().location.as_ref().unwrap();
-                let dist = rootsignal_common::haversine_km(center_lat, center_lng, loc.lat, loc.lng);
+                let dist =
+                    rootsignal_common::haversine_km(center_lat, center_lng, loc.lat, loc.lng);
                 if dist <= radius_km {
                     // Case 1: coordinates within radius → accept
                     nodes_filtered.push(node);
@@ -1497,7 +1844,10 @@ impl Scout {
                 }
             } else if !loc_name.is_empty() && loc_name != "<UNKNOWN>" {
                 let loc_lower = loc_name.to_lowercase();
-                if geo_terms.iter().any(|term| loc_lower.contains(&term.to_lowercase())) {
+                if geo_terms
+                    .iter()
+                    .any(|term| loc_lower.contains(&term.to_lowercase()))
+                {
                     // Case 3: location_name matches geo_term → accept
                     nodes_filtered.push(node);
                 } else if is_city_local {
@@ -1520,9 +1870,7 @@ impl Scout {
         // queries (admin UI, API). Precision is marked City so consumers know it's
         // approximate, not a specific location.
         for node in &mut nodes_filtered {
-            let needs_coords = node.meta()
-                .map(|m| m.location.is_none())
-                .unwrap_or(false);
+            let needs_coords = node.meta().map(|m| m.location.is_none()).unwrap_or(false);
             if needs_coords {
                 if let Some(meta) = node_meta_mut(node) {
                     meta.location = Some(rootsignal_common::GeoPoint {
@@ -1537,7 +1885,11 @@ impl Scout {
         let nodes = nodes_filtered;
         let geo_filtered = before_geo - nodes.len();
         if geo_filtered > 0 {
-            info!(url = url.as_str(), filtered = geo_filtered, "Off-geography signals dropped");
+            info!(
+                url = url.as_str(),
+                filtered = geo_filtered,
+                "Off-geography signals dropped"
+            );
         }
 
         // Filter to signal nodes only (skip Evidence)
@@ -1574,7 +1926,11 @@ impl Scout {
             .collect();
         let url_deduped = before_url_dedup - nodes.len();
         if url_deduped > 0 {
-            info!(url = url.as_str(), skipped = url_deduped, "URL-based title dedup");
+            info!(
+                url = url.as_str(),
+                skipped = url_deduped,
+                "URL-based title dedup"
+            );
             stats.signals_deduplicated += url_deduped as u32;
         }
 
@@ -1610,7 +1966,9 @@ impl Scout {
                         new_source = url.as_str(),
                         "Global title+type match from different source, corroborating"
                     );
-                    self.writer.corroborate(*existing_id, node.node_type(), now, &entity_mappings).await?;
+                    self.writer
+                        .corroborate(*existing_id, node.node_type(), now, &entity_mappings)
+                        .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
@@ -1633,7 +1991,9 @@ impl Scout {
                         source = url.as_str(),
                         "Same-source title match, refreshing (no corroboration)"
                     );
-                    self.writer.refresh_signal(*existing_id, node.node_type(), now).await?;
+                    self.writer
+                        .refresh_signal(*existing_id, node.node_type(), now)
+                        .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
@@ -1670,9 +2030,7 @@ impl Scout {
         };
         let embed_texts: Vec<String> = nodes
             .iter()
-            .map(|n| {
-                format!("{} {}", n.title(), content_snippet)
-            })
+            .map(|n| format!("{} {}", n.title(), content_snippet))
             .collect();
 
         let embeddings = match self.embedder.embed_batch(embed_texts).await {
@@ -1710,7 +2068,9 @@ impl Scout {
                         source = "cache",
                         "Same-source duplicate in cache, refreshing (no corroboration)"
                     );
-                    self.writer.refresh_signal(cached_id, cached_type, now).await?;
+                    self.writer
+                        .refresh_signal(cached_id, cached_type, now)
+                        .await?;
 
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1734,7 +2094,9 @@ impl Scout {
                         source = "cache",
                         "Cross-source duplicate in cache, corroborating"
                     );
-                    self.writer.corroborate(cached_id, cached_type, now, &entity_mappings).await?;
+                    self.writer
+                        .corroborate(cached_id, cached_type, now, &entity_mappings)
+                        .await?;
 
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1753,7 +2115,11 @@ impl Scout {
             }
 
             // 3b: Check graph index (catches dupes from previous runs)
-            match self.writer.find_duplicate(&embedding, node_type, 0.85).await {
+            match self
+                .writer
+                .find_duplicate(&embedding, node_type, 0.85)
+                .await
+            {
                 Ok(Some(dup)) => {
                     let dominated_url = sanitize_url(&dup.source_url);
                     let is_same_source = dominated_url == url;
@@ -1766,7 +2132,9 @@ impl Scout {
                             source = "graph",
                             "Same-source duplicate in graph, refreshing (no corroboration)"
                         );
-                        self.writer.refresh_signal(dup.id, dup.node_type, now).await?;
+                        self.writer
+                            .refresh_signal(dup.id, dup.node_type, now)
+                            .await?;
 
                         let evidence = EvidenceNode {
                             id: Uuid::new_v4(),
@@ -1794,7 +2162,9 @@ impl Scout {
                             source = "graph",
                             "Cross-source duplicate in graph, corroborating"
                         );
-                        self.writer.corroborate(dup.id, dup.node_type, now, &entity_mappings).await?;
+                        self.writer
+                            .corroborate(dup.id, dup.node_type, now, &entity_mappings)
+                            .await?;
 
                         let evidence = EvidenceNode {
                             id: Uuid::new_v4(),
@@ -1868,7 +2238,11 @@ impl Scout {
                             continue;
                         }
                     };
-                    if let Err(e) = self.writer.link_actor_to_signal(actor_id, node_id, "mentioned").await {
+                    if let Err(e) = self
+                        .writer
+                        .link_actor_to_signal(actor_id, node_id, "mentioned")
+                        .await
+                    {
                         warn!(error = %e, actor = actor_name, "Failed to link actor to signal (non-fatal)");
                     }
                 }
@@ -1879,7 +2253,8 @@ impl Scout {
                 if let Some(tags) = resource_map.get(&meta.id) {
                     for tag in tags.iter().filter(|t| t.confidence >= 0.3) {
                         let slug = rootsignal_common::slugify(&tag.slug);
-                        let embed_text = format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
+                        let embed_text =
+                            format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
                         let res_embedding = match self.embedder.embed(&embed_text).await {
                             Ok(e) => e,
                             Err(e) => {
@@ -1887,7 +2262,16 @@ impl Scout {
                                 continue;
                             }
                         };
-                        let resource_id = match self.writer.find_or_create_resource(&tag.slug, &slug, tag.context.as_deref().unwrap_or(""), &res_embedding).await {
+                        let resource_id = match self
+                            .writer
+                            .find_or_create_resource(
+                                &tag.slug,
+                                &slug,
+                                tag.context.as_deref().unwrap_or(""),
+                                &res_embedding,
+                            )
+                            .await
+                        {
                             Ok(id) => id,
                             Err(e) => {
                                 warn!(error = %e, slug = slug.as_str(), "Resource creation failed (non-fatal)");
@@ -1896,9 +2280,32 @@ impl Scout {
                         };
                         let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
                         let edge_result = match tag.role.as_str() {
-                            "requires" => self.writer.create_requires_edge(node_id, resource_id, confidence, tag.context.as_deref(), None).await,
-                            "prefers" => self.writer.create_prefers_edge(node_id, resource_id, confidence).await,
-                            "offers" => self.writer.create_offers_edge(node_id, resource_id, confidence, tag.context.as_deref()).await,
+                            "requires" => {
+                                self.writer
+                                    .create_requires_edge(
+                                        node_id,
+                                        resource_id,
+                                        confidence,
+                                        tag.context.as_deref(),
+                                        None,
+                                    )
+                                    .await
+                            }
+                            "prefers" => {
+                                self.writer
+                                    .create_prefers_edge(node_id, resource_id, confidence)
+                                    .await
+                            }
+                            "offers" => {
+                                self.writer
+                                    .create_offers_edge(
+                                        node_id,
+                                        resource_id,
+                                        confidence,
+                                        tag.context.as_deref(),
+                                    )
+                                    .await
+                            }
                             other => {
                                 warn!(role = other, slug = slug.as_str(), "Unknown resource role");
                                 continue;
@@ -1924,7 +2331,6 @@ impl Scout {
                 } else if age.num_days() < 90 {
                     stats.fresh_90d += 1;
                 }
-
             }
         }
 
@@ -1940,8 +2346,18 @@ fn normalize_title(title: &str) -> String {
 /// Strip tracking parameters from URLs that may contain PII or cause dedup mismatches.
 fn sanitize_url(url: &str) -> String {
     const TRACKING_PARAMS: &[&str] = &[
-        "_dt", "fbclid", "gclid", "utm_source", "utm_medium", "utm_campaign",
-        "utm_term", "utm_content", "modal", "ref", "mc_cid", "mc_eid",
+        "_dt",
+        "fbclid",
+        "gclid",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "modal",
+        "ref",
+        "mc_cid",
+        "mc_eid",
     ];
 
     let Ok(mut parsed) = url::Url::parse(url) else {
@@ -2004,7 +2420,11 @@ fn jaccard_similarity(a: &str, b: &str) -> f64 {
     let b_tokens: std::collections::HashSet<&str> = b_lower.split_whitespace().collect();
     let intersection = a_tokens.intersection(&b_tokens).count();
     let union = a_tokens.union(&b_tokens).count();
-    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 #[cfg(test)]
@@ -2015,12 +2435,11 @@ mod tests {
     fn jaccard_specific_vs_generic_passes() {
         // "emergency housing for detained immigrants" vs "housing"
         // Only share "housing" — 1 token overlap out of 5+1=5 unique → 1/5 = 0.2
-        let sim = jaccard_similarity(
-            "emergency housing for detained immigrants",
-            "housing",
+        let sim = jaccard_similarity("emergency housing for detained immigrants", "housing");
+        assert!(
+            sim < DEDUP_JACCARD_THRESHOLD,
+            "Specific long-tail query should not match generic: {sim}"
         );
-        assert!(sim < DEDUP_JACCARD_THRESHOLD,
-            "Specific long-tail query should not match generic: {sim}");
     }
 
     #[test]
@@ -2046,8 +2465,10 @@ mod tests {
         // intersection: {housing, assistance, minneapolis} (3)
         // union: {housing, assistance, programs, resources, minneapolis} (5)
         // 3/5 = 0.6 — at threshold
-        assert!(sim >= DEDUP_JACCARD_THRESHOLD,
-            "Similar queries should be flagged as duplicate: {sim}");
+        assert!(
+            sim >= DEDUP_JACCARD_THRESHOLD,
+            "Similar queries should be flagged as duplicate: {sim}"
+        );
     }
 
     #[test]
@@ -2056,8 +2477,10 @@ mod tests {
             "immigration legal aid Minneapolis",
             "immigration legal aid Minneapolis",
         );
-        assert!((sim - 1.0).abs() < f64::EPSILON,
-            "Identical queries should have Jaccard 1.0: {sim}");
+        assert!(
+            (sim - 1.0).abs() < f64::EPSILON,
+            "Identical queries should have Jaccard 1.0: {sim}"
+        );
     }
 
     #[test]
@@ -2069,8 +2492,10 @@ mod tests {
     #[test]
     fn jaccard_case_insensitive() {
         let sim = jaccard_similarity("Housing Minneapolis", "housing minneapolis");
-        assert!((sim - 1.0).abs() < f64::EPSILON,
-            "Jaccard should be case-insensitive: {sim}");
+        assert!(
+            (sim - 1.0).abs() < f64::EPSILON,
+            "Jaccard should be case-insensitive: {sim}"
+        );
     }
 
     #[test]

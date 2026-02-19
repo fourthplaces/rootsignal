@@ -15,11 +15,11 @@ use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::{self, Extractor};
 use rootsignal_scout::fixtures::{
-    CorpusSearcher, FixtureScraper, FixtureSearcher, FixtureSocialScraper,
-    LayeredSearcher, ScenarioSearcher, ScenarioSocialScraper,
+    CorpusSearcher, FixtureScraper, FixtureSearcher, FixtureSocialScraper, LayeredSearcher,
+    ScenarioSearcher, ScenarioSocialScraper,
 };
-use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
 use rootsignal_scout::scout::{Scout, ScoutStats};
+use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
 use rootsignal_scout::sources;
 use simweb::{SimulatedWeb, World};
 
@@ -35,9 +35,15 @@ fn default_city_node() -> CityNode {
         center_lng: -93.2650,
         radius_km: 30.0,
         geo_terms: vec![
-            "Minneapolis".to_string(), "St. Paul".to_string(), "Saint Paul".to_string(),
-            "Twin Cities".to_string(), "Minnesota".to_string(), "Hennepin".to_string(),
-            "Ramsey".to_string(), "MN".to_string(), "Mpls".to_string(),
+            "Minneapolis".to_string(),
+            "St. Paul".to_string(),
+            "Saint Paul".to_string(),
+            "Twin Cities".to_string(),
+            "Minnesota".to_string(),
+            "Hennepin".to_string(),
+            "Ramsey".to_string(),
+            "MN".to_string(),
+            "Mpls".to_string(),
         ],
         active: true,
         created_at: chrono::Utc::now(),
@@ -107,8 +113,8 @@ impl TestContext {
             self.client.clone(),
             Box::new(Extractor::with_system_prompt(&self.anthropic_key, prompt)),
             Box::new(Embedder::new(&self.voyage_key)),
-            Box::new(SimPageAdapter::new(sim.clone())),
-            Box::new(SimSearchAdapter::new(sim.clone())),
+            Arc::new(SimPageAdapter::new(sim.clone())),
+            Arc::new(SimSearchAdapter::new(sim.clone())),
             Box::new(SimSocialAdapter::new(sim)),
             &self.anthropic_key,
             city_node,
@@ -126,8 +132,8 @@ impl TestContext {
                 city_node.center_lng,
             )),
             Box::new(Embedder::new(&self.voyage_key)),
-            Box::new(SimPageAdapter::new(sim.clone())),
-            Box::new(SimSearchAdapter::new(sim.clone())),
+            Arc::new(SimPageAdapter::new(sim.clone())),
+            Arc::new(SimSearchAdapter::new(sim.clone())),
             Box::new(SimSocialAdapter::new(sim)),
             &self.anthropic_key,
             city_node,
@@ -190,9 +196,10 @@ impl<'a> ScoutBuilder<'a> {
 
     /// Use a ScenarioSearcher with default system prompt.
     pub fn with_scenario(mut self, scenario: &str) -> Self {
-        self.searcher_override = Some(Box::new(
-            ScenarioSearcher::new(&self.ctx.anthropic_key, scenario),
-        ));
+        self.searcher_override = Some(Box::new(ScenarioSearcher::new(
+            &self.ctx.anthropic_key,
+            scenario,
+        )));
         self
     }
 
@@ -221,9 +228,9 @@ impl<'a> ScoutBuilder<'a> {
     pub async fn run(self) -> ScoutStats {
         let city_node = self.city_node;
 
-        let searcher: Box<dyn WebSearcher> = match self.searcher_override {
-            Some(s) => s,
-            None => Box::new(FixtureSearcher::new(self.search_results)),
+        let searcher: Arc<dyn WebSearcher> = match self.searcher_override {
+            Some(s) => Arc::from(s),
+            None => Arc::new(FixtureSearcher::new(self.search_results)),
         };
 
         let social: Box<dyn SocialScraper> = match self.social_override {
@@ -240,7 +247,7 @@ impl<'a> ScoutBuilder<'a> {
                 city_node.center_lng,
             )),
             Box::new(Embedder::new(&self.ctx.voyage_key)),
-            Box::new(FixtureScraper::new(&self.web_content)),
+            Arc::new(FixtureScraper::new(&self.web_content)),
             searcher,
             social,
             &self.ctx.anthropic_key,
@@ -255,7 +262,10 @@ impl<'a> ScoutBuilder<'a> {
 pub fn city_node_for(world: &World) -> CityNode {
     CityNode {
         id: uuid::Uuid::new_v4(),
-        name: format!("{}, {}", world.geography.city, world.geography.state_or_region),
+        name: format!(
+            "{}, {}",
+            world.geography.city, world.geography.state_or_region
+        ),
         slug: world.geography.city.to_lowercase().replace(' ', "-"),
         center_lat: world.geography.center_lat,
         center_lng: world.geography.center_lng,

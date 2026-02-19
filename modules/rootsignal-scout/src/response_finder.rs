@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::claude::Claude;
@@ -16,13 +17,11 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
-use crate::tension_linker::{
-    ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool,
-};
 use crate::embedder::TextEmbedder;
 use crate::extractor::ResourceTag;
 use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
+use crate::tension_linker::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -63,6 +62,9 @@ pub struct DiscoveredResponse {
     pub also_addresses: Vec<String>,
     /// ISO date for events (null if not an event or date unknown)
     pub event_date: Option<String>,
+    /// True if this is an ongoing program or recurring event
+    #[serde(default)]
+    pub is_recurring: bool,
     /// Resource capabilities this response requires, prefers, or offers.
     #[serde(default)]
     pub resources: Vec<ResourceTag>,
@@ -185,9 +187,7 @@ fn investigation_user_prompt(
     }
 
     if !existing.is_empty() {
-        prompt.push_str(
-            "\n\nEXISTING RESPONSES (hints about what categories exist):",
-        );
+        prompt.push_str("\n\nEXISTING RESPONSES (hints about what categories exist):");
         for r in existing {
             prompt.push_str(&format!(
                 "\n- [{}] {}: {}",
@@ -216,6 +216,7 @@ For each response you discovered:
 - match_strength: 0.0-1.0 how directly this addresses the tension
 - also_addresses: titles of OTHER community tensions this also diffuses (empty if none)
 - event_date: ISO date if this is an event (null if not an event or date unknown)
+- is_recurring: true if this is an ongoing program or recurring event
 
 For each response, also extract resource capabilities:
 - resources: array of {slug, role, confidence, context}
@@ -243,34 +244,25 @@ pub struct ResponseFinder<'a> {
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
     city_slug: String,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<'a> ResponseFinder<'a> {
-    /// Create a new response finder.
-    ///
-    /// SAFETY: Same as TensionLinker — the `searcher` and `scraper` references are held via
-    /// raw pointers. The caller MUST ensure they outlive this ResponseFinder.
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: &dyn WebSearcher,
-        scraper: &dyn PageScraper,
+        searcher: Arc<dyn WebSearcher>,
+        scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         city: CityNode,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
-        let searcher_handle = Arc::new(SearcherHandle(unsafe {
-            std::mem::transmute::<*const dyn WebSearcher, *const dyn WebSearcher>(searcher)
-        }));
-        let scraper_handle = Arc::new(ScraperHandle(unsafe {
-            std::mem::transmute::<*const dyn PageScraper, *const dyn PageScraper>(scraper)
-        }));
-
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: searcher_handle,
+                searcher: searcher.clone(),
             })
             .tool(ReadPageTool {
-                scraper: scraper_handle,
+                scraper: scraper.clone(),
             });
 
         let city_slug = city.slug.clone();
@@ -280,6 +272,7 @@ impl<'a> ResponseFinder<'a> {
             embedder,
             city,
             city_slug,
+            cancelled,
         }
     }
 
@@ -307,6 +300,11 @@ impl<'a> ResponseFinder<'a> {
         info!(count = targets.len(), "Response scout targets selected");
 
         for target in &targets {
+            if self.cancelled.load(Ordering::Relaxed) {
+                info!("Response finder cancelled");
+                break;
+            }
+
             match self.investigate_tension(target, &mut stats).await {
                 Ok(()) => {
                     stats.targets_investigated += 1;
@@ -377,10 +375,7 @@ impl<'a> ResponseFinder<'a> {
             .into_iter()
             .take(MAX_RESPONSES_PER_TENSION)
         {
-            if let Err(e) = self
-                .process_response(target, &response, stats)
-                .await
-            {
+            if let Err(e) = self.process_response(target, &response, stats).await {
                 warn!(
                     tension_id = %target.tension_id,
                     response_title = response.title.as_str(),
@@ -407,10 +402,7 @@ impl<'a> ResponseFinder<'a> {
             .iter()
             .take(MAX_FUTURE_QUERIES_PER_TENSION)
         {
-            if let Err(e) = self
-                .create_future_query(query, target, stats)
-                .await
-            {
+            if let Err(e) = self.create_future_query(query, target, stats).await {
                 warn!(
                     query = query.as_str(),
                     error = %e,
@@ -496,7 +488,10 @@ impl<'a> ResponseFinder<'a> {
 
         // Wire resource edges
         if !response.resources.is_empty() {
-            if let Err(e) = self.wire_resources(signal_id, &response.signal_type, &response.resources).await {
+            if let Err(e) = self
+                .wire_resources(signal_id, &response.signal_type, &response.resources)
+                .await
+            {
                 warn!(error = %e, "Failed to wire resource edges (non-fatal)");
             }
         }
@@ -522,14 +517,25 @@ impl<'a> ResponseFinder<'a> {
 
             let resource_id = self
                 .writer
-                .find_or_create_resource(&tag.slug, &slug, tag.context.as_deref().unwrap_or(""), &embedding)
+                .find_or_create_resource(
+                    &tag.slug,
+                    &slug,
+                    tag.context.as_deref().unwrap_or(""),
+                    &embedding,
+                )
                 .await?;
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
             match tag.role.as_str() {
                 "requires" => {
                     self.writer
-                        .create_requires_edge(signal_id, resource_id, confidence, tag.context.as_deref(), None)
+                        .create_requires_edge(
+                            signal_id,
+                            resource_id,
+                            confidence,
+                            tag.context.as_deref(),
+                            None,
+                        )
                         .await?;
                 }
                 "prefers" => {
@@ -539,11 +545,20 @@ impl<'a> ResponseFinder<'a> {
                 }
                 "offers" => {
                     self.writer
-                        .create_offers_edge(signal_id, resource_id, confidence, tag.context.as_deref())
+                        .create_offers_edge(
+                            signal_id,
+                            resource_id,
+                            confidence,
+                            tag.context.as_deref(),
+                        )
                         .await?;
                 }
                 other => {
-                    warn!(role = other, slug = tag.slug.as_str(), "Unknown resource role, skipping");
+                    warn!(
+                        role = other,
+                        slug = tag.slug.as_str(),
+                        "Unknown resource role, skipping"
+                    );
                 }
             }
 
@@ -558,10 +573,7 @@ impl<'a> ResponseFinder<'a> {
         Ok(())
     }
 
-    async fn create_response_node(
-        &self,
-        response: &DiscoveredResponse,
-    ) -> Result<Uuid> {
+    async fn create_response_node(&self, response: &DiscoveredResponse) -> Result<Uuid> {
         let now = Utc::now();
         let meta = NodeMeta {
             id: Uuid::new_v4(),
@@ -589,25 +601,18 @@ impl<'a> ResponseFinder<'a> {
 
         let node = match response.signal_type.to_lowercase().as_str() {
             "event" => {
-                let starts_at = response
-                    .event_date
-                    .as_deref()
-                    .and_then(|d| {
-                        chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                            .ok()
-                            .map(|nd| {
-                                nd.and_hms_opt(0, 0, 0)
-                                    .unwrap()
-                                    .and_utc()
-                            })
-                    });
+                let starts_at = response.event_date.as_deref().and_then(|d| {
+                    chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                        .ok()
+                        .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                });
                 Node::Event(EventNode {
                     meta,
                     starts_at,
                     ends_at: None,
                     action_url: response.url.clone(),
                     organizer: None,
-                    is_recurring: false,
+                    is_recurring: response.is_recurring,
                 })
             }
             "ask" => Node::Ask(AskNode {
@@ -621,7 +626,7 @@ impl<'a> ResponseFinder<'a> {
                 meta,
                 action_url: response.url.clone(),
                 availability: None,
-                is_ongoing: true,
+                is_ongoing: response.is_recurring,
             }),
         };
 
@@ -799,7 +804,10 @@ impl<'a> ResponseFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
+            weight: crate::source_finder::initial_weight_for_method(
+                DiscoveryMethod::GapAnalysis,
+                Some("unmet_tension"),
+            ),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,
@@ -821,13 +829,7 @@ impl<'a> ResponseFinder<'a> {
 }
 
 fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
+    crate::util::cosine_similarity(a, b)
 }
 
 #[cfg(test)]
@@ -873,7 +875,10 @@ mod tests {
         assert_eq!(finding.responses[0].title, "Know Your Rights Workshop");
         assert_eq!(finding.responses[0].signal_type, "give");
         assert!((finding.responses[0].match_strength - 0.9).abs() < 0.001);
-        assert_eq!(finding.responses[0].also_addresses, vec!["Housing instability"]);
+        assert_eq!(
+            finding.responses[0].also_addresses,
+            vec!["Housing instability"]
+        );
         assert_eq!(finding.emergent_tensions.len(), 1);
         assert_eq!(
             finding.emergent_tensions[0].title,

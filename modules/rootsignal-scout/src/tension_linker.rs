@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::claude::Claude;
@@ -15,7 +16,7 @@ use rootsignal_common::{
     CityNode, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
     TensionNode,
 };
-use rootsignal_graph::{TensionLinkerTarget, TensionLinkerOutcome, GraphWriter};
+use rootsignal_graph::{GraphWriter, TensionLinkerOutcome, TensionLinkerTarget};
 
 use crate::embedder::TextEmbedder;
 use crate::scraper::{PageScraper, WebSearcher};
@@ -26,43 +27,11 @@ const MAX_TOOL_TURNS: usize = 8;
 const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 
 // =============================================================================
-// Borrowed-reference wrappers for Arc-based tool registration
-// =============================================================================
-
-/// Wrapper that lets a borrowed `&dyn WebSearcher` be held behind an `Arc`.
-/// The Arc manages the wrapper struct's heap allocation, NOT the underlying data.
-/// SAFETY: The caller must ensure the referenced data outlives all tool calls.
-pub(crate) struct SearcherHandle(pub(crate) *const dyn WebSearcher);
-
-// SAFETY: WebSearcher is Send + Sync, and we only access it through shared reference.
-unsafe impl Send for SearcherHandle {}
-unsafe impl Sync for SearcherHandle {}
-
-impl SearcherHandle {
-    pub(crate) fn get(&self) -> &dyn WebSearcher {
-        // SAFETY: The TensionLinker guarantees the reference outlives all tool calls.
-        unsafe { &*self.0 }
-    }
-}
-
-/// Wrapper that lets a borrowed `&dyn PageScraper` be held behind an `Arc`.
-pub(crate) struct ScraperHandle(pub(crate) *const dyn PageScraper);
-
-unsafe impl Send for ScraperHandle {}
-unsafe impl Sync for ScraperHandle {}
-
-impl ScraperHandle {
-    pub(crate) fn get(&self) -> &dyn PageScraper {
-        unsafe { &*self.0 }
-    }
-}
-
-// =============================================================================
 // Tool Wrappers — give the LLM web_search and read_page capabilities
 // =============================================================================
 
 pub(crate) struct WebSearchTool {
-    pub(crate) searcher: Arc<SearcherHandle>,
+    pub(crate) searcher: Arc<dyn WebSearcher>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,7 +90,6 @@ impl Tool for WebSearchTool {
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
         let results = self
             .searcher
-            .get()
             .search(&args.query, 5)
             .await
             .map_err(|e| ToolError(format!("Search failed: {e}")))?;
@@ -140,7 +108,7 @@ impl Tool for WebSearchTool {
 }
 
 pub(crate) struct ReadPageTool {
-    pub(crate) scraper: Arc<ScraperHandle>,
+    pub(crate) scraper: Arc<dyn PageScraper>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,7 +145,6 @@ impl Tool for ReadPageTool {
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
         let content = self
             .scraper
-            .get()
             .scrape(&args.url)
             .await
             .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
@@ -288,20 +255,24 @@ new. Focus on finding tensions NOT yet in the landscape — that's the highest v
     )
 }
 
-const STRUCTURING_SYSTEM: &str = "\
+fn structuring_system() -> String {
+    format!(
+        "\
 Extract the tensions discovered in the investigation. For each tension:
 - title: Short, specific title (e.g. \"ICE workplace raids causing community fear\")
 - summary: 2-3 sentence description of the tension
 - severity: \"low\", \"medium\", \"high\", or \"critical\"
-- category: One of: housing, safety, economic, health, education, infrastructure, \
-environment, social, governance, immigration, civil_rights, other
+- category: One of: {}. These are guidance, not constraints — propose a new category if none fit.
 - what_would_help: What actions or resources would address this tension
 - source_url: The URL where you found the strongest evidence for this tension
 - match_strength: 0.0-1.0 for how strongly the original signal relates to this tension
 - explanation: Why the signal responds to this tension
 
 If the signal is self-explanatory (not curious), set curious=false and provide a skip_reason. \
-Return at most 3 tensions. Only include tensions you have evidence for.";
+Return at most 3 tensions. Only include tensions you have evidence for.",
+        crate::util::TENSION_CATEGORIES,
+    )
+}
 
 // =============================================================================
 // TensionLinker
@@ -312,39 +283,25 @@ pub struct TensionLinker<'a> {
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<'a> TensionLinker<'a> {
-    /// Create a new tension linker.
-    ///
-    /// SAFETY: The `searcher` and `scraper` references are held via raw pointers inside
-    /// tool wrappers. The borrow checker cannot enforce that they outlive the Claude agent's
-    /// tool calls. The caller MUST ensure that `searcher` and `scraper` live at least as
-    /// long as this `TensionLinker` — which is guaranteed when called from Scout::run()
-    /// since Scout owns both.
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: &dyn WebSearcher,
-        scraper: &dyn PageScraper,
+        searcher: Arc<dyn WebSearcher>,
+        scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         city: CityNode,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
-        // SAFETY: Erase the trait object lifetime so the handle can be 'static.
-        // The caller guarantees the references outlive this TensionLinker.
-        let searcher_handle = Arc::new(SearcherHandle(unsafe {
-            std::mem::transmute::<*const dyn WebSearcher, *const dyn WebSearcher>(searcher)
-        }));
-        let scraper_handle = Arc::new(ScraperHandle(unsafe {
-            std::mem::transmute::<*const dyn PageScraper, *const dyn PageScraper>(scraper)
-        }));
-
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: searcher_handle,
+                searcher: searcher.clone(),
             })
             .tool(ReadPageTool {
-                scraper: scraper_handle,
+                scraper: scraper.clone(),
             });
 
         Self {
@@ -352,6 +309,7 @@ impl<'a> TensionLinker<'a> {
             claude,
             embedder,
             city,
+            cancelled,
         }
     }
 
@@ -387,9 +345,7 @@ impl<'a> TensionLinker<'a> {
                     tensions
                         .iter()
                         .enumerate()
-                        .map(|(i, (title, summary))| {
-                            format!("{}. {} — {}", i + 1, title, summary)
-                        })
+                        .map(|(i, (title, summary))| format!("{}. {} — {}", i + 1, title, summary))
                         .collect::<Vec<_>>()
                         .join("\n")
                 }
@@ -401,6 +357,11 @@ impl<'a> TensionLinker<'a> {
         };
 
         for target in &targets {
+            if self.cancelled.load(Ordering::Relaxed) {
+                info!("Tension linker cancelled");
+                break;
+            }
+
             let outcome = match self.investigate_signal(target, &tension_landscape).await {
                 Ok(finding) => {
                     if !finding.curious {
@@ -414,14 +375,10 @@ impl<'a> TensionLinker<'a> {
                         TensionLinkerOutcome::Skipped
                     } else {
                         stats.targets_investigated += 1;
-                        let tensions_count =
-                            finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
+                        let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
                         let mut any_tension_failed = false;
-                        for tension in
-                            finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL)
-                        {
-                            if let Err(e) =
-                                self.process_tension(target, &tension, &mut stats).await
+                        for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
+                            if let Err(e) = self.process_tension(target, &tension, &mut stats).await
                             {
                                 any_tension_failed = true;
                                 warn!(
@@ -499,9 +456,10 @@ impl<'a> TensionLinker<'a> {
             target.title, target.summary, reasoning,
         );
 
+        let structuring_prompt = structuring_system();
         let finding: SignalFinding = self
             .claude
-            .extract(HAIKU_MODEL, STRUCTURING_SYSTEM, &structuring_user)
+            .extract(HAIKU_MODEL, &structuring_prompt, &structuring_user)
             .await?;
 
         Ok(finding)
@@ -731,11 +689,23 @@ mod tests {
         };
 
         // Key assertions: location is set to city center
-        let loc = tension_node.meta.location.expect("Tension should have location");
-        assert!((loc.lat - 44.9778).abs() < 0.001, "lat should be city center");
-        assert!((loc.lng - (-93.2650)).abs() < 0.001, "lng should be city center");
+        let loc = tension_node
+            .meta
+            .location
+            .expect("Tension should have location");
+        assert!(
+            (loc.lat - 44.9778).abs() < 0.001,
+            "lat should be city center"
+        );
+        assert!(
+            (loc.lng - (-93.2650)).abs() < 0.001,
+            "lng should be city center"
+        );
         assert_eq!(loc.precision, GeoPrecision::City);
-        assert_eq!(tension_node.meta.location_name.as_deref(), Some("Minneapolis"));
+        assert_eq!(
+            tension_node.meta.location_name.as_deref(),
+            Some("Minneapolis")
+        );
         assert_eq!(tension_node.severity, Severity::High);
     }
 

@@ -1,8 +1,11 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use ai_client::claude::Claude;
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
-use serde::{Deserialize, de};
+use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -20,6 +23,7 @@ pub struct Investigator<'a> {
     searcher: &'a dyn WebSearcher,
     claude: Claude,
     city: String,
+    cancelled: Arc<AtomicBool>,
 }
 
 /// Stats from an investigation run.
@@ -64,14 +68,12 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     match value {
-        serde_json::Value::Array(_) => {
-            serde_json::from_value(value).map_err(de::Error::custom)
-        }
-        serde_json::Value::String(ref s) => {
-            serde_json::from_str(s).map_err(de::Error::custom)
-        }
+        serde_json::Value::Array(_) => serde_json::from_value(value).map_err(de::Error::custom),
+        serde_json::Value::String(ref s) => serde_json::from_str(s).map_err(de::Error::custom),
         serde_json::Value::Null => Ok(Vec::new()),
-        _ => Err(de::Error::custom("evidence must be an array or JSON string")),
+        _ => Err(de::Error::custom(
+            "evidence must be an array or JSON string",
+        )),
     }
 }
 
@@ -111,12 +113,14 @@ impl<'a> Investigator<'a> {
         searcher: &'a dyn WebSearcher,
         anthropic_api_key: &str,
         city: &str,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
             writer,
             searcher,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             city: city.to_string(),
+            cancelled,
         }
     }
 
@@ -144,6 +148,10 @@ impl<'a> Investigator<'a> {
         info!(count = targets.len(), "Investigation targets selected");
 
         for target in &targets {
+            if self.cancelled.load(Ordering::Relaxed) {
+                info!("Investigation cancelled");
+                break;
+            }
             if stats.search_queries_used >= MAX_SEARCH_QUERIES_PER_RUN as u32 {
                 info!("Search query budget exhausted, stopping investigation");
                 break;
@@ -178,7 +186,11 @@ impl<'a> Investigator<'a> {
             }
 
             // Always mark investigated (even on failure — prevents retry loops)
-            if let Err(e) = self.writer.mark_investigated(target.signal_id, target.node_type).await {
+            if let Err(e) = self
+                .writer
+                .mark_investigated(target.signal_id, target.node_type)
+                .await
+            {
                 warn!(signal_id = %target.signal_id, error = %e, "Failed to mark signal as investigated");
             }
         }
@@ -193,7 +205,10 @@ impl<'a> Investigator<'a> {
     ) -> Result<u32> {
         // 1. Generate search queries via LLM
         let system_prompt = if target.is_sensitive {
-            format!("{}{}", QUERY_GENERATION_SYSTEM, QUERY_GENERATION_SENSITIVE_SUFFIX)
+            format!(
+                "{}{}",
+                QUERY_GENERATION_SYSTEM, QUERY_GENERATION_SENSITIVE_SUFFIX
+            )
         } else {
             QUERY_GENERATION_SYSTEM.to_string()
         };
@@ -208,7 +223,11 @@ impl<'a> Investigator<'a> {
             .extract(HAIKU_MODEL, &system_prompt, &user_prompt)
             .await?;
 
-        let queries: Vec<_> = queries.queries.into_iter().take(MAX_QUERIES_PER_SIGNAL).collect();
+        let queries: Vec<_> = queries
+            .queries
+            .into_iter()
+            .take(MAX_QUERIES_PER_SIGNAL)
+            .collect();
         if queries.is_empty() {
             return Ok(0);
         }
@@ -250,7 +269,10 @@ impl<'a> Investigator<'a> {
             .map(|(i, r)| {
                 format!(
                     "--- Result {} ---\nURL: {}\nTitle: {}\nSnippet: {}",
-                    i + 1, r.url, r.title, r.snippet,
+                    i + 1,
+                    r.url,
+                    r.title,
+                    r.snippet,
                 )
             })
             .collect::<Vec<_>>()
@@ -287,7 +309,11 @@ impl<'a> Investigator<'a> {
                 evidence_confidence: Some(item.confidence as f32),
             };
 
-            match self.writer.create_evidence(&evidence, target.signal_id).await {
+            match self
+                .writer
+                .create_evidence(&evidence, target.signal_id)
+                .await
+            {
                 Ok(()) => {
                     evidence_count += 1;
                     info!(
@@ -313,8 +339,16 @@ impl<'a> Investigator<'a> {
     }
 
     /// Revise signal confidence based on accumulated evidence.
-    async fn revise_confidence(&self, target: &InvestigationTarget, stats: &mut InvestigationStats) {
-        let evidence = match self.writer.get_evidence_summary(target.signal_id, target.node_type).await {
+    async fn revise_confidence(
+        &self,
+        target: &InvestigationTarget,
+        stats: &mut InvestigationStats,
+    ) {
+        let evidence = match self
+            .writer
+            .get_evidence_summary(target.signal_id, target.node_type)
+            .await
+        {
             Ok(e) => e,
             Err(e) => {
                 warn!(signal_id = %target.signal_id, error = %e, "Failed to get evidence summary for confidence revision");
@@ -331,7 +365,11 @@ impl<'a> Investigator<'a> {
             return;
         }
 
-        let old_confidence = match self.writer.get_signal_confidence(target.signal_id, target.node_type).await {
+        let old_confidence = match self
+            .writer
+            .get_signal_confidence(target.signal_id, target.node_type)
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 warn!(signal_id = %target.signal_id, error = %e, "Failed to read signal confidence");
@@ -344,7 +382,11 @@ impl<'a> Investigator<'a> {
             return;
         }
 
-        if let Err(e) = self.writer.update_signal_confidence(target.signal_id, target.node_type, new_confidence).await {
+        if let Err(e) = self
+            .writer
+            .update_signal_confidence(target.signal_id, target.node_type, new_confidence)
+            .await
+        {
             warn!(signal_id = %target.signal_id, error = %e, "Failed to update signal confidence");
             return;
         }
@@ -398,14 +440,11 @@ fn extract_domain(url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// FNV-1a content hash (same as scout.rs).
+use crate::util;
+
+/// FNV-1a content hash — delegates to shared implementation in `util.rs`.
 fn content_hash(content: &str) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in content.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+    util::content_hash(content)
 }
 
 #[cfg(test)]
@@ -445,10 +484,7 @@ mod tests {
     #[test]
     fn confidence_adjustment_mixed_evidence() {
         // 1 DIRECT (0.8) + 1 CONTRADICTING (0.9) → +0.05 - 0.10 = -0.05
-        let evidence = vec![
-            evidence("DIRECT", 0.8),
-            evidence("CONTRADICTING", 0.9),
-        ];
+        let evidence = vec![evidence("DIRECT", 0.8), evidence("CONTRADICTING", 0.9)];
         let adj = compute_confidence_adjustment(&evidence);
         assert!((adj - (-0.05)).abs() < 0.001, "Expected -0.05, got {adj}");
     }
@@ -466,17 +502,17 @@ mod tests {
         // Document: 2 DIRECT evidence pieces at high confidence = +0.10 total
         // For a signal at median confidence (~0.75), this moves it to 0.85
         // This is a 13% relative increase — barely perceptible
-        let evidence = vec![
-            evidence("DIRECT", 0.8),
-            evidence("DIRECT", 0.9),
-        ];
+        let evidence = vec![evidence("DIRECT", 0.8), evidence("DIRECT", 0.9)];
         let adj = compute_confidence_adjustment(&evidence);
         assert!((adj - 0.10).abs() < 0.001, "Expected +0.10, got {adj}");
 
         // Apply to a median-confidence signal
         let old = 0.75f32;
         let new = (old + adj).clamp(0.1, 1.0);
-        assert!((new - 0.85).abs() < 0.01, "Median signal barely moves: {old} → {new}");
+        assert!(
+            (new - 0.85).abs() < 0.01,
+            "Median signal barely moves: {old} → {new}"
+        );
     }
 
     #[test]
@@ -489,7 +525,13 @@ mod tests {
         // Verify clamping works at usage site
         let old_confidence = 0.7f32;
         let new_confidence = (old_confidence + adj).clamp(0.1, 1.0);
-        assert!(new_confidence >= 0.1, "Clamped confidence below 0.1: {new_confidence}");
-        assert!(new_confidence <= 1.0, "Clamped confidence above 1.0: {new_confidence}");
+        assert!(
+            new_confidence >= 0.1,
+            "Clamped confidence below 0.1: {new_confidence}"
+        );
+        assert!(
+            new_confidence <= 1.0,
+            "Clamped confidence above 1.0: {new_confidence}"
+        );
     }
 }

@@ -141,7 +141,7 @@ The curiosity loop *does* check worthiness — but it's integrated into the inve
 
 | File | Role |
 |------|------|
-| `modules/rootsignal-scout/src/curiosity.rs` | Main module: struct, prompts, tool wrappers, investigation, finding processing |
+| `modules/rootsignal-scout/src/tension_linker.rs` | Main module: struct, prompts, tool wrappers (`WebSearchTool`, `ReadPageTool`), investigation, finding processing |
 | `modules/rootsignal-graph/src/writer.rs` | Target selection: `find_curiosity_targets`, `mark_curiosity_investigated`, `get_tension_landscape` |
 | `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_CURIOSITY`, `SEARCH_CURIOSITY`, `CHROME_CURIOSITY` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs curiosity loop before response scout |
