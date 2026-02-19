@@ -1,0 +1,6 @@
+:3000 {
+	reverse_proxy /graphql* {$API_URL}
+	root * /srv
+	file_server
+	try_files {path} /index.html
+}
