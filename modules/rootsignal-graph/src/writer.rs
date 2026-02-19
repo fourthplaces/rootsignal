@@ -2919,6 +2919,264 @@ impl GraphWriter {
 
         Ok(None)
     }
+
+    // =============================================================================
+    // Response Scout methods
+    // =============================================================================
+
+    /// Find tensions that need response discovery.
+    /// Prioritizes tensions with fewer responses and higher cause_heat.
+    pub async fn find_response_scout_targets(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<ResponseScoutTarget>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.confidence >= 0.5
+               AND coalesce(datetime(t.response_scouted_at), datetime('2000-01-01'))
+                   < datetime() - duration('P14D')
+             OPTIONAL MATCH (t)<-[:RESPONDS_TO]-(r)
+             WITH t, count(r) AS response_count
+             RETURN t.id AS id, t.title AS title, t.summary AS summary,
+                    t.severity AS severity, t.category AS category,
+                    t.what_would_help AS what_would_help,
+                    coalesce(t.cause_heat, 0.0) AS cause_heat,
+                    response_count
+             ORDER BY response_count ASC, t.cause_heat DESC, t.confidence DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Ok(tension_id) = Uuid::parse_str(&id_str) else {
+                continue;
+            };
+            results.push(ResponseScoutTarget {
+                tension_id,
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                severity: row.get("severity").unwrap_or_default(),
+                category: {
+                    let s: String = row.get("category").unwrap_or_default();
+                    if s.is_empty() { None } else { Some(s) }
+                },
+                what_would_help: {
+                    let s: String = row.get("what_would_help").unwrap_or_default();
+                    if s.is_empty() { None } else { Some(s) }
+                },
+                cause_heat: row.get("cause_heat").unwrap_or(0.0),
+                response_count: {
+                    let c: i64 = row.get("response_count").unwrap_or(0);
+                    c as u32
+                },
+            });
+        }
+        Ok(results)
+    }
+
+    /// Fetch existing responses for a tension (used as heuristics in the response scout prompt).
+    pub async fn get_existing_responses(
+        &self,
+        tension_id: Uuid,
+    ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r)-[:RESPONDS_TO]->(t:Tension {id: $id})
+             WHERE r:Give OR r:Event OR r:Ask
+             RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
+             LIMIT 5",
+        )
+        .param("id", tension_id.to_string());
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            results.push(ResponseHeuristic {
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                signal_type: row.get("label").unwrap_or_default(),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Mark a tension as having been scouted for responses.
+    pub async fn mark_response_scouted(
+        &self,
+        tension_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+        let q = query(
+            "MATCH (t:Tension {id: $id})
+             SET t.response_scouted_at = $now",
+        )
+        .param("id", tension_id.to_string())
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
+
+    // =============================================================================
+    // Gravity Scout operations
+    // =============================================================================
+
+    /// Find tensions with active heat that need gravity scouting.
+    /// Requires cause_heat >= 0.1 (cold tensions don't create gatherings).
+    /// Uses exponential backoff based on consecutive miss count.
+    pub async fn find_gravity_scout_targets(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<GravityScoutTarget>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.confidence >= 0.5
+               AND coalesce(t.cause_heat, 0.0) >= 0.1
+               AND coalesce(datetime(t.gravity_scouted_at), datetime('2000-01-01'))
+                   < datetime() - duration({days:
+                       CASE
+                         WHEN coalesce(t.gravity_scout_miss_count, 0) = 0 THEN 7
+                         WHEN coalesce(t.gravity_scout_miss_count, 0) = 1 THEN 14
+                         WHEN coalesce(t.gravity_scout_miss_count, 0) = 2 THEN 21
+                         ELSE 30
+                       END
+                     })
+             RETURN t.id AS id, t.title AS title, t.summary AS summary,
+                    t.severity AS severity, t.category AS category,
+                    t.what_would_help AS what_would_help,
+                    coalesce(t.cause_heat, 0.0) AS cause_heat
+             ORDER BY t.cause_heat DESC, t.confidence DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Ok(tension_id) = Uuid::parse_str(&id_str) else {
+                continue;
+            };
+            results.push(GravityScoutTarget {
+                tension_id,
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                severity: row.get("severity").unwrap_or_default(),
+                category: {
+                    let s: String = row.get("category").unwrap_or_default();
+                    if s.is_empty() { None } else { Some(s) }
+                },
+                what_would_help: {
+                    let s: String = row.get("what_would_help").unwrap_or_default();
+                    if s.is_empty() { None } else { Some(s) }
+                },
+                cause_heat: row.get("cause_heat").unwrap_or(0.0),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Fetch existing gravity signals for a tension (gatherings already wired via RESPONDS_TO
+    /// with a gathering_type property).
+    pub async fn get_existing_gravity_signals(
+        &self,
+        tension_id: Uuid,
+    ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r)-[rel:RESPONDS_TO]->(t:Tension {id: $id})
+             WHERE (r:Give OR r:Event OR r:Ask)
+               AND rel.gathering_type IS NOT NULL
+             RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
+             LIMIT 5",
+        )
+        .param("id", tension_id.to_string());
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            results.push(ResponseHeuristic {
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                signal_type: row.get("label").unwrap_or_default(),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Mark a tension as having been gravity-scouted.
+    /// Resets miss_count to 0 on success, increments on failure.
+    pub async fn mark_gravity_scouted(
+        &self,
+        tension_id: Uuid,
+        found_gatherings: bool,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+        let q = query(
+            "MATCH (t:Tension {id: $id})
+             SET t.gravity_scouted_at = datetime($now),
+                 t.gravity_scout_miss_count = CASE
+                     WHEN $found THEN 0
+                     ELSE coalesce(t.gravity_scout_miss_count, 0) + 1
+                 END",
+        )
+        .param("id", tension_id.to_string())
+        .param("now", now)
+        .param("found", found_gatherings);
+
+        self.client.graph.run(q).await
+    }
+
+    /// Create a RESPONDS_TO edge with gathering_type property.
+    /// Uses MERGE on structure only, then ON CREATE/ON MATCH to set properties,
+    /// avoiding duplicate edges when a response scout edge already exists.
+    pub async fn create_gravity_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        match_strength: f64,
+        explanation: &str,
+        gathering_type: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event OR resp:Ask)
+             MATCH (t:Tension {id: $tension_id})
+             MERGE (resp)-[r:RESPONDS_TO]->(t)
+             ON CREATE SET
+                 r.match_strength = $strength,
+                 r.explanation = $explanation,
+                 r.gathering_type = $gathering_type
+             ON MATCH SET
+                 r.gathering_type = coalesce(r.gathering_type, $gathering_type)",
+        )
+        .param("resp_id", signal_id.to_string())
+        .param("tension_id", tension_id.to_string())
+        .param("strength", match_strength)
+        .param("explanation", explanation)
+        .param("gathering_type", gathering_type);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Refresh a signal's `last_confirmed_active` timestamp by ID alone.
+    /// Used by gravity scout on the dedup path to prevent recurring gatherings from aging out.
+    pub async fn touch_signal_timestamp(
+        &self,
+        signal_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+        let q = query(
+            "MATCH (n)
+             WHERE n.id = $id AND (n:Give OR n:Event OR n:Ask)
+             SET n.last_confirmed_active = datetime($now)",
+        )
+        .param("id", signal_id.to_string())
+        .param("now", now);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -3089,6 +3347,43 @@ pub struct StoryGrowth {
     pub story_id: Uuid,
     pub tension_id: Uuid,
     pub new_respondents: Vec<TensionRespondent>,
+}
+
+// --- Response Scout types ---
+
+/// A tension that needs response discovery.
+#[derive(Debug)]
+pub struct ResponseScoutTarget {
+    pub tension_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub severity: String,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
+    pub cause_heat: f64,
+    pub response_count: u32,
+}
+
+/// An existing response signal used as a heuristic hint.
+#[derive(Debug)]
+pub struct ResponseHeuristic {
+    pub title: String,
+    pub summary: String,
+    pub signal_type: String,
+}
+
+// --- Gravity Scout types ---
+
+/// A tension that needs gravity scouting (where are people gathering?).
+#[derive(Debug)]
+pub struct GravityScoutTarget {
+    pub tension_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub severity: String,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
+    pub cause_heat: f64,
 }
 
 /// Add lat/lng params to a query from node metadata.

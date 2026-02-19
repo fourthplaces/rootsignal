@@ -528,6 +528,48 @@ impl Scout {
 
         self.check_cancelled()?;
 
+        // Response Scout — find what diffuses known tensions
+        if self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_RESPONSE_SCOUT + OperationCost::TAVILY_RESPONSE_SCOUT,
+        ) {
+            info!("Starting response scout...");
+            let response_scout = crate::response_scout::ResponseScout::new(
+                &self.writer,
+                &*self.searcher,
+                &*self.scraper,
+                &*self.embedder,
+                &self.anthropic_api_key,
+                self.city_node.clone(),
+            );
+            let rs_stats = response_scout.run().await;
+            info!("{rs_stats}");
+        } else if self.budget.is_active() {
+            info!("Skipping response scout (budget exhausted)");
+        }
+
+        self.check_cancelled()?;
+
+        // Gravity Scout — find where people gather around tensions
+        if self.budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_GRAVITY_SCOUT + OperationCost::TAVILY_GRAVITY_SCOUT,
+        ) {
+            info!("Starting gravity scout...");
+            let gravity_scout = crate::gravity_scout::GravityScout::new(
+                &self.writer,
+                &*self.searcher,
+                &*self.scraper,
+                &*self.embedder,
+                &self.anthropic_api_key,
+                self.city_node.clone(),
+            );
+            let gs_stats = gravity_scout.run().await;
+            info!("{gs_stats}");
+        } else if self.budget.is_active() {
+            info!("Skipping gravity scout (budget exhausted)");
+        }
+
+        self.check_cancelled()?;
+
         // Story weaving — materialize tension hubs as stories
         info!("Starting story weaving...");
         let weaver = rootsignal_graph::StoryWeaver::new(

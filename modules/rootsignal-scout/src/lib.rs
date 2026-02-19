@@ -1,11 +1,14 @@
 pub mod bootstrap;
 pub mod budget;
+pub mod curiosity;
 pub mod discovery;
 pub mod embedder;
 pub mod extractor;
 pub mod fixtures;
+pub mod gravity_scout;
 pub mod investigator;
 pub mod quality;
+pub mod response_scout;
 pub mod scheduler;
 pub mod scout;
 pub mod scraper;
