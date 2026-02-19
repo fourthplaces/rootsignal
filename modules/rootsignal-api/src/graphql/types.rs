@@ -570,3 +570,41 @@ impl GqlActor {
         Ok(stories.into_iter().map(GqlStory).collect())
     }
 }
+
+// --- Search Result types (for search app) ---
+
+/// A signal with a blended relevance score from semantic search.
+pub struct GqlSearchResult {
+    pub signal: GqlSignal,
+    pub score: f64,
+}
+
+#[Object]
+impl GqlSearchResult {
+    async fn signal(&self) -> &GqlSignal {
+        &self.signal
+    }
+    async fn score(&self) -> f64 {
+        self.score
+    }
+}
+
+/// A story matched via its constituent signals' semantic similarity.
+pub struct GqlStorySearchResult {
+    pub story: GqlStory,
+    pub score: f64,
+    pub top_matching_signal_title: Option<String>,
+}
+
+#[Object]
+impl GqlStorySearchResult {
+    async fn story(&self) -> &GqlStory {
+        &self.story
+    }
+    async fn score(&self) -> f64 {
+        self.score
+    }
+    async fn top_matching_signal_title(&self) -> Option<&str> {
+        self.top_matching_signal_title.as_deref()
+    }
+}
