@@ -2285,3 +2285,606 @@ async fn signal_expansion_source_created_with_correct_method() {
     assert!(gc.contains("Emergency bail fund"), "Gap context should reference originating signal");
     assert!(active, "Source should be active");
 }
+
+// =============================================================================
+// Resource Capability Matching tests
+// =============================================================================
+
+/// Helper: create a 1024-dim f32 embedding with a specific value in the first slot.
+fn make_embedding(first: f32) -> Vec<f32> {
+    let mut emb = vec![0.0f32; 1024];
+    emb[0] = first;
+    emb
+}
+
+/// Helper: create a similar embedding (high cosine similarity to make_embedding(first)).
+fn make_similar_embedding(first: f32) -> Vec<f32> {
+    let mut emb = vec![0.0f32; 1024];
+    emb[0] = first;
+    emb[1] = 0.05; // small perturbation → high similarity
+    emb
+}
+
+/// Helper: create a dissimilar embedding (low cosine similarity).
+fn make_dissimilar_embedding() -> Vec<f32> {
+    let mut emb = vec![0.0f32; 1024];
+    emb[500] = 1.0; // orthogonal direction
+    emb
+}
+
+#[tokio::test]
+async fn resource_find_or_create_is_idempotent() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let emb = make_embedding(0.5);
+    let id1 = writer
+        .find_or_create_resource("Vehicle", "vehicle", "A car or truck", &emb)
+        .await
+        .expect("first create failed");
+
+    let id2 = writer
+        .find_or_create_resource("Vehicle", "vehicle", "A car or truck", &emb)
+        .await
+        .expect("second create failed");
+
+    assert_eq!(id1, id2, "Same slug should return same UUID");
+
+    // signal_count should be 2 after two calls
+    let q = query("MATCH (r:Resource {slug: 'vehicle'}) RETURN r.signal_count AS sc");
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream err").expect("no row");
+    let sc: i64 = row.get("sc").expect("no sc");
+    assert_eq!(sc, 2, "signal_count should increment on each MERGE");
+}
+
+#[tokio::test]
+async fn resource_find_by_slug() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let emb = make_embedding(0.3);
+    let created_id = writer
+        .find_or_create_resource("Food", "food", "Food assistance", &emb)
+        .await
+        .expect("create failed");
+
+    let found = writer
+        .find_resource_by_slug("food")
+        .await
+        .expect("lookup failed");
+
+    assert_eq!(found, Some(created_id), "Should find resource by slug");
+
+    let not_found = writer
+        .find_resource_by_slug("nonexistent")
+        .await
+        .expect("lookup failed");
+
+    assert_eq!(not_found, None, "Should return None for unknown slug");
+}
+
+#[tokio::test]
+async fn resource_find_by_embedding_similarity() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let emb = make_embedding(0.7);
+    writer
+        .find_or_create_resource("Legal Expertise", "legal-expertise", "Legal aid", &emb)
+        .await
+        .expect("create failed");
+
+    // Similar embedding should match above threshold
+    let similar = make_similar_embedding(0.7);
+    let found = writer
+        .find_resource_by_embedding(&similar, 0.85)
+        .await
+        .expect("search failed");
+
+    assert!(found.is_some(), "Should find similar resource");
+    let (_, sim) = found.unwrap();
+    assert!(sim >= 0.85, "Similarity should be >= 0.85, got {sim}");
+
+    // Dissimilar embedding should NOT match
+    let dissimilar = make_dissimilar_embedding();
+    let not_found = writer
+        .find_resource_by_embedding(&dissimilar, 0.85)
+        .await
+        .expect("search failed");
+
+    assert!(not_found.is_none(), "Should not find dissimilar resource");
+}
+
+#[tokio::test]
+async fn resource_requires_edge_creation() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create an Ask signal
+    let ask_id = Uuid::new_v4();
+    create_signal(&client, "Ask", ask_id, "Need drivers for food delivery", "https://test.com/ask1").await;
+
+    // Create a Resource
+    let emb = make_embedding(0.4);
+    let resource_id = writer
+        .find_or_create_resource("Vehicle", "vehicle", "A car or truck", &emb)
+        .await
+        .expect("create failed");
+
+    // Create REQUIRES edge
+    writer
+        .create_requires_edge(ask_id, resource_id, 0.9, Some("Saturday mornings"), Some("10 volunteers"))
+        .await
+        .expect("edge creation failed");
+
+    // Verify edge exists with properties
+    let q = query(
+        "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
+         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes"
+    )
+    .param("sid", ask_id.to_string())
+    .param("rid", resource_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream err").expect("no REQUIRES edge found");
+    let conf: f64 = row.get("conf").expect("no confidence");
+    let qty: String = row.get("qty").expect("no quantity");
+    let notes: String = row.get("notes").expect("no notes");
+
+    assert!((conf - 0.9).abs() < 0.01, "Confidence should be 0.9");
+    assert_eq!(qty, "Saturday mornings");
+    assert_eq!(notes, "10 volunteers");
+}
+
+#[tokio::test]
+async fn resource_prefers_edge_creation() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let ask_id = Uuid::new_v4();
+    create_signal(&client, "Ask", ask_id, "Court date transport", "https://test.com/ask2").await;
+
+    let emb = make_embedding(0.6);
+    let resource_id = writer
+        .find_or_create_resource("Bilingual Spanish", "bilingual-spanish", "Spanish speaker", &emb)
+        .await
+        .expect("create failed");
+
+    writer
+        .create_prefers_edge(ask_id, resource_id, 0.7)
+        .await
+        .expect("edge creation failed");
+
+    let q = query(
+        "MATCH (s:Ask {id: $sid})-[e:PREFERS]->(r:Resource {id: $rid})
+         RETURN e.confidence AS conf"
+    )
+    .param("sid", ask_id.to_string())
+    .param("rid", resource_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream err").expect("no PREFERS edge found");
+    let conf: f64 = row.get("conf").expect("no confidence");
+    assert!((conf - 0.7).abs() < 0.01, "Confidence should be 0.7");
+}
+
+#[tokio::test]
+async fn resource_offers_edge_creation() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Emergency food pantry", "https://test.com/give1").await;
+
+    let emb = make_embedding(0.3);
+    let resource_id = writer
+        .find_or_create_resource("Food", "food", "Food assistance", &emb)
+        .await
+        .expect("create failed");
+
+    writer
+        .create_offers_edge(give_id, resource_id, 0.95, Some("Mon-Fri 9-5"))
+        .await
+        .expect("edge creation failed");
+
+    let q = query(
+        "MATCH (s:Give {id: $sid})-[e:OFFERS]->(r:Resource {id: $rid})
+         RETURN e.confidence AS conf, e.capacity AS cap"
+    )
+    .param("sid", give_id.to_string())
+    .param("rid", resource_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream err").expect("no OFFERS edge found");
+    let conf: f64 = row.get("conf").expect("no confidence");
+    let cap: String = row.get("cap").expect("no capacity");
+
+    assert!((conf - 0.95).abs() < 0.01, "Confidence should be 0.95");
+    assert_eq!(cap, "Mon-Fri 9-5");
+}
+
+#[tokio::test]
+async fn resource_edges_are_idempotent() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let ask_id = Uuid::new_v4();
+    create_signal(&client, "Ask", ask_id, "Need volunteers", "https://test.com/ask3").await;
+
+    let emb = make_embedding(0.2);
+    let resource_id = writer
+        .find_or_create_resource("Physical Labor", "physical-labor", "Manual work", &emb)
+        .await
+        .expect("create failed");
+
+    // Create same REQUIRES edge twice
+    writer.create_requires_edge(ask_id, resource_id, 0.8, None, None).await.expect("first edge failed");
+    writer.create_requires_edge(ask_id, resource_id, 0.9, Some("updated"), None).await.expect("second edge failed");
+
+    // Should have exactly ONE edge (MERGE), with updated confidence
+    let q = query(
+        "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
+         RETURN count(e) AS edge_count, e.confidence AS conf"
+    )
+    .param("sid", ask_id.to_string())
+    .param("rid", resource_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream err").expect("no row");
+    let count: i64 = row.get("edge_count").expect("no count");
+    let conf: f64 = row.get("conf").expect("no conf");
+
+    assert_eq!(count, 1, "MERGE should create only one edge");
+    assert!((conf - 0.9).abs() < 0.01, "Confidence should be updated to 0.9");
+}
+
+#[tokio::test]
+async fn find_asks_by_single_resource() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+
+    // Create two Asks and one Give, all needing "vehicle"
+    let ask1 = Uuid::new_v4();
+    let ask2 = Uuid::new_v4();
+    let give1 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask1, "Deliver meals to elderly", "https://test.com/a1").await;
+    create_signal(&client, "Ask", ask2, "Drive kids to camp", "https://test.com/a2").await;
+    create_signal(&client, "Give", give1, "Free car service", "https://test.com/g1").await;
+
+    let emb = make_embedding(0.5);
+    let vehicle_id = writer
+        .find_or_create_resource("Vehicle", "vehicle", "Car or truck", &emb)
+        .await
+        .expect("create failed");
+
+    writer.create_requires_edge(ask1, vehicle_id, 0.9, None, None).await.unwrap();
+    writer.create_requires_edge(ask2, vehicle_id, 0.85, None, None).await.unwrap();
+    writer.create_offers_edge(give1, vehicle_id, 0.9, None).await.unwrap();
+
+    // Query: "I have a car" — should find Asks, not Gives
+    let matches = reader
+        .find_asks_by_resource("vehicle", 44.9778, -93.2650, 50.0, 50)
+        .await
+        .expect("query failed");
+
+    assert_eq!(matches.len(), 2, "Should find 2 Asks requiring vehicle");
+    for m in &matches {
+        assert!(m.score > 0.0, "Score should be positive");
+        assert!(m.matched_requires.contains(&"vehicle".to_string()), "Should match vehicle");
+    }
+}
+
+#[tokio::test]
+async fn find_gives_by_resource() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+
+    let give1 = Uuid::new_v4();
+    let give2 = Uuid::new_v4();
+    create_signal(&client, "Give", give1, "Food shelf downtown", "https://test.com/g1").await;
+    create_signal(&client, "Give", give2, "Free grocery delivery", "https://test.com/g2").await;
+
+    let emb = make_embedding(0.3);
+    let food_id = writer
+        .find_or_create_resource("Food", "food", "Food assistance", &emb)
+        .await
+        .expect("create failed");
+
+    writer.create_offers_edge(give1, food_id, 0.9, Some("Mon-Fri")).await.unwrap();
+    writer.create_offers_edge(give2, food_id, 0.85, None).await.unwrap();
+
+    // Query: "I need food" — should find Gives
+    let matches = reader
+        .find_gives_by_resource("food", 44.9778, -93.2650, 50.0, 50)
+        .await
+        .expect("query failed");
+
+    assert_eq!(matches.len(), 2, "Should find 2 Gives offering food");
+    for m in &matches {
+        assert_eq!(m.score, 1.0, "Give matches should have score 1.0");
+    }
+}
+
+#[tokio::test]
+async fn multi_resource_fuzzy_and_scoring() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+
+    // Create resources
+    let emb_v = make_embedding(0.5);
+    let emb_s = make_embedding(0.6);
+    let vehicle_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb_v).await.unwrap();
+    let spanish_id = writer.find_or_create_resource("Bilingual Spanish", "bilingual-spanish", "", &emb_s).await.unwrap();
+
+    // Ask 1: Requires(vehicle) + Requires(bilingual-spanish) — full match for car+Spanish person
+    let ask1 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask1, "Court date transport (bilingual)", "https://test.com/a1").await;
+    writer.create_requires_edge(ask1, vehicle_id, 0.9, None, None).await.unwrap();
+    writer.create_requires_edge(ask1, spanish_id, 0.85, None, None).await.unwrap();
+
+    // Ask 2: Requires(vehicle) only — partial match for car+Spanish person
+    let ask2 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask2, "Meal delivery drivers", "https://test.com/a2").await;
+    writer.create_requires_edge(ask2, vehicle_id, 0.9, None, None).await.unwrap();
+
+    // Ask 3: Requires(vehicle) + Prefers(bilingual-spanish) — full Requires match + Prefers bonus
+    let ask3 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask3, "Transport to ICE check-in", "https://test.com/a3").await;
+    writer.create_requires_edge(ask3, vehicle_id, 0.9, None, None).await.unwrap();
+    writer.create_prefers_edge(ask3, spanish_id, 0.7).await.unwrap();
+
+    // Query: "I have a car AND speak Spanish"
+    let matches = reader
+        .find_asks_by_resources(
+            &["vehicle".to_string(), "bilingual-spanish".to_string()],
+            44.9778, -93.2650, 50.0, 50,
+        )
+        .await
+        .expect("query failed");
+
+    assert_eq!(matches.len(), 3, "Should find all 3 Asks");
+
+    // Find each by title to check scores
+    let ask1_match = matches.iter().find(|m| m.node.title() == "Court date transport (bilingual)").expect("ask1 not found");
+    let ask2_match = matches.iter().find(|m| m.node.title() == "Meal delivery drivers").expect("ask2 not found");
+    let ask3_match = matches.iter().find(|m| m.node.title() == "Transport to ICE check-in").expect("ask3 not found");
+
+    // Ask 1: 2/2 Requires matched = 1.0
+    assert!((ask1_match.score - 1.0).abs() < 0.01, "Ask1 score should be 1.0, got {}", ask1_match.score);
+    assert!(ask1_match.unmatched_requires.is_empty(), "Ask1 should have no unmatched requires");
+
+    // Ask 2: 1/1 Requires matched = 1.0 (vehicle is the only requirement)
+    assert!((ask2_match.score - 1.0).abs() < 0.01, "Ask2 score should be 1.0, got {}", ask2_match.score);
+
+    // Ask 3: 1/1 Requires matched = 1.0, +0.2 for Prefers match = 1.2
+    assert!((ask3_match.score - 1.2).abs() < 0.01, "Ask3 score should be 1.2, got {}", ask3_match.score);
+
+    // Results should be sorted by score descending
+    assert!(matches[0].score >= matches[1].score, "Should be sorted by score desc");
+}
+
+#[tokio::test]
+async fn list_resources_sorted_by_signal_count() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+
+    let emb1 = make_embedding(0.1);
+    let emb2 = make_embedding(0.2);
+
+    // Create "food" with 3 signal_count bumps
+    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
+    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
+    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
+
+    // Create "vehicle" with 1 signal_count
+    writer.find_or_create_resource("Vehicle", "vehicle", "", &emb2).await.unwrap();
+
+    let resources = reader.list_resources(10).await.expect("list failed");
+    assert_eq!(resources.len(), 2);
+    assert_eq!(resources[0].slug, "food", "Food should be first (highest signal_count)");
+    assert_eq!(resources[0].signal_count, 3);
+    assert_eq!(resources[1].slug, "vehicle");
+    assert_eq!(resources[1].signal_count, 1);
+}
+
+#[tokio::test]
+async fn resource_gap_analysis_shows_unmet_needs() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+
+    let emb_v = make_embedding(0.5);
+    let emb_f = make_embedding(0.3);
+    let vehicle_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb_v).await.unwrap();
+    let food_id = writer.find_or_create_resource("Food", "food", "", &emb_f).await.unwrap();
+
+    // 3 Asks require vehicle, 0 Gives offer it → gap = 3
+    for i in 0..3 {
+        let ask = Uuid::new_v4();
+        create_signal(&client, "Ask", ask, &format!("Driver needed {i}"), &format!("https://test.com/a{i}")).await;
+        writer.create_requires_edge(ask, vehicle_id, 0.9, None, None).await.unwrap();
+    }
+
+    // 2 Asks require food, 2 Gives offer it → gap = 0
+    for i in 0..2 {
+        let ask = Uuid::new_v4();
+        create_signal(&client, "Ask", ask, &format!("Food needed {i}"), &format!("https://test.com/fa{i}")).await;
+        writer.create_requires_edge(ask, food_id, 0.9, None, None).await.unwrap();
+    }
+    for i in 0..2 {
+        let give = Uuid::new_v4();
+        create_signal(&client, "Give", give, &format!("Food shelf {i}"), &format!("https://test.com/fg{i}")).await;
+        writer.create_offers_edge(give, food_id, 0.9, None).await.unwrap();
+    }
+
+    let gaps = reader.resource_gap_analysis().await.expect("gap analysis failed");
+    assert!(gaps.len() >= 2, "Should have at least 2 resources");
+
+    // Vehicle should be the biggest gap
+    let vehicle_gap = gaps.iter().find(|g| g.resource_slug == "vehicle").expect("vehicle not found");
+    assert_eq!(vehicle_gap.requires_count, 3);
+    assert_eq!(vehicle_gap.offers_count, 0);
+    assert_eq!(vehicle_gap.gap, 3);
+
+    // Food should be balanced
+    let food_gap = gaps.iter().find(|g| g.resource_slug == "food").expect("food not found");
+    assert_eq!(food_gap.requires_count, 2);
+    assert_eq!(food_gap.offers_count, 2);
+    assert_eq!(food_gap.gap, 0);
+
+    // Vehicle should appear before food (sorted by gap descending)
+    let v_idx = gaps.iter().position(|g| g.resource_slug == "vehicle").unwrap();
+    let f_idx = gaps.iter().position(|g| g.resource_slug == "food").unwrap();
+    assert!(v_idx < f_idx, "Vehicle (gap=3) should rank before food (gap=0)");
+}
+
+#[tokio::test]
+async fn consolidate_resources_merges_similar() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create two similar resources (should merge)
+    let emb1 = make_embedding(0.8);
+    let emb2 = make_similar_embedding(0.8); // high similarity to emb1
+    let id1 = writer.find_or_create_resource("Vehicle", "vehicle", "Car", &emb1).await.unwrap();
+    let id2 = writer.find_or_create_resource("Car", "car", "Automobile", &emb2).await.unwrap();
+
+    // Create a dissimilar resource (should NOT merge)
+    let emb3 = make_dissimilar_embedding();
+    let id3 = writer.find_or_create_resource("Food", "food", "Food assistance", &emb3).await.unwrap();
+
+    // Create edges to the duplicate
+    let ask1 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask1, "Need a driver", "https://test.com/a1").await;
+    writer.create_requires_edge(ask1, id2, 0.9, Some("weekends"), None).await.unwrap();
+
+    let ask2 = Uuid::new_v4();
+    create_signal(&client, "Ask", ask2, "Need transport", "https://test.com/a2").await;
+    writer.create_requires_edge(ask2, id1, 0.85, None, None).await.unwrap();
+
+    // Run consolidation
+    let stats = writer.consolidate_resources(0.85).await.expect("consolidation failed");
+    assert!(stats.clusters_found >= 1, "Should find at least 1 merge cluster");
+    assert!(stats.nodes_merged >= 1, "Should merge at least 1 node");
+    assert!(stats.edges_redirected >= 1, "Should redirect at least 1 edge");
+
+    // Verify: "car" resource should be deleted
+    let q = query("MATCH (r:Resource {slug: 'car'}) RETURN count(r) AS c");
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("no row");
+    let count: i64 = row.get("c").expect("no c");
+    assert_eq!(count, 0, "Duplicate 'car' resource should be deleted");
+
+    // Verify: "vehicle" resource should still exist
+    let q = query("MATCH (r:Resource {slug: 'vehicle'}) RETURN r.signal_count AS sc");
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("no row");
+    let sc: i64 = row.get("sc").expect("no sc");
+    assert!(sc >= 2, "Canonical should have summed signal_count, got {sc}");
+
+    // Verify: "food" resource should still exist (dissimilar, not merged)
+    let food_found = writer.find_resource_by_slug("food").await.expect("lookup failed");
+    assert_eq!(food_found, Some(id3), "Food should survive consolidation");
+
+    // Verify: ask1's REQUIRES edge now points to vehicle (canonical), not car (deleted)
+    let q = query(
+        "MATCH (s:Ask {id: $sid})-[:REQUIRES]->(r:Resource)
+         RETURN r.slug AS slug"
+    )
+    .param("sid", ask1.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("no row");
+    let slug: String = row.get("slug").expect("no slug");
+    assert_eq!(slug, "vehicle", "Edge should be re-pointed to canonical 'vehicle'");
+}
+
+#[tokio::test]
+async fn consolidate_resources_below_threshold_not_merged() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create two dissimilar resources
+    let emb1 = make_embedding(1.0);
+    let emb2 = make_dissimilar_embedding();
+    writer.find_or_create_resource("Vehicle", "vehicle", "Car", &emb1).await.unwrap();
+    writer.find_or_create_resource("Food", "food", "Groceries", &emb2).await.unwrap();
+
+    let stats = writer.consolidate_resources(0.85).await.expect("consolidation failed");
+    assert_eq!(stats.clusters_found, 0, "Dissimilar resources should not merge");
+    assert_eq!(stats.nodes_merged, 0);
+
+    // Both should still exist
+    let q = query("MATCH (r:Resource) RETURN count(r) AS c");
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("no row");
+    let count: i64 = row.get("c").expect("no c");
+    assert_eq!(count, 2, "Both resources should survive");
+}
+
+#[tokio::test]
+async fn consolidate_resources_preserves_edge_properties() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create two similar resources
+    let emb1 = make_embedding(0.9);
+    let emb2 = make_similar_embedding(0.9);
+    let _canonical_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb1).await.unwrap();
+    let dup_id = writer.find_or_create_resource("Car", "car", "", &emb2).await.unwrap();
+
+    // Create edges with properties to the duplicate
+    let ask = Uuid::new_v4();
+    create_signal(&client, "Ask", ask, "Need ride", "https://test.com/r1").await;
+    writer.create_requires_edge(ask, dup_id, 0.88, Some("10 volunteers"), Some("urgent")).await.unwrap();
+
+    let give = Uuid::new_v4();
+    create_signal(&client, "Give", give, "Free rides", "https://test.com/r2").await;
+    writer.create_offers_edge(give, dup_id, 0.92, Some("evenings only")).await.unwrap();
+
+    let event = Uuid::new_v4();
+    create_signal(&client, "Event", event, "Carpool meetup", "https://test.com/r3").await;
+    writer.create_prefers_edge(event, dup_id, 0.75).await.unwrap();
+
+    // Run consolidation
+    writer.consolidate_resources(0.85).await.expect("consolidation failed");
+
+    // Verify REQUIRES edge properties preserved on canonical
+    let q = query(
+        "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {slug: 'vehicle'})
+         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes"
+    )
+    .param("sid", ask.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("REQUIRES edge not found on canonical");
+    let conf: f64 = row.get("conf").expect("no conf");
+    let qty: String = row.get("qty").expect("no qty");
+    assert!((conf - 0.88).abs() < 0.01, "REQUIRES confidence should be preserved");
+    assert_eq!(qty, "10 volunteers", "REQUIRES quantity should be preserved");
+
+    // Verify OFFERS edge properties preserved
+    let q = query(
+        "MATCH (s:Give {id: $sid})-[e:OFFERS]->(r:Resource {slug: 'vehicle'})
+         RETURN e.confidence AS conf, e.capacity AS cap"
+    )
+    .param("sid", give.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("OFFERS edge not found on canonical");
+    let cap: String = row.get("cap").expect("no cap");
+    assert_eq!(cap, "evenings only", "OFFERS capacity should be preserved");
+
+    // Verify PREFERS edge preserved
+    let q = query(
+        "MATCH (s:Event {id: $sid})-[e:PREFERS]->(r:Resource {slug: 'vehicle'})
+         RETURN e.confidence AS conf"
+    )
+    .param("sid", event.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("err").expect("PREFERS edge not found on canonical");
+    let conf: f64 = row.get("conf").expect("no conf");
+    assert!((conf - 0.75).abs() < 0.01, "PREFERS confidence should be preserved");
+}
