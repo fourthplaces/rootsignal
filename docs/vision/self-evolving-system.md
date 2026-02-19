@@ -133,7 +133,7 @@ The system doesn't need a spam filter. The graph structure *is* the filter, and 
 
 Once the system discovers its own sources, several things become possible that weren't before:
 
-**City bootstrapping:** Point the system at a new city with a minimal seed (5-10 URLs, a few Tavily queries). The system discovers the rest. What took days of manual research becomes a few scout runs.
+**City bootstrapping:** Point the system at a new city with a minimal seed (5-10 URLs, a few web search queries). The system discovers the rest. What took days of manual research becomes a few scout runs.
 
 **Temporal adaptation:** When a crisis hits, the gap analyzer notices the surge in related signals and discovers new sources covering the crisis (mutual aid networks, legal aid hotlines, community response organizations). The system's attention naturally shifts to where community energy is concentrating.
 

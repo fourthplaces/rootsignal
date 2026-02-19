@@ -61,7 +61,7 @@ The curiosity filter is also the natural cost control. Most Eventbrite networkin
 The curiosity loop reuses existing infrastructure:
 
 - **LLM call** (Haiku): "Does this signal spark curiosity? If yes, generate a search query to find the underlying tension." One call per signal.
-- **Tavily search**: same API already used by discovery engine.
+- **Web search**: same API already used by discovery engine.
 - **Scrape + extract**: same pipeline already used by scout.
 - **Dedup**: same embedding dedup against existing tensions.
 - **RESPONDS_TO edges**: already exist in the graph schema with `match_strength`.

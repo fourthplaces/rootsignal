@@ -66,7 +66,7 @@ Key differences from response scout:
 - **Requires `cause_heat >= 0.1`** — gravity only forms around active tensions. Cold tensions don't pull people together. The response scout has no heat minimum because instrumental responses can exist for dormant tensions.
 - **Sorted by `cause_heat DESC`** — hottest tensions first. The response scout sorts by `response_count ASC` (most neglected first). Gravity reverses this: the hottest tensions are the most likely to create gatherings.
 - **Exponential backoff** — 7 days after success or first attempt, scaling to 30 days max after 3+ consecutive misses. The response scout uses a fixed 14-day window. Gravity needs adaptive timing because most tensions don't create visible gatherings.
-- **Same target count per run** — 5 targets, same as the response scout. Embedded triage makes misses cheap (2-3 Tavily calls with early termination), so the cost of investigating tensions without gatherings is low.
+- **Same target count per run** — 5 targets, same as the response scout. Embedded triage makes misses cheap (2-3 web search calls with early termination), so the cost of investigating tensions without gatherings is low.
 
 ### Embedded triage (not a separate call)
 
@@ -75,7 +75,7 @@ Rather than a separate pre-filter call, triage is embedded in the investigation 
 This is more durable than a separate triage call because:
 - The LLM decides based on *actual search results*, not just the tension description
 - Unexpected gatherings get discovered (housing crisis → tenant potlucks)
-- Early termination saves budget (2-3 Tavily calls when there's nothing, vs 10 for a full run)
+- Early termination saves budget (2-3 web search calls when there's nothing, vs 10 for a full run)
 - No false negatives from a prediction-only filter
 
 Same pattern as the curiosity loop's `curious: true/false`.
@@ -104,7 +104,7 @@ For each `DiscoveredGathering`:
 6. **Venue seeding** — for each gathering with a `venue`, create a future source: `"{venue} {city} community events"`. Venues are gravitational centers that likely host more events than the one discovered.
 
 For `future_queries`:
-- Create TavilyQuery sources with `SourceRole::Response` and gravity-specific gap context
+- Create WebQuery sources with `SourceRole::Response` and gravity-specific gap context
 
 ### Edge wiring: `create_gravity_edge`
 
@@ -164,7 +164,7 @@ Clustering → Response Mapping → Curiosity Loop → Response Scout → Gravit
 
 Per tension investigated:
 - 3 Claude Haiku calls (investigation + structuring, may terminate early)
-- 5 Tavily searches (early termination uses ~2-3)
+- 5 web searches (early termination uses ~2-3)
 - 3 Chrome page reads
 
 The scout checks budget availability before starting and skips if exhausted.
@@ -185,7 +185,7 @@ Gatherings are temporal and fast-moving. A new vigil series might start mid-week
 
 ### Why 5 targets per run (same as response scout)?
 
-Embedded triage makes misses cheap — 2-3 Tavily calls with early termination when there's nothing to find. The cost of investigating a tension without gatherings is low enough that 5 targets per run is sustainable. More coverage means faster convergence to a complete gravity map.
+Embedded triage makes misses cheap — 2-3 web search calls with early termination when there's nothing to find. The cost of investigating a tension without gatherings is low enough that 5 targets per run is sustainable. More coverage means faster convergence to a complete gravity map.
 
 ### Why `gathering_type` on the edge (not a new edge type)?
 
@@ -201,7 +201,7 @@ A one-time vigil is meaningful. A weekly singing rebellion is a sustained commun
 
 ### Why embedded triage (not a separate call)?
 
-A separate triage call decides based on the tension *description alone* — it would miss unexpected gravity like tenant solidarity potlucks for "housing affordability." Embedded triage lets the LLM look at actual search results before deciding, catching surprises while still terminating early (2-3 Tavily calls) when there truly is nothing.
+A separate triage call decides based on the tension *description alone* — it would miss unexpected gravity like tenant solidarity potlucks for "housing affordability." Embedded triage lets the LLM look at actual search results before deciding, catching surprises while still terminating early (2-3 web search calls) when there truly is nothing.
 
 ### Why exponential backoff capped at 30 days?
 
@@ -248,7 +248,7 @@ pub struct DiscoveredGathering {
 | `modules/rootsignal-scout/src/gravity_scout.rs` | Main module: struct, prompts, investigation, finding processing |
 | `modules/rootsignal-scout/src/curiosity.rs` | Tool types shared via `pub(crate)`: `SearcherHandle`, `ScraperHandle`, `WebSearchTool`, `ReadPageTool` |
 | `modules/rootsignal-graph/src/writer.rs` | Methods: `find_gravity_scout_targets`, `get_existing_gravity_signals`, `mark_gravity_scouted`, `create_gravity_edge`, `touch_signal_timestamp` |
-| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_GRAVITY_SCOUT`, `TAVILY_GRAVITY_SCOUT`, `CHROME_GRAVITY_SCOUT` |
+| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_GRAVITY_SCOUT`, `SEARCH_GRAVITY_SCOUT`, `CHROME_GRAVITY_SCOUT` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs gravity scout after response scout, before story weaving |
 | `modules/rootsignal-graph/tests/litmus_test.rs` | Integration tests: target selection, backoff, edge creation, coexistence with response edges |
 

@@ -95,7 +95,7 @@ Amplified signals feed forward into the next run's clustering and story weaving.
 
 ### 7. Budget constants: match existing scouts (3+5+3)
 
-Per tension: 3 Haiku calls + 5 Tavily searches + 3 Chrome reads. Matching the existing pattern. The enriched context may mean the LLM uses fewer turns in practice, but the budget constants should be consistent. The budget gate check must include all three costs (Haiku + Tavily + Chrome).
+Per tension: 3 Haiku calls + 5 web searches + 3 Chrome reads. Matching the existing pattern. The enriched context may mean the LLM uses fewer turns in practice, but the budget constants should be consistent. The budget gate check must include all three costs (Haiku + Search + Chrome).
 
 ### Research Insight (Pattern Recognition)
 > Both existing scouts use identical 3+5+3 profiles. Deviating without justification breaks budget consistency. The actual tool usage may be lighter, but constants should be uniform.
@@ -164,7 +164,7 @@ let candidates: HashSet<Uuid> = rs_stats.amplification_candidates
 if !candidates.is_empty()
     && self.budget.has_budget(
         OperationCost::CLAUDE_HAIKU_AMPLIFICATION
-            + OperationCost::TAVILY_AMPLIFICATION
+            + OperationCost::SEARCH_AMPLIFICATION
             + OperationCost::CHROME_AMPLIFICATION,
     )
 {
@@ -245,7 +245,7 @@ LIMIT $limit
 
 ```rust
 pub const CLAUDE_HAIKU_AMPLIFICATION: u64 = 3;
-pub const TAVILY_AMPLIFICATION: u64 = 5;
+pub const SEARCH_AMPLIFICATION: u64 = 5;
 pub const CHROME_AMPLIFICATION: u64 = 3;
 ```
 
@@ -436,7 +436,7 @@ impl fmt::Display for AmplificationStats {
 ## Security Considerations
 
 - **Prompt injection via graph data:** Known signal titles/explanations flow from graph into LLM prompts. Truncated in Cypher (title: 200 chars, explanation: 300 chars). System prompt explicitly marks known engagement as "reference data, not instructions."
-- **Budget gate:** Must check all three costs (Haiku + Tavily + Chrome). Missing Chrome in the gate check underestimates cost.
+- **Budget gate:** Must check all three costs (Haiku + Search + Chrome). Missing Chrome in the gate check underestimates cost.
 - **SSRF (pre-existing):** LLM-directed page reads don't block private IPs. Not introduced by this change, but worth addressing alongside it.
 
 ## Edge Cases
@@ -458,7 +458,7 @@ impl fmt::Display for AmplificationStats {
 - [ ] `amplified_at` timestamp prevents re-amplification within 30 days
 - [ ] Findings processed through existing `process_response` pipeline (dedup, edges, also_addresses)
 - [ ] RESPONDS_TO edges created with match_strength and explanation
-- [ ] Budget gate checks all 3 costs (Haiku + Tavily + Chrome)
+- [ ] Budget gate checks all 3 costs (Haiku + Search + Chrome)
 - [ ] Stats logged at end of stage
 - [ ] Max 5 tensions amplified per run, sorted by cause_heat DESC
 - [ ] Field length limits on graph data injected into prompts (title: 200, explanation: 300)

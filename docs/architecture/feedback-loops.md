@@ -26,7 +26,7 @@ flowchart TB
     subgraph ENRICH ["Phase 5-6: Enrich"]
         Cluster["Clustering<br/><i>similarity → stories</i>"]
         Respond["Response Mapping<br/><i>Give ↔ Tension</i>"]
-        Investigate["Investigation<br/><i>Tavily corroboration</i>"]
+        Investigate["Investigation<br/><i>web search corroboration</i>"]
     end
 
     subgraph DISCOVER ["Phase 7: Discover"]
@@ -159,10 +159,10 @@ flowchart TB
     LLM --> Plan["DiscoveryPlan<br/><i>3-7 queries with reasoning</i>"]
 
     Plan --> Dedup{"Substring<br/>dedup"}
-    Dedup -- novel --> Create["Create TavilyQuery<br/>SourceNode"]
+    Dedup -- novel --> Create["Create WebQuery<br/>SourceNode"]
     Dedup -- duplicate --> Skip["Skip"]
 
-    Create --> Search["Future run:<br/>Tavily search"]
+    Create --> Search["Future run:<br/>web search"]
     Search --> Signals["Signals produced<br/>(or not)"]
 
     Signals --> Metrics["Source metrics update:<br/>signals_produced, weight,<br/>consecutive_empty_runs"]
@@ -194,7 +194,7 @@ flowchart LR
     T --> Unmet["Marked UNMET<br/><i>no RESPONDS_TO edges</i>"]
     Unmet --> Brief["High priority in<br/>discovery briefing"]
     Brief --> Query["LLM generates:<br/>'food shelf locations<br/>Minneapolis'"]
-    Query --> Source["New TavilyQuery<br/>source created"]
+    Query --> Source["New WebQuery<br/>source created"]
     Source --> Scrape["Scraped next run"]
     Scrape --> Give["Give signal found:<br/>'Second Harvest food shelf<br/>expansion program'"]
     Give --> Map["Response Mapper:<br/>cosine similarity > 0.7"]
@@ -249,7 +249,7 @@ flowchart LR
         P1["Scrape + Extract"]
         P2["Clustering"]
         P3["Response Mapping<br/><i>~10 Haiku calls</i>"]
-        P4["Investigation<br/><i>Haiku + Tavily</i>"]
+        P4["Investigation<br/><i>Haiku + web search</i>"]
         P5["LLM Discovery<br/><i>1 Haiku call</i>"]
         P1 --> P2 --> P3 --> P4 --> P5
     end
@@ -461,7 +461,7 @@ These appear in the LLM prompt as "Worked well" and "Didn't work" sections, with
 
 **Consumes:** `find_investigation_targets()` filters out signals investigated within the last 7 days. Per-domain dedup ensures max 1 target per source domain.
 
-**Effect:** Prevents wasting Tavily budget investigating the same signals repeatedly. The 7-day cooldown allows new evidence to accumulate before re-investigation. Domain dedup prevents one prolific source from consuming the entire investigation budget.
+**Effect:** Prevents wasting web search budget investigating the same signals repeatedly. The 7-day cooldown allows new evidence to accumulate before re-investigation. Domain dedup prevents one prolific source from consuming the entire investigation budget.
 
 ---
 
@@ -471,7 +471,7 @@ These appear in the LLM prompt as "Worked well" and "Didn't work" sections, with
 
 **Consumes:** Phase guards check `has_budget()` before expensive operations:
 - Response mapping: needs ~10x CLAUDE_HAIKU_SYNTHESIS
-- Investigation: needs CLAUDE_HAIKU_INVESTIGATION + TAVILY_INVESTIGATION
+- Investigation: needs CLAUDE_HAIKU_INVESTIGATION + SEARCH_INVESTIGATION
 - LLM discovery: needs CLAUDE_HAIKU_DISCOVERY
 
 **Effect:** Four-level degradation:
@@ -656,7 +656,7 @@ flowchart TB
     ColdStart -- no --> LLMCall["Claude Haiku<br/>extract DiscoveryPlan"]
     LLMCall --> LLMOk{"LLM call<br/>succeeded?"}
     LLMOk -- error --> Mechanical
-    LLMOk -- ok --> CreateSources["Create TavilyQuery<br/>sources (max 7)<br/><i>with dedup</i>"]
+    LLMOk -- ok --> CreateSources["Create WebQuery<br/>sources (max 7)<br/><i>with dedup</i>"]
 
     Mechanical --> CreateMech["Create template queries<br/>(max 5)<br/><i>'{help} resources services {city}'</i>"]
 
@@ -723,7 +723,7 @@ flowchart TB
 
     subgraph Investigate ["Per Target"]
         I1["LLM generates<br/>1-3 search queries"]
-        I1 --> I2["Tavily searches<br/><i>filter out same-domain</i>"]
+        I1 --> I2["Web searches<br/><i>filter out same-domain</i>"]
         I2 --> I3["LLM evaluates<br/>evidence quality"]
         I3 --> I4{"confidence<br/>≥ 0.5?"}
         I4 -- yes --> I5["Create Evidence node"]

@@ -292,7 +292,7 @@ pub struct SocialTopic {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DiscoveryQuery {
-    /// The Tavily search query
+    /// The web search query
     pub query: String,
     /// Why this query — what gap it fills
     pub reasoning: String,
@@ -648,7 +648,7 @@ impl<'a> SourceDiscoverer<'a> {
             }
 
             let cv = dq.query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::TavilyQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
 
             let gap_context = format!(
                 "Curiosity: {} | Gap: {} | Related: {}",
@@ -671,7 +671,7 @@ impl<'a> SourceDiscoverer<'a> {
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::TavilyQuery,
+                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
                 city: self.city_slug.clone(),
                 created_at: now,
@@ -728,11 +728,11 @@ impl<'a> SourceDiscoverer<'a> {
         let response_shapes = self.writer.get_tension_response_shape(10).await
             .map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
 
-        // Get existing TavilyQuery sources for dedup
+        // Get existing WebQuery sources for dedup
         let existing = self.writer.get_active_sources(&self.city_slug).await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
         let existing_queries: Vec<String> = existing.iter()
-            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .filter(|s| s.source_type == SourceType::WebQuery)
             .map(|s| s.canonical_value.clone())
             .collect();
 
@@ -785,7 +785,7 @@ impl<'a> SourceDiscoverer<'a> {
         };
 
         let existing_queries: HashSet<String> = existing.iter()
-            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .filter(|s| s.source_type == SourceType::WebQuery)
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
 
@@ -811,14 +811,14 @@ impl<'a> SourceDiscoverer<'a> {
             }
 
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::TavilyQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
 
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::TavilyQuery,
+                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
                 city: self.city_slug.clone(),
                 created_at: now,
@@ -1524,7 +1524,7 @@ mod tests {
                 contradicted: 2,
             },
             ExtractionYield {
-                source_type: "tavily_query".to_string(),
+                source_type: "web_query".to_string(),
                 extracted: 67,
                 survived: 31,
                 corroborated: 4,
@@ -1534,7 +1534,7 @@ mod tests {
         let prompt = briefing.format_prompt();
         assert!(prompt.contains("## EXTRACTION YIELD"), "Missing EXTRACTION YIELD section");
         assert!(prompt.contains("web: 142 extracted, 118 survived (83%)"), "Missing web yield stats");
-        assert!(prompt.contains("tavily_query: 67 extracted, 31 survived (46%)"), "Missing tavily yield stats");
+        assert!(prompt.contains("web_query: 67 extracted, 31 survived (46%)"), "Missing web_query yield stats");
     }
 
     #[test]
@@ -1542,7 +1542,7 @@ mod tests {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![
             ExtractionYield {
-                source_type: "tavily_query".to_string(),
+                source_type: "web_query".to_string(),
                 extracted: 67,
                 survived: 31,
                 corroborated: 4,
@@ -1551,7 +1551,7 @@ mod tests {
         ];
         let prompt = briefing.format_prompt();
         assert!(
-            prompt.contains("tavily_query survival rate below 50%"),
+            prompt.contains("web_query survival rate below 50%"),
             "Missing low survival annotation. Prompt:\n{prompt}"
         );
     }
@@ -1561,7 +1561,7 @@ mod tests {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![
             ExtractionYield {
-                source_type: "tavily_query".to_string(),
+                source_type: "web_query".to_string(),
                 extracted: 50,
                 survived: 40,
                 corroborated: 4,
@@ -1570,7 +1570,7 @@ mod tests {
         ];
         let prompt = briefing.format_prompt();
         assert!(
-            prompt.contains("tavily_query has high contradiction rate (30%)"),
+            prompt.contains("web_query has high contradiction rate (30%)"),
             "Missing high contradiction annotation. Prompt:\n{prompt}"
         );
     }

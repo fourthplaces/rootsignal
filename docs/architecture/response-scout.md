@@ -91,7 +91,7 @@ For each `EmergentTension`:
 - Create TensionNode with **confidence capped at 0.4** — below the 0.5 target selection threshold, so emergent tensions require external corroboration before becoming Response Scout targets. Prevents infinite loops.
 
 For `future_queries`:
-- Create TavilyQuery sources with `SourceRole::Response` to seed next-run discovery.
+- Create WebQuery sources with `SourceRole::Response` to seed next-run discovery.
 
 ### Integration point
 
@@ -105,7 +105,7 @@ Clustering → Response Mapping → Curiosity Loop → Response Scout → Story 
 
 Per tension investigated:
 - 3 Claude Haiku calls (investigation + structuring)
-- 5 Tavily searches
+- 5 web searches
 - 3 Chrome page reads
 
 The scout checks budget availability before starting and skips if exhausted.
@@ -151,7 +151,7 @@ Events are inherently temporal. A "Know Your Rights workshop" from 2023 injected
 | `modules/rootsignal-scout/src/response_scout.rs` | Main module: struct, prompts, investigation, finding processing |
 | `modules/rootsignal-scout/src/curiosity.rs` | Tool types shared via `pub(crate)`: `SearcherHandle`, `ScraperHandle`, `WebSearchTool`, `ReadPageTool` |
 | `modules/rootsignal-graph/src/writer.rs` | New methods: `find_response_scout_targets`, `get_existing_responses`, `mark_response_scouted` |
-| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_RESPONSE_SCOUT`, `TAVILY_RESPONSE_SCOUT`, `CHROME_RESPONSE_SCOUT` |
+| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_RESPONSE_SCOUT`, `SEARCH_RESPONSE_SCOUT`, `CHROME_RESPONSE_SCOUT` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs response scout after curiosity loop |
 
 ## Future Work

@@ -165,7 +165,7 @@ let is_city_local = {
 
 Every source is treated as city-local. Geo-filter Case 4 always triggers: signals with location names that don't match `geo_terms` get a 0.8x confidence penalty instead of being rejected.
 
-A Tavily search for "food shelf Minneapolis" could return a St. Paul result with location name "Midway" — accepted with just a 20% confidence penalty instead of being filtered out. This defeats the purpose of the geo filter for non-local results.
+A Serper search for "food shelf Minneapolis" could return a St. Paul result with location name "Midway" — accepted with just a 20% confidence penalty instead of being filtered out. This defeats the purpose of the geo filter for non-local results.
 
 ---
 
@@ -173,11 +173,11 @@ A Tavily search for "food shelf Minneapolis" could return a St. Paul result with
 
 Cost estimates below are rough order-of-magnitude based on Feb 2026 pricing. Actual costs vary by token count, result length, and provider plan.
 
-**Assumptions**: Tavily ~$0.01/search (standard plan), Claude Haiku ~$0.005/extraction call (short context). These should be re-validated if providers change pricing.
+**Assumptions**: Serper ~$0.01/search (standard plan), Claude Haiku ~$0.005/extraction call (short context). These should be re-validated if providers change pricing.
 
 | Constant | Value | Est. Cost Per Run | Justification |
 |---|---|---|---|
-| `MAX_TAVILY_QUERIES_PER_RUN` | 10 | ~$0.10 | Safety cap; daily budget system tracks total |
+| `MAX_SEARCH_QUERIES_PER_RUN` | 10 | ~$0.10 | Safety cap; daily budget system tracks total |
 | `MAX_SIGNALS_INVESTIGATED` | 5 | ~$0.20 (queries + LLM) | Prevents single phase from burning budget |
 | `MAX_CURIOSITY_QUERIES` | 7 | ~$0.10 | Two discovery runs per cycle = ~$0.20 |
 | `MAX_CONCURRENT_CHROME` | 2 | N/A | Railway PID/memory limits (~100MB per instance) |
@@ -244,7 +244,7 @@ The symmetric threshold for DIRECT and CONTRADICTING (both 0.7) is epistemically
 |---|---|---|
 | 1 | **Fix `scrape_count` in weight computation** — Use actual scrape count, not `signals_produced` | Add a `scrape_count` field to `SourceNode`. Unit test: source with 10 signals / 20 scrapes computes weight ~0.5, not ~1.0. Existing `weight_formula_bayesian_smoothing` test updated. |
 | 2 | **Remove fabricated fallback strings** — Use `Option<String>` instead of "Contact for details" / "Support needed" | `availability` and `what_needed` are `Option<String>` on their respective node types. `grep -r "Contact for details\|Support needed" modules/` returns zero hits. API returns `null` for missing fields. |
-| 3 | **Fix `is_city_local`** — Check source's city field against current city slug | Unit test: Tavily result with non-matching location_name from a non-city source is rejected (geo_filtered incremented). Same signal from a city-matching source gets 0.8x penalty instead. |
+| 3 | **Fix `is_city_local`** — Check source's city field against current city slug | Unit test: Serper result with non-matching location_name from a non-city source is rejected (geo_filtered incremented). Same signal from a city-matching source gets 0.8x penalty instead. |
 
 ### Medium Priority (Design Issues)
 

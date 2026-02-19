@@ -28,7 +28,7 @@ The scout pipeline is observational and present-tense. Power analysis is structu
 
 **Different evidentiary bar.** If the gravity scout gets something wrong, worst case is a stale event that ages out in 60 days. If the power analysis incorrectly attributes an action to an actor — "Mayor Smith blocked affordable housing" when it was a committee vote — that's misattribution with reputational consequences. Power claims need higher accuracy than "here's an event happening Tuesday."
 
-**Different source ecosystem.** The scout uses Tavily web search, Chrome scraping, and social media APIs. Power analysis needs government databases, legislative records, campaign finance data, public meeting minutes, voting records, budget documents. Different tools entirely.
+**Different source ecosystem.** The scout uses Serper web search, Chrome scraping, and social media APIs. Power analysis needs government databases, legislative records, campaign finance data, public meeting minutes, voting records, budget documents. Different tools entirely.
 
 **Different pacing.** The scout runs every few days to stay current with community signals. Power structures change slowly. Zoning laws don't shift weekly. Legislative sessions have their own cadence. Weekly or monthly analysis is sufficient.
 

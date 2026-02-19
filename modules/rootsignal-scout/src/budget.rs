@@ -14,25 +14,25 @@ pub struct BudgetTracker {
 pub struct OperationCost;
 
 impl OperationCost {
-    pub const TAVILY_SEARCH: u64 = 1;
+    pub const SEARCH_QUERY: u64 = 1;
     pub const CHROME_SCRAPE: u64 = 1; // ~0.5 but round up
     pub const APIFY_SOCIAL: u64 = 2;
     pub const CLAUDE_HAIKU_EXTRACTION: u64 = 1; // ~0.2 but round up
     pub const VOYAGE_EMBEDDING: u64 = 1; // ~0.01 per batch, round up
     pub const CLAUDE_HAIKU_SYNTHESIS: u64 = 1; // ~0.5 per story
     pub const CLAUDE_HAIKU_INVESTIGATION: u64 = 1; // ~0.1 per query gen + ~1 per search
-    pub const TAVILY_INVESTIGATION: u64 = 1;
+    pub const SEARCH_INVESTIGATION: u64 = 1;
     pub const CLAUDE_HAIKU_DISCOVERY: u64 = 1; // ~0.2 per discovery briefing
     pub const CLAUDE_HAIKU_CURIOSITY: u64 = 2; // per signal: agentic investigation + structuring
-    pub const TAVILY_CURIOSITY: u64 = 3;       // per signal: up to 3 searches
+    pub const SEARCH_CURIOSITY: u64 = 3;       // per signal: up to 3 searches
     pub const CHROME_CURIOSITY: u64 = 2;        // per signal: up to 2 page reads
     pub const CLAUDE_HAIKU_STORY_WEAVE: u64 = 1; // per story: synthesis enrichment
     pub const CLAUDE_HAIKU_RESPONSE_SCOUT: u64 = 3; // per tension: investigation + structuring
-    pub const TAVILY_RESPONSE_SCOUT: u64 = 5;       // per tension: up to 5 searches
+    pub const SEARCH_RESPONSE_SCOUT: u64 = 5;       // per tension: up to 5 searches
     pub const CHROME_RESPONSE_SCOUT: u64 = 3;        // per tension: page reads
     pub const CLAUDE_HAIKU_ACTOR_SWEEP: u64 = 1;    // per batch: actor extraction from signal text
     pub const CLAUDE_HAIKU_GRAVITY_SCOUT: u64 = 3;  // per tension: investigation + extraction (may terminate early)
-    pub const TAVILY_GRAVITY_SCOUT: u64 = 5;        // per tension: early termination uses ~2-3
+    pub const SEARCH_GRAVITY_SCOUT: u64 = 5;        // per tension: early termination uses ~2-3
     pub const CHROME_GRAVITY_SCOUT: u64 = 3;        // per tension: page reads
 }
 

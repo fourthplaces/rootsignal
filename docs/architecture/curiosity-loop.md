@@ -99,7 +99,7 @@ For each `DiscoveredTension`:
 
 Per signal investigated:
 - 1 Claude Haiku call for the agentic phase (multi-turn with tools)
-- ~3 Tavily searches (via `web_search` tool)
+- ~3 web searches (via `web_search` tool)
 - ~2 Chrome page reads (via `read_page` tool)
 - 1 Claude Haiku call for structured extraction
 
@@ -131,7 +131,7 @@ Without it, the LLM would re-discover "housing affordability crisis" from every 
 
 ### Why retry failed investigations?
 
-Failures are often transient — a Tavily rate limit, a page that was temporarily down, a Chrome timeout. Three retries with the pre-pass promotion to `abandoned` ensures legitimate failures don't clog the target queue indefinitely.
+Failures are often transient — a Serper rate limit, a page that was temporarily down, a Chrome timeout. Three retries with the pre-pass promotion to `abandoned` ensures legitimate failures don't clog the target queue indefinitely.
 
 ### Why not check worthiness before investigating (like response scout doesn't)?
 
@@ -143,5 +143,5 @@ The curiosity loop *does* check worthiness — but it's integrated into the inve
 |------|------|
 | `modules/rootsignal-scout/src/curiosity.rs` | Main module: struct, prompts, tool wrappers, investigation, finding processing |
 | `modules/rootsignal-graph/src/writer.rs` | Target selection: `find_curiosity_targets`, `mark_curiosity_investigated`, `get_tension_landscape` |
-| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_CURIOSITY`, `TAVILY_CURIOSITY`, `CHROME_CURIOSITY` |
+| `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_CURIOSITY`, `SEARCH_CURIOSITY`, `CHROME_CURIOSITY` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs curiosity loop before response scout |

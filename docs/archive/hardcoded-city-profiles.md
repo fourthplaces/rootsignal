@@ -9,7 +9,7 @@ These profiles were the original compile-time source configurations.
 - **Radius:** 30 km
 - **Geo terms:** Minneapolis, St. Paul, Saint Paul, Twin Cities, Minnesota, Hennepin, Ramsey, MN, Mpls
 
-### Tavily Queries
+### Web Search Queries
 
 - Twin Cities volunteer opportunities 2026
 - Minneapolis food shelf food bank hours
@@ -166,7 +166,7 @@ TwinCitiesMutualAid, MplsMutualAid, SaintPaulMutualAid
 - **Instagram/Facebook/Entity mappings:** none (empty)
 - **Discovery topics:** none
 
-### Tavily Queries
+### Web Search Queries
 
 - NYC volunteer opportunities 2026
 - New York City food bank pantry hours
@@ -215,7 +215,7 @@ TwinCitiesMutualAid, MplsMutualAid, SaintPaulMutualAid
 - **Instagram/Facebook/Entity mappings:** none (empty)
 - **Discovery topics:** none
 
-### Tavily Queries
+### Web Search Queries
 
 - Portland Oregon volunteer opportunities 2026
 - Portland food bank pantry hours
@@ -263,7 +263,7 @@ TwinCitiesMutualAid, MplsMutualAid, SaintPaulMutualAid
 - **Instagram/Facebook/Entity mappings:** none (empty)
 - **Discovery topics:** none
 
-### Tavily Queries
+### Web Search Queries
 
 - Berlin volunteer opportunities 2026
 - Berlin community events this week

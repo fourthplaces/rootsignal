@@ -11,7 +11,7 @@ use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::scraper::WebSearcher;
 
-const MAX_TAVILY_QUERIES_PER_RUN: usize = 10;
+const MAX_SEARCH_QUERIES_PER_RUN: usize = 10;
 const MAX_SIGNALS_INVESTIGATED: usize = 5;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
@@ -29,7 +29,7 @@ pub struct InvestigationStats {
     pub targets_investigated: u32,
     pub targets_failed: u32,
     pub evidence_created: u32,
-    pub tavily_queries_used: u32,
+    pub search_queries_used: u32,
     pub confidence_adjustments: u32,
 }
 
@@ -37,9 +37,9 @@ impl std::fmt::Display for InvestigationStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Investigation: {} targets found, {} investigated, {} failed, {} evidence created, {} Tavily queries, {} confidence adjustments",
+            "Investigation: {} targets found, {} investigated, {} failed, {} evidence created, {} search queries, {} confidence adjustments",
             self.targets_found, self.targets_investigated, self.targets_failed,
-            self.evidence_created, self.tavily_queries_used, self.confidence_adjustments,
+            self.evidence_created, self.search_queries_used, self.confidence_adjustments,
         )
     }
 }
@@ -144,8 +144,8 @@ impl<'a> Investigator<'a> {
         info!(count = targets.len(), "Investigation targets selected");
 
         for target in &targets {
-            if stats.tavily_queries_used >= MAX_TAVILY_QUERIES_PER_RUN as u32 {
-                info!("Tavily query budget exhausted, stopping investigation");
+            if stats.search_queries_used >= MAX_SEARCH_QUERIES_PER_RUN as u32 {
+                info!("Search query budget exhausted, stopping investigation");
                 break;
             }
 
@@ -213,15 +213,15 @@ impl<'a> Investigator<'a> {
             return Ok(0);
         }
 
-        // 2. Execute Tavily searches (budget-limited)
+        // 2. Execute web searches (budget-limited)
         let source_domain = extract_domain(&target.source_url);
         let mut all_results = Vec::new();
 
         for query in &queries {
-            if stats.tavily_queries_used >= MAX_TAVILY_QUERIES_PER_RUN as u32 {
+            if stats.search_queries_used >= MAX_SEARCH_QUERIES_PER_RUN as u32 {
                 break;
             }
-            stats.tavily_queries_used += 1;
+            stats.search_queries_used += 1;
 
             match self.searcher.search(query, 5).await {
                 Ok(results) => {
@@ -234,7 +234,7 @@ impl<'a> Investigator<'a> {
                     }
                 }
                 Err(e) => {
-                    warn!(query, error = %e, "Investigation Tavily search failed");
+                    warn!(query, error = %e, "Investigation search failed");
                 }
             }
         }

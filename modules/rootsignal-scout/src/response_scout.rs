@@ -706,7 +706,7 @@ impl<'a> ResponseScout<'a> {
         stats: &mut ResponseScoutStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&self.city_slug, SourceType::TavilyQuery, &cv);
+        let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
         let gap_context = format!(
             "Response Scout: response discovery for \"{}\"",
             target.title,
@@ -717,7 +717,7 @@ impl<'a> ResponseScout<'a> {
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::TavilyQuery,
+            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::GapAnalysis,
             city: self.city_slug.clone(),
             created_at: Utc::now(),

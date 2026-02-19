@@ -1821,8 +1821,8 @@ async fn create_give_with_implied_queries(
     client.inner().run(q).await.expect("Failed to create give with implied_queries");
 }
 
-/// Helper: create a TavilyQuery source node.
-async fn create_tavily_source(
+/// Helper: create a WebQuery source node.
+async fn create_web_query_source(
     client: &GraphClient,
     city: &str,
     query_text: &str,
@@ -1836,7 +1836,7 @@ async fn create_tavily_source(
             canonical_key: $key,
             canonical_value: $query,
             url: $query,
-            source_type: 'tavily_query',
+            source_type: 'web_query',
             discovery_method: 'curated',
             city: $city,
             created_at: datetime($now),
@@ -1852,13 +1852,13 @@ async fn create_tavily_source(
         })"
     )
     .param("id", id.to_string())
-    .param("key", format!("{city}:tavily_query:{query_text}"))
+    .param("key", format!("{city}:web_query:{query_text}"))
     .param("query", query_text)
     .param("city", city)
     .param("now", now)
     .param("active", active);
 
-    client.inner().run(q).await.expect("Failed to create tavily source");
+    client.inner().run(q).await.expect("Failed to create web query source");
 }
 
 // ---------------------------------------------------------------------------
@@ -2137,20 +2137,20 @@ async fn recently_linked_signals_works_with_drawn_to() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: get_active_tavily_queries returns active queries only
+// Test: get_active_web_queries returns active queries only
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn active_tavily_queries_filters_inactive() {
+async fn active_web_queries_filters_inactive() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
-    create_tavily_source(&client, "twincities", "immigration services Minneapolis", true).await;
-    create_tavily_source(&client, "twincities", "food shelf volunteer Minneapolis", true).await;
-    create_tavily_source(&client, "twincities", "deactivated old query", false).await;
-    create_tavily_source(&client, "nyc", "immigration services NYC", true).await;
+    create_web_query_source(&client, "twincities", "immigration services Minneapolis", true).await;
+    create_web_query_source(&client, "twincities", "food shelf volunteer Minneapolis", true).await;
+    create_web_query_source(&client, "twincities", "deactivated old query", false).await;
+    create_web_query_source(&client, "nyc", "immigration services NYC", true).await;
 
-    let queries = writer.get_active_tavily_queries("twincities").await.expect("query failed");
+    let queries = writer.get_active_web_queries("twincities").await.expect("query failed");
     assert_eq!(queries.len(), 2, "Should find 2 active twincities queries, got {}", queries.len());
     assert!(queries.contains(&"immigration services Minneapolis".to_string()));
     assert!(queries.contains(&"food shelf volunteer Minneapolis".to_string()));
@@ -2244,10 +2244,10 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "twincities:tavily_query:emergency housing Minneapolis".to_string(),
+        canonical_key: "twincities:web_query:emergency housing Minneapolis".to_string(),
         canonical_value: "emergency housing Minneapolis".to_string(),
         url: None,
-        source_type: SourceType::TavilyQuery,
+        source_type: SourceType::WebQuery,
         discovery_method: DiscoveryMethod::SignalExpansion,
         city: "twincities".to_string(),
         created_at: Utc::now(),
@@ -2273,7 +2273,7 @@ async fn signal_expansion_source_created_with_correct_method() {
         "MATCH (s:Source {canonical_key: $key})
          RETURN s.discovery_method AS dm, s.gap_context AS gc, s.active AS active"
     )
-    .param("key", "twincities:tavily_query:emergency housing Minneapolis");
+    .param("key", "twincities:web_query:emergency housing Minneapolis");
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");

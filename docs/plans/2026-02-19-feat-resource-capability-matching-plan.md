@@ -147,14 +147,14 @@ ON MATCH SET
 ```
 
 **Acceptance criteria:**
-- [ ] `ResourceNode` struct in `types.rs` with: id, name, slug, description, created_at, last_seen, signal_count
-- [ ] `EdgeType` enum has `Requires`, `Prefers`, `Offers` variants with doc comments
-- [ ] `find_or_create_resource()` uses MERGE on slug, idempotent
-- [ ] `create_requires_edge()`, `create_prefers_edge()`, `create_offers_edge()` use MERGE with ON CREATE/ON MATCH
-- [ ] `find_resource_by_slug()` returns existing resource UUID
-- [ ] `find_resource_by_embedding()` queries vector index with configurable threshold
-- [ ] Vector index `resource_embedding` created in graph init
-- [ ] Unit tests for ResourceNode construction and edge type Display
+- [x] `ResourceNode` struct in `types.rs` with: id, name, slug, description, created_at, last_seen, signal_count
+- [x] `EdgeType` enum has `Requires`, `Prefers`, `Offers` variants with doc comments
+- [x] `find_or_create_resource()` uses MERGE on slug, idempotent
+- [x] `create_requires_edge()`, `create_prefers_edge()`, `create_offers_edge()` use MERGE with ON CREATE/ON MATCH
+- [x] `find_resource_by_slug()` returns existing resource UUID
+- [x] `find_resource_by_embedding()` queries vector index with configurable threshold
+- [x] Vector index `resource_embedding` created in graph init
+- [x] Unit tests for ResourceNode construction and edge type Display
 
 ---
 

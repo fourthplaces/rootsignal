@@ -14,7 +14,7 @@ use rootsignal_graph::{
     query, GraphClient, GraphWriter,
     reader::{node_type_label, row_to_node, row_to_story},
 };
-use rootsignal_scout::{bootstrap, scout::Scout, scraper::TavilySearcher};
+use rootsignal_scout::{bootstrap, scout::Scout, scraper::SerperSearcher};
 
 #[derive(Parser)]
 #[command(about = "Run the Root Signal scout for a city")]
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
             writer.upsert_city(&node).await?;
 
             // Run cold start bootstrapper to generate seed sources
-            let searcher = TavilySearcher::new(&config.tavily_api_key);
+            let searcher = SerperSearcher::new(&config.serper_api_key);
             let bootstrapper = bootstrap::ColdStartBootstrapper::new(
                 &writer, &searcher, &config.anthropic_api_key, node.clone(),
             );
@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
         client.clone(),
         &config.anthropic_api_key,
         &config.voyage_api_key,
-        &config.tavily_api_key,
+        &config.serper_api_key,
         &config.apify_api_key,
         city_node,
         config.daily_budget_cents,

@@ -426,6 +426,7 @@ impl SignalExtractor for FixtureExtractor {
         Ok(crate::extractor::ExtractionResult {
             nodes: self.nodes.clone(),
             implied_queries: Vec::new(),
+            resource_tags: Vec::new(),
         })
     }
 }
