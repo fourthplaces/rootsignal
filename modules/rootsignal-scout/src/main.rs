@@ -149,6 +149,9 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Save city name before moving city_node into Scout
+    let city_name = city_node.name.clone();
+
     // Create and run scout
     let scout = Scout::new(
         client.clone(),
@@ -170,6 +173,13 @@ async fn main() -> Result<()> {
     if merged > 0 {
         info!(merged, "Merged duplicate tensions");
     }
+
+    // Actor sweep — extract actors from signals that have none
+    info!("Starting actor sweep...");
+    let sweep_stats = rootsignal_scout::actor_sweep::run_actor_sweep(
+        &writer_ref, &client, &config.anthropic_api_key, &city_name,
+    ).await;
+    info!("{sweep_stats}");
 
     // Compute cause heat (cross-story signal boosting via embedding similarity)
     compute_cause_heat(&client, 0.7).await?;

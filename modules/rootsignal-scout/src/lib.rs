@@ -1,3 +1,4 @@
+pub mod actor_sweep;
 pub mod bootstrap;
 pub mod budget;
 pub mod curiosity;
