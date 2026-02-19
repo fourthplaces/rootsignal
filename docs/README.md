@@ -88,6 +88,8 @@ Architectural exploration. The canonical brainstorm supersedes earlier versions.
 | [Scout Supervisor](brainstorms/2026-02-17-scout-supervisor-brainstorm.md) | draft | Autonomous scout health management |
 | [Signal vs. Affordances](brainstorms/2026-02-17-signal-vs-affordances-brainstorm.md) | draft | What Root Signal is and isn't |
 | [Triangulation Model](brainstorms/2026-02-17-triangulation-model-brainstorm.md) | draft | From echo to structural truth |
+| [Web Archive](brainstorms/2026-02-18-web-archive-brainstorm.md) | draft | Web archive as a signal source |
+| [Gravity-Aware Stories](brainstorms/2026-02-18-gravity-aware-stories-brainstorm.md) | draft | Surface gatherings structurally in stories for platform consumers |
 
 ## Tests
 
