@@ -5,6 +5,7 @@ members = [
     "modules/twilio-rs",
     "modules/rootsignal-common",
     "modules/rootsignal-graph",
+    "modules/browserless-client",
     "modules/rootsignal-scout",
     "modules/rootsignal-editions",
     "modules/rootsignal-scout-supervisor",
@@ -68,6 +69,7 @@ testcontainers = "0.23"
 # Local crates
 ai-client = { path = "modules/ai-client" }
 apify-client = { path = "modules/apify-client" }
+browserless-client = { path = "modules/browserless-client" }
 twilio = { path = "modules/twilio-rs" }
 rootsignal-common = { path = "modules/rootsignal-common" }
 rootsignal-graph = { path = "modules/rootsignal-graph" }

@@ -20,8 +20,7 @@ RUN cargo build --release --bin api
 
 # -- Stage 5: minimal runtime image --
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates libssl3 chromium && rm -rf /var/lib/apt/lists/*
-ENV CHROME_BIN=/usr/bin/chromium
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 

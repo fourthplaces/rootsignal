@@ -308,7 +308,7 @@ impl StoryWeaver {
              WHERE s.synthesis_pending = true OR s.lede IS NULL OR s.lede = ''
              RETURN s.id AS id, s.headline AS headline, s.velocity AS velocity,
                     s.first_seen AS first_seen, s.arc AS arc
-             LIMIT 5"
+             LIMIT 300"
         );
 
         let stories: Vec<(Uuid, String, f64, String, Option<String>)> =
