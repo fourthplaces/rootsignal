@@ -195,7 +195,10 @@ async fn main() -> Result<()> {
         // CORS: support credentials for JWT cookies
         .layer(if cfg!(debug_assertions) {
             tower_http::cors::CorsLayer::new()
-                .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+                .allow_origin([
+                    "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+                    "http://localhost:5174".parse::<HeaderValue>().unwrap(),
+                ])
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([header::CONTENT_TYPE, header::COOKIE])
                 .allow_credentials(true)

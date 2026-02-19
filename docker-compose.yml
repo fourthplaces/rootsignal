@@ -73,6 +73,21 @@ services:
       API_URL: http://api:3000
     command: ["sh", "-c", "npm install && npm run dev"]
 
+  search-app:
+    image: node:22-slim
+    ports:
+      - "5174:5174"
+    depends_on:
+      - api
+    volumes:
+      - ./modules/search-app:/app
+      - search-node-modules:/app/node_modules
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+      API_URL: http://api:3000
+    command: ["sh", "-c", "npm install && npm run dev"]
+
   scout:
     build:
       context: .
@@ -106,3 +121,4 @@ volumes:
   cargo-registry:
   cargo-target:
   admin-node-modules:
+  search-node-modules:
