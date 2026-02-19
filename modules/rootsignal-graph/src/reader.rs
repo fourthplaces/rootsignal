@@ -626,79 +626,6 @@ impl PublicGraphReader {
         Ok(results)
     }
 
-    // --- Edition queries ---
-
-    /// List editions for a city.
-    pub async fn list_editions(
-        &self,
-        city: &str,
-        limit: u32,
-    ) -> Result<Vec<rootsignal_common::EditionNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (e:Edition)
-             WHERE e.city = $city
-             RETURN e
-             ORDER BY e.period_end DESC
-             LIMIT $limit"
-        )
-        .param("city", city)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(edition) = row_to_edition(&row) {
-                results.push(edition);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Get the latest edition for a city.
-    pub async fn latest_edition(
-        &self,
-        city: &str,
-    ) -> Result<Option<rootsignal_common::EditionNode>, neo4rs::Error> {
-        let editions = self.list_editions(city, 1).await?;
-        Ok(editions.into_iter().next())
-    }
-
-    /// Get an edition by ID with its featured stories.
-    pub async fn edition_detail(
-        &self,
-        edition_id: Uuid,
-    ) -> Result<Option<(rootsignal_common::EditionNode, Vec<StoryNode>)>, neo4rs::Error> {
-        let q = query("MATCH (e:Edition {id: $id}) RETURN e")
-            .param("id", edition_id.to_string());
-
-        let mut stream = self.client.graph.execute(q).await?;
-        let edition = match stream.next().await? {
-            Some(row) => match row_to_edition(&row) {
-                Some(e) => e,
-                None => return Ok(None),
-            },
-            None => return Ok(None),
-        };
-
-        // Get featured stories
-        let q = query(
-            "MATCH (e:Edition {id: $id})-[:FEATURES]->(s:Story)
-             RETURN s
-             ORDER BY s.energy DESC"
-        )
-        .param("id", edition_id.to_string());
-
-        let mut stories = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                stories.push(story);
-            }
-        }
-
-        Ok(Some((edition, stories)))
-    }
-
     // --- Tension response queries ---
 
     /// Get Give/Event/Ask signals that respond to a tension, with edge metadata.
@@ -918,28 +845,6 @@ impl PublicGraphReader {
             Some(row) => Ok(row_to_story(&row)),
             None => Ok(None),
         }
-    }
-
-    /// Get stories for an edition.
-    pub async fn edition_stories(
-        &self,
-        edition_id: Uuid,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (e:Edition {id: $id})-[:FEATURES]->(s:Story)
-             RETURN s
-             ORDER BY s.energy DESC"
-        )
-        .param("id", edition_id.to_string());
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
     }
 
     /// Batch-fetch evidence for multiple signal IDs. Returns map of signal_id -> Vec<EvidenceNode>.
@@ -1518,30 +1423,3 @@ fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::ActorNode> {
     })
 }
 
-fn row_to_edition(row: &neo4rs::Row) -> Option<rootsignal_common::EditionNode> {
-    let n: neo4rs::Node = row.get("e").ok()?;
-
-    let id_str: String = n.get("id").ok()?;
-    let id = Uuid::parse_str(&id_str).ok()?;
-
-    let city: String = n.get("city").unwrap_or_default();
-    let period: String = n.get("period").unwrap_or_default();
-    let period_start = parse_story_datetime(&n, "period_start");
-    let period_end = parse_story_datetime(&n, "period_end");
-    let generated_at = parse_story_datetime(&n, "generated_at");
-    let story_count: i64 = n.get("story_count").unwrap_or(0);
-    let new_signal_count: i64 = n.get("new_signal_count").unwrap_or(0);
-    let editorial_summary: String = n.get("editorial_summary").unwrap_or_default();
-
-    Some(rootsignal_common::EditionNode {
-        id,
-        city,
-        period,
-        period_start,
-        period_end,
-        generated_at,
-        story_count: story_count as u32,
-        new_signal_count: new_signal_count as u32,
-        editorial_summary,
-    })
-}

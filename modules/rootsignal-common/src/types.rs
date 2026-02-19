@@ -183,21 +183,6 @@ pub struct ActorNode {
     pub typical_roles: Vec<String>,
 }
 
-// --- Edition Types ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EditionNode {
-    pub id: Uuid,
-    pub city: String,
-    pub period: String,
-    pub period_start: DateTime<Utc>,
-    pub period_end: DateTime<Utc>,
-    pub generated_at: DateTime<Utc>,
-    pub story_count: u32,
-    pub new_signal_count: u32,
-    pub editorial_summary: String,
-}
-
 // --- Response Mapping Types ---
 
 // RoleActionPlan removed: audience roles no longer drive action routing.
@@ -728,8 +713,6 @@ pub enum EdgeType {
     ActedIn,
     /// Story -> Story (evolution)
     EvolvedFrom,
-    /// Edition -> Story (editorial curation)
-    Features,
     /// Signal <-> Signal (clustering). Properties: weight
     SimilarTo,
     /// Submission -> Source (human submission)

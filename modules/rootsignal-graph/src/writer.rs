@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EditionNode, EvidenceNode,
+    ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EvidenceNode,
     EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode,
     SourceRole, SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
@@ -1967,55 +1967,6 @@ impl GraphWriter {
         Ok(())
     }
 
-    // --- Edition operations ---
-
-    /// Create an Edition node.
-    pub async fn create_edition(&self, edition: &EditionNode) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "CREATE (e:Edition {
-                id: $id,
-                city: $city,
-                period: $period,
-                period_start: datetime($period_start),
-                period_end: datetime($period_end),
-                generated_at: datetime($generated_at),
-                story_count: $story_count,
-                new_signal_count: $new_signal_count,
-                editorial_summary: $editorial_summary
-            })"
-        )
-        .param("id", edition.id.to_string())
-        .param("city", edition.city.as_str())
-        .param("period", edition.period.as_str())
-        .param("period_start", format_datetime(&edition.period_start))
-        .param("period_end", format_datetime(&edition.period_end))
-        .param("generated_at", format_datetime(&edition.generated_at))
-        .param("story_count", edition.story_count as i64)
-        .param("new_signal_count", edition.new_signal_count as i64)
-        .param("editorial_summary", edition.editorial_summary.as_str());
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Link an edition to a featured story.
-    pub async fn link_edition_to_story(
-        &self,
-        edition_id: Uuid,
-        story_id: Uuid,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (e:Edition {id: $edition_id})
-             MATCH (s:Story {id: $story_id})
-             MERGE (e)-[:FEATURES]->(s)"
-        )
-        .param("edition_id", edition_id.to_string())
-        .param("story_id", story_id.to_string());
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
     /// Get recent tension titles and what_would_help for discovery queries.
     pub async fn get_recent_tensions(&self, limit: u32) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
         let q = query(
@@ -2271,37 +2222,6 @@ impl GraphWriter {
                 if !embedding.is_empty() {
                     results.push((id, embedding));
                 }
-            }
-        }
-        Ok(results)
-    }
-
-    /// Get stories active in a time period (for edition generation).
-    pub async fn get_stories_in_period(
-        &self,
-        start: &DateTime<Utc>,
-        end: &DateTime<Utc>,
-    ) -> Result<Vec<(Uuid, String, String, f64)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story)
-             WHERE datetime(s.last_updated) >= datetime($start)
-               AND datetime(s.last_updated) <= datetime($end)
-             RETURN s.id AS id, s.headline AS headline,
-                    s.category AS category, s.energy AS energy
-             ORDER BY s.energy DESC"
-        )
-        .param("start", format_datetime(start))
-        .param("end", format_datetime(end));
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                let headline: String = row.get("headline").unwrap_or_default();
-                let category: String = row.get("category").unwrap_or_default();
-                let energy: f64 = row.get("energy").unwrap_or(0.0);
-                results.push((id, headline, category, energy));
             }
         }
         Ok(results)

@@ -38,16 +38,16 @@ export function ActorsPage() {
             <thead>
               <tr className="border-b border-border text-left text-muted-foreground">
                 <th className="pb-2 font-medium">Name</th>
-                <th className="pb-2 font-medium">Role</th>
-                <th className="pb-2 font-medium">Stories</th>
+                <th className="pb-2 font-medium">Type</th>
+                <th className="pb-2 font-medium">Signals</th>
               </tr>
             </thead>
             <tbody>
-              {actors.map((a: { id: string; name: string; role: string; storyCount: number }) => (
+              {actors.map((a: { id: string; name: string; actorType: string; description: string | null; signalCount: number }) => (
                 <tr key={a.id} className="border-b border-border/50">
                   <td className="py-2">{a.name}</td>
-                  <td className="py-2 text-muted-foreground">{a.role}</td>
-                  <td className="py-2">{a.storyCount}</td>
+                  <td className="py-2 text-muted-foreground">{a.actorType}</td>
+                  <td className="py-2">{a.signalCount}</td>
                 </tr>
               ))}
             </tbody>

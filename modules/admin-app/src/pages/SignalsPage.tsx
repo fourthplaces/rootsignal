@@ -2,6 +2,17 @@ import { Link } from "react-router";
 import { useQuery } from "@apollo/client";
 import { SIGNALS_RECENT } from "@/graphql/queries";
 
+// Extract common fields from the union type signal
+function getSignalFields(s: Record<string, unknown>) {
+  return {
+    id: s.id as string,
+    title: s.title as string,
+    confidence: s.confidence as number,
+    extractedAt: s.extractedAt as string,
+    __typename: s.__typename as string,
+  };
+}
+
 export function SignalsPage() {
   const { data, loading } = useQuery(SIGNALS_RECENT, {
     variables: { limit: 100 },
@@ -21,20 +32,14 @@ export function SignalsPage() {
               <th className="pb-2 font-medium">Title</th>
               <th className="pb-2 font-medium">Type</th>
               <th className="pb-2 font-medium">Confidence</th>
-              <th className="pb-2 font-medium">City</th>
-              <th className="pb-2 font-medium">Created</th>
+              <th className="pb-2 font-medium">Extracted</th>
             </tr>
           </thead>
           <tbody>
-            {signals.map(
-              (s: {
-                id: string;
-                title: string;
-                signalType: string;
-                confidence: number;
-                city: string;
-                createdAt: string;
-              }) => (
+            {signals.map((raw: Record<string, unknown>) => {
+              const s = getSignalFields(raw);
+              const typeName = s.__typename.replace("Gql", "").replace("Signal", "");
+              return (
                 <tr key={s.id} className="border-b border-border/50 hover:bg-accent/30">
                   <td className="py-2">
                     <Link to={`/signals/${s.id}`} className="hover:underline">
@@ -43,17 +48,16 @@ export function SignalsPage() {
                   </td>
                   <td className="py-2">
                     <span className="px-2 py-0.5 rounded-full text-xs bg-secondary">
-                      {s.signalType}
+                      {typeName}
                     </span>
                   </td>
                   <td className="py-2">{(s.confidence * 100).toFixed(0)}%</td>
-                  <td className="py-2">{s.city}</td>
                   <td className="py-2 text-muted-foreground">
-                    {new Date(s.createdAt).toLocaleDateString()}
+                    {new Date(s.extractedAt).toLocaleDateString()}
                   </td>
                 </tr>
-              ),
-            )}
+              );
+            })}
           </tbody>
         </table>
       </div>

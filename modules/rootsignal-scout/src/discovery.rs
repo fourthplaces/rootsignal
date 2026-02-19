@@ -276,6 +276,18 @@ impl DiscoveryBriefing {
 pub struct DiscoveryPlan {
     #[serde(default, deserialize_with = "deserialize_queries")]
     pub queries: Vec<DiscoveryQuery>,
+    /// Social media discovery topics (hashtags + search terms).
+    /// Searched across Instagram, X/Twitter, TikTok, and GoFundMe.
+    #[serde(default)]
+    pub social_topics: Vec<SocialTopic>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SocialTopic {
+    /// A hashtag or search term (plain text, no # prefix)
+    pub topic: String,
+    /// Why this topic — what gap it fills on social media
+    pub reasoning: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -337,7 +349,29 @@ pub fn discovery_system_prompt(city_name: &str) -> String {
          for response-seeking queries. But ALWAYS reserve at least 2 queries for\n\
          low-engagement or novel tensions — early signals matter.\n\
          \n\
-         For each query, explain your reasoning — why this search, what gap it fills."
+         For each query, explain your reasoning — why this search, what gap it fills.\n\
+         \n\
+         ## SOCIAL MEDIA DISCOVERY TOPICS\n\
+         \n\
+         Additionally, generate 2-5 social media discovery topics — hashtags and\n\
+         search terms for finding INDIVIDUALS posting publicly about community\n\
+         tensions on Instagram, X/Twitter, TikTok, and GoFundMe.\n\
+         \n\
+         Social topics should target:\n\
+         - Individuals publicly advocating, volunteering, or organizing\n\
+         - GoFundMe campaigns for community causes\n\
+         - Hashtags used by local advocacy communities\n\
+         - Search terms for mutual aid, donations, volunteer coordination\n\
+         \n\
+         Include \"{city_name}\" or state abbreviation. Examples:\n\
+         - \"MNimmigration\" (Instagram hashtag)\n\
+         - \"sanctuary city {city_name} volunteer\" (X/Twitter keyword)\n\
+         - \"immigration legal aid Minnesota\" (GoFundMe search)\n\
+         \n\
+         Focus on PEOPLE, not organizations — individuals who chose to be\n\
+         publicly visible. Organizations may be deliberately hidden.\n\
+         \n\
+         For each topic, explain your reasoning."
     )
 }
 
@@ -379,21 +413,26 @@ impl<'a> SourceDiscoverer<'a> {
         }
     }
 
-    /// Run all discovery triggers. Returns stats on what was found.
-    pub async fn run(&self) -> DiscoveryStats {
+    /// Run all discovery triggers. Returns stats and social topics for topic discovery.
+    pub async fn run(&self) -> (DiscoveryStats, Vec<String>) {
         let mut stats = DiscoveryStats::default();
+        let mut social_topics = Vec::new();
 
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
         self.discover_from_actors(&mut stats).await;
 
         // 2. LLM-driven curiosity engine (with mechanical fallback)
-        self.discover_from_curiosity(&mut stats).await;
+        self.discover_from_curiosity(&mut stats, &mut social_topics).await;
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
             info!("{stats}");
         }
 
-        stats
+        if !social_topics.is_empty() {
+            info!(count = social_topics.len(), "Social discovery topics generated");
+        }
+
+        (stats, social_topics)
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
@@ -528,7 +567,7 @@ impl<'a> SourceDiscoverer<'a> {
     }
 
     /// LLM-driven curiosity engine with mechanical fallback.
-    async fn discover_from_curiosity(&self, stats: &mut DiscoveryStats) {
+    async fn discover_from_curiosity(&self, stats: &mut DiscoveryStats, social_topics: &mut Vec<String>) {
         // Guard: no Claude client → mechanical fallback
         let claude = match &self.claude {
             Some(c) => c,
@@ -578,6 +617,17 @@ impl<'a> SourceDiscoverer<'a> {
 
         // Record budget spend after successful response
         self.budget.spend(OperationCost::CLAUDE_HAIKU_DISCOVERY);
+
+        // Extract social topics from plan (for topic discovery pipeline)
+        const MAX_SOCIAL_TOPICS: usize = 5;
+        for st in plan.social_topics.iter().take(MAX_SOCIAL_TOPICS) {
+            info!(
+                topic = st.topic.as_str(),
+                reasoning = st.reasoning.as_str(),
+                "LLM discovery: social topic"
+            );
+            social_topics.push(st.topic.clone());
+        }
 
         // Create sources from plan
         let existing_queries: HashSet<String> = briefing.existing_queries.iter()
@@ -1221,6 +1271,7 @@ mod tests {
         assert_eq!(plan.queries[0].query, "mutual aid Minneapolis");
         assert!(plan.queries[0].related_tension.is_some());
         assert!(plan.queries[1].related_tension.is_none());
+        assert!(plan.social_topics.is_empty(), "Missing social_topics should default to empty");
     }
 
     #[test]
@@ -1228,6 +1279,32 @@ mod tests {
         let json = r#"{"queries": null}"#;
         let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
         assert!(plan.queries.is_empty());
+        assert!(plan.social_topics.is_empty());
+    }
+
+    #[test]
+    fn discovery_plan_deserializes_social_topics() {
+        let json = r#"{
+            "queries": [],
+            "social_topics": [
+                {"topic": "MNimmigration", "reasoning": "find immigration advocates"},
+                {"topic": "sanctuary city Minneapolis", "reasoning": "find volunteer organizers"}
+            ]
+        }"#;
+        let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.social_topics.len(), 2);
+        assert_eq!(plan.social_topics[0].topic, "MNimmigration");
+        assert_eq!(plan.social_topics[1].topic, "sanctuary city Minneapolis");
+    }
+
+    #[test]
+    fn discovery_plan_social_topics_default_when_missing() {
+        let json = r#"{"queries": [
+            {"query": "test", "reasoning": "r", "gap_type": "unmet_tension", "related_tension": null}
+        ]}"#;
+        let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.queries.len(), 1);
+        assert!(plan.social_topics.is_empty(), "Missing social_topics field should default to empty vec");
     }
 
     #[test]

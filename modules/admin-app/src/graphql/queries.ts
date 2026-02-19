@@ -1,5 +1,34 @@
 import { gql } from "@apollo/client";
 
+// Shared fields across all signal types (from signal_meta_resolvers macro)
+const SIGNAL_FIELDS = `
+  ... on GqlEventSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    startsAt endsAt actionUrl organizer isRecurring
+  }
+  ... on GqlGiveSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    actionUrl availability isOngoing
+  }
+  ... on GqlAskSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    urgency whatNeeded actionUrl goal
+  }
+  ... on GqlNoticeSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    severity category effectiveDate sourceAuthority
+  }
+  ... on GqlTensionSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    severity category whatWouldHelp
+  }
+`;
+
 export const ME = gql`
   query Me {
     me {
@@ -165,15 +194,7 @@ export const SIGNALS_NEAR_GEO_JSON = gql`
 export const SIGNALS_RECENT = gql`
   query SignalsRecent($limit: Int, $types: [SignalType!]) {
     signalsRecent(limit: $limit, types: $types) {
-      id
-      title
-      summary
-      signalType
-      lat
-      lng
-      confidence
-      createdAt
-      city
+      ${SIGNAL_FIELDS}
     }
   }
 `;
@@ -181,30 +202,31 @@ export const SIGNALS_RECENT = gql`
 export const SIGNAL_DETAIL = gql`
   query Signal($id: UUID!) {
     signal(id: $id) {
-      id
-      title
-      summary
-      signalType
-      lat
-      lng
-      confidence
-      createdAt
-      city
-      evidence {
-        id
-        url
-        snippet
-        sourceType
+      ${SIGNAL_FIELDS}
+      ... on GqlEventSignal {
+        evidence { id sourceUrl snippet relevance }
+        actors { id name actorType }
+        story { id headline arc }
       }
-      actors {
-        id
-        name
-        role
+      ... on GqlGiveSignal {
+        evidence { id sourceUrl snippet relevance }
+        actors { id name actorType }
+        story { id headline arc }
       }
-      story {
-        id
-        title
-        arc
+      ... on GqlAskSignal {
+        evidence { id sourceUrl snippet relevance }
+        actors { id name actorType }
+        story { id headline arc }
+      }
+      ... on GqlNoticeSignal {
+        evidence { id sourceUrl snippet relevance }
+        actors { id name actorType }
+        story { id headline arc }
+      }
+      ... on GqlTensionSignal {
+        evidence { id sourceUrl snippet relevance }
+        actors { id name actorType }
+        story { id headline arc }
       }
     }
   }
@@ -214,12 +236,14 @@ export const STORIES = gql`
   query Stories($limit: Int, $status: String) {
     stories(limit: $limit, status: $status) {
       id
-      title
+      headline
+      summary
       arc
       category
       energy
       signalCount
-      createdAt
+      firstSeen
+      status
     }
   }
 `;
@@ -228,13 +252,19 @@ export const STORY_DETAIL = gql`
   query Story($id: UUID!) {
     story(id: $id) {
       id
-      title
+      headline
+      summary
       arc
       category
       energy
-      summary
       signalCount
-      createdAt
+      firstSeen
+      lastUpdated
+      velocity
+      dominantType
+      status
+      lede
+      narrative
     }
   }
 `;
@@ -244,19 +274,11 @@ export const ACTORS = gql`
     actors(city: $city, limit: $limit) {
       id
       name
-      role
-      storyCount
+      actorType
+      description
+      signalCount
+      city
     }
   }
 `;
 
-export const EDITIONS = gql`
-  query Editions($city: String!, $limit: Int) {
-    editions(city: $city, limit: $limit) {
-      id
-      title
-      publishedAt
-      signalCount
-    }
-  }
-`;

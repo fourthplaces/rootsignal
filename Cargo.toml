@@ -7,7 +7,6 @@ members = [
     "modules/rootsignal-graph",
     "modules/browserless-client",
     "modules/rootsignal-scout",
-    "modules/rootsignal-editions",
     "modules/rootsignal-scout-supervisor",
     "modules/rootsignal-api",
     "modules/simweb",

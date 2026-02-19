@@ -118,6 +118,15 @@ pub struct TweetScraperInput {
     pub max_items: u32,
 }
 
+/// Input for X/Twitter keyword search via apidojo/tweet-scraper.
+#[derive(Debug, Clone, Serialize)]
+pub struct TweetSearchInput {
+    #[serde(rename = "searchTerms")]
+    pub search_terms: Vec<String>,
+    #[serde(rename = "maxItems")]
+    pub max_items: u32,
+}
+
 /// Author info nested inside a Tweet.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TweetAuthor {
@@ -152,10 +161,19 @@ impl Tweet {
     }
 }
 
-/// Input for the clockworks/tiktok-scraper actor.
+/// Input for the clockworks/tiktok-scraper actor (profile-based).
 #[derive(Debug, Clone, Serialize)]
 pub struct TikTokScraperInput {
     pub profiles: Vec<String>,
+    #[serde(rename = "resultsPerPage")]
+    pub results_per_page: u32,
+}
+
+/// Input for TikTok keyword/hashtag search.
+#[derive(Debug, Clone, Serialize)]
+pub struct TikTokSearchInput {
+    #[serde(rename = "searchQueries")]
+    pub search_queries: Vec<String>,
     #[serde(rename = "resultsPerPage")]
     pub results_per_page: u32,
 }

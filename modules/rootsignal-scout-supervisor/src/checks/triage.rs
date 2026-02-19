@@ -298,7 +298,7 @@ async fn triage_near_duplicates(
     Ok(suspects)
 }
 
-/// Signals with very low confidence that appear in confirmed stories or editions.
+/// Signals with very low confidence that appear in confirmed stories.
 async fn triage_low_confidence_high_visibility(
     client: &GraphClient,
     from_ts: &str,

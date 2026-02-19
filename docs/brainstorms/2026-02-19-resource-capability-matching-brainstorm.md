@@ -99,6 +99,8 @@ One query, three orgs, three different tensions. Clean.
 - **Resource heat**: count of Requires edges × urgency of connected Asks. Surfaces "most needed resources right now."
 - **Resource gap analysis**: tensions with many Asks but few Gives for a resource type → unmet need.
 - **Cross-tension resource prism**: shared bottlenecks across siloed tensions (housing + education + food access all need `reliable-internet`).
+- **Spike-triggered consolidation**: when 50+ signals hit the graph in an hour (disaster spike), trigger immediate re-dedup of Resource nodes in that geographic bounding box. Daily batch is fine for steady-state; disaster tempo needs faster consolidation.
+- **Disaster-domain seed vocabulary**: extend the seed list with terms like `search-and-rescue`, `water-purification`, `sanitation-engineering`, `epidemiology`, `field-hospital`, `heavy-equipment-operator`, `hazmat-certification` to reduce synonym fragmentation during crisis response.
 
 ## Next Steps
 

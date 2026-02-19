@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, EditionNode, EvidenceNode, EventNode, GiveNode, NodeMeta, NoticeNode,
+    ActorNode, AskNode, EvidenceNode, EventNode, GiveNode, NodeMeta, NoticeNode,
     StoryNode, TensionNode, Node,
 };
 use rootsignal_graph::PublicGraphReader;
@@ -568,43 +568,3 @@ impl GqlActor {
     }
 }
 
-// --- Edition ---
-
-pub struct GqlEdition(pub EditionNode);
-
-#[Object]
-impl GqlEdition {
-    async fn id(&self) -> Uuid {
-        self.0.id
-    }
-    async fn city(&self) -> &str {
-        &self.0.city
-    }
-    async fn period(&self) -> &str {
-        &self.0.period
-    }
-    async fn period_start(&self) -> DateTime<Utc> {
-        self.0.period_start
-    }
-    async fn period_end(&self) -> DateTime<Utc> {
-        self.0.period_end
-    }
-    async fn generated_at(&self) -> DateTime<Utc> {
-        self.0.generated_at
-    }
-    async fn story_count(&self) -> u32 {
-        self.0.story_count
-    }
-    async fn new_signal_count(&self) -> u32 {
-        self.0.new_signal_count
-    }
-    async fn editorial_summary(&self) -> &str {
-        &self.0.editorial_summary
-    }
-
-    async fn stories(&self, ctx: &Context<'_>) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let stories = reader.edition_stories(self.0.id).await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-}
