@@ -224,16 +224,16 @@ Routine community events (farmers markets, worship services) typically have no r
 ```
 
 **Acceptance criteria:**
-- [ ] `ResourceTag` struct with JsonSchema derive
-- [ ] `ExtractedSignal.resources` field with `#[serde(default)]`
-- [ ] `build_system_prompt()` includes seed vocabulary and resource extraction instructions
-- [ ] `DiscoveredResponse.resources` field in ResponseScout
-- [ ] ResponseScout structuring prompt includes resource instructions
-- [ ] Pipeline wires resource tags to `find_or_create_resource()` + edge creation after signal write
-- [ ] Resources with `confidence < 0.3` are filtered out (noise gate)
-- [ ] Test: extraction JSON with resources parses correctly
-- [ ] Test: extraction JSON missing resources defaults to empty vec
-- [ ] Test: ResourceTag round-trips through serde
+- [x] `ResourceTag` struct with JsonSchema derive
+- [x] `ExtractedSignal.resources` field with `#[serde(default)]`
+- [x] `build_system_prompt()` includes seed vocabulary and resource extraction instructions
+- [x] `DiscoveredResponse.resources` field in ResponseScout
+- [x] ResponseScout structuring prompt includes resource instructions
+- [x] Pipeline wires resource tags to `find_or_create_resource()` + edge creation after signal write
+- [x] Resources with `confidence < 0.3` are filtered out (noise gate)
+- [x] Test: extraction JSON with resources parses correctly
+- [x] Test: extraction JSON missing resources defaults to empty vec
+- [x] Test: ResourceTag round-trips through serde
 
 ---
 
@@ -309,15 +309,15 @@ LIMIT $limit
 Score computation happens in Rust after fetching results (not in Cypher).
 
 **Acceptance criteria:**
-- [ ] `find_asks_by_resource()` returns scored Ask/Event nodes matching a single resource
-- [ ] `find_gives_by_resource()` returns scored Give nodes offering a resource
-- [ ] `find_asks_by_resources()` handles multi-resource queries with fuzzy-AND scoring
-- [ ] `resolve_resource()` resolves free text to ResourceNode (slug first, embedding fallback)
-- [ ] `resource_gap_analysis()` returns gap table sorted by unmet need
-- [ ] `list_resources()` returns resources by signal_count
-- [ ] Locationless signals included as citywide matches
-- [ ] Expired signals excluded (existing expiry pattern)
-- [ ] Results limited (default 50)
+- [x] `find_asks_by_resource()` returns scored Ask/Event nodes matching a single resource
+- [x] `find_gives_by_resource()` returns scored Give nodes offering a resource
+- [x] `find_asks_by_resources()` handles multi-resource queries with fuzzy-AND scoring
+- [ ] `resolve_resource()` resolves free text to ResourceNode (slug first, embedding fallback) — deferred, composable from existing writer methods
+- [x] `resource_gap_analysis()` returns gap table sorted by unmet need
+- [x] `list_resources()` returns resources by signal_count
+- [x] Locationless signals included as citywide matches
+- [x] Expired signals excluded (existing expiry pattern)
+- [x] Results limited (default 50)
 - [ ] Test: single-resource query returns correct signals
 - [ ] Test: multi-resource query computes correct fuzzy-AND scores
 - [ ] Test: gap analysis aggregates correctly
@@ -362,13 +362,13 @@ DELETE old
 Repeat for PREFERS and OFFERS.
 
 **Acceptance criteria:**
-- [ ] `consolidate_resources()` loads all resource embeddings
-- [ ] Pairwise cosine similarity with 0.85 threshold
-- [ ] Canonical selection by highest signal_count
-- [ ] All edge types (REQUIRES, PREFERS, OFFERS) re-pointed via MERGE
-- [ ] Non-canonical nodes deleted after edge re-pointing
-- [ ] signal_count summed on canonical
-- [ ] Stats returned: clusters_found, nodes_merged, edges_redirected
+- [x] `consolidate_resources()` loads all resource embeddings
+- [x] Pairwise cosine similarity with 0.85 threshold
+- [x] Canonical selection by highest signal_count
+- [x] All edge types (REQUIRES, PREFERS, OFFERS) re-pointed via MERGE
+- [x] Non-canonical nodes deleted after edge re-pointing
+- [x] signal_count summed on canonical
+- [x] Stats returned: clusters_found, nodes_merged, edges_redirected
 - [ ] Test: two resources with 0.90 similarity merge correctly
 - [ ] Test: edges survive merge without duplication
 - [ ] Test: resources below threshold are NOT merged

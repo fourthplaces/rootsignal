@@ -12,7 +12,7 @@ use rootsignal_graph::{Clusterer, GraphWriter, GraphClient};
 
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::{Embedder, TextEmbedder};
-use crate::extractor::{Extractor, SignalExtractor};
+use crate::extractor::{Extractor, ResourceTag, SignalExtractor};
 use crate::quality;
 use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SocialAccount, SocialPlatform,
@@ -79,7 +79,11 @@ impl std::fmt::Display for ScoutStats {
 }
 
 enum ScrapeOutcome {
-    New { content: String, nodes: Vec<Node> },
+    New {
+        content: String,
+        nodes: Vec<Node>,
+        resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+    },
     Unchanged,
     Failed,
 }
@@ -834,7 +838,11 @@ impl Scout {
                 }
 
                 match self.extractor.extract(&content, &clean_url).await {
-                    Ok(result) => (clean_url, ScrapeOutcome::New { content, nodes: result.nodes }),
+                    Ok(result) => (clean_url, ScrapeOutcome::New {
+                        content,
+                        nodes: result.nodes,
+                        resource_tags: result.resource_tags,
+                    }),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
                         (clean_url, ScrapeOutcome::Failed)
@@ -851,7 +859,7 @@ impl Scout {
         for (url, outcome) in pipeline_results {
             let ck = url_to_canonical_key.get(&url).cloned().unwrap_or_else(|| url.clone());
             match outcome {
-                ScrapeOutcome::New { content, nodes } => {
+                ScrapeOutcome::New { content, nodes, resource_tags } => {
                     // Collect implied queries from Tension + Ask nodes for immediate expansion
                     for node in &nodes {
                         if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
@@ -863,7 +871,7 @@ impl Scout {
 
                     let signal_count_before = stats.signals_stored;
                     let known_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
-                    match self.store_signals(&url, &content, nodes, stats, embed_cache, &known_urls).await {
+                    match self.store_signals(&url, &content, nodes, resource_tags, stats, embed_cache, &known_urls).await {
                         Ok(_) => {
                             stats.urls_scraped += 1;
                             let produced = stats.signals_stored - signal_count_before;
@@ -906,7 +914,7 @@ impl Scout {
         use std::pin::Pin;
         use std::future::Future;
 
-        type SocialResult = Option<(String, String, String, Vec<Node>, usize)>; // (canonical_key, source_url, combined_text, nodes, post_count)
+        type SocialResult = Option<(String, String, String, Vec<Node>, Vec<(Uuid, Vec<ResourceTag>)>, usize)>; // (canonical_key, source_url, combined_text, nodes, resource_tags, post_count)
 
         // Build uniform list of SocialAccounts from SourceNodes
         let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
@@ -992,6 +1000,7 @@ impl Scout {
                     // Reddit: batch posts 10 at a time for extraction
                     let batches: Vec<_> = posts.chunks(10).collect();
                     let mut all_nodes = Vec::new();
+                    let mut all_resource_tags = Vec::new();
                     let mut combined_all = String::new();
                     for batch in batches {
                         let combined_text: String = batch
@@ -1005,7 +1014,10 @@ impl Scout {
                         }
                         combined_all.push_str(&combined_text);
                         match self.extractor.extract(&combined_text, &source_url).await {
-                            Ok(result) => all_nodes.extend(result.nodes),
+                            Ok(result) => {
+                                all_nodes.extend(result.nodes);
+                                all_resource_tags.extend(result.resource_tags);
+                            }
                             Err(e) => {
                                 warn!(source_url, error = %e, "Reddit extraction failed");
                             }
@@ -1015,7 +1027,7 @@ impl Scout {
                         return None;
                     }
                     info!(source_url, posts = post_count, "Reddit scrape complete");
-                    Some((canonical_key, source_url, combined_all, all_nodes, post_count))
+                    Some((canonical_key, source_url, combined_all, all_nodes, all_resource_tags, post_count))
                 } else {
                     // Instagram/Facebook: combine all posts then extract
                     let combined_text: String = posts
@@ -1035,7 +1047,7 @@ impl Scout {
                         }
                     };
                     info!(source_url, posts = post_count, "Social scrape complete");
-                    Some((canonical_key, source_url, combined_text, result.nodes, post_count))
+                    Some((canonical_key, source_url, combined_text, result.nodes, result.resource_tags, post_count))
                 }
             }));
         }
@@ -1046,7 +1058,7 @@ impl Scout {
             .await;
 
         for result in results.into_iter().flatten() {
-            let (canonical_key, source_url, combined_text, nodes, post_count) = result;
+            let (canonical_key, source_url, combined_text, nodes, resource_tags, post_count) = result;
             // Collect implied queries from Tension/Ask social signals
             for node in &nodes {
                 if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
@@ -1057,7 +1069,7 @@ impl Scout {
             }
             stats.social_media_posts += post_count as u32;
             let signal_count_before = stats.signals_stored;
-            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache, known_city_urls).await {
+            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, resource_tags, stats, embed_cache, known_city_urls).await {
                 warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
             }
             let produced = stats.signals_stored - signal_count_before;
@@ -1187,21 +1199,21 @@ impl Scout {
                 }
 
                 // Extract signals via LLM
-                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                    Ok(result) => result.nodes,
+                let result = match self.extractor.extract(&combined_text, &source_url).await {
+                    Ok(r) => r,
                     Err(e) => {
                         warn!(username, platform = platform_name, error = %e, "Discovery extraction failed");
                         continue;
                     }
                 };
 
-                if nodes.is_empty() {
+                if result.nodes.is_empty() {
                     continue; // No signal found — don't follow this person
                 }
 
                 // Store signals through normal pipeline
                 let signal_count_before = stats.signals_stored;
-                if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache, known_city_urls).await {
+                if let Err(e) = self.store_signals(&source_url, &combined_text, result.nodes, result.resource_tags, stats, embed_cache, known_city_urls).await {
                     warn!(username, error = %e, "Failed to store discovery signals");
                     continue;
                 }
@@ -1286,19 +1298,19 @@ impl Scout {
 
                 let source_url = campaign.url.as_deref().unwrap_or("https://www.gofundme.com");
 
-                let nodes = match self.extractor.extract(&content, source_url).await {
-                    Ok(result) => result.nodes,
+                let result = match self.extractor.extract(&content, source_url).await {
+                    Ok(r) => r,
                     Err(e) => {
                         warn!(title, error = %e, "GoFundMe extraction failed");
                         continue;
                     }
                 };
 
-                if nodes.is_empty() {
+                if result.nodes.is_empty() {
                     continue;
                 }
 
-                if let Err(e) = self.store_signals(source_url, &content, nodes, stats, embed_cache, known_city_urls).await {
+                if let Err(e) = self.store_signals(source_url, &content, result.nodes, result.resource_tags, stats, embed_cache, known_city_urls).await {
                     warn!(title, error = %e, "Failed to store GoFundMe signals");
                 }
             }
@@ -1317,12 +1329,17 @@ impl Scout {
         url: &str,
         content: &str,
         mut nodes: Vec<Node>,
+        resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         known_city_urls: &std::collections::HashSet<String>,
     ) -> Result<()> {
         let url = sanitize_url(url);
         stats.signals_extracted += nodes.len() as u32;
+
+        // Build lookup map from node ID → resource tags
+        let resource_map: std::collections::HashMap<Uuid, Vec<ResourceTag>> =
+            resource_tags.into_iter().collect();
 
         // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
         let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
@@ -1762,6 +1779,43 @@ impl Scout {
                     };
                     if let Err(e) = self.writer.link_actor_to_signal(actor_id, node_id, "mentioned").await {
                         warn!(error = %e, actor = actor_name, "Failed to link actor to signal (non-fatal)");
+                    }
+                }
+            }
+
+            // Wire resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
+            if let Some(meta) = node.meta() {
+                if let Some(tags) = resource_map.get(&meta.id) {
+                    for tag in tags.iter().filter(|t| t.confidence >= 0.3) {
+                        let slug = rootsignal_common::slugify(&tag.slug);
+                        let embed_text = format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
+                        let res_embedding = match self.embedder.embed(&embed_text).await {
+                            Ok(e) => e,
+                            Err(e) => {
+                                warn!(error = %e, slug = slug.as_str(), "Resource embedding failed (non-fatal)");
+                                continue;
+                            }
+                        };
+                        let resource_id = match self.writer.find_or_create_resource(&tag.slug, &slug, tag.context.as_deref().unwrap_or(""), &res_embedding).await {
+                            Ok(id) => id,
+                            Err(e) => {
+                                warn!(error = %e, slug = slug.as_str(), "Resource creation failed (non-fatal)");
+                                continue;
+                            }
+                        };
+                        let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
+                        let edge_result = match tag.role.as_str() {
+                            "requires" => self.writer.create_requires_edge(node_id, resource_id, confidence, tag.context.as_deref(), None).await,
+                            "prefers" => self.writer.create_prefers_edge(node_id, resource_id, confidence).await,
+                            "offers" => self.writer.create_offers_edge(node_id, resource_id, confidence, tag.context.as_deref()).await,
+                            other => {
+                                warn!(role = other, slug = slug.as_str(), "Unknown resource role");
+                                continue;
+                            }
+                        };
+                        if let Err(e) = edge_result {
+                            warn!(error = %e, slug = slug.as_str(), "Resource edge creation failed (non-fatal)");
+                        }
                     }
                 }
             }
