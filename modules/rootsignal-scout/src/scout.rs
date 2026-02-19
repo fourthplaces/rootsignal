@@ -16,7 +16,7 @@ use crate::extractor::{Extractor, SignalExtractor};
 use crate::quality;
 use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SocialAccount, SocialPlatform,
-    SocialPost, SocialScraper, TavilySearcher, WebSearcher,
+    SocialPost, SocialScraper, SerperSearcher, WebSearcher,
 };
 use crate::sources;
 
@@ -151,7 +151,7 @@ impl Scout {
         graph_client: GraphClient,
         anthropic_api_key: &str,
         voyage_api_key: &str,
-        tavily_api_key: &str,
+        serper_api_key: &str,
         apify_api_key: &str,
         city_node: CityNode,
         daily_budget_cents: u64,
@@ -177,7 +177,7 @@ impl Scout {
             extractor: Box::new(Extractor::new(anthropic_api_key, city_node.name.as_str(), city_node.center_lat, city_node.center_lng)),
             embedder: Box::new(Embedder::new(voyage_api_key)),
             scraper,
-            searcher: Box::new(TavilySearcher::new(tavily_api_key)),
+            searcher: Box::new(SerperSearcher::new(serper_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
             city_node,
@@ -529,7 +529,7 @@ impl Scout {
         self.check_cancelled()?;
 
         // Curiosity loop — ask "why?" about signals without tension context
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_CURIOSITY + OperationCost::TAVILY_CURIOSITY) {
+        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_CURIOSITY + OperationCost::SEARCH_CURIOSITY) {
             info!("Starting curiosity loop...");
             let curiosity = crate::curiosity::CuriosityLoop::new(
                 &self.writer,
@@ -549,7 +549,7 @@ impl Scout {
 
         // Response Scout — find what diffuses known tensions
         if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_RESPONSE_SCOUT + OperationCost::TAVILY_RESPONSE_SCOUT,
+            OperationCost::CLAUDE_HAIKU_RESPONSE_SCOUT + OperationCost::SEARCH_RESPONSE_SCOUT,
         ) {
             info!("Starting response scout...");
             let response_scout = crate::response_scout::ResponseScout::new(
@@ -570,7 +570,7 @@ impl Scout {
 
         // Gravity Scout — find where people gather around tensions
         if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_GRAVITY_SCOUT + OperationCost::TAVILY_GRAVITY_SCOUT,
+            OperationCost::CLAUDE_HAIKU_GRAVITY_SCOUT + OperationCost::SEARCH_GRAVITY_SCOUT,
         ) {
             info!("Starting gravity scout...");
             let gravity_scout = crate::gravity_scout::GravityScout::new(
@@ -603,8 +603,8 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // Investigation (Uses Tavily + Claude — check budget)
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::TAVILY_INVESTIGATION) {
+        // Investigation (Uses web search + Claude — check budget)
+        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION) {
             info!("Starting investigation phase...");
             let investigator = crate::investigator::Investigator::new(
                 &self.writer, &*self.searcher, &self.anthropic_api_key, &self.city_node.name,
@@ -637,7 +637,7 @@ impl Scout {
         stats.expansion_queries_collected = expansion_queries.len() as u32;
 
         if !expansion_queries.is_empty() {
-            let existing = self.writer.get_active_tavily_queries(&self.city_node.slug).await
+            let existing = self.writer.get_active_web_queries(&self.city_node.slug).await
                 .unwrap_or_default();
             let deduped: Vec<String> = expansion_queries.iter()
                 .filter(|q| !existing.iter().any(|e| jaccard_similarity(q, e) > DEDUP_JACCARD_THRESHOLD))
@@ -650,14 +650,14 @@ impl Scout {
             for query_text in &deduped {
                 let cv = query_text.clone();
                 let ck = crate::sources::make_canonical_key(
-                    &self.city_node.slug, SourceType::TavilyQuery, &cv,
+                    &self.city_node.slug, SourceType::WebQuery, &cv,
                 );
                 let source = SourceNode {
                     id: Uuid::new_v4(),
                     canonical_key: ck,
                     canonical_value: cv,
                     url: None,
-                    source_type: SourceType::TavilyQuery,
+                    source_type: SourceType::WebQuery,
                     discovery_method: DiscoveryMethod::SignalExpansion,
                     city: self.city_node.slug.clone(),
                     created_at: now_expansion,
@@ -734,10 +734,10 @@ impl Scout {
 
         // Resolve query sources → URLs
         let api_queries: Vec<&&&SourceNode> = query_sources.iter()
-            .filter(|s| s.source_type == SourceType::TavilyQuery)
+            .filter(|s| s.source_type == SourceType::WebQuery)
             .collect();
         if !api_queries.is_empty() {
-            info!(queries = api_queries.len(), "Resolving Tavily queries...");
+            info!(queries = api_queries.len(), "Resolving web search queries...");
             let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
                 let query_str = source.canonical_value.clone();
                 async move {
@@ -756,7 +756,7 @@ impl Scout {
                         }
                     }
                     Err(e) => {
-                        warn!(query_str, error = %e, "Tavily search failed");
+                        warn!(query_str, error = %e, "Web search failed");
                     }
                 }
             }

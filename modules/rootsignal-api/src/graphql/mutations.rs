@@ -237,7 +237,7 @@ impl MutationRoot {
 
         // Run cold-start bootstrapper (non-fatal)
         let bootstrap_writer = GraphWriter::new((**graph_client).clone());
-        let searcher = rootsignal_scout::scraper::TavilySearcher::new(&config.tavily_api_key);
+        let searcher = rootsignal_scout::scraper::SerperSearcher::new(&config.serper_api_key);
         let bootstrapper = rootsignal_scout::bootstrap::ColdStartBootstrapper::new(
             &bootstrap_writer,
             &searcher,
@@ -333,7 +333,7 @@ impl MutationRoot {
         // Check API keys
         if config.anthropic_api_key.is_empty()
             || config.voyage_api_key.is_empty()
-            || config.tavily_api_key.is_empty()
+            || config.serper_api_key.is_empty()
         {
             return Ok(ScoutResult {
                 success: false,
@@ -609,7 +609,7 @@ async fn run_scout(
         client.clone(),
         &config.anthropic_api_key,
         &config.voyage_api_key,
-        &config.tavily_api_key,
+        &config.serper_api_key,
         &config.apify_api_key,
         city_node,
         config.daily_budget_cents,

@@ -13,7 +13,7 @@ Scout is the automated community signal collection engine for Root Signal. It di
 │  ┌──────────────────── PHASE 1: SOURCE COLLECTION ──────────────────┐  │
 │  │                                                                   │  │
 │  │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │  │
-│  │  │  Curated     │  │  Tavily Web  │  │  Social Media (Apify)  │  │  │
+│  │  │  Curated     │  │  Serper Web  │  │  Social Media (Apify)  │  │  │
 │  │  │  Sources     │  │  Search      │  │                        │  │  │
 │  │  │  (~35 URLs)  │  │  (~35 queries│  │  Instagram  Facebook   │  │  │
 │  │  │  per city    │  │   per city)  │  │  Reddit    Hashtags    │  │  │
@@ -105,7 +105,7 @@ Scout is the automated community signal collection engine for Root Signal. It di
 │  │  │  Clustering   │  │  Response       │  │  Investigation      │  │  │
 │  │  │  (Leiden      │  │  Mapping        │  │                     │  │  │
 │  │  │   algorithm)  │  │                 │  │  Top 5 signals      │  │  │
-│  │  │              │  │  Give/Event     │  │  ≤3 Tavily queries  │  │  │
+│  │  │              │  │  Give/Event     │  │  ≤3 web queries     │  │  │
 │  │  │  Groups      │  │  addresses      │  │  per signal         │  │  │
 │  │  │  signals     │  │  Ask/Tension    │  │  ≤10 queries total  │  │  │
 │  │  │  into        │  │                 │  │                     │  │  │
@@ -157,7 +157,7 @@ Scout is the automated community signal collection engine for Root Signal. It di
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────┐
-│  Anthropic   │     │  Voyage AI   │     │  Tavily      │     │  Apify   │
+│  Anthropic   │     │  Voyage AI   │     │  Serper      │     │  Apify   │
 │  (Claude)    │     │              │     │              │     │          │
 │              │     │  voyage-3-   │     │  Web Search  │     │  Social  │
 │  Haiku: ext- │     │  large       │     │  API         │     │  Media   │
@@ -196,7 +196,7 @@ Source (URL/Post)
   │
   ├─ Response Map (Sonnet) ──▶ Give/Event RESPONDS_TO Ask/Tension
   │
-  ├─ Investigate (Tavily + Haiku) ──▶ additional Evidence nodes
+  ├─ Investigate (Serper + Haiku) ──▶ additional Evidence nodes
   │
   ├─ Cause Heat ──▶ cross-story attention boosting (0.0–1.0)
   │
@@ -217,7 +217,7 @@ Source (URL/Post)
 ## Concurrency Model
 
 - **Web scraping**: `buffer_unordered(10)` — 10 concurrent Chrome + extraction pipelines
-- **Web search**: `buffer_unordered(5)` — 5 concurrent Tavily queries
+- **Web search**: `buffer_unordered(5)` — 5 concurrent Serper queries
 - **Social scraping**: `buffer_unordered(10)` — 10 concurrent Apify calls
 - **Signal storage**: Sequential (graph writes + embedding cache must be ordered)
 - **Scout lock**: Mutual exclusion via `ScoutLock` node in graph (prevents concurrent runs)
@@ -226,7 +226,7 @@ Source (URL/Post)
 
 Each city profile provides:
 - **~35 curated source URLs** (nonprofits, gov sites, community orgs)
-- **~35 Tavily search queries** (volunteer, food bank, advocacy, etc.)
+- **~35 Serper search queries** (volunteer, food bank, advocacy, etc.)
 - **~20 Instagram accounts** + Facebook pages + Reddit subreddits
 - **~5 discovery hashtags** for finding new sources automatically
 - **Entity mappings** linking domains to Instagram/Facebook/Reddit for cross-platform dedup

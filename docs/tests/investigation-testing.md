@@ -23,11 +23,11 @@ cargo run --bin scout -- --city twincities 2>&1 | grep -E "investigation|Investi
 - `Starting investigation phase...`
 - `Investigation targets selected count=N` (where N >= 1)
 - One or more `Evidence created` lines with `signal_id`, `evidence_url`, `relevance`, `confidence`
-- `Investigation: N targets found, N investigated, 0 failed, M evidence created, K Tavily queries`
+- `Investigation: N targets found, N investigated, 0 failed, M evidence created, K web search queries`
 
 **Fail criteria:**
 - `No investigation targets found` on a graph with signals — Cypher queries in `find_investigation_targets()` are broken
-- `Investigation failed for signal` — LLM extract or Tavily search failing
+- `Investigation failed for signal` — LLM extract or web search failing
 - `Failed to find investigation targets` — graph connection or query error
 
 ## 2. Evidence Nodes Exist in Graph
@@ -126,7 +126,7 @@ If sensitive signals exist and get investigated, verify the log shows the sensit
 ## 8. Budget Limits
 
 The investigator should respect:
-- Max 10 Tavily queries per run
+- Max 10 web search queries per run
 - Max 5 signals investigated per run
 - Max 3 queries per signal
 
@@ -134,7 +134,7 @@ The investigator should respect:
 cargo run --bin scout -- --city twincities 2>&1 | grep "Investigation:"
 ```
 
-**Pass:** `Tavily queries` <= 10, `investigated` <= 5.
+**Pass:** `web search queries` <= 10, `investigated` <= 5.
 
 ## 9. Multi-City Investigation
 
@@ -165,10 +165,10 @@ Investigation is non-fatal and additive. Existing validation must still pass.
 | Symptom | Likely cause |
 |---------|-------------|
 | `No investigation targets found` (with signals in graph) | Cypher queries not matching — check label names, property filters |
-| `Investigation failed for signal` | Haiku API error, malformed structured output, or Tavily auth failure |
+| `Investigation failed for signal` | Haiku API error, malformed structured output, or web search auth failure |
 | `Failed to mark signal as investigated` | Node type mismatch or graph write error |
 | Same signal re-investigated immediately | `investigated_at` not being set or cooldown filter wrong |
 | All targets from same domain | Per-domain dedup `HashSet` logic broken in `collect_investigation_targets()` |
 | Evidence from same domain as signal | Same-domain filter in `investigate_signal()` not working |
-| `Tavily query budget exhausted` on first signal | MAX_QUERIES_PER_SIGNAL too high or budget counter not incrementing |
+| `Search query budget exhausted` on first signal | MAX_SEARCH_QUERIES_PER_RUN too high or budget counter not incrementing |
 | Zero evidence created despite successful queries | Confidence threshold (0.5) filtering everything — LLM returning low confidence |

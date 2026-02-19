@@ -407,6 +407,26 @@ pub struct PlaceNode {
     pub created_at: DateTime<Utc>,
 }
 
+// --- Resource Node (capability/resource matching) ---
+
+/// A capability or resource type that signals can require, prefer, or offer.
+/// Global taxonomy — not city-scoped. Geographic filtering happens through signal edges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceNode {
+    pub id: Uuid,
+    /// Canonical label (e.g. "vehicle", "bilingual-spanish", "legal-expertise")
+    pub name: String,
+    /// Machine-readable slug, used as MERGE key
+    pub slug: String,
+    /// Optional LLM-generated description
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+    /// Updated when any edge is created to this resource
+    pub last_seen: DateTime<Utc>,
+    /// Number of signals connected to this resource
+    pub signal_count: u32,
+}
+
 // --- Source Types (for emergent source discovery) ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -416,7 +436,7 @@ pub enum SourceType {
     Instagram,
     Facebook,
     Reddit,
-    TavilyQuery,
+    WebQuery,
     TikTok,
     Twitter,
     GoFundMeQuery,
@@ -432,7 +452,7 @@ impl std::fmt::Display for SourceType {
             SourceType::Instagram => write!(f, "instagram"),
             SourceType::Facebook => write!(f, "facebook"),
             SourceType::Reddit => write!(f, "reddit"),
-            SourceType::TavilyQuery => write!(f, "tavily_query"),
+            SourceType::WebQuery => write!(f, "web_query"),
             SourceType::TikTok => write!(f, "tiktok"),
             SourceType::Twitter => write!(f, "twitter"),
             SourceType::GoFundMeQuery => write!(f, "gofundme_query"),
@@ -449,7 +469,7 @@ impl SourceType {
             "instagram" => Self::Instagram,
             "facebook" => Self::Facebook,
             "reddit" => Self::Reddit,
-            "tavily_query" => Self::TavilyQuery,
+            "web_query" | "tavily_query" => Self::WebQuery,
             "tiktok" => Self::TikTok,
             "twitter" => Self::Twitter,
             "gofundme" | "gofundme_query" => Self::GoFundMeQuery,
@@ -489,7 +509,7 @@ impl SourceType {
     pub fn is_query(&self) -> bool {
         matches!(
             self,
-            Self::TavilyQuery
+            Self::WebQuery
                 | Self::EventbriteQuery
                 | Self::GoFundMeQuery
                 | Self::VolunteerMatchQuery
@@ -585,7 +605,7 @@ pub struct SourceNode {
     pub canonical_key: String,
     /// The handle/query/URL that identifies this source within its type.
     pub canonical_value: String,
-    /// URL for web/social sources. None for query-type sources (TavilyQuery).
+    /// URL for web/social sources. None for query-type sources (WebQuery).
     pub url: Option<String>,
     pub source_type: SourceType,
     pub discovery_method: DiscoveryMethod,
@@ -721,6 +741,12 @@ pub enum EdgeType {
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,
+    /// Ask/Event -> Resource (must have this capability to help). Properties: confidence, quantity, notes
+    Requires,
+    /// Ask/Event -> Resource (better if you have it, not required). Properties: confidence
+    Prefers,
+    /// Give -> Resource (this is what we provide). Properties: confidence, capacity
+    Offers,
 }
 
 #[cfg(test)]
@@ -795,5 +821,35 @@ mod tests {
     fn haversine_same_point_is_zero() {
         let dist = haversine_km(44.9778, -93.265, 44.9778, -93.265);
         assert!(dist < 0.001, "Same point should be 0km, got {dist}");
+    }
+
+    #[test]
+    fn resource_node_has_all_fields() {
+        let now = Utc::now();
+        let r = ResourceNode {
+            id: Uuid::new_v4(),
+            name: "vehicle".to_string(),
+            slug: "vehicle".to_string(),
+            description: "Car, truck, or other motor vehicle".to_string(),
+            created_at: now,
+            last_seen: now,
+            signal_count: 3,
+        };
+        assert_eq!(r.name, "vehicle");
+        assert_eq!(r.slug, "vehicle");
+        assert_eq!(r.signal_count, 3);
+    }
+
+    #[test]
+    fn edge_type_has_resource_variants() {
+        let requires = EdgeType::Requires;
+        let prefers = EdgeType::Prefers;
+        let offers = EdgeType::Offers;
+        let req_json = serde_json::to_string(&requires).unwrap();
+        let pref_json = serde_json::to_string(&prefers).unwrap();
+        let off_json = serde_json::to_string(&offers).unwrap();
+        assert_eq!(req_json, "\"requires\"");
+        assert_eq!(pref_json, "\"prefers\"");
+        assert_eq!(off_json, "\"offers\"");
     }
 }

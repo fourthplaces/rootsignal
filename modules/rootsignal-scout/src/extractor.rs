@@ -70,6 +70,28 @@ pub struct ExtractedSignal {
     /// signal to discover related signals from different perspectives.
     #[serde(default)]
     pub implied_queries: Vec<String>,
+    /// Resource capabilities this signal requires, prefers, or offers.
+    #[serde(default)]
+    pub resources: Vec<ResourceTag>,
+}
+
+/// A resource capability extracted from a signal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResourceTag {
+    /// Canonical slug (e.g. "vehicle", "bilingual-spanish", "legal-expertise").
+    /// Use the seed vocabulary when it fits; otherwise propose a concise noun-phrase slug.
+    pub slug: String,
+    /// "requires", "prefers", or "offers"
+    pub role: String,
+    /// 0.0–1.0 confidence that this resource is relevant
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+    /// Optional context (e.g. "10 people", "Saturday mornings", "500 lbs shelf-stable protein")
+    pub context: Option<String>,
+}
+
+fn default_confidence() -> f64 {
+    0.8
 }
 
 /// The full extraction response from the LLM.
@@ -105,6 +127,8 @@ where
 pub struct ExtractionResult {
     pub nodes: Vec<Node>,
     pub implied_queries: Vec<String>,
+    /// Resource tags paired with the signal node UUID they came from.
+    pub resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
 }
 
 // --- SignalExtractor trait ---
@@ -167,6 +191,7 @@ impl Extractor {
 
         let now = Utc::now();
         let mut nodes = Vec::new();
+        let mut resource_tags: Vec<(Uuid, Vec<ResourceTag>)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -212,8 +237,9 @@ impl Extractor {
                 .unwrap_or(source_url)
                 .to_string();
 
+            let node_id = Uuid::new_v4();
             let meta = NodeMeta {
-                id: Uuid::new_v4(),
+                id: node_id,
                 title: signal.title.clone(),
                 summary: signal.summary.clone(),
                 sensitivity,
@@ -320,6 +346,11 @@ impl Extractor {
                 }
             };
 
+            // Collect resource tags for this signal
+            if !signal.resources.is_empty() {
+                resource_tags.push((node_id, signal.resources.clone()));
+            }
+
             nodes.push(node);
         }
 
@@ -329,7 +360,7 @@ impl Extractor {
             implied_queries = implied_queries.len(),
             "Extracted signals"
         );
-        Ok(ExtractionResult { nodes, implied_queries })
+        Ok(ExtractionResult { nodes, implied_queries, resource_tags })
     }
 }
 
@@ -423,6 +454,30 @@ Extract the names of organizations, groups, government bodies, or notable indivi
 ## Contact Information
 Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs).
 
+## Resource Capabilities
+
+For Ask, Event, and Give signals, extract the resource capabilities they require, prefer, or offer.
+This enables matching: "I have a car" finds all orgs needing drivers; "I need food" finds all orgs giving food.
+
+**Edge types:**
+- **requires**: Must have this capability to help (Ask/Event only)
+- **prefers**: Better if you have it, not required (Ask/Event only)
+- **offers**: This is what the signal provides (Give only)
+
+**Seed vocabulary** (use these slugs when they fit; otherwise propose a concise noun-phrase slug):
+`vehicle`, `bilingual-spanish`, `bilingual-somali`, `bilingual-hmong`, `legal-expertise`,
+`food`, `shelter-space`, `clothing`, `childcare`, `medical-professional`, `mental-health`,
+`physical-labor`, `kitchen-space`, `event-space`, `storage-space`, `technology`,
+`reliable-internet`, `financial-donation`, `skilled-trade`, `administrative`
+
+**Examples:**
+- A volunteer driver program → resources: [{{slug: "vehicle", role: "requires", confidence: 0.95}}]
+- A bilingual legal clinic → resources: [{{slug: "legal-expertise", role: "offers", confidence: 0.9}}, {{slug: "bilingual-spanish", role: "offers", confidence: 0.85}}]
+- Food shelf → resources: [{{slug: "food", role: "offers", confidence: 0.95, context: "emergency groceries, Mon-Fri 9-5"}}]
+- Court date transport needing Spanish speakers → resources: [{{slug: "vehicle", role: "requires", confidence: 0.9}}, {{slug: "bilingual-spanish", role: "prefers", confidence: 0.7}}]
+
+Only include resources when the capability is clear from the content. Omit the resources array for signals with no resource semantics (e.g. Notices, Tensions).
+
 ## IMPLIED QUERIES (optional — signal quality is always the priority)
 
 For signals with a clear community tension connection, provide up to 3
@@ -494,11 +549,29 @@ mod tests {
             what_would_help: Some("affordable housing policy".to_string()),
             source_url: None,
             implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
+            resources: vec![],
         };
 
         assert_eq!(signal.signal_type, "tension");
         assert_eq!(signal.what_would_help.as_deref(), Some("affordable housing policy"));
         assert_eq!(signal.category.as_deref(), Some("housing"));
+    }
+
+    #[test]
+    fn resource_tag_deserialization() {
+        let json = r#"{"slug":"vehicle","role":"requires","confidence":0.9,"context":"Saturday mornings"}"#;
+        let tag: ResourceTag = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.slug, "vehicle");
+        assert_eq!(tag.role, "requires");
+        assert!((tag.confidence - 0.9).abs() < f64::EPSILON);
+        assert_eq!(tag.context.as_deref(), Some("Saturday mornings"));
+    }
+
+    #[test]
+    fn resource_tag_default_confidence() {
+        let json = r#"{"slug":"food","role":"offers","context":null}"#;
+        let tag: ResourceTag = serde_json::from_str(json).unwrap();
+        assert!((tag.confidence - 0.8).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -626,6 +699,7 @@ mod tests {
                 "query 1".to_string(),
                 "query 2".to_string(),
             ],
+            resource_tags: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
     }
@@ -648,5 +722,15 @@ mod tests {
             prompt.contains("DO NOT provide implied_queries for routine"),
             "system prompt should warn against routine event queries"
         );
+    }
+
+    #[test]
+    fn system_prompt_includes_resource_instructions() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        assert!(prompt.contains("Resource Capabilities"), "should have Resource Capabilities section");
+        assert!(prompt.contains("vehicle"), "should include seed vocabulary");
+        assert!(prompt.contains("bilingual-spanish"), "should include bilingual seed");
+        assert!(prompt.contains("requires"), "should mention requires role");
+        assert!(prompt.contains("offers"), "should mention offers role");
     }
 }

@@ -177,7 +177,7 @@ Only signals linked to tensions with `cause_heat >= 0.1` drive expansion. A cold
 
 ### Dedup: Token-Based Jaccard Similarity
 
-Expansion queries are deduplicated against existing active TavilyQuery sources using token-based Jaccard similarity (threshold: 0.6), not substring matching.
+Expansion queries are deduplicated against existing active WebQuery sources using token-based Jaccard similarity (threshold: 0.6), not substring matching.
 
 Why Jaccard, not substring: substring matching kills specific long-tail queries. "emergency housing for detained immigrants" would be discarded if "housing" already exists as a query — they share 1/6 tokens (Jaccard = 0.17, well below threshold). But "housing assistance Minneapolis" vs "housing resources Minneapolis" share 2/3 tokens (Jaccard = 0.67, correctly flagged as duplicate).
 
@@ -255,7 +255,7 @@ The difference is mechanism and timing:
 | | Signal Expansion | Amplification Scout |
 |---|---|---|
 | **Mechanism** | Query generation (feeds next cycle) | Agentic investigation (LLM + tools, same run) |
-| **Cost** | Zero extra LLM calls | 2 Haiku + 3 Tavily + 2 Chrome per tension |
+| **Cost** | Zero extra LLM calls | 2 Haiku + 3 web searches + 2 Chrome per tension |
 | **Scope** | Every signal, every scale, every cycle | Per-tension only, 5 per run, 30-day cooldown |
 | **Depth** | Generates queries — breadth over depth | Follows threads — depth over breadth |
 

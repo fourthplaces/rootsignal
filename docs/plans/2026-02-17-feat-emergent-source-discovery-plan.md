@@ -17,9 +17,9 @@ Today all sources are hardcoded as `&'static str` in `sources.rs` CityProfile st
 
 1. **Source selection bias** — whoever curates the list embeds their worldview. Somali community orgs, Hmong mutual aid, Spanish-language services may be invisible simply because no human thought to add them.
 2. **Static coverage** — the civic landscape changes. New orgs form, old ones close, crises emerge. The source list doesn't adapt.
-3. **Scaling bottleneck** — expanding to new cities requires manual source research per city. The Twin Cities profile has ~60 curated URLs + ~25 social accounts + 30 Tavily queries. Replicating this for every city doesn't scale.
+3. **Scaling bottleneck** — expanding to new cities requires manual source research per city. The Twin Cities profile has ~60 curated URLs + ~25 social accounts + 30 web search queries. Replicating this for every city doesn't scale.
 
-The system already has the building blocks: Tavily search, scrape pipeline, embedding dedup, corroboration tracking, org diversity metrics. What's missing is the feedback loop that uses *what the system already knows* to discover *what it doesn't know yet*.
+The system already has the building blocks: Serper web search, scrape pipeline, embedding dedup, corroboration tracking, org diversity metrics. What's missing is the feedback loop that uses *what the system already knows* to discover *what it doesn't know yet*.
 
 ## Proposed Solution
 
@@ -179,7 +179,7 @@ struct Gap {
 
 **Model:** Haiku 4.5 (cost control). The landscape summary is structured data, not free-form reasoning — Haiku handles this well. Upgrade to Sonnet if gap quality is poor.
 
-**Budget per run:** Max 5 new sources discovered per run. Max 3 new Tavily queries per run.
+**Budget per run:** Max 5 new sources discovered per run. Max 3 new web search queries per run.
 
 ### Source Loading at Run Start
 
@@ -331,12 +331,12 @@ The system asks WHY about interesting signals, tensions, and newly discovered so
 - [ ] Define investigation triggers: new tension detected, new source discovered, signal with high urgency but low evidence
 - [ ] Implement `Investigator` struct with LLM-driven evidence chain following:
   - Given a signal or source, generate targeted search queries (e.g., "Is [org name] a registered 501(c)(3)?", "[org name] media coverage")
-  - Execute queries via Tavily
+  - Execute queries via Serper
   - Parse results into Evidence nodes with `source_url`, `content_hash`, `snippet`
   - Create `SOURCED_FROM` edges linking Evidence → Signal
 - [ ] Add `ActorNode` type for organizations/entities discovered through investigation (future: dynamic OrgMapping)
 - [ ] Wire into `run_inner()` after gap analysis — investigate newly discovered sources and high-interest signals
-- [ ] Budget: max 10 investigation queries per run (Tavily cost control)
+- [ ] Budget: max 10 investigation queries per run (web search cost control)
 - [ ] **Gate:** After a scout run with investigation, Evidence nodes appear connected to signals from both curated and discovered sources. Sources with rich evidence trails are distinguishable from thin ones.
 
 ### Phase 3: Gap Analysis + Discovery + Evidence-Based Trust
@@ -344,7 +344,7 @@ The system asks WHY about interesting signals, tensions, and newly discovered so
 - [ ] Create `modules/rootsignal-graph/src/discover.rs`
 - [ ] Implement `SignalLandscape` assembly from graph queries
 - [ ] Implement gap analysis LLM call (Haiku) with structured output
-- [ ] Implement Tavily query execution for gap-generated queries
+- [ ] Implement Serper query execution for gap-generated queries
 - [ ] Implement URL validation (reachability check before source creation)
 - [ ] Add blocked source check before creation
 - [ ] Wire into `run_inner()` after clustering
@@ -395,7 +395,7 @@ The system asks WHY about interesting signals, tensions, and newly discovered so
 ## Dependencies & Risks
 
 **Dependencies:**
-- Tavily API (already integrated, no new dependency)
+- Serper API (already integrated, no new dependency)
 - Anthropic API for gap analysis (already integrated via ai-client)
 - Memgraph schema migration (idempotent, no downtime)
 

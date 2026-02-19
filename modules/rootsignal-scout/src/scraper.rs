@@ -394,9 +394,9 @@ impl SocialScraper for NoopSocialScraper {
     }
 }
 
-// --- Tavily ---
+// --- Serper (Google Search) ---
 
-pub struct TavilySearcher {
+pub struct SerperSearcher {
     api_key: String,
     client: reqwest::Client,
 }
@@ -409,21 +409,22 @@ pub struct SearchResult {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct TavilyResponse {
+struct SerperResponse {
     #[serde(default)]
-    results: Vec<TavilyResult>,
+    organic: Vec<SerperResult>,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct TavilyResult {
-    url: String,
+struct SerperResult {
+    #[serde(default)]
+    link: String,
     #[serde(default)]
     title: String,
     #[serde(default)]
-    content: String,
+    snippet: String,
 }
 
-impl TavilySearcher {
+impl SerperSearcher {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
@@ -436,40 +437,38 @@ impl TavilySearcher {
 }
 
 #[async_trait]
-impl WebSearcher for TavilySearcher {
+impl WebSearcher for SerperSearcher {
     async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
-        info!(query, max_results, "Tavily search");
+        info!(query, max_results, "Serper search");
 
         let body = serde_json::json!({
-            "query": query,
-            "max_results": max_results,
-            "search_depth": "advanced",
-            "include_answer": false,
+            "q": query,
+            "num": max_results,
         });
 
         let resp = self
             .client
-            .post("https://api.tavily.com/search")
+            .post("https://google.serper.dev/search")
+            .header("X-API-KEY", &self.api_key)
             .header("Content-Type", "application/json")
-            .bearer_auth(&self.api_key)
             .json(&body)
             .send()
             .await
-            .context("Tavily API request failed")?;
+            .context("Serper API request failed")?;
 
-        let data: TavilyResponse = resp.json().await.context("Failed to parse Tavily response")?;
+        let data: SerperResponse = resp.json().await.context("Failed to parse Serper response")?;
 
         let results: Vec<SearchResult> = data
-            .results
+            .organic
             .into_iter()
             .map(|r| SearchResult {
-                url: r.url,
+                url: r.link,
                 title: r.title,
-                snippet: r.content,
+                snippet: r.snippet,
             })
             .collect();
 
-        info!(query, count = results.len(), "Tavily search complete");
+        info!(query, count = results.len(), "Serper search complete");
         Ok(results)
     }
 }

@@ -24,7 +24,7 @@ Community radio stations occupy a unique position in the civic information ecosy
 
 ### Approach A: Add radio station websites as curated sources (chosen)
 
-Radio station websites added to `curated_sources` in each city's `CityProfile`. These are plain `Web` source type — no new `SourceType` variant needed. Optionally add `site:` Tavily queries to surface their content via search.
+Radio station websites added to `curated_sources` in each city's `CityProfile`. These are plain `Web` source type — no new `SourceType` variant needed. Optionally add `site:` web search queries to surface their content via search.
 
 **Pros:** Zero infrastructure change. Fits existing pipeline perfectly. Immediate value.
 **Cons:** Only captures what stations publish as text on their websites, not audio content.
@@ -94,12 +94,12 @@ This prevents the same station's web content and social media from inflating `so
 
 ## Open Questions
 
-- **Tavily queries**: Should we add `site:` queries for these stations (e.g., `"site:gothamist.com NYC volunteer community"`)? This would surface their content even when it's not on the homepage. Probably yes for the larger newsrooms (OPB, WNYC, Gothamist, rbb24).
+- **Web search queries**: Should we add `site:` queries for these stations (e.g., `"site:gothamist.com NYC volunteer community"`)? This would surface their content even when it's not on the homepage. Probably yes for the larger newsrooms (OPB, WNYC, Gothamist, rbb24).
 - **Crawl depth**: Some stations have deep archives. Should we limit to recent content, or let the freshness scoring handle it naturally? Freshness scoring should be sufficient.
 - **Berlin language**: rbb24 is German-only. The LLM extraction pipeline handles German fine, but worth confirming extraction quality on a sample.
 
 ## Next Steps
 
 → Add curated sources and entity mappings to `sources.rs`
-→ Optionally add targeted Tavily queries for larger newsrooms
+→ Optionally add targeted web search queries for larger newsrooms
 → Run a scout cycle and check extraction quality from these new sources

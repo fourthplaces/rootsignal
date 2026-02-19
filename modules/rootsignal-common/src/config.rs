@@ -13,7 +13,7 @@ pub struct Config {
     pub voyage_api_key: String,
 
     // Scraping
-    pub tavily_api_key: String,
+    pub serper_api_key: String,
     pub apify_api_key: String,
 
     // Web server
@@ -59,7 +59,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            tavily_api_key: required_env("TAVILY_API_KEY"),
+            serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             web_port: env::var("WEB_PORT")
@@ -90,7 +90,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
-            tavily_api_key: required_env("TAVILY_API_KEY"),
+            serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: String::new(),
             web_port: 0,
@@ -121,7 +121,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             voyage_api_key: String::new(),
-            tavily_api_key: String::new(),
+            serper_api_key: String::new(),
             apify_api_key: String::new(),
             web_host: String::new(),
             web_port: 0,
@@ -160,7 +160,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             voyage_api_key: env::var("VOYAGE_API_KEY").unwrap_or_default(),
-            tavily_api_key: env::var("TAVILY_API_KEY").unwrap_or_default(),
+            serper_api_key: env::var("SERPER_API_KEY").unwrap_or_default(),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             web_port: env::var("WEB_PORT")
@@ -193,7 +193,7 @@ impl Config {
             ("NEO4J_PASSWORD", &self.neo4j_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
-            ("TAVILY_API_KEY", &self.tavily_api_key),
+            ("SERPER_API_KEY", &self.serper_api_key),
             ("APIFY_API_KEY", &self.apify_api_key),
         ];
         for (name, value) in vars {

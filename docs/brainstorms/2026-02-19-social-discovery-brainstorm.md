@@ -7,7 +7,7 @@ topic: social-discovery
 
 ## What We're Building
 
-The scout's discovery engine generates web search queries (TavilyQuery) to fill gaps in the tension landscape. But the most important signals for active community tensions don't live on the web — they live on social media, posted by individuals who are publicly visible while the organizations they protect stay hidden.
+The scout's discovery engine generates web search queries (WebQuery) to fill gaps in the tension landscape. But the most important signals for active community tensions don't live on the web — they live on social media, posted by individuals who are publicly visible while the organizations they protect stay hidden.
 
 We extend the discovery engine to generate **social discovery topics** (hashtags + search terms) alongside web queries. These feed into platform-specific pipelines that search Instagram, X/Twitter, TikTok, and GoFundMe for individual voices, advocacy posts, and fundraiser campaigns. When discovery finds someone posting community signals, we auto-follow them as a Source so they get scraped on future runs.
 
@@ -19,7 +19,7 @@ From the [volunteer coordinator interview](../interviews/2026-02-17-volunteer-co
 
 But individuals step forward publicly. The volunteer posts every day on Instagram. GoFundMe campaigns are created under personal names to protect the churches. The signal is on social media — posted by people who are willing to be visible so the organizations don't have to be.
 
-The scout currently only generates TavilyQuery sources (Google/web search). Social media scraping exists but only hits known accounts bootstrapped at cold start. The hashtag discovery pipeline (`discover_from_topics`) is fully built but the topics list is hardcoded to `Vec::new()` — dead code.
+The scout currently only generates WebQuery sources (Google/web search). Social media scraping exists but only hits known accounts bootstrapped at cold start. The hashtag discovery pipeline (`discover_from_topics`) is fully built but the topics list is hardcoded to `Vec::new()` — dead code.
 
 ### Why LLM-generated topics
 

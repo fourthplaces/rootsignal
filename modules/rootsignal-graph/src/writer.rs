@@ -1652,10 +1652,10 @@ impl GraphWriter {
         }
     }
 
-    /// Get all active TavilyQuery canonical_values for a city (used for expansion dedup).
-    pub async fn get_active_tavily_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
+    /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
+    pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true, source_type: 'tavily_query'})
+            "MATCH (s:Source {city: $city, active: true, source_type: 'web_query'})
              RETURN s.canonical_value AS query"
         )
         .param("city", city);
@@ -3316,6 +3316,195 @@ impl GraphWriter {
 
         self.client.graph.run(q).await?;
         Ok(())
+    }
+
+    // ─── Resource Capability Matching ────────────────────────────────
+
+    /// Find or create a Resource node, deduplicating on slug.
+    /// Returns the Resource's UUID (existing or newly created).
+    pub async fn find_or_create_resource(
+        &self,
+        name: &str,
+        slug: &str,
+        description: &str,
+        embedding: &[f32],
+    ) -> Result<Uuid, neo4rs::Error> {
+        let new_id = Uuid::new_v4();
+        let now = format_datetime(&Utc::now());
+        let emb = embedding_to_f64(embedding);
+
+        let q = query(
+            "MERGE (r:Resource {slug: $slug})
+             ON CREATE SET
+                 r.id = $id,
+                 r.name = $name,
+                 r.description = $description,
+                 r.embedding = $embedding,
+                 r.signal_count = 1,
+                 r.created_at = datetime($now),
+                 r.last_seen = datetime($now)
+             ON MATCH SET
+                 r.signal_count = r.signal_count + 1,
+                 r.last_seen = datetime($now)
+             RETURN r.id AS resource_id",
+        )
+        .param("slug", slug)
+        .param("id", new_id.to_string())
+        .param("name", name)
+        .param("description", description)
+        .param("embedding", emb)
+        .param("now", now);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("resource_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(id);
+            }
+        }
+        Ok(new_id)
+    }
+
+    /// Create a REQUIRES edge from a signal (Ask/Event) to a Resource.
+    /// Uses MERGE for idempotency; updates properties on match.
+    pub async fn create_requires_edge(
+        &self,
+        signal_id: Uuid,
+        resource_id: Uuid,
+        confidence: f32,
+        quantity: Option<&str>,
+        notes: Option<&str>,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s) WHERE s.id = $sid AND (s:Ask OR s:Event)
+             MATCH (r:Resource {id: $rid})
+             MERGE (s)-[e:REQUIRES]->(r)
+             ON CREATE SET
+                 e.confidence = $conf,
+                 e.quantity = $qty,
+                 e.notes = $notes
+             ON MATCH SET
+                 e.confidence = $conf,
+                 e.quantity = $qty,
+                 e.notes = $notes",
+        )
+        .param("sid", signal_id.to_string())
+        .param("rid", resource_id.to_string())
+        .param("conf", confidence as f64)
+        .param("qty", quantity.unwrap_or(""))
+        .param("notes", notes.unwrap_or(""));
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Create a PREFERS edge from a signal (Ask/Event) to a Resource.
+    /// Uses MERGE for idempotency.
+    pub async fn create_prefers_edge(
+        &self,
+        signal_id: Uuid,
+        resource_id: Uuid,
+        confidence: f32,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s) WHERE s.id = $sid AND (s:Ask OR s:Event)
+             MATCH (r:Resource {id: $rid})
+             MERGE (s)-[e:PREFERS]->(r)
+             ON CREATE SET e.confidence = $conf
+             ON MATCH SET e.confidence = $conf",
+        )
+        .param("sid", signal_id.to_string())
+        .param("rid", resource_id.to_string())
+        .param("conf", confidence as f64);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Create an OFFERS edge from a Give signal to a Resource.
+    /// Uses MERGE for idempotency.
+    pub async fn create_offers_edge(
+        &self,
+        signal_id: Uuid,
+        resource_id: Uuid,
+        confidence: f32,
+        capacity: Option<&str>,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Give {id: $sid})
+             MATCH (r:Resource {id: $rid})
+             MERGE (s)-[e:OFFERS]->(r)
+             ON CREATE SET
+                 e.confidence = $conf,
+                 e.capacity = $cap
+             ON MATCH SET
+                 e.confidence = $conf,
+                 e.capacity = $cap",
+        )
+        .param("sid", signal_id.to_string())
+        .param("rid", resource_id.to_string())
+        .param("conf", confidence as f64)
+        .param("cap", capacity.unwrap_or(""));
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Look up a Resource node by its slug. Returns the UUID if found.
+    pub async fn find_resource_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource {slug: $slug})
+             RETURN r.id AS resource_id",
+        )
+        .param("slug", slug);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("resource_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find the closest existing Resource by embedding similarity.
+    /// Returns (UUID, similarity) if a Resource exceeds the threshold.
+    /// Uses brute-force pairwise comparison (Resource count expected < 500).
+    pub async fn find_resource_by_embedding(
+        &self,
+        embedding: &[f32],
+        threshold: f64,
+    ) -> Result<Option<(Uuid, f64)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource)
+             WHERE r.embedding IS NOT NULL
+             RETURN r.id AS rid, r.embedding AS emb",
+        );
+
+        let emb_f64 = embedding_to_f64(embedding);
+        let mut best: Option<(Uuid, f64)> = None;
+
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("rid").unwrap_or_default();
+            let stored: Vec<f64> = row.get("emb").unwrap_or_default();
+            if stored.is_empty() {
+                continue;
+            }
+            let sim = cosine_sim_f64(&emb_f64, &stored);
+            if sim >= threshold {
+                if best.as_ref().map_or(true, |(_, s)| sim > *s) {
+                    if let Ok(id) = Uuid::parse_str(&id_str) {
+                        best = Some((id, sim));
+                    }
+                }
+            }
+        }
+        Ok(best)
     }
 }
 

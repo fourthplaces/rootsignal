@@ -12,7 +12,7 @@ docker compose up -d memgraph web
 docker compose ps  # memgraph: healthy, web: running
 ```
 
-Required env vars in `.env` or shell: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `TAVILY_API_KEY`, `APIFY_API_KEY`.
+Required env vars in `.env` or shell: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `SERPER_API_KEY`, `APIFY_API_KEY`.
 
 ## 1. Build and Run Scout
 

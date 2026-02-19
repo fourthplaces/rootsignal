@@ -20,7 +20,7 @@ From the volunteer coordinator interview: organizations helping with immigration
 
 But individuals step forward publicly. The volunteer posts every day on Instagram. GoFundMe campaigns are created under personal names to protect the churches. The signal is on social media — posted by people who are willing to be visible so the organizations don't have to be.
 
-The scout currently only generates `TavilyQuery` sources (web search). The `discover_from_topics()` pipeline is fully built but permanently stubbed — `let topics: Vec<String> = Vec::new()`. The Apify scrapers for Instagram hashtags, X/Twitter, TikTok, and GoFundMe all exist in `apify-client` but aren't wired into discovery.
+The scout currently only generates `WebQuery` sources (web search). The `discover_from_topics()` pipeline is fully built but permanently stubbed — `let topics: Vec<String> = Vec::new()`. The Apify scrapers for Instagram hashtags, X/Twitter, TikTok, and GoFundMe all exist in `apify-client` but aren't wired into discovery.
 
 ## Proposed Solution
 

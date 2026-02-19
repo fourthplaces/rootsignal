@@ -25,7 +25,7 @@
          │         └─────────────────┘
          ▼
   ┌──────────────────┐
-  │ Tavily search     │  "immigration enforcement Minnesota 2026"
+  │ Serper search     │  "immigration enforcement Minnesota 2026"
   │ Scrape + extract  │
   └──────┬───────────┘
          │
@@ -153,7 +153,7 @@
                  │
                  ▼
   ┌─────────────────────────────┐
-  │ Tavily: "ICE immigration     │
+  │ Serper: "ICE immigration     │
   │ enforcement Minnesota 2026"  │
   │                              │
   │ Results:                     │

@@ -42,18 +42,18 @@ impl<'a> ColdStartBootstrapper<'a> {
         let queries = self.generate_seed_queries().await?;
         info!(count = queries.len(), "Generated seed queries");
 
-        // Step 2: Create TavilyQuery source nodes for each query
+        // Step 2: Create WebQuery source nodes for each query
         let mut sources_created = 0u32;
         let now = Utc::now();
         for query in &queries {
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_node.slug, SourceType::TavilyQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_node.slug, SourceType::WebQuery, &cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::TavilyQuery,
+                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::ColdStart,
                 city: self.city_node.slug.clone(),
                 created_at: now,
@@ -93,7 +93,7 @@ impl<'a> ColdStartBootstrapper<'a> {
         Ok(sources_created)
     }
 
-    /// Use Claude Haiku to generate 20-30 seed Tavily search queries for the city.
+    /// Use Claude Haiku to generate 20-30 seed web search queries for the city.
     async fn generate_seed_queries(&self) -> Result<Vec<String>> {
         let city = &self.city_node.name;
 
@@ -267,13 +267,13 @@ pub async fn tension_seed_queries(
         );
 
         let cv = query.clone();
-        let ck = sources::make_canonical_key(&city_node.slug, SourceType::TavilyQuery, &cv);
+        let ck = sources::make_canonical_key(&city_node.slug, SourceType::WebQuery, &cv);
         all_sources.push(SourceNode {
             id: Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::TavilyQuery,
+            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::TensionSeed,
             city: city_node.slug.clone(),
             created_at: now,

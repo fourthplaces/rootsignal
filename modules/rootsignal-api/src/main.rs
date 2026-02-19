@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
     if scout_interval > 0
         && !config.anthropic_api_key.is_empty()
         && !config.voyage_api_key.is_empty()
-        && !config.tavily_api_key.is_empty()
+        && !config.serper_api_key.is_empty()
     {
         graphql::mutations::start_scout_interval(client.clone(), config.clone(), scout_interval);
     } else if scout_interval > 0 {

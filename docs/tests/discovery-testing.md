@@ -32,7 +32,7 @@ cargo run --bin scout -- --city twincities 2>&1 | grep -iE "discovery|curiosity|
 ## 2. Query Sources Exist in Graph
 
 ```bash
-echo "MATCH (s:Source {source_type: 'tavily_query', discovery_method: 'gap_analysis'})
+echo "MATCH (s:Source {source_type: 'web_query', discovery_method: 'gap_analysis'})
 RETURN s.canonical_value AS query, s.gap_context AS context, s.weight AS weight, s.active AS active
 ORDER BY s.created_at DESC LIMIT 10;" | $MG
 ```
@@ -61,7 +61,7 @@ cargo run --bin scout -- --city portland 2>&1 | grep -iE "cold start|mechanical|
 Verify mechanical queries are tension-derived:
 
 ```bash
-echo "MATCH (s:Source {source_type: 'tavily_query', city: 'portland'})
+echo "MATCH (s:Source {source_type: 'web_query', city: 'portland'})
 RETURN s.canonical_value AS query, s.gap_context AS context LIMIT 10;" | $MG
 ```
 
@@ -73,14 +73,14 @@ Run the same city twice. Discovery should not create duplicate query sources.
 
 ```bash
 # Count before
-echo "MATCH (s:Source {source_type: 'tavily_query', discovery_method: 'gap_analysis'})
+echo "MATCH (s:Source {source_type: 'web_query', discovery_method: 'gap_analysis'})
 RETURN count(s) AS count;" | $MG
 
 # Run again
 cargo run --bin scout -- --city twincities 2>&1 | grep -i "discovery"
 
 # Count after
-echo "MATCH (s:Source {source_type: 'tavily_query', discovery_method: 'gap_analysis'})
+echo "MATCH (s:Source {source_type: 'web_query', discovery_method: 'gap_analysis'})
 RETURN count(s) AS count;" | $MG
 ```
 
@@ -91,7 +91,7 @@ RETURN count(s) AS count;" | $MG
 Also verify no exact canonical_key duplicates:
 
 ```bash
-echo "MATCH (s:Source {source_type: 'tavily_query'})
+echo "MATCH (s:Source {source_type: 'web_query'})
 WITH s.canonical_key AS ck, count(*) AS c WHERE c > 1
 RETURN ck, c;" | $MG
 ```
@@ -183,7 +183,7 @@ RETURN count(s) AS recent_queries;" | $MG
 Pull the 5 most recent discovery queries and evaluate them manually.
 
 ```bash
-echo "MATCH (s:Source {source_type: 'tavily_query', discovery_method: 'gap_analysis'})
+echo "MATCH (s:Source {source_type: 'web_query', discovery_method: 'gap_analysis'})
 RETURN s.canonical_value AS query, s.gap_context AS context
 ORDER BY s.created_at DESC LIMIT 5;" | $MG
 ```
@@ -250,7 +250,7 @@ echo "MATCH (t:Tension {title: 'Test zero engagement'}) DELETE t;" | $MG
 
 ```bash
 # Check that discovery queries reference high-engagement tensions
-echo "MATCH (s:Source {source_type: 'tavily_query', active: true})
+echo "MATCH (s:Source {source_type: 'web_query', active: true})
       WHERE s.gap_context CONTAINS 'Tension:'
       RETURN s.canonical_value, s.gap_context
       ORDER BY s.created_at DESC LIMIT 10;" | $MG
@@ -267,7 +267,7 @@ Verify that tensions with higher corroboration/source_diversity appear in earlie
 | `Cold start detected` on a full graph | `is_cold_start()` thresholds wrong (needs >= 3 tensions AND >= 1 story) |
 | Duplicate query sources | Substring dedup comparing wrong case, or canonical_key MERGE broken |
 | All queries same gap_type | LLM system prompt not encouraging diversity, or briefing missing sections |
-| Discovery sources never scraped | Scheduler not picking up TavilyQuery sources, or Tavily API key missing |
+| Discovery sources never scraped | Scheduler not picking up WebQuery sources, or Serper API key missing |
 | `gaps=0` with tensions present | `get_unmet_tensions` query returning empty, or `get_active_sources` dedup too aggressive |
 | Actor sources not discovered | `get_actors_with_domains` query broken, or actors don't have domain/social_url properties |
 | Engagement data all zeros | Tensions haven't been through investigation yet, or `corroboration_count`/`source_diversity` properties not being set |

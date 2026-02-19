@@ -278,6 +278,13 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     g.run(query("CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)")).await?;
     info!("Place constraints and indexes created");
 
+    // --- Resource node constraints and indexes ---
+    g.run(query("CREATE CONSTRAINT resource_id_unique IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE")).await?;
+    g.run(query("CREATE CONSTRAINT resource_slug_unique IF NOT EXISTS FOR (r:Resource) REQUIRE r.slug IS UNIQUE")).await?;
+    g.run(query("CREATE INDEX resource_name IF NOT EXISTS FOR (r:Resource) ON (r.name)")).await?;
+    g.run(query("CREATE VECTOR INDEX resource_embedding IF NOT EXISTS FOR (r:Resource) ON (r.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}")).await?;
+    info!("Resource constraints and indexes created");
+
     // --- Convert RESPONDS_TO gathering edges to DRAWN_TO ---
     convert_gathering_edges(client).await?;
 
@@ -289,6 +296,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Backfill event dates: clean up string/empty dates ---
     backfill_event_dates(client).await?;
+
+    // --- Rename tavily_query → web_query in Source nodes ---
+    rename_tavily_to_web_query(client).await?;
 
     // --- Backfill source_role on existing Source nodes ---
     backfill_source_roles(client).await?;
@@ -755,5 +765,36 @@ pub async fn convert_gathering_edges(client: &GraphClient) -> Result<(), neo4rs:
     }
 
     info!("Gathering edge conversion complete");
+    Ok(())
+}
+
+/// Rename `tavily_query` → `web_query` in Source nodes.
+/// Updates both `source_type` and `canonical_key`. Idempotent — WHERE clause
+/// matches nothing after the first run.
+pub async fn rename_tavily_to_web_query(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Renaming tavily_query → web_query in Source nodes...");
+
+    let q = query(
+        "MATCH (s:Source {source_type: 'tavily_query'})
+         SET s.source_type = 'web_query',
+             s.canonical_key = replace(s.canonical_key, ':tavily_query:', ':web_query:')
+         RETURN count(s) AS updated"
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Renamed tavily_query → web_query");
+                }
+            }
+        }
+        Err(e) => warn!("tavily_query rename failed (non-fatal): {e}"),
+    }
+
+    info!("tavily_query rename complete");
     Ok(())
 }

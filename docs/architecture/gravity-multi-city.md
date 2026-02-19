@@ -37,7 +37,7 @@ But these are brand new — they have no heat yet. The globally hottest tensions
 
 **The gravity scout investigates Minneapolis tensions for NYC.** It gets "Youth Violence Spike in North Minneapolis" as a target, but the investigation prompt says "in New York City." The LLM searches for NYC youth violence gatherings and either finds them (because NYC has its own youth violence community response) or finds nothing (because the tension is too Minneapolis-specific). Either outcome is fine:
 - Found NYC gatherings: great, the system discovered that NYC has its own response to a similar tension
-- Found nothing: a few wasted Tavily calls (2-3 with early termination), moves on
+- Found nothing: a few wasted web search calls (2-3 with early termination), moves on
 
 ### Week 2+: NYC develops its own heat
 
@@ -73,7 +73,7 @@ The target selection remains global (heat is heat). Only the *context* is city-s
 
 ### Why not filter targets by city?
 
-Because you'd miss Palestine. A tension discovered in Minneapolis is relevant everywhere. City-filtering the target selection would mean NYC never gravity-scouts Minneapolis-origin tensions, even when those tensions are universal. The cost of investigating a non-transferable tension (a few wasted Tavily calls with early termination) is far lower than the cost of missing a universal tension with massive local gravity.
+Because you'd miss Palestine. A tension discovered in Minneapolis is relevant everywhere. City-filtering the target selection would mean NYC never gravity-scouts Minneapolis-origin tensions, even when those tensions are universal. The cost of investigating a non-transferable tension (a few wasted web search calls with early termination) is far lower than the cost of missing a universal tension with massive local gravity.
 
 ## Temporal Dynamics
 
@@ -121,7 +121,7 @@ This is a bottom-up portrait of community life. Not what organizations exist (th
 
 A new city's first gravity scout run will investigate globally-hot tensions that may be other cities' local issues. This is expected and self-correcting:
 
-1. **First run:** targets are dominated by existing cities' hot tensions. Some transfer (Palestine, immigration fear), some don't (city-specific incidents). The ones that don't transfer terminate early (2-3 Tavily calls), wasting minimal budget.
+1. **First run:** targets are dominated by existing cities' hot tensions. Some transfer (Palestine, immigration fear), some don't (city-specific incidents). The ones that don't transfer terminate early (2-3 web search calls), wasting minimal budget.
 
 2. **Second run:** the new city's own tensions have gained heat from the first cycle's curiosity loop and cause_heat computation. Target selection shifts toward a mix of global and local tensions.
 
@@ -133,7 +133,7 @@ No tuning required. The system converges to the right behavior through the natur
 
 ### Target limit per run (currently 5)
 
-The gravity scout investigates 5 tensions per cycle, same as the response scout. Embedded triage makes misses cheap (2-3 Tavily calls with early termination), so the budget impact of investigating tensions without gatherings is minimal.
+The gravity scout investigates 5 tensions per cycle, same as the response scout. Embedded triage makes misses cheap (2-3 web search calls with early termination), so the budget impact of investigating tensions without gatherings is minimal.
 
 ### Freeform gathering_type
 
@@ -141,4 +141,4 @@ The `gathering_type` property on DRAWN_TO edges is freeform — "vigil" vs "cand
 
 ### Venue as first-class entity
 
-Currently, venues are just future query seeds — strings that create TavilyQuery sources. A venue that hosts multiple gatherings across tensions is a community anchor and arguably deserves its own node type (Place or Venue) in the graph. This would enable queries like "what are the top 10 community anchors in Minneapolis?" and "which venues serve multiple tensions?" The data is already there in the venue seeds; the graph model just doesn't reify it yet.
+Currently, venues are just future query seeds — strings that create WebQuery sources. A venue that hosts multiple gatherings across tensions is a community anchor and arguably deserves its own node type (Place or Venue) in the graph. This would enable queries like "what are the top 10 community anchors in Minneapolis?" and "which venues serve multiple tensions?" The data is already there in the venue seeds; the graph model just doesn't reify it yet.

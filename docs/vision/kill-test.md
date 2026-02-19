@@ -32,7 +32,7 @@ You solve the freshness problem but there simply aren't enough active, actionabl
 
 **Test:** Before building any pipeline, do a manual audit. Spend 4 hours across all known sources and count how many actionable, current signals you can find for the Twin Cities right now, today. If you can find 100+, volume isn't the problem. If you can find fewer than 30, you need more sources or a different geography.
 
-**Mitigation:** Expand source list aggressively. Use Tavily discovery queries to find signal in unexpected places. Consider broadening the geographic radius. Supplement with ongoing/recurring opportunities (not just one-time events) to keep volume up. Consider whether "things you can do at home" and evergreen stewardship content can fill gaps without feeling like filler.
+**Mitigation:** Expand source list aggressively. Use web search discovery queries to find signal in unexpected places. Consider broadening the geographic radius. Supplement with ongoing/recurring opportunities (not just one-time events) to keep volume up. Consider whether "things you can do at home" and evergreen stewardship content can fill gaps without feeling like filler.
 
 ---
 
@@ -248,7 +248,7 @@ The vision is so broad — human services, ecology, ethical consumption, boycott
 
 **Test:** After each sprint, ask: "Does the core experience — finding actionable local signal — work noticeably better than it did two weeks ago?" If the answer is consistently no because effort went to new categories or new sources instead of improving existing ones, scope creep is winning.
 
-**Mitigation:** The first sprint spec exists for a reason. GoFundMe, Tavily, 5 org websites, Eventbrite. That's it. Don't add ecological sources until human services signal is proven. Don't add boycott signal until volunteer signal is solid. Each layer earns the right to the next by being good, not by existing.
+**Mitigation:** The first sprint spec exists for a reason. GoFundMe, web search, 5 org websites, Eventbrite. That's it. Don't add ecological sources until human services signal is proven. Don't add boycott signal until volunteer signal is solid. Each layer earns the right to the next by being good, not by existing.
 
 ---
 

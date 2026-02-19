@@ -7,7 +7,7 @@ topic: web-archive
 
 ## What We're Building
 
-A standalone Rust crate (`web-archive`) that sits between scout and the outside world. Every web interaction — page scrapes, search queries, social media fetches — flows through this layer. It delegates to the real implementations (Chrome, Tavily, Apify) and records every request and response to Postgres. The crate owns its own connection pool; scout doesn't know Postgres exists.
+A standalone Rust crate (`web-archive`) that sits between scout and the outside world. Every web interaction — page scrapes, search queries, social media fetches — flows through this layer. It delegates to the real implementations (Chrome, Serper, Apify) and records every request and response to Postgres. The crate owns its own connection pool; scout doesn't know Postgres exists.
 
 This gives us a historical record of everything scout has ever seen, enabling extraction replay, regression testing on real data, and discovery analysis — all without hitting the network.
 
@@ -108,9 +108,9 @@ modules/web-archive/
 
 ### How scout wires it up
 
-Scout's `main.rs` currently constructs `ChromeScraper`, `TavilySearcher`, etc. directly. With the archive:
+Scout's `main.rs` currently constructs `ChromeScraper`, `SerperSearcher`, etc. directly. With the archive:
 
-- **Production with archive**: `Archive::new(config, chrome, tavily, social)` — real web, everything recorded
+- **Production with archive**: `Archive::new(config, chrome, serper, social)` — real web, everything recorded
 - **Production without archive**: If `WEB_ARCHIVE_DATABASE_URL` is not set, skip the archive layer entirely and use scrapers directly. Log a warning at startup. Matches the existing `NoopSocialScraper` pattern.
 - **Test replay**: `Replay::new(config)` — no network, reads from a pinned run
 - **SimWeb stays unchanged** — still valuable for synthetic/controlled scenarios
@@ -128,7 +128,7 @@ Postgres is a secondary concern. A PG outage means you lose the recording, not t
 
 ## What This Unlocks
 
-**Extraction replay.** Change extractor prompts, feed archived content directly to `Extractor::extract()`, compare signal output. No Chrome, no Tavily, no graph state needed. This is the highest-value use case.
+**Extraction replay.** Change extractor prompts, feed archived content directly to `Extractor::extract()`, compare signal output. No Chrome, no Serper, no graph state needed. This is the highest-value use case.
 
 **Regression testing on real data.** Pin a run_id as a test fixture. Assert that extractor changes don't silently drop signals from pages that used to produce them.
 

@@ -19,7 +19,7 @@ The system captures volunteer and donation opportunities when it stumbles on the
 
 ## Simplest Approach Considered
 
-The bootstrap query generator already uses an LLM to create Tavily search queries per city. It could also:
+The bootstrap query generator already uses an LLM to create web search queries per city. It could also:
 
 1. Query the graph for existing Asks
 2. Feed them to the LLM alongside city context
