@@ -330,11 +330,13 @@ pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Ve
 
 // --- Social media types ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SocialPlatform {
     Instagram,
     Facebook,
     Reddit,
+    Twitter,
+    TikTok,
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +365,11 @@ pub trait WebSearcher: Send + Sync {
 pub trait SocialScraper: Send + Sync {
     async fn search_posts(&self, account: &SocialAccount, limit: u32) -> Result<Vec<SocialPost>>;
     async fn search_hashtags(&self, hashtags: &[&str], limit: u32) -> Result<Vec<SocialPost>>;
+    /// Search a specific platform for topics (hashtags/keywords). Used by multi-platform
+    /// topic discovery. Returns empty vec for unsupported platforms.
+    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>>;
+    /// Search GoFundMe campaigns by keyword. Returns campaign data for signal extraction.
+    async fn search_gofundme(&self, keyword: &str, limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>>;
 }
 
 /// No-op social scraper for when no API key is configured.
@@ -375,6 +382,14 @@ impl SocialScraper for NoopSocialScraper {
     }
 
     async fn search_hashtags(&self, _hashtags: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(Vec::new())
+    }
+
+    async fn search_topics(&self, _platform: &SocialPlatform, _topics: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(Vec::new())
+    }
+
+    async fn search_gofundme(&self, _keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
         Ok(Vec::new())
     }
 }
@@ -524,6 +539,40 @@ impl SocialScraper for ApifyClient {
                     })
                     .collect())
             }
+            SocialPlatform::Twitter => {
+                let tweets = self.scrape_x_posts(&account.identifier, limit).await?;
+                Ok(tweets
+                    .into_iter()
+                    .filter_map(|t| {
+                        let content = t.content()?.to_string();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: t.author.as_ref().and_then(|a| a.user_name.clone()),
+                            url: t.url,
+                        })
+                    })
+                    .collect())
+            }
+            SocialPlatform::TikTok => {
+                let posts = self.scrape_tiktok_posts(&account.identifier, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        let content = p.text?;
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: p.author_meta.as_ref().and_then(|a| a.name.clone()),
+                            url: p.web_video_url,
+                        })
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -537,5 +586,53 @@ impl SocialScraper for ApifyClient {
                 url: Some(p.post_url),
             })
             .collect())
+    }
+
+    async fn search_gofundme(&self, keyword: &str, limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+        self.scrape_gofundme(keyword, limit).await.map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
+        match platform {
+            SocialPlatform::Instagram => {
+                self.search_hashtags(topics, limit).await
+            }
+            SocialPlatform::Twitter => {
+                let posts = self.search_x_keywords(topics, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|t| {
+                        let content = t.content()?.to_string();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: t.author.as_ref().and_then(|a| a.user_name.clone()),
+                            url: t.url,
+                        })
+                    })
+                    .collect())
+            }
+            SocialPlatform::TikTok => {
+                let posts = self.search_tiktok_keywords(topics, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        let content = p.text?;
+                        if content.len() < 20 {
+                            return None; // Skip sparse captions
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: p.author_meta.as_ref().and_then(|a| a.name.clone()),
+                            url: p.web_video_url,
+                        })
+                    })
+                    .collect())
+            }
+            // Facebook and Reddit don't support keyword search
+            _ => Ok(Vec::new()),
+        }
     }
 }

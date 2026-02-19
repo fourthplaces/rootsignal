@@ -113,34 +113,6 @@ impl Config {
         }
     }
 
-    /// Load config for edition generation (Neo4j + Anthropic + city).
-    pub fn editions_from_env() -> Self {
-        Self {
-            neo4j_uri: required_env("NEO4J_URI"),
-            neo4j_user: required_env("NEO4J_USER"),
-            neo4j_password: required_env("NEO4J_PASSWORD"),
-            anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
-            voyage_api_key: String::new(),
-            tavily_api_key: String::new(),
-            apify_api_key: String::new(),
-            web_host: String::new(),
-            web_port: 0,
-            admin_username: String::new(),
-            admin_password: String::new(),
-            session_secret: String::new(),
-            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
-            city_name: None,
-            city_lat: None,
-            city_lng: None,
-            city_radius_km: None,
-            daily_budget_cents: 0,
-            twilio_account_sid: String::new(),
-            twilio_auth_token: String::new(),
-            twilio_service_id: String::new(),
-            admin_numbers: Vec::new(),
-        }
-    }
-
     /// Load config for the scout supervisor (Neo4j + Anthropic + city + notifications).
     pub fn supervisor_from_env() -> Self {
         Self {

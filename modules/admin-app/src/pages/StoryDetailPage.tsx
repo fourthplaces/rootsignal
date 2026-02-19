@@ -15,13 +15,17 @@ export function StoryDetailPage() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <p className="text-sm text-muted-foreground mb-1">
-          <span className="px-2 py-0.5 rounded-full bg-secondary">{story.arc}</span>
-          {" "}&middot; {story.category}
+          {story.arc && (
+            <span className="px-2 py-0.5 rounded-full bg-secondary">{story.arc}</span>
+          )}
+          {story.category && <>{" "}&middot; {story.category}</>}
           {" "}&middot; Energy {story.energy.toFixed(1)}
           {" "}&middot; {story.signalCount} signals
         </p>
-        <h1 className="text-xl font-semibold">{story.title}</h1>
+        <h1 className="text-xl font-semibold">{story.headline}</h1>
+        {story.lede && <p className="mt-2 text-foreground/80 italic">{story.lede}</p>}
         {story.summary && <p className="mt-2 text-muted-foreground">{story.summary}</p>}
+        {story.narrative && <p className="mt-2 text-muted-foreground">{story.narrative}</p>}
       </div>
     </div>
   );

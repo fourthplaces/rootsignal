@@ -18,7 +18,7 @@ export function StoriesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-muted-foreground">
-              <th className="pb-2 font-medium">Title</th>
+              <th className="pb-2 font-medium">Headline</th>
               <th className="pb-2 font-medium">Arc</th>
               <th className="pb-2 font-medium">Category</th>
               <th className="pb-2 font-medium">Energy</th>
@@ -29,20 +29,24 @@ export function StoriesPage() {
             {stories.map(
               (s: {
                 id: string;
-                title: string;
-                arc: string;
-                category: string;
+                headline: string;
+                arc: string | null;
+                category: string | null;
                 energy: number;
                 signalCount: number;
               }) => (
                 <tr key={s.id} className="border-b border-border/50 hover:bg-accent/30">
-                  <td className="py-2">
-                    <Link to={`/stories/${s.id}`} className="hover:underline">
-                      {s.title}
+                  <td className="py-2 max-w-md">
+                    <Link to={`/stories/${s.id}`} className="hover:underline line-clamp-1">
+                      {s.headline}
                     </Link>
                   </td>
                   <td className="py-2">
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-secondary">{s.arc}</span>
+                    {s.arc && (
+                      <span className="px-2 py-0.5 rounded-full text-xs bg-secondary">
+                        {s.arc}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 text-muted-foreground">{s.category}</td>
                   <td className="py-2">{s.energy.toFixed(1)}</td>

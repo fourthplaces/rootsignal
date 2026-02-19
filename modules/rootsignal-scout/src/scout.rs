@@ -330,7 +330,7 @@ impl Scout {
         // Phase A social: tension + mixed social sources
         let phase_a_social: Vec<&SourceNode> = scheduled_sources.iter()
             .filter(|s| {
-                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit)
+                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit | SourceType::Twitter | SourceType::TikTok)
                     && tension_phase_keys.contains(&s.canonical_key)
             })
             .copied()
@@ -353,7 +353,7 @@ impl Scout {
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         );
-        let mid_discovery_stats = discoverer.run().await;
+        let (mid_discovery_stats, social_topics) = discoverer.run().await;
         if mid_discovery_stats.actor_sources + mid_discovery_stats.gap_sources > 0 {
             info!("{mid_discovery_stats}");
         }
@@ -405,7 +405,7 @@ impl Scout {
         // Phase B social: response social sources
         let phase_b_social: Vec<&SourceNode> = scheduled_sources.iter()
             .filter(|s| {
-                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit)
+                matches!(s.source_type, SourceType::Instagram | SourceType::Facebook | SourceType::Reddit | SourceType::Twitter | SourceType::TikTok)
                     && response_phase_keys.contains(&s.canonical_key)
             })
             .copied()
@@ -418,8 +418,8 @@ impl Scout {
         self.check_cancelled()?;
 
         {
-            // Topic discovery — search hashtags to find new accounts
-            self.discover_from_topics(&mut stats, &mut embed_cache, &mut source_signal_counts, &known_city_urls).await;
+            // Topic discovery — search social media to find new accounts
+            self.discover_from_topics(&social_topics, &mut stats, &mut embed_cache, &mut source_signal_counts, &known_city_urls).await;
         }
 
         // ================================================================
@@ -699,7 +699,7 @@ impl Scout {
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         );
-        let end_discovery_stats = end_discoverer.run().await;
+        let (end_discovery_stats, _end_social_topics) = end_discoverer.run().await;
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
         }
@@ -935,6 +935,12 @@ impl Scout {
                     };
                     (SocialPlatform::Reddit, identifier)
                 }
+                SourceType::Twitter => {
+                    (SocialPlatform::Twitter, source.canonical_value.clone())
+                }
+                SourceType::TikTok => {
+                    (SocialPlatform::TikTok, source.canonical_value.clone())
+                }
                 _ => continue,
             };
             let source_url = source.url.as_deref()
@@ -951,7 +957,9 @@ impl Scout {
         let ig_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Instagram)).count();
         let fb_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Facebook)).count();
         let reddit_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Reddit)).count();
-        info!(ig = ig_count, fb = fb_count, reddit = reddit_count, "Scraping social media...");
+        let twitter_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Twitter)).count();
+        let tiktok_count = accounts.iter().filter(|(_, _, a)| matches!(a.platform, SocialPlatform::TikTok)).count();
+        info!(ig = ig_count, fb = fb_count, reddit = reddit_count, twitter = twitter_count, tiktok = tiktok_count, "Scraping social media...");
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> = Vec::new();
@@ -1057,173 +1065,250 @@ impl Scout {
         }
     }
 
-    /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords).
+    /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
+    /// across Instagram, X/Twitter, TikTok, and GoFundMe.
     async fn discover_from_topics(
         &self,
+        topics: &[String],
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
         known_city_urls: &std::collections::HashSet<String>,
     ) {
-        const MAX_HASHTAG_SEARCHES: usize = 3;
+        use crate::scraper::SocialPlatform;
+
+        const MAX_SOCIAL_SEARCHES: usize = 3;
+        const MAX_GOFUNDME_SEARCHES: usize = 2;
         const MAX_NEW_ACCOUNTS: usize = 5;
         const POSTS_PER_SEARCH: u32 = 20;
+        const CAMPAIGNS_PER_SEARCH: u32 = 10;
 
-        // Discovery topics will be a future graph-driven feature
-        let topics: Vec<String> = Vec::new();
         if topics.is_empty() {
             return;
         }
 
-        info!(topics = ?topics, "Starting topic discovery...");
+        info!(topics = ?topics, "Starting social topic discovery...");
 
-        // Search topics across platforms
-        let search_topics: Vec<_> = topics.iter().take(MAX_HASHTAG_SEARCHES).collect();
-        let hashtags: Vec<&str> = search_topics.iter().map(|t| t.as_str()).collect();
-
-        let discovered_posts = match self.social.search_hashtags(&hashtags, POSTS_PER_SEARCH).await {
-            Ok(posts) => posts,
-            Err(e) => {
-                warn!(error = %e, "Hashtag discovery failed");
-                return;
-            }
-        };
-
-        stats.discovery_posts_found = discovered_posts.len() as u32;
-        if discovered_posts.is_empty() {
-            info!("No posts found from topic discovery");
-            return;
-        }
-
-        // Group posts by author
-        let mut by_author: std::collections::HashMap<String, Vec<&SocialPost>> =
-            std::collections::HashMap::new();
-        for post in &discovered_posts {
-            if let Some(ref author) = post.author {
-                by_author
-                    .entry(author.clone())
-                    .or_default()
-                    .push(post);
-            }
-        }
-
-        info!(
-            posts = discovered_posts.len(),
-            unique_authors = by_author.len(),
-            "Topic discovery posts grouped by author"
-        );
-
-        // Check which authors are already known sources (skip them)
+        // Load existing sources for dedup across all platforms
         let existing_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
             Ok(s) => s,
             Err(_) => Vec::new(),
         };
         let existing_canonical_values: std::collections::HashSet<String> = existing_sources
             .iter()
-            .filter(|s| s.source_type == SourceType::Instagram)
             .map(|s| s.canonical_value.clone())
             .collect();
 
         let mut new_accounts = 0u32;
+        let topic_strs: Vec<&str> = topics.iter().take(MAX_SOCIAL_SEARCHES).map(|t| t.as_str()).collect();
 
-        for (username, posts) in &by_author {
+        // Search each social platform with the same topics
+        let platforms = [
+            (SocialPlatform::Instagram, SourceType::Instagram),
+            (SocialPlatform::Twitter, SourceType::Twitter),
+            (SocialPlatform::TikTok, SourceType::TikTok),
+        ];
+
+        for (platform, source_type) in &platforms {
             if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
-                info!("Discovery account budget exhausted");
                 break;
             }
 
-            let source_url = format!("https://www.instagram.com/{username}/");
+            let platform_name = match platform {
+                SocialPlatform::Instagram => "instagram",
+                SocialPlatform::Twitter => "x",
+                SocialPlatform::TikTok => "tiktok",
+                _ => continue,
+            };
 
-            // Skip already-known sources (check by canonical_value = username)
-            if existing_canonical_values.contains(&username.to_string()) {
-                continue;
-            }
-
-            // Concatenate post content for extraction, including post URLs
-            let combined_text: String = posts
-                .iter()
-                .enumerate()
-                .map(|(i, p)| match &p.url {
-                    Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
-                    None => format!("--- Post {} ---\n{}", i + 1, p.content),
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            if combined_text.is_empty() {
-                continue;
-            }
-
-            // Extract signals via LLM
-            let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                Ok(result) => result.nodes,
+            let discovered_posts = match self.social.search_topics(platform, &topic_strs, POSTS_PER_SEARCH).await {
+                Ok(posts) => posts,
                 Err(e) => {
-                    warn!(username, error = %e, "Discovery extraction failed");
+                    warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");
+                    continue; // Platform failure doesn't block others
+                }
+            };
+
+            if discovered_posts.is_empty() {
+                info!(platform = platform_name, "No posts found from topic discovery");
+                continue;
+            }
+
+            stats.discovery_posts_found += discovered_posts.len() as u32;
+
+            // Group posts by author
+            let mut by_author: std::collections::HashMap<String, Vec<&SocialPost>> =
+                std::collections::HashMap::new();
+            for post in &discovered_posts {
+                if let Some(ref author) = post.author {
+                    by_author.entry(author.clone()).or_default().push(post);
+                }
+            }
+
+            info!(
+                platform = platform_name,
+                posts = discovered_posts.len(),
+                unique_authors = by_author.len(),
+                "Topic discovery posts grouped by author"
+            );
+
+            for (username, posts) in &by_author {
+                if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
+                    info!("Discovery account budget exhausted");
+                    break;
+                }
+
+                // Platform-aware source URL
+                let source_url = match platform {
+                    SocialPlatform::Instagram => format!("https://www.instagram.com/{username}/"),
+                    SocialPlatform::Twitter => format!("https://x.com/{username}"),
+                    SocialPlatform::TikTok => format!("https://www.tiktok.com/@{username}"),
+                    _ => continue,
+                };
+
+                // Skip already-known sources
+                if existing_canonical_values.contains(&username.to_string()) {
+                    continue;
+                }
+
+                // Concatenate post content for extraction
+                let combined_text: String = posts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| match &p.url {
+                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
+                        None => format!("--- Post {} ---\n{}", i + 1, p.content),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                if combined_text.is_empty() {
+                    continue;
+                }
+
+                // Extract signals via LLM
+                let nodes = match self.extractor.extract(&combined_text, &source_url).await {
+                    Ok(result) => result.nodes,
+                    Err(e) => {
+                        warn!(username, platform = platform_name, error = %e, "Discovery extraction failed");
+                        continue;
+                    }
+                };
+
+                if nodes.is_empty() {
+                    continue; // No signal found — don't follow this person
+                }
+
+                // Store signals through normal pipeline
+                let signal_count_before = stats.signals_stored;
+                if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache, known_city_urls).await {
+                    warn!(username, error = %e, "Failed to store discovery signals");
+                    continue;
+                }
+                let produced = stats.signals_stored - signal_count_before;
+
+                // Create a Source node with correct platform type
+                let cv = sources::canonical_value_from_url(*source_type, &source_url);
+                let ck = sources::make_canonical_key(&self.city_node.slug, *source_type, &cv);
+                let gap_context = format!("Topic: {}", topics.first().map(|t| t.as_str()).unwrap_or("unknown"));
+                let source = SourceNode {
+                    id: Uuid::new_v4(),
+                    canonical_key: ck.clone(),
+                    canonical_value: cv,
+                    url: Some(source_url.clone()),
+                    source_type: *source_type,
+                    discovery_method: DiscoveryMethod::HashtagDiscovery,
+                    city: self.city_node.slug.clone(),
+                    created_at: Utc::now(),
+                    last_scraped: Some(Utc::now()),
+                    last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
+                    signals_produced: produced,
+                    signals_corroborated: 0,
+                    consecutive_empty_runs: 0,
+                    active: true,
+                    gap_context: Some(gap_context),
+                    weight: 0.3,
+                    cadence_hours: None,
+                    avg_signals_per_scrape: 0.0,
+                    quality_penalty: 1.0,
+                    source_role: rootsignal_common::SourceRole::default(),
+                    scrape_count: 0,
+                };
+
+                *source_signal_counts.entry(ck).or_default() += produced;
+
+                match self.writer.upsert_source(&source).await {
+                    Ok(()) => {
+                        new_accounts += 1;
+                        info!(
+                            username,
+                            platform = platform_name,
+                            signals = produced,
+                            "Discovered new account via topic search"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(username, error = %e, "Failed to create Source node for discovered account");
+                    }
+                }
+            }
+        }
+
+        // GoFundMe: search campaigns → extract signals (no auto-follow)
+        let gofundme_topics: Vec<&str> = topics.iter().take(MAX_GOFUNDME_SEARCHES).map(|t| t.as_str()).collect();
+        for topic in &gofundme_topics {
+            let campaigns = match self.social.search_gofundme(topic, CAMPAIGNS_PER_SEARCH).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(topic, error = %e, "GoFundMe discovery failed");
                     continue;
                 }
             };
 
-            if nodes.is_empty() {
-                continue; // No signal found — don't follow this person
-            }
-
-            // Store signals through normal pipeline (dedup, quality, geo-filter)
-            let signal_count_before = stats.signals_stored;
-            if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache, known_city_urls).await {
-                warn!(username, error = %e, "Failed to store discovery signals");
+            if campaigns.is_empty() {
                 continue;
             }
-            let produced = stats.signals_stored - signal_count_before;
 
-            // Create a Source node so this account gets scraped on future runs
-            let cv = sources::canonical_value_from_url(SourceType::Instagram, &source_url);
-            let ck = sources::make_canonical_key(&self.city_node.slug, SourceType::Instagram, &cv);
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck.clone(),
-                canonical_value: cv,
-                url: Some(source_url.clone()),
-                source_type: SourceType::Instagram,
-                discovery_method: DiscoveryMethod::HashtagDiscovery,
-                city: self.city_node.slug.clone(),
-                created_at: Utc::now(),
-                last_scraped: Some(Utc::now()),
-                last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
-                signals_produced: produced,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: None,
-                weight: 0.3,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: rootsignal_common::SourceRole::default(),
-                scrape_count: 0,
-            };
+            info!(topic, count = campaigns.len(), "GoFundMe campaigns found");
 
-            *source_signal_counts.entry(ck).or_default() += produced;
+            for campaign in &campaigns {
+                let title = campaign.title.as_deref().unwrap_or("Untitled campaign");
+                let desc = campaign.description.as_deref().unwrap_or("");
+                let location = campaign.location.as_deref().unwrap_or("");
+                let organizer = campaign.organizer_name.as_deref().unwrap_or("");
+                let amount = campaign.current_amount.unwrap_or(0.0);
+                let goal = campaign.goal_amount.unwrap_or(0.0);
 
-            match self.writer.upsert_source(&source).await {
-                Ok(()) => {
-                    new_accounts += 1;
-                    info!(
-                        username,
-                        signals = produced,
-                        "Discovered new account via topic search"
-                    );
+                let content = format!(
+                    "GoFundMe Campaign: {title}\nOrganizer: {organizer}\nLocation: {location}\n\
+                     Raised: ${amount:.0} of ${goal:.0} goal\n\n{desc}"
+                );
+
+                let source_url = campaign.url.as_deref().unwrap_or("https://www.gofundme.com");
+
+                let nodes = match self.extractor.extract(&content, source_url).await {
+                    Ok(result) => result.nodes,
+                    Err(e) => {
+                        warn!(title, error = %e, "GoFundMe extraction failed");
+                        continue;
+                    }
+                };
+
+                if nodes.is_empty() {
+                    continue;
                 }
-                Err(e) => {
-                    warn!(username, error = %e, "Failed to create Source node for discovered account");
+
+                if let Err(e) = self.store_signals(source_url, &content, nodes, stats, embed_cache, known_city_urls).await {
+                    warn!(title, error = %e, "Failed to store GoFundMe signals");
                 }
             }
         }
 
         stats.discovery_accounts_found = new_accounts;
         info!(
-            posts = discovered_posts.len(),
+            topics = topics.len(),
             new_accounts,
-            "Topic discovery complete"
+            "Social topic discovery complete"
         );
     }
 

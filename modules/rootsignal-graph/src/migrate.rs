@@ -196,19 +196,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Actor constraints and indexes created");
 
-    // --- Edition constraints and indexes ---
-    g.run(query("CREATE CONSTRAINT edition_id_unique IF NOT EXISTS FOR (e:Edition) REQUIRE e.id IS UNIQUE")).await?;
-
-    let edition_indexes = [
-        "CREATE INDEX edition_city IF NOT EXISTS FOR (e:Edition) ON (e.city)",
-        "CREATE INDEX edition_period IF NOT EXISTS FOR (e:Edition) ON (e.period)",
-    ];
-
-    for idx in &edition_indexes {
-        g.run(query(idx)).await?;
-    }
-    info!("Edition constraints and indexes created");
-
     // --- Edge index for SIMILAR_TO weight ---
     g.run(query("CREATE INDEX similar_to_weight IF NOT EXISTS FOR ()-[r:SIMILAR_TO]-() ON (r.weight)")).await?;
     info!("Edge indexes created");

@@ -169,30 +169,6 @@ impl QueryRoot {
         Ok(actor.map(GqlActor))
     }
 
-    /// List editions for a city.
-    async fn editions(
-        &self,
-        ctx: &Context<'_>,
-        city: String,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlEdition>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let limit = limit.unwrap_or(10).min(50);
-        let editions = reader.list_editions(&city, limit).await?;
-        Ok(editions.into_iter().map(GqlEdition).collect())
-    }
-
-    /// Get the latest edition for a city.
-    async fn latest_edition(
-        &self,
-        ctx: &Context<'_>,
-        city: String,
-    ) -> Result<Option<GqlEdition>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let edition = reader.latest_edition(&city).await?;
-        Ok(edition.map(GqlEdition))
-    }
-
     // ========== Admin queries (AdminGuard) ==========
 
     /// Dashboard data for a city.

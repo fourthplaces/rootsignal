@@ -26,7 +26,7 @@ use rootsignal_common::{
 
 use crate::embedder::TextEmbedder;
 use crate::extractor::SignalExtractor;
-use crate::scraper::{PageScraper, SearchResult, SocialAccount, SocialPost, SocialScraper, WebSearcher};
+use crate::scraper::{PageScraper, SearchResult, SocialAccount, SocialPlatform, SocialPost, SocialScraper, WebSearcher};
 
 // --- FixtureSearcher ---
 
@@ -325,6 +325,19 @@ impl SocialScraper for ScenarioSocialScraper {
         );
         self.generate(&context, limit).await
     }
+
+    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
+        let context = format!(
+            "Platform: {:?}, Topics: {}. Generate posts from different accounts discussing these topics.",
+            platform, topics.join(", ")
+        );
+        self.generate(&context, limit).await
+    }
+
+    async fn search_gofundme(&self, keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+        let _ = keyword;
+        Ok(Vec::new())
+    }
 }
 
 // --- FixtureSocialScraper ---
@@ -351,6 +364,14 @@ impl SocialScraper for FixtureSocialScraper {
 
     async fn search_hashtags(&self, _hashtags: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
         Ok(self.posts.clone())
+    }
+
+    async fn search_topics(&self, _platform: &SocialPlatform, _topics: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(self.posts.clone())
+    }
+
+    async fn search_gofundme(&self, _keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+        Ok(Vec::new())
     }
 }
 

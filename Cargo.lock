@@ -3011,19 +3011,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rootsignal-editions"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "rootsignal-common",
- "rootsignal-graph",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "rootsignal-graph"
 version = "0.1.0"
 dependencies = [

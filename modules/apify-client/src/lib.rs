@@ -5,7 +5,8 @@ pub use error::{ApifyError, Result};
 pub use types::{
     DiscoveredPost, FacebookPost, FacebookScraperInput, GoFundMeCampaign, GoFundMeScraperInput,
     InstagramHashtagInput, InstagramPost, InstagramScraperInput, RedditPost, RedditScraperInput,
-    RunData, StartUrl, TikTokPost, TikTokScraperInput, Tweet, TweetAuthor, TweetScraperInput,
+    RunData, StartUrl, TikTokPost, TikTokScraperInput, TikTokSearchInput,
+    Tweet, TweetAuthor, TweetScraperInput, TweetSearchInput,
 };
 
 use serde::de::DeserializeOwned;
@@ -412,6 +413,88 @@ impl ApifyClient {
             .get_dataset_items(&completed.default_dataset_id)
             .await?;
         tracing::info!(count = posts.len(), "Fetched Reddit posts");
+
+        Ok(posts)
+    }
+
+    /// Search X/Twitter by keywords. Uses the same apidojo/tweet-scraper actor
+    /// with searchTerms instead of twitterHandles.
+    pub async fn search_x_keywords(&self, keywords: &[&str], limit: u32) -> Result<Vec<Tweet>> {
+        tracing::info!(?keywords, limit, "Starting X/Twitter keyword search");
+
+        let input = TweetSearchInput {
+            search_terms: keywords.iter().map(|k| k.to_string()).collect(),
+            max_items: limit,
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, TWEET_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "X/Twitter keyword search started, polling");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        let tweets: Vec<Tweet> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = tweets.len(), "Fetched tweets from keyword search");
+
+        Ok(tweets)
+    }
+
+    /// Search TikTok by keywords. Uses the clockworks/tiktok-scraper actor
+    /// with searchQueries instead of profiles.
+    pub async fn search_tiktok_keywords(&self, keywords: &[&str], limit: u32) -> Result<Vec<TikTokPost>> {
+        tracing::info!(?keywords, limit, "Starting TikTok keyword search");
+
+        let input = TikTokSearchInput {
+            search_queries: keywords.iter().map(|k| k.to_string()).collect(),
+            results_per_page: limit,
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, TIKTOK_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "TikTok keyword search started, polling");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        let posts: Vec<TikTokPost> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = posts.len(), "Fetched TikTok posts from keyword search");
 
         Ok(posts)
     }

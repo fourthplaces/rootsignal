@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use rootsignal_scout::scraper::{
-    PageScraper, SearchResult, SocialAccount, SocialPost, SocialScraper, WebSearcher,
+    PageScraper, SearchResult, SocialAccount, SocialPlatform, SocialPost, SocialScraper, WebSearcher,
 };
 use simweb::SimulatedWeb;
 
@@ -103,5 +103,13 @@ impl SocialScraper for SimSocialAdapter {
                 url: p.url,
             })
             .collect())
+    }
+
+    async fn search_topics(&self, _platform: &SocialPlatform, _topics: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+        Ok(Vec::new())
+    }
+
+    async fn search_gofundme(&self, _keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+        Ok(Vec::new())
     }
 }
