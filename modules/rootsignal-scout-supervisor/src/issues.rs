@@ -23,7 +23,7 @@ impl IssueStore {
             "MATCH (v:ValidationIssue {target_id: $target_id, issue_type: $issue_type})
              WHERE v.status = 'open'
              RETURN v.id AS id
-             LIMIT 1"
+             LIMIT 1",
         )
         .param("target_id", issue.target_id.to_string())
         .param("issue_type", issue.issue_type.to_string());
@@ -49,7 +49,7 @@ impl IssueStore {
                 suggested_action: $suggested_action,
                 status: $status,
                 created_at: datetime($created_at)
-            })"
+            })",
         )
         .param("id", issue.id.to_string())
         .param("city", issue.city.clone())
@@ -76,7 +76,7 @@ impl IssueStore {
              SET v.status = 'resolved',
                  v.resolved_at = datetime(),
                  v.resolution = 'auto-expired after 30 days'
-             RETURN count(v) AS expired"
+             RETURN count(v) AS expired",
         );
 
         let mut stream = self.client.inner().execute(q).await?;

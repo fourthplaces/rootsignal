@@ -12,10 +12,7 @@ use crate::genome::{FitnessScore, ScenarioScore};
 /// - `raw = 0.7 * verdict_avg + 0.3 * audit_avg`
 /// - `regressions` = count of scenarios baseline passed but mutant fails
 /// - `total = max(0, raw - regressions * 0.05)`
-pub fn score_genome(
-    scores: &[ScenarioScore],
-    baseline: Option<&[ScenarioScore]>,
-) -> FitnessScore {
+pub fn score_genome(scores: &[ScenarioScore], baseline: Option<&[ScenarioScore]>) -> FitnessScore {
     if scores.is_empty() {
         return FitnessScore {
             total: 0.0,
@@ -26,8 +23,8 @@ pub fn score_genome(
         };
     }
 
-    let verdict_avg: f64 = scores.iter().map(|s| s.verdict_score as f64).sum::<f64>()
-        / scores.len() as f64;
+    let verdict_avg: f64 =
+        scores.iter().map(|s| s.verdict_score as f64).sum::<f64>() / scores.len() as f64;
 
     let audit_avg: f64 = scores
         .iter()
@@ -56,10 +53,7 @@ pub fn score_genome(
 }
 
 /// Count scenarios where baseline passed but mutant fails.
-fn count_regressions(
-    scores: &[ScenarioScore],
-    baseline: Option<&[ScenarioScore]>,
-) -> u32 {
+fn count_regressions(scores: &[ScenarioScore], baseline: Option<&[ScenarioScore]>) -> u32 {
     let baseline = match baseline {
         Some(b) => b,
         None => return 0,
@@ -85,7 +79,13 @@ pub fn is_improvement(mutant: &FitnessScore, champion: &FitnessScore) -> bool {
 mod tests {
     use super::*;
 
-    fn make_score(name: &str, pass: bool, score: f32, audit_passed: usize, audit_total: usize) -> ScenarioScore {
+    fn make_score(
+        name: &str,
+        pass: bool,
+        score: f32,
+        audit_passed: usize,
+        audit_total: usize,
+    ) -> ScenarioScore {
         ScenarioScore {
             name: name.to_string(),
             verdict_pass: pass,
@@ -118,7 +118,7 @@ mod tests {
             make_score("b", true, 0.7, 3, 5),
         ];
         let mutant = vec![
-            make_score("a", false, 0.3, 2, 5),  // regression
+            make_score("a", false, 0.3, 2, 5), // regression
             make_score("b", true, 0.9, 5, 5),
         ];
         let fitness = score_genome(&mutant, Some(&baseline));

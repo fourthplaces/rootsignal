@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 use schemars::JsonSchema;
-use serde::{Deserialize, de};
+use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -110,8 +110,12 @@ impl DiscoveryBriefing {
         // Response shapes
         if !self.response_shapes.is_empty() {
             out.push_str("## RESPONSE SHAPE (what's missing from each tension's response)\n\n");
-            out.push_str("These tensions HAVE responses, but coverage may be uneven. Look for what's\n");
-            out.push_str("MISSING — if a tension has legal aid but no housing help, search for housing.\n");
+            out.push_str(
+                "These tensions HAVE responses, but coverage may be uneven. Look for what's\n",
+            );
+            out.push_str(
+                "MISSING — if a tension has legal aid but no housing help, search for housing.\n",
+            );
             out.push_str("If it has events but no donation channels, search for giving.\n\n");
             for rs in &self.response_shapes {
                 let help = rs.what_would_help.as_deref().unwrap_or("unknown");
@@ -125,7 +129,9 @@ impl DiscoveryBriefing {
                     rs.give_count, rs.event_count, rs.ask_count,
                 ));
                 if !rs.sample_titles.is_empty() {
-                    let titles = rs.sample_titles.iter()
+                    let titles = rs
+                        .sample_titles
+                        .iter()
                         .map(|t| format!("\"{}\"", t))
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -165,7 +171,9 @@ impl DiscoveryBriefing {
         let total = sc.events + sc.gives + sc.asks + sc.notices + sc.tensions;
         if total > 5 {
             if sc.tensions > 0 && sc.gives < sc.tensions / 3 {
-                out.push_str("→ Give signals significantly underrepresented relative to tensions.\n");
+                out.push_str(
+                    "→ Give signals significantly underrepresented relative to tensions.\n",
+                );
             }
             if sc.asks > 0 && sc.gives < sc.asks / 2 {
                 out.push_str("→ Few Give signals to match the Ask signals.\n");
@@ -233,8 +241,12 @@ impl DiscoveryBriefing {
                 };
                 out.push_str(&format!(
                     "- {}: {} extracted, {} survived ({}%), {} corroborated, {} contradicted\n",
-                    y.source_type, y.extracted, y.survived, survival_pct,
-                    y.corroborated, y.contradicted,
+                    y.source_type,
+                    y.extracted,
+                    y.survived,
+                    survival_pct,
+                    y.corroborated,
+                    y.contradicted,
                 ));
                 if y.extracted >= 10 && survival_pct < 50 {
                     out.push_str(&format!(
@@ -310,14 +322,12 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     match value {
-        serde_json::Value::Array(_) => {
-            serde_json::from_value(value).map_err(de::Error::custom)
-        }
-        serde_json::Value::String(ref s) => {
-            serde_json::from_str(s).map_err(de::Error::custom)
-        }
+        serde_json::Value::Array(_) => serde_json::from_value(value).map_err(de::Error::custom),
+        serde_json::Value::String(ref s) => serde_json::from_str(s).map_err(de::Error::custom),
         serde_json::Value::Null => Ok(Vec::new()),
-        _ => Err(de::Error::custom("queries must be an array, JSON string, or null")),
+        _ => Err(de::Error::custom(
+            "queries must be an array, JSON string, or null",
+        )),
     }
 }
 
@@ -459,14 +469,18 @@ impl<'a> SourceFinder<'a> {
         self.discover_from_actors(&mut stats).await;
 
         // 2. LLM-driven curiosity engine (with mechanical fallback)
-        self.discover_from_curiosity(&mut stats, &mut social_topics).await;
+        self.discover_from_curiosity(&mut stats, &mut social_topics)
+            .await;
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
             info!("{stats}");
         }
 
         if !social_topics.is_empty() {
-            info!(count = social_topics.len(), "Social discovery topics generated");
+            info!(
+                count = social_topics.len(),
+                "Social discovery topics generated"
+            );
         }
 
         (stats, social_topics)
@@ -489,12 +503,12 @@ impl<'a> SourceFinder<'a> {
                 return;
             }
         };
-        let existing_urls: HashSet<String> = existing.iter()
+        let existing_urls: HashSet<String> = existing
+            .iter()
             .filter_map(|s| s.url.as_ref().cloned())
             .collect();
-        let existing_keys: HashSet<String> = existing.iter()
-            .map(|s| s.canonical_key.clone())
-            .collect();
+        let existing_keys: HashSet<String> =
+            existing.iter().map(|s| s.canonical_key.clone()).collect();
 
         let now = Utc::now();
         for (actor_name, domains, social_urls, dominant_role) in &actors {
@@ -547,7 +561,10 @@ impl<'a> SourceFinder<'a> {
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
-                        info!(actor = actor_name.as_str(), url, "Discovered source from actor domain");
+                        info!(
+                            actor = actor_name.as_str(),
+                            url, "Discovered source from actor domain"
+                        );
                     }
                     Err(e) => warn!(url, error = %e, "Failed to create actor-derived source"),
                 }
@@ -595,16 +612,26 @@ impl<'a> SourceFinder<'a> {
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
-                        info!(actor = actor_name.as_str(), url = social_url.as_str(), "Discovered source from actor social");
+                        info!(
+                            actor = actor_name.as_str(),
+                            url = social_url.as_str(),
+                            "Discovered source from actor social"
+                        );
                     }
-                    Err(e) => warn!(url = social_url.as_str(), error = %e, "Failed to create actor social source"),
+                    Err(e) => {
+                        warn!(url = social_url.as_str(), error = %e, "Failed to create actor social source")
+                    }
                 }
             }
         }
     }
 
     /// LLM-driven curiosity engine with mechanical fallback.
-    async fn discover_from_curiosity(&self, stats: &mut SourceFinderStats, social_topics: &mut Vec<String>) {
+    async fn discover_from_curiosity(
+        &self,
+        stats: &mut SourceFinderStats,
+        social_topics: &mut Vec<String>,
+    ) {
         // Guard: no Claude client → mechanical fallback
         let claude = match &self.claude {
             Some(c) => c,
@@ -615,7 +642,11 @@ impl<'a> SourceFinder<'a> {
         };
 
         // Guard: no budget → mechanical fallback
-        if self.budget.is_active() && !self.budget.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY) {
+        if self.budget.is_active()
+            && !self
+                .budget
+                .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
+        {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
             self.discover_from_gaps_mechanical(stats).await;
             return;
@@ -667,7 +698,9 @@ impl<'a> SourceFinder<'a> {
         }
 
         // Create sources from plan
-        let existing_queries: HashSet<String> = briefing.existing_queries.iter()
+        let existing_queries: HashSet<String> = briefing
+            .existing_queries
+            .iter()
             .map(|q| q.to_lowercase())
             .collect();
 
@@ -676,9 +709,9 @@ impl<'a> SourceFinder<'a> {
             let query_lower = dq.query.to_lowercase();
 
             // Dedup layer 1: substring overlap with existing queries
-            let is_dup = existing_queries.iter().any(|q| {
-                q.contains(&query_lower) || query_lower.contains(q.as_str())
-            });
+            let is_dup = existing_queries
+                .iter()
+                .any(|q| q.contains(&query_lower) || query_lower.contains(q.as_str()));
             if is_dup {
                 stats.duplicates_skipped += 1;
                 continue;
@@ -688,7 +721,15 @@ impl<'a> SourceFinder<'a> {
             if let Some(embedder) = self.embedder {
                 match embedder.embed(&dq.query).await {
                     Ok(embedding) => {
-                        match self.writer.find_similar_query(&embedding, &self.city_slug, QUERY_DEDUP_SIMILARITY_THRESHOLD).await {
+                        match self
+                            .writer
+                            .find_similar_query(
+                                &embedding,
+                                &self.city_slug,
+                                QUERY_DEDUP_SIMILARITY_THRESHOLD,
+                            )
+                            .await
+                        {
                             Ok(Some((existing_ck, sim))) => {
                                 info!(
                                     query = dq.query.as_str(),
@@ -732,7 +773,8 @@ impl<'a> SourceFinder<'a> {
                 _ => SourceRole::Mixed,
             };
 
-            let weight = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
+            let weight =
+                initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
 
             let source = SourceNode {
                 id: Uuid::new_v4(),
@@ -784,31 +826,56 @@ impl<'a> SourceFinder<'a> {
 
     /// Build a DiscoveryBriefing from graph queries.
     async fn build_briefing(&self) -> anyhow::Result<DiscoveryBriefing> {
-        let tensions = self.writer.get_unmet_tensions(10).await
+        let tensions = self
+            .writer
+            .get_unmet_tensions(10)
+            .await
             .map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
 
-        let stories = self.writer.get_story_landscape(8).await
+        let stories = self
+            .writer
+            .get_story_landscape(8)
+            .await
             .map_err(|e| anyhow::anyhow!("get_story_landscape: {e}"))?;
 
-        let signal_counts = self.writer.get_signal_type_counts(&self.city_slug).await
+        let signal_counts = self
+            .writer
+            .get_signal_type_counts(&self.city_slug)
+            .await
             .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
 
-        let (successes, failures) = self.writer.get_discovery_performance(&self.city_slug).await
+        let (successes, failures) = self
+            .writer
+            .get_discovery_performance(&self.city_slug)
+            .await
             .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
 
-        let gap_type_stats = self.writer.get_gap_type_stats(&self.city_slug).await
+        let gap_type_stats = self
+            .writer
+            .get_gap_type_stats(&self.city_slug)
+            .await
             .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
 
-        let extraction_yield = self.writer.get_extraction_yield(&self.city_slug).await
+        let extraction_yield = self
+            .writer
+            .get_extraction_yield(&self.city_slug)
+            .await
             .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
 
-        let response_shapes = self.writer.get_tension_response_shape(10).await
+        let response_shapes = self
+            .writer
+            .get_tension_response_shape(10)
+            .await
             .map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
 
         // Get existing WebQuery sources for dedup
-        let existing = self.writer.get_active_sources(&self.city_slug).await
+        let existing = self
+            .writer
+            .get_active_sources(&self.city_slug)
+            .await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
-        let existing_queries: Vec<String> = existing.iter()
+        let existing_queries: Vec<String> = existing
+            .iter()
             .filter(|s| s.source_type == SourceType::WebQuery)
             .map(|s| s.canonical_value.clone())
             .collect();
@@ -848,9 +915,13 @@ impl<'a> SourceFinder<'a> {
 
         // Stable-sort by engagement score descending (preserves unmet-first from query)
         tensions.sort_by(|a, b| {
-            let score_a = a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
-            let score_b = b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            let score_a =
+                a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
+            let score_b =
+                b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let existing = match self.writer.get_active_sources(&self.city_slug).await {
@@ -861,7 +932,8 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        let existing_queries: HashSet<String> = existing.iter()
+        let existing_queries: HashSet<String> = existing
+            .iter()
             .filter(|s| s.source_type == SourceType::WebQuery)
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
@@ -880,9 +952,10 @@ impl<'a> SourceFinder<'a> {
             let query_lower = query.to_lowercase();
 
             // Skip if we already have a similar query
-            if existing_queries.iter().any(|q| {
-                q.contains(&query_lower) || query_lower.contains(q.as_str())
-            }) {
+            if existing_queries
+                .iter()
+                .any(|q| q.contains(&query_lower) || query_lower.contains(q.as_str()))
+            {
                 stats.duplicates_skipped += 1;
                 continue;
             }
@@ -890,7 +963,8 @@ impl<'a> SourceFinder<'a> {
             let cv = query.clone();
             let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
 
-            let weight = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
+            let weight =
+                initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
 
             let source = SourceNode {
                 id: Uuid::new_v4(),
@@ -921,7 +995,11 @@ impl<'a> SourceFinder<'a> {
                 Ok(_) => {
                     gap_count += 1;
                     stats.gap_sources += 1;
-                    info!(tension = t.title.as_str(), query = source.canonical_value.as_str(), "Created gap analysis query");
+                    info!(
+                        tension = t.title.as_str(),
+                        query = source.canonical_value.as_str(),
+                        "Created gap analysis query"
+                    );
                 }
                 Err(e) => warn!(error = %e, "Failed to create gap analysis source"),
             }
@@ -935,7 +1013,12 @@ mod tests {
 
     // --- Helper builders ---
 
-    fn make_tension(title: &str, severity: &str, what_would_help: Option<&str>, unmet: bool) -> UnmetTension {
+    fn make_tension(
+        title: &str,
+        severity: &str,
+        what_would_help: Option<&str>,
+        unmet: bool,
+    ) -> UnmetTension {
         UnmetTension {
             title: title.to_string(),
             severity: severity.to_string(),
@@ -949,8 +1032,13 @@ mod tests {
     }
 
     fn make_tension_with_engagement(
-        title: &str, severity: &str, what_would_help: Option<&str>, unmet: bool,
-        corroboration_count: u32, source_diversity: u32, cause_heat: f64,
+        title: &str,
+        severity: &str,
+        what_would_help: Option<&str>,
+        unmet: bool,
+        corroboration_count: u32,
+        source_diversity: u32,
+        cause_heat: f64,
     ) -> UnmetTension {
         UnmetTension {
             title: title.to_string(),
@@ -964,7 +1052,14 @@ mod tests {
         }
     }
 
-    fn make_story(headline: &str, arc: &str, energy: f64, signal_count: u32, dominant_type: &str, source_count: u32) -> StoryBrief {
+    fn make_story(
+        headline: &str,
+        arc: &str,
+        energy: f64,
+        signal_count: u32,
+        dominant_type: &str,
+        source_count: u32,
+    ) -> StoryBrief {
         StoryBrief {
             headline: headline.to_string(),
             arc: Some(arc.to_string()),
@@ -976,7 +1071,14 @@ mod tests {
         }
     }
 
-    fn make_source_brief(cv: &str, signals: u32, weight: f64, empty_runs: u32, context: &str, active: bool) -> SourceBrief {
+    fn make_source_brief(
+        cv: &str,
+        signals: u32,
+        weight: f64,
+        empty_runs: u32,
+        context: &str,
+        active: bool,
+    ) -> SourceBrief {
         SourceBrief {
             canonical_value: cv.to_string(),
             signals_produced: signals,
@@ -990,13 +1092,42 @@ mod tests {
     fn make_briefing() -> DiscoveryBriefing {
         DiscoveryBriefing {
             tensions: vec![
-                make_tension("Northside food desert growing", "high", Some("grocery co-op, food shelf expansion"), true),
-                make_tension("Youth mental health crisis", "critical", Some("crisis counselors, peer support"), true),
-                make_tension("Housing affordability declining", "medium", Some("affordable housing programs"), false),
+                make_tension(
+                    "Northside food desert growing",
+                    "high",
+                    Some("grocery co-op, food shelf expansion"),
+                    true,
+                ),
+                make_tension(
+                    "Youth mental health crisis",
+                    "critical",
+                    Some("crisis counselors, peer support"),
+                    true,
+                ),
+                make_tension(
+                    "Housing affordability declining",
+                    "medium",
+                    Some("affordable housing programs"),
+                    false,
+                ),
             ],
             stories: vec![
-                make_story("Downtown bike lane conflict", "Emerging", 0.7, 3, "Tension+Notice", 2),
-                make_story("Encampment clearance on 3rd Ave", "Growing", 0.9, 8, "Tension+Ask+Notice", 4),
+                make_story(
+                    "Downtown bike lane conflict",
+                    "Emerging",
+                    0.7,
+                    3,
+                    "Tension+Notice",
+                    2,
+                ),
+                make_story(
+                    "Encampment clearance on 3rd Ave",
+                    "Growing",
+                    0.9,
+                    8,
+                    "Tension+Ask+Notice",
+                    4,
+                ),
             ],
             signal_counts: SignalTypeCounts {
                 events: 23,
@@ -1005,12 +1136,22 @@ mod tests {
                 notices: 12,
                 tensions: 31,
             },
-            successes: vec![
-                make_source_brief("affordable housing programs Minneapolis", 12, 0.8, 0, "unmet tension housing", true),
-            ],
-            failures: vec![
-                make_source_brief("youth mentorship programs Minneapolis", 0, 0.3, 10, "emerging thread youth services", false),
-            ],
+            successes: vec![make_source_brief(
+                "affordable housing programs Minneapolis",
+                12,
+                0.8,
+                0,
+                "unmet tension housing",
+                true,
+            )],
+            failures: vec![make_source_brief(
+                "youth mentorship programs Minneapolis",
+                0,
+                0.3,
+                10,
+                "emerging thread youth services",
+                false,
+            )],
             existing_queries: vec![
                 "affordable housing programs Minneapolis".to_string(),
                 "food shelf locations Minneapolis".to_string(),
@@ -1029,16 +1170,37 @@ mod tests {
         let briefing = make_briefing();
         let prompt = briefing.format_prompt();
 
-        assert!(prompt.contains("## UNMET TENSIONS"), "Missing UNMET TENSIONS section");
-        assert!(prompt.contains("## TENSIONS WITH RESPONSES"), "Missing TENSIONS WITH RESPONSES section");
-        assert!(prompt.contains("## STORY LANDSCAPE"), "Missing STORY LANDSCAPE section");
-        assert!(prompt.contains("## SIGNAL BALANCE"), "Missing SIGNAL BALANCE section");
-        assert!(prompt.contains("## PAST DISCOVERY RESULTS"), "Missing PAST DISCOVERY RESULTS section");
-        assert!(prompt.contains("## EXISTING QUERIES"), "Missing EXISTING QUERIES section");
+        assert!(
+            prompt.contains("## UNMET TENSIONS"),
+            "Missing UNMET TENSIONS section"
+        );
+        assert!(
+            prompt.contains("## TENSIONS WITH RESPONSES"),
+            "Missing TENSIONS WITH RESPONSES section"
+        );
+        assert!(
+            prompt.contains("## STORY LANDSCAPE"),
+            "Missing STORY LANDSCAPE section"
+        );
+        assert!(
+            prompt.contains("## SIGNAL BALANCE"),
+            "Missing SIGNAL BALANCE section"
+        );
+        assert!(
+            prompt.contains("## PAST DISCOVERY RESULTS"),
+            "Missing PAST DISCOVERY RESULTS section"
+        );
+        assert!(
+            prompt.contains("## EXISTING QUERIES"),
+            "Missing EXISTING QUERIES section"
+        );
 
         // Tensions include severity and what_would_help
         assert!(prompt.contains("[HIGH]"), "Missing severity tag");
-        assert!(prompt.contains("grocery co-op"), "Missing what_would_help text");
+        assert!(
+            prompt.contains("grocery co-op"),
+            "Missing what_would_help text"
+        );
 
         // Stories include arc and energy
         assert!(prompt.contains("Emerging"), "Missing story arc");
@@ -1051,11 +1213,20 @@ mod tests {
         // Past results
         assert!(prompt.contains("Worked well:"), "Missing successes header");
         assert!(prompt.contains("Didn't work:"), "Missing failures header");
-        assert!(prompt.contains("12 signals"), "Missing success signal count");
-        assert!(prompt.contains("10 empty runs"), "Missing failure empty runs");
+        assert!(
+            prompt.contains("12 signals"),
+            "Missing success signal count"
+        );
+        assert!(
+            prompt.contains("10 empty runs"),
+            "Missing failure empty runs"
+        );
 
         // Existing queries
-        assert!(prompt.contains("affordable housing programs Minneapolis"), "Missing existing query");
+        assert!(
+            prompt.contains("affordable housing programs Minneapolis"),
+            "Missing existing query"
+        );
     }
 
     #[test]
@@ -1066,7 +1237,10 @@ mod tests {
             briefing.tensions.push(make_tension(
                 &format!("Tension number {} with a reasonably long title here", i),
                 "high",
-                Some(&format!("help text for tension {} that is moderately long", i)),
+                Some(&format!(
+                    "help text for tension {} that is moderately long",
+                    i
+                )),
                 i % 2 == 0,
             ));
         }
@@ -1101,7 +1275,9 @@ mod tests {
             ));
         }
         for i in 0..15 {
-            briefing.existing_queries.push(format!("existing query {} Minneapolis", i));
+            briefing
+                .existing_queries
+                .push(format!("existing query {} Minneapolis", i));
         }
 
         let prompt = briefing.format_prompt();
@@ -1147,7 +1323,10 @@ mod tests {
             extraction_yield: vec![],
             response_shapes: vec![],
         };
-        assert!(briefing.is_cold_start(), "2 tensions + 0 stories should be cold start");
+        assert!(
+            briefing.is_cold_start(),
+            "2 tensions + 0 stories should be cold start"
+        );
     }
 
     #[test]
@@ -1223,16 +1402,14 @@ mod tests {
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
-            failures: vec![
-                make_source_brief(
-                    "youth mentorship programs Minneapolis",
-                    0,
-                    0.3,
-                    10,
-                    "Curiosity: emerging thread youth services | Gap: emerging_thread",
-                    false,
-                ),
-            ],
+            failures: vec![make_source_brief(
+                "youth mentorship programs Minneapolis",
+                0,
+                0.3,
+                10,
+                "Curiosity: emerging thread youth services | Gap: emerging_thread",
+                false,
+            )],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
@@ -1252,12 +1429,8 @@ mod tests {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             signal_counts: SignalTypeCounts::default(),
-            successes: vec![
-                make_source_brief("good query", 10, 0.7, 0, "worked", true),
-            ],
-            failures: vec![
-                make_source_brief("bad query", 0, 0.2, 8, "failed", false),
-            ],
+            successes: vec![make_source_brief("good query", 10, 0.7, 0, "worked", true)],
+            failures: vec![make_source_brief("bad query", 0, 0.2, 8, "failed", false)],
             existing_queries: vec![],
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
@@ -1273,7 +1446,10 @@ mod tests {
         let bad_pos = prompt.find("bad query").expect("Missing bad query");
 
         // Good query appears after "Worked well" and before "Didn't work"
-        assert!(good_pos > worked_pos && good_pos < didnt_pos, "Success in wrong section");
+        assert!(
+            good_pos > worked_pos && good_pos < didnt_pos,
+            "Success in wrong section"
+        );
         // Bad query appears after "Didn't work"
         assert!(bad_pos > didnt_pos, "Failure in wrong section");
     }
@@ -1297,8 +1473,14 @@ mod tests {
         };
         let prompt = briefing.format_prompt();
 
-        assert!(prompt.contains("## UNMET TENSIONS"), "Missing UNMET section");
-        assert!(prompt.contains("## TENSIONS WITH RESPONSES"), "Missing RESPONDED section");
+        assert!(
+            prompt.contains("## UNMET TENSIONS"),
+            "Missing UNMET section"
+        );
+        assert!(
+            prompt.contains("## TENSIONS WITH RESPONSES"),
+            "Missing RESPONDED section"
+        );
 
         // Unmet tensions in the UNMET section
         let unmet_pos = prompt.find("## UNMET TENSIONS").unwrap();
@@ -1306,7 +1488,10 @@ mod tests {
         let unmet_a_pos = prompt.find("Unmet tension A").unwrap();
         let met_b_pos = prompt.find("Met tension B").unwrap();
 
-        assert!(unmet_a_pos > unmet_pos && unmet_a_pos < met_pos, "Unmet tension in wrong section");
+        assert!(
+            unmet_a_pos > unmet_pos && unmet_a_pos < met_pos,
+            "Unmet tension in wrong section"
+        );
         assert!(met_b_pos > met_pos, "Met tension in wrong section");
     }
 
@@ -1350,7 +1535,10 @@ mod tests {
         assert_eq!(plan.queries[0].query, "mutual aid Minneapolis");
         assert!(plan.queries[0].related_tension.is_some());
         assert!(plan.queries[1].related_tension.is_none());
-        assert!(plan.social_topics.is_empty(), "Missing social_topics should default to empty");
+        assert!(
+            plan.social_topics.is_empty(),
+            "Missing social_topics should default to empty"
+        );
     }
 
     #[test]
@@ -1383,7 +1571,10 @@ mod tests {
         ]}"#;
         let plan: DiscoveryPlan = serde_json::from_str(json).unwrap();
         assert_eq!(plan.queries.len(), 1);
-        assert!(plan.social_topics.is_empty(), "Missing social_topics field should default to empty vec");
+        assert!(
+            plan.social_topics.is_empty(),
+            "Missing social_topics field should default to empty vec"
+        );
     }
 
     #[test]
@@ -1402,7 +1593,9 @@ mod tests {
         let related = Some("Northside food desert");
         let context = format!(
             "Curiosity: {} | Gap: {} | Related: {}",
-            reasoning, gap_type, related.unwrap_or("none"),
+            reasoning,
+            gap_type,
+            related.unwrap_or("none"),
         );
         assert!(context.contains("food insecurity"));
         assert!(context.contains("unmet_tension"));
@@ -1426,9 +1619,9 @@ mod tests {
     fn dedup_catches_substring_matches() {
         let existing: HashSet<String> = ["affordable housing minneapolis".to_string()].into();
         let new_query = "affordable housing minneapolis programs";
-        let is_dup = existing.iter().any(|q| {
-            q.contains(new_query) || new_query.contains(q.as_str())
-        });
+        let is_dup = existing
+            .iter()
+            .any(|q| q.contains(new_query) || new_query.contains(q.as_str()));
         assert!(is_dup, "Substring dedup should catch this");
     }
 
@@ -1436,9 +1629,9 @@ mod tests {
     fn dedup_allows_novel_queries() {
         let existing: HashSet<String> = ["affordable housing minneapolis".to_string()].into();
         let new_query = "tenant rights legal aid minneapolis";
-        let is_dup = existing.iter().any(|q| {
-            q.contains(new_query) || new_query.contains(q.as_str())
-        });
+        let is_dup = existing
+            .iter()
+            .any(|q| q.contains(new_query) || new_query.contains(q.as_str()));
         assert!(!is_dup, "Novel query should pass dedup");
     }
 
@@ -1448,26 +1641,54 @@ mod tests {
     fn briefing_engagement_shown_for_tensions() {
         let mut briefing = make_briefing();
         briefing.tensions = vec![
-            make_tension_with_engagement("Food desert", "high", Some("grocery co-op"), true, 3, 2, 0.7),
-            make_tension_with_engagement("Housing crisis", "medium", Some("housing programs"), false, 1, 1, 0.3),
+            make_tension_with_engagement(
+                "Food desert",
+                "high",
+                Some("grocery co-op"),
+                true,
+                3,
+                2,
+                0.7,
+            ),
+            make_tension_with_engagement(
+                "Housing crisis",
+                "medium",
+                Some("housing programs"),
+                false,
+                1,
+                1,
+                0.3,
+            ),
         ];
         let prompt = briefing.format_prompt();
-        assert!(prompt.contains("community attention: 2 sources, 3 corroborations, heat=0.7"),
-            "Missing engagement line for unmet tension. Prompt:\n{prompt}");
-        assert!(prompt.contains("community attention: 1 sources, 1 corroborations, heat=0.3"),
-            "Missing engagement line for met tension. Prompt:\n{prompt}");
+        assert!(
+            prompt.contains("community attention: 2 sources, 3 corroborations, heat=0.7"),
+            "Missing engagement line for unmet tension. Prompt:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("community attention: 1 sources, 1 corroborations, heat=0.3"),
+            "Missing engagement line for met tension. Prompt:\n{prompt}"
+        );
     }
 
     #[test]
     fn briefing_engagement_zero_still_shown() {
         let mut briefing = make_briefing();
-        briefing.tensions = vec![
-            make_tension("Novel early signal", "low", Some("unknown"), true),
-        ];
+        briefing.tensions = vec![make_tension(
+            "Novel early signal",
+            "low",
+            Some("unknown"),
+            true,
+        )];
         let prompt = briefing.format_prompt();
-        assert!(prompt.contains("Novel early signal"), "Zero-engagement tension should still appear");
-        assert!(prompt.contains("community attention: 0 sources, 0 corroborations, heat=0.0"),
-            "Zero engagement should still show engagement line. Prompt:\n{prompt}");
+        assert!(
+            prompt.contains("Novel early signal"),
+            "Zero-engagement tension should still appear"
+        );
+        assert!(
+            prompt.contains("community attention: 0 sources, 0 corroborations, heat=0.0"),
+            "Zero engagement should still show engagement line. Prompt:\n{prompt}"
+        );
     }
 
     #[test]
@@ -1476,13 +1697,30 @@ mod tests {
         briefing.tensions = vec![
             make_tension_with_engagement("Low engagement", "high", Some("help"), true, 0, 0, 0.0),
             make_tension_with_engagement("High engagement", "high", Some("help"), true, 5, 3, 0.8),
-            make_tension_with_engagement("Medium engagement", "high", Some("help"), true, 2, 1, 0.4),
+            make_tension_with_engagement(
+                "Medium engagement",
+                "high",
+                Some("help"),
+                true,
+                2,
+                1,
+                0.4,
+            ),
         ];
         let prompt = briefing.format_prompt();
         // All three should appear (no gating)
-        assert!(prompt.contains("Low engagement"), "Low engagement tension missing");
-        assert!(prompt.contains("High engagement"), "High engagement tension missing");
-        assert!(prompt.contains("Medium engagement"), "Medium engagement tension missing");
+        assert!(
+            prompt.contains("Low engagement"),
+            "Low engagement tension missing"
+        );
+        assert!(
+            prompt.contains("High engagement"),
+            "High engagement tension missing"
+        );
+        assert!(
+            prompt.contains("Medium engagement"),
+            "Medium engagement tension missing"
+        );
     }
 
     #[test]
@@ -1494,22 +1732,41 @@ mod tests {
             make_tension_with_engagement("Medium", "high", Some("help"), true, 2, 1, 0.4),
         ];
         tensions.sort_by(|a, b| {
-            let score_a = a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
-            let score_b = b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            let score_a =
+                a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
+            let score_b =
+                b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        assert_eq!(tensions[0].title, "High", "Highest engagement should sort first");
-        assert_eq!(tensions[1].title, "Medium", "Medium engagement should sort second");
-        assert_eq!(tensions[2].title, "Low", "Low engagement should sort last but still present");
+        assert_eq!(
+            tensions[0].title, "High",
+            "Highest engagement should sort first"
+        );
+        assert_eq!(
+            tensions[1].title, "Medium",
+            "Medium engagement should sort second"
+        );
+        assert_eq!(
+            tensions[2].title, "Low",
+            "Low engagement should sort last but still present"
+        );
     }
 
     #[test]
     fn cold_start_ignores_engagement() {
         // Cold start: < 3 tensions, no stories — mechanical fallback runs regardless of engagement
         let briefing = DiscoveryBriefing {
-            tensions: vec![
-                make_tension_with_engagement("Only tension", "high", Some("help"), true, 0, 0, 0.0),
-            ],
+            tensions: vec![make_tension_with_engagement(
+                "Only tension",
+                "high",
+                Some("help"),
+                true,
+                0,
+                0,
+                0.0,
+            )],
             stories: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1520,7 +1777,10 @@ mod tests {
             extraction_yield: vec![],
             response_shapes: vec![],
         };
-        assert!(briefing.is_cold_start(), "Should be cold start with 1 tension");
+        assert!(
+            briefing.is_cold_start(),
+            "Should be cold start with 1 tension"
+        );
         // Zero-engagement tension is still present — no gating
         assert_eq!(briefing.tensions.len(), 1);
         assert_eq!(briefing.tensions[0].corroboration_count, 0);
@@ -1566,25 +1826,34 @@ mod tests {
             },
         ];
         let prompt = briefing.format_prompt();
-        assert!(prompt.contains("## STRATEGY PERFORMANCE"), "Missing STRATEGY PERFORMANCE section");
-        assert!(prompt.contains("unmet_tension: 7/10 sources successful (70%)"), "Missing unmet_tension stats");
-        assert!(prompt.contains("novel_angle: 1/5 sources successful (20%)"), "Missing novel_angle stats");
+        assert!(
+            prompt.contains("## STRATEGY PERFORMANCE"),
+            "Missing STRATEGY PERFORMANCE section"
+        );
+        assert!(
+            prompt.contains("unmet_tension: 7/10 sources successful (70%)"),
+            "Missing unmet_tension stats"
+        );
+        assert!(
+            prompt.contains("novel_angle: 1/5 sources successful (20%)"),
+            "Missing novel_angle stats"
+        );
     }
 
     #[test]
     fn briefing_strategy_warns_on_zero_success() {
         let mut briefing = make_briefing();
-        briefing.gap_type_stats = vec![
-            GapTypeStats {
-                gap_type: "novel_angle".to_string(),
-                total_sources: 5,
-                successful_sources: 0,
-                avg_weight: 0.20,
-            },
-        ];
+        briefing.gap_type_stats = vec![GapTypeStats {
+            gap_type: "novel_angle".to_string(),
+            total_sources: 5,
+            successful_sources: 0,
+            avg_weight: 0.20,
+        }];
         let prompt = briefing.format_prompt();
         assert!(
-            prompt.contains("WARNING: \"novel_angle\" strategy has 0% success rate across 5 attempts"),
+            prompt.contains(
+                "WARNING: \"novel_angle\" strategy has 0% success rate across 5 attempts"
+            ),
             "Missing zero-success warning. Prompt:\n{prompt}"
         );
     }
@@ -1611,23 +1880,30 @@ mod tests {
             },
         ];
         let prompt = briefing.format_prompt();
-        assert!(prompt.contains("## EXTRACTION YIELD"), "Missing EXTRACTION YIELD section");
-        assert!(prompt.contains("web: 142 extracted, 118 survived (83%)"), "Missing web yield stats");
-        assert!(prompt.contains("web_query: 67 extracted, 31 survived (46%)"), "Missing web_query yield stats");
+        assert!(
+            prompt.contains("## EXTRACTION YIELD"),
+            "Missing EXTRACTION YIELD section"
+        );
+        assert!(
+            prompt.contains("web: 142 extracted, 118 survived (83%)"),
+            "Missing web yield stats"
+        );
+        assert!(
+            prompt.contains("web_query: 67 extracted, 31 survived (46%)"),
+            "Missing web_query yield stats"
+        );
     }
 
     #[test]
     fn briefing_extraction_yield_annotates_low_survival() {
         let mut briefing = make_briefing();
-        briefing.extraction_yield = vec![
-            ExtractionYield {
-                source_type: "web_query".to_string(),
-                extracted: 67,
-                survived: 31,
-                corroborated: 4,
-                contradicted: 0,
-            },
-        ];
+        briefing.extraction_yield = vec![ExtractionYield {
+            source_type: "web_query".to_string(),
+            extracted: 67,
+            survived: 31,
+            corroborated: 4,
+            contradicted: 0,
+        }];
         let prompt = briefing.format_prompt();
         assert!(
             prompt.contains("web_query survival rate below 50%"),
@@ -1638,15 +1914,13 @@ mod tests {
     #[test]
     fn briefing_extraction_yield_annotates_high_contradiction() {
         let mut briefing = make_briefing();
-        briefing.extraction_yield = vec![
-            ExtractionYield {
-                source_type: "web_query".to_string(),
-                extracted: 50,
-                survived: 40,
-                corroborated: 4,
-                contradicted: 15,
-            },
-        ];
+        briefing.extraction_yield = vec![ExtractionYield {
+            source_type: "web_query".to_string(),
+            extracted: 50,
+            survived: 40,
+            corroborated: 4,
+            contradicted: 15,
+        }];
         let prompt = briefing.format_prompt();
         assert!(
             prompt.contains("web_query has high contradiction rate (30%)"),
@@ -1659,36 +1933,50 @@ mod tests {
     #[test]
     fn briefing_format_includes_response_shape() {
         let mut briefing = make_briefing();
-        briefing.response_shapes = vec![
-            TensionResponseShape {
-                title: "Immigration Enforcement Fear".to_string(),
-                what_would_help: Some("legal defense, emergency housing, mental health support".to_string()),
-                cause_heat: 0.8,
-                give_count: 3,
-                event_count: 2,
-                ask_count: 1,
-                sample_titles: vec![
-                    "ILCM Legal Clinic".to_string(),
-                    "Know Your Rights Workshop".to_string(),
-                    "ICE Rapid Response Fund".to_string(),
-                ],
-            },
-        ];
+        briefing.response_shapes = vec![TensionResponseShape {
+            title: "Immigration Enforcement Fear".to_string(),
+            what_would_help: Some(
+                "legal defense, emergency housing, mental health support".to_string(),
+            ),
+            cause_heat: 0.8,
+            give_count: 3,
+            event_count: 2,
+            ask_count: 1,
+            sample_titles: vec![
+                "ILCM Legal Clinic".to_string(),
+                "Know Your Rights Workshop".to_string(),
+                "ICE Rapid Response Fund".to_string(),
+            ],
+        }];
         let prompt = briefing.format_prompt();
-        assert!(prompt.contains("## RESPONSE SHAPE"), "Missing RESPONSE SHAPE section");
-        assert!(prompt.contains("Immigration Enforcement Fear"), "Missing tension title");
+        assert!(
+            prompt.contains("## RESPONSE SHAPE"),
+            "Missing RESPONSE SHAPE section"
+        );
+        assert!(
+            prompt.contains("Immigration Enforcement Fear"),
+            "Missing tension title"
+        );
         assert!(prompt.contains("heat: 0.8"), "Missing cause heat");
-        assert!(prompt.contains("Gives: 3, Events: 2, Asks: 1"), "Missing response counts");
+        assert!(
+            prompt.contains("Gives: 3, Events: 2, Asks: 1"),
+            "Missing response counts"
+        );
         assert!(prompt.contains("ILCM Legal Clinic"), "Missing sample title");
-        assert!(prompt.contains("legal defense, emergency housing"), "Missing what_would_help");
+        assert!(
+            prompt.contains("legal defense, emergency housing"),
+            "Missing what_would_help"
+        );
     }
 
     #[test]
     fn briefing_empty_response_shapes_omits_section() {
         let briefing = make_briefing();
         let prompt = briefing.format_prompt();
-        assert!(!prompt.contains("## RESPONSE SHAPE"),
-            "Empty response_shapes should not produce RESPONSE SHAPE section");
+        assert!(
+            !prompt.contains("## RESPONSE SHAPE"),
+            "Empty response_shapes should not produce RESPONSE SHAPE section"
+        );
     }
 
     // --- I. Method-Based Initial Weight ---
@@ -1698,30 +1986,45 @@ mod tests {
         let w = initial_weight_for_method(DiscoveryMethod::Curated, None);
         assert!((w - 0.5).abs() < f64::EPSILON, "Curated should be 0.5: {w}");
         let w = initial_weight_for_method(DiscoveryMethod::HumanSubmission, None);
-        assert!((w - 0.5).abs() < f64::EPSILON, "HumanSubmission should be 0.5: {w}");
+        assert!(
+            (w - 0.5).abs() < f64::EPSILON,
+            "HumanSubmission should be 0.5: {w}"
+        );
     }
 
     #[test]
     fn initial_weight_gap_analysis_unmet() {
         let w = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
-        assert!((w - 0.4).abs() < f64::EPSILON, "GapAnalysis+unmet should be 0.4: {w}");
+        assert!(
+            (w - 0.4).abs() < f64::EPSILON,
+            "GapAnalysis+unmet should be 0.4: {w}"
+        );
     }
 
     #[test]
     fn initial_weight_gap_analysis_other() {
         let w = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("novel_angle"));
-        assert!((w - 0.3).abs() < f64::EPSILON, "GapAnalysis+other should be 0.3: {w}");
+        assert!(
+            (w - 0.3).abs() < f64::EPSILON,
+            "GapAnalysis+other should be 0.3: {w}"
+        );
     }
 
     #[test]
     fn initial_weight_signal_expansion() {
         let w = initial_weight_for_method(DiscoveryMethod::SignalExpansion, None);
-        assert!((w - 0.2).abs() < f64::EPSILON, "SignalExpansion should be 0.2: {w}");
+        assert!(
+            (w - 0.2).abs() < f64::EPSILON,
+            "SignalExpansion should be 0.2: {w}"
+        );
     }
 
     #[test]
     fn initial_weight_hashtag_discovery() {
         let w = initial_weight_for_method(DiscoveryMethod::HashtagDiscovery, None);
-        assert!((w - 0.3).abs() < f64::EPSILON, "HashtagDiscovery should be 0.3: {w}");
+        assert!(
+            (w - 0.3).abs() < f64::EPSILON,
+            "HashtagDiscovery should be 0.3: {w}"
+        );
     }
 }

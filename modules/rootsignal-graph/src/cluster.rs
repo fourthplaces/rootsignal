@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use rootsignal_common::{ClusterSnapshot, EntityMappingOwned, StoryNode};
 
-use crate::{GraphClient, SimilarityBuilder};
-use crate::synthesizer::{Synthesizer, SynthesisInput};
+use crate::synthesizer::{SynthesisInput, Synthesizer};
 use crate::writer::GraphWriter;
+use crate::{GraphClient, SimilarityBuilder};
 
 /// Minimum number of connected signals (with at least one SIMILAR_TO edge)
 /// before running Leiden. Below this, clustering produces noise.
@@ -38,7 +38,6 @@ pub struct Clusterer {
     anthropic_api_key: String,
     entity_mappings: Vec<EntityMappingOwned>,
 }
-
 
 /// A community detected by Leiden.
 struct Community {
@@ -79,14 +78,21 @@ impl Clusterer {
         // Check minimum connected signals
         let connected = self.count_connected_signals().await?;
         if connected < MIN_CONNECTED_SIGNALS {
-            info!(connected, min = MIN_CONNECTED_SIGNALS, "Insufficient connected signals for clustering");
+            info!(
+                connected,
+                min = MIN_CONNECTED_SIGNALS,
+                "Insufficient connected signals for clustering"
+            );
             stats.status = "insufficient_signals".to_string();
             return Ok(stats);
         }
 
         // 2. Run Leiden community detection
         let communities = self.run_leiden().await?;
-        info!(communities = communities.len(), "Leiden communities detected");
+        info!(
+            communities = communities.len(),
+            "Leiden communities detected"
+        );
 
         if communities.is_empty() {
             stats.status = "no_communities".to_string();
@@ -124,7 +130,8 @@ impl Clusterer {
             let signal_meta = self.fetch_signal_metadata(&community.signal_ids).await?;
 
             // Compute org count and source diversity
-            let source_urls: Vec<&str> = signal_meta.iter().map(|s| s.source_url.as_str()).collect();
+            let source_urls: Vec<&str> =
+                signal_meta.iter().map(|s| s.source_url.as_str()).collect();
             let source_domains: Vec<String> = source_urls
                 .iter()
                 .map(|u| rootsignal_common::extract_domain(u))
@@ -132,7 +139,10 @@ impl Clusterer {
                 .into_iter()
                 .collect();
             let entity_count = self.count_distinct_entities(&source_urls);
-            let corroboration_depth = signal_meta.iter().filter(|s| s.corroboration_count > 0).count() as u32;
+            let corroboration_depth = signal_meta
+                .iter()
+                .filter(|s| s.corroboration_count > 0)
+                .count() as u32;
 
             // Dominant type and type diversity
             let mut type_counts: HashMap<String, u32> = HashMap::new();
@@ -279,7 +289,7 @@ impl Clusterer {
         let q = query(
             "MATCH (n)-[:SIMILAR_TO]-()
              WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
-             RETURN count(DISTINCT n) AS cnt"
+             RETURN count(DISTINCT n) AS cnt",
         );
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -309,8 +319,9 @@ impl Clusterer {
                 'signals',
                 ['Event', 'Give', 'Ask', 'Notice', 'Tension'],
                 {SIMILAR_TO: {properties: 'weight', orientation: 'UNDIRECTED'}}
-            )"
-        )).await?;
+            )",
+        ))
+        .await?;
 
         // Step 2: Run Leiden with tunable resolution
         let q = query(
@@ -320,7 +331,7 @@ impl Clusterer {
                 randomSeed: 42
             })
             YIELD nodeId, communityId
-            RETURN gds.util.asNode(nodeId).id AS signal_id, communityId AS community_id"
+            RETURN gds.util.asNode(nodeId).id AS signal_id, communityId AS community_id",
         )
         .param("gamma", LEIDEN_GAMMA);
 
@@ -354,7 +365,10 @@ impl Clusterer {
                     );
                     None
                 } else {
-                    Some(Community { _id: id, signal_ids })
+                    Some(Community {
+                        _id: id,
+                        signal_ids,
+                    })
                 }
             })
             .collect();
@@ -400,7 +414,10 @@ Respond in this exact JSON format:
     }
 
     /// Call Haiku for headline generation.
-    async fn call_haiku(&self, prompt: &str) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    async fn call_haiku(
+        &self,
+        prompt: &str,
+    ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
         use ai_client::claude::Claude;
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
@@ -411,8 +428,14 @@ Respond in this exact JSON format:
 
         // Parse JSON response
         let parsed: serde_json::Value = serde_json::from_str(&response)?;
-        let headline = parsed["headline"].as_str().unwrap_or("Emerging pattern").to_string();
-        let summary = parsed["summary"].as_str().unwrap_or("Cluster of related signals.").to_string();
+        let headline = parsed["headline"]
+            .as_str()
+            .unwrap_or("Emerging pattern")
+            .to_string();
+        let summary = parsed["summary"]
+            .as_str()
+            .unwrap_or("Cluster of related signals.")
+            .to_string();
 
         Ok((headline, summary))
     }
@@ -428,7 +451,10 @@ Respond in this exact JSON format:
     }
 
     /// Fetch metadata for a set of signal IDs.
-    async fn fetch_signal_metadata(&self, signal_ids: &[String]) -> Result<Vec<SignalMeta>, neo4rs::Error> {
+    async fn fetch_signal_metadata(
+        &self,
+        signal_ids: &[String],
+    ) -> Result<Vec<SignalMeta>, neo4rs::Error> {
         let mut results = Vec::new();
 
         for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
@@ -449,9 +475,17 @@ Respond in this exact JSON format:
                 let summary: String = row.get("summary").unwrap_or_default();
                 let source_url: String = row.get("source_url").unwrap_or_default();
                 let corroboration_count: i64 = row.get("corroboration_count").unwrap_or(0);
-                let sensitivity: String = row.get("sensitivity").unwrap_or_else(|_| "general".to_string());
-                let lat: Option<f64> = row.get("lat").ok().and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
-                let lng: Option<f64> = row.get("lng").ok().and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
+                let sensitivity: String = row
+                    .get("sensitivity")
+                    .unwrap_or_else(|_| "general".to_string());
+                let lat: Option<f64> =
+                    row.get("lat")
+                        .ok()
+                        .and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
+                let lng: Option<f64> =
+                    row.get("lng")
+                        .ok()
+                        .and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
 
                 results.push(SignalMeta {
                     _id: id,
@@ -487,13 +521,15 @@ Respond in this exact JSON format:
                  s.type_diversity = $type_diversity,
                  s.source_domains = $source_domains,
                  s.corroboration_depth = $corroboration_depth,
-                 s.status = $status"
+                 s.status = $status",
         )
         .param("id", story.id.to_string())
         .param("signal_count", story.signal_count as i64)
-        .param("last_updated", crate::writer::format_datetime_pub(&story.last_updated))
+        .param(
+            "last_updated",
+            crate::writer::format_datetime_pub(&story.last_updated),
+        )
         .param("dominant_type", story.dominant_type.as_str())
-
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -504,7 +540,9 @@ Respond in this exact JSON format:
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
-            _ => q.param::<Option<f64>>("centroid_lat", None).param::<Option<f64>>("centroid_lng", None),
+            _ => q
+                .param::<Option<f64>>("centroid_lat", None)
+                .param::<Option<f64>>("centroid_lng", None),
         };
 
         self.client.graph.run(q).await?;
@@ -521,7 +559,7 @@ Respond in this exact JSON format:
              OPTIONAL MATCH (s)-[:CONTAINS]->(n)
              RETURN s.id AS id, s.source_count AS source_count,
                     s.entity_count AS entity_count, s.type_diversity AS type_diversity,
-                    count(n) AS signal_count"
+                    count(n) AS signal_count",
         );
 
         let mut stories: Vec<(Uuid, u32, u32, u32, u32)> = Vec::new();
@@ -533,7 +571,13 @@ Respond in this exact JSON format:
             let type_diversity: i64 = row.get("type_diversity").unwrap_or(1);
             let signal_count: i64 = row.get("signal_count").unwrap_or(0);
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                stories.push((id, signal_count as u32, source_count as u32, entity_count as u32, type_diversity as u32));
+                stories.push((
+                    id,
+                    signal_count as u32,
+                    source_count as u32,
+                    entity_count as u32,
+                    type_diversity as u32,
+                ));
             }
         }
 
@@ -550,7 +594,10 @@ Respond in this exact JSON format:
 
             // Velocity driven by entity diversity growth, not raw signal count.
             // A flood from one source doesn't move the needle.
-            let entity_count_7d_ago = self.writer.get_snapshot_entity_count_7d_ago(story_id).await?;
+            let entity_count_7d_ago = self
+                .writer
+                .get_snapshot_entity_count_7d_ago(story_id)
+                .await?;
             let velocity = match entity_count_7d_ago {
                 Some(old_entities) => (entity_count as f64 - old_entities as f64) / 7.0,
                 None => entity_count as f64 / 7.0, // First run, assume all new
@@ -575,7 +622,7 @@ Respond in this exact JSON format:
             // Update story velocity, energy, and reconcile signal_count with actual edges
             let q = query(
                 "MATCH (s:Story {id: $id})
-                 SET s.velocity = $velocity, s.energy = $energy, s.signal_count = $signal_count"
+                 SET s.velocity = $velocity, s.energy = $energy, s.signal_count = $signal_count",
             )
             .param("id", story_id.to_string())
             .param("velocity", velocity)
@@ -598,28 +645,29 @@ Respond in this exact JSON format:
             "MATCH (s:Story)
              WHERE s.lede IS NULL OR s.lede = ''
              RETURN s.id AS id, s.headline AS headline, s.velocity AS velocity,
-                    s.first_seen AS first_seen"
+                    s.first_seen AS first_seen",
         );
 
-        let stories_to_synth: Vec<(Uuid, String, f64, String)> = match self.client.graph.execute(q).await {
-            Ok(mut stream) => {
-                let mut results = Vec::new();
-                while let Ok(Some(row)) = stream.next().await {
-                    let id_str: String = row.get("id").unwrap_or_default();
-                    if let Ok(id) = Uuid::parse_str(&id_str) {
-                        let headline: String = row.get("headline").unwrap_or_default();
-                        let velocity: f64 = row.get("velocity").unwrap_or(0.0);
-                        let first_seen: String = row.get("first_seen").unwrap_or_default();
-                        results.push((id, headline, velocity, first_seen));
+        let stories_to_synth: Vec<(Uuid, String, f64, String)> =
+            match self.client.graph.execute(q).await {
+                Ok(mut stream) => {
+                    let mut results = Vec::new();
+                    while let Ok(Some(row)) = stream.next().await {
+                        let id_str: String = row.get("id").unwrap_or_default();
+                        if let Ok(id) = Uuid::parse_str(&id_str) {
+                            let headline: String = row.get("headline").unwrap_or_default();
+                            let velocity: f64 = row.get("velocity").unwrap_or(0.0);
+                            let first_seen: String = row.get("first_seen").unwrap_or_default();
+                            results.push((id, headline, velocity, first_seen));
+                        }
                     }
+                    results
                 }
-                results
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to find stories for synthesis");
-                return;
-            }
-        };
+                Err(e) => {
+                    warn!(error = %e, "Failed to find stories for synthesis");
+                    return;
+                }
+            };
 
         if stories_to_synth.is_empty() {
             return;
@@ -658,7 +706,9 @@ Respond in this exact JSON format:
 
             let age_days = {
                 use chrono::NaiveDateTime;
-                let dt = if let Ok(naive) = NaiveDateTime::parse_from_str(first_seen_str, "%Y-%m-%dT%H:%M:%S%.f") {
+                let dt = if let Ok(naive) =
+                    NaiveDateTime::parse_from_str(first_seen_str, "%Y-%m-%dT%H:%M:%S%.f")
+                {
                     naive.and_utc()
                 } else {
                     Utc::now()
@@ -666,18 +716,26 @@ Respond in this exact JSON format:
                 (Utc::now() - dt).num_hours() as f64 / 24.0
             };
 
-            match synthesizer.synthesize(headline, &inputs, *velocity, age_days).await {
+            match synthesizer
+                .synthesize(headline, &inputs, *velocity, age_days)
+                .await
+            {
                 Ok(synthesis) => {
-                    let action_guidance_json = serde_json::to_string(&synthesis.action_guidance).unwrap_or_default();
-                    if let Err(e) = self.writer.update_story_synthesis(
-                        *story_id,
-                        &synthesis.headline,
-                        &synthesis.lede,
-                        &synthesis.narrative,
-                        &synthesis.arc.to_string(),
-                        &synthesis.category.to_string(),
-                        &action_guidance_json,
-                    ).await {
+                    let action_guidance_json =
+                        serde_json::to_string(&synthesis.action_guidance).unwrap_or_default();
+                    if let Err(e) = self
+                        .writer
+                        .update_story_synthesis(
+                            *story_id,
+                            &synthesis.headline,
+                            &synthesis.lede,
+                            &synthesis.narrative,
+                            &synthesis.arc.to_string(),
+                            &synthesis.category.to_string(),
+                            &action_guidance_json,
+                        )
+                        .await
+                    {
                         warn!(story_id = %story_id, error = %e, "Failed to write story synthesis");
                     }
                 }
@@ -692,7 +750,7 @@ Respond in this exact JSON format:
     async fn get_story_signal_ids(&self, story_id: Uuid) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)
-             RETURN n.id AS id"
+             RETURN n.id AS id",
         )
         .param("id", story_id.to_string());
 
@@ -777,7 +835,9 @@ pub fn story_energy(velocity: f64, recency: f64, source_diversity: f64, triangul
 fn parse_recency(datetime_str: &str, now: &chrono::DateTime<Utc>) -> f64 {
     use chrono::NaiveDateTime;
 
-    let dt: chrono::DateTime<Utc> = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(datetime_str) {
+    let dt: chrono::DateTime<Utc> = if let Ok(dt) =
+        chrono::DateTime::parse_from_rfc3339(datetime_str)
+    {
         dt.with_timezone(&Utc)
     } else if let Ok(naive) = NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S%.f") {
         naive.and_utc()
@@ -853,7 +913,7 @@ mod tests {
     #[test]
     fn triangulated_story_outranks_echo_with_same_velocity() {
         // Same velocity, recency, source diversity — but different triangulation
-        let echo_energy = story_energy(1.0, 1.0, 1.0, 0.2);     // type_diversity=1
+        let echo_energy = story_energy(1.0, 1.0, 1.0, 0.2); // type_diversity=1
         let confirmed_energy = story_energy(1.0, 1.0, 1.0, 1.0); // type_diversity=5
         assert!(confirmed_energy > echo_energy);
         // The difference should be 0.25 * (1.0 - 0.2) = 0.20
@@ -880,4 +940,3 @@ mod tests {
         assert!(echo > confirmed);
     }
 }
-

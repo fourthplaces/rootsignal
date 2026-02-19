@@ -4,8 +4,8 @@ use ai_client::Claude;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::world::World;
 use crate::judge::JudgeCriteria;
+use crate::world::World;
 
 const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
 
@@ -123,8 +123,8 @@ impl Improver {
             critical_categories: Vec<String>,
         }
 
-        let parsed: CriteriaResponse = serde_json::from_str(json_str)
-            .map_err(|e| anyhow!("Failed to parse criteria: {e}"))?;
+        let parsed: CriteriaResponse =
+            serde_json::from_str(json_str).map_err(|e| anyhow!("Failed to parse criteria: {e}"))?;
 
         Ok(JudgeCriteria {
             checks: parsed.checks,
@@ -194,8 +194,7 @@ impl Improver {
         let response = self.claude.chat_completion(system, &user).await?;
         let json_str = strip_code_fence(&response);
 
-        serde_json::from_str(json_str)
-            .map_err(|e| anyhow!("Failed to parse generated world: {e}"))
+        serde_json::from_str(json_str).map_err(|e| anyhow!("Failed to parse generated world: {e}"))
     }
 }
 

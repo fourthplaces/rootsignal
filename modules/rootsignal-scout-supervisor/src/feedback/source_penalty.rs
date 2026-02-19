@@ -39,7 +39,12 @@ pub async fn apply_source_penalties(client: &GraphClient) -> Result<PenaltyStats
             warn!(source = key.as_str(), error = %e, "Failed to set quality penalty");
         } else {
             stats.sources_penalized += 1;
-            info!(source = key.as_str(), penalty, issues = issue_count, "Applied quality penalty");
+            info!(
+                source = key.as_str(),
+                penalty,
+                issues = issue_count,
+                "Applied quality penalty"
+            );
         }
     }
 
@@ -68,7 +73,10 @@ pub async fn reset_resolved_penalties(client: &GraphClient) -> Result<u64> {
     };
 
     if count > 0 {
-        info!(count, "Reset quality penalties for sources with no open issues");
+        info!(
+            count,
+            "Reset quality penalties for sources with no open issues"
+        );
     }
 
     Ok(count)

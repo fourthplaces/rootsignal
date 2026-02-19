@@ -18,7 +18,9 @@ pub mod world;
 pub use evolve::{AuditSummary, EvolutionConfig, EvolutionResult, Evolver};
 pub use fitness::{is_improvement, score_genome};
 pub use genome::{FitnessScore, ScenarioScore, ScoutGenome};
-pub use improve::{BlindSpot, BlindSpotSeverity, ImprovementReport, Improver, PromptFix, TestFailure};
+pub use improve::{
+    BlindSpot, BlindSpotSeverity, ImprovementReport, Improver, PromptFix, TestFailure,
+};
 pub use judge::{generate_random_world, Issue, Judge, JudgeCriteria, Severity, Verdict};
 pub use scenario_gym::{ScenarioEntry, ScenarioGym, ScenarioSource};
 pub use sim::SimulatedWeb;

@@ -123,7 +123,11 @@ pub async fn check_no_pii(client: &GraphClient) -> CheckResult {
         detail: if violations.is_empty() {
             "No PII patterns found".into()
         } else {
-            format!("{} titles with PII: {}", violations.len(), violations.join("; "))
+            format!(
+                "{} titles with PII: {}",
+                violations.len(),
+                violations.join("; ")
+            )
         },
         value: Some(violations.len() as f64),
     }
@@ -192,7 +196,11 @@ pub async fn check_geo_accuracy(
     CheckResult {
         name: "geo_accuracy",
         passed: pct >= min_pct,
-        detail: format!("{within}/{total} within {radius_km}km ({:.0}%, min: {:.0}%)", pct * 100.0, min_pct * 100.0),
+        detail: format!(
+            "{within}/{total} within {radius_km}km ({:.0}%, min: {:.0}%)",
+            pct * 100.0,
+            min_pct * 100.0
+        ),
         value: Some(pct),
     }
 }
@@ -219,7 +227,11 @@ pub async fn check_evidence_trails(client: &GraphClient) -> CheckResult {
         detail: if orphans.is_empty() {
             "All signals have evidence".into()
         } else {
-            format!("{} signals without evidence: {}", orphans.len(), orphans.join("; "))
+            format!(
+                "{} signals without evidence: {}",
+                orphans.len(),
+                orphans.join("; ")
+            )
         },
         value: Some(orphans.len() as f64),
     }
@@ -320,7 +332,11 @@ pub async fn check_no_orphaned_evidence(client: &GraphClient) -> CheckResult {
         detail: if orphans.is_empty() {
             "No orphaned evidence".into()
         } else {
-            format!("{} orphaned evidence nodes: {}", orphans.len(), orphans.join("; "))
+            format!(
+                "{} orphaned evidence nodes: {}",
+                orphans.len(),
+                orphans.join("; ")
+            )
         },
         value: Some(orphans.len() as f64),
     }
@@ -348,7 +364,11 @@ pub async fn check_no_empty_signals(client: &GraphClient) -> CheckResult {
         detail: if empties.is_empty() {
             "No empty signal titles".into()
         } else {
-            format!("{} signals with empty titles: {}", empties.len(), empties.join("; "))
+            format!(
+                "{} signals with empty titles: {}",
+                empties.len(),
+                empties.join("; ")
+            )
         },
         value: Some(empties.len() as f64),
     }

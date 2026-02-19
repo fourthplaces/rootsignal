@@ -85,7 +85,10 @@ impl StoryWeaver {
     ///
     /// `has_enrichment_budget` controls whether Phase C (LLM synthesis) runs.
     /// Phases A and B always run — they're cheap graph queries + writes.
-    pub async fn run(&self, has_enrichment_budget: bool) -> Result<StoryWeaverStats, neo4rs::Error> {
+    pub async fn run(
+        &self,
+        has_enrichment_budget: bool,
+    ) -> Result<StoryWeaverStats, neo4rs::Error> {
         let mut stats = StoryWeaverStats::default();
 
         // Count abandoned signals for coverage gap reporting
@@ -179,7 +182,11 @@ impl StoryWeaver {
             let story_id = Uuid::new_v4();
 
             // Compute metadata from respondent signals
-            let source_urls: Vec<&str> = hub.respondents.iter().map(|r| r.source_url.as_str()).collect();
+            let source_urls: Vec<&str> = hub
+                .respondents
+                .iter()
+                .map(|r| r.source_url.as_str())
+                .collect();
             let source_domains: Vec<String> = source_urls
                 .iter()
                 .map(|u| extract_domain(u))
@@ -188,7 +195,11 @@ impl StoryWeaver {
                 .collect();
 
             // Fetch signal types for status computation
-            let signal_ids: Vec<String> = hub.respondents.iter().map(|r| r.signal_id.to_string()).collect();
+            let signal_ids: Vec<String> = hub
+                .respondents
+                .iter()
+                .map(|r| r.signal_id.to_string())
+                .collect();
             let type_diversity = self.count_type_diversity(&signal_ids).await.unwrap_or(1);
 
             let signal_count = hub.respondents.len() as u32;
@@ -308,7 +319,7 @@ impl StoryWeaver {
              WHERE s.synthesis_pending = true OR s.lede IS NULL OR s.lede = ''
              RETURN s.id AS id, s.headline AS headline, s.velocity AS velocity,
                     s.first_seen AS first_seen, s.arc AS arc
-             LIMIT 300"
+             LIMIT 300",
         );
 
         let stories: Vec<(Uuid, String, f64, String, Option<String>)> =
@@ -394,7 +405,8 @@ impl StoryWeaver {
             }
 
             // Check for signal type diversity (contradiction detection)
-            let type_set: HashSet<&str> = signal_meta.iter().map(|s| s.node_type.as_str()).collect();
+            let type_set: HashSet<&str> =
+                signal_meta.iter().map(|s| s.node_type.as_str()).collect();
             if type_set.len() >= 2 {
                 let has_tension = type_set.contains("tension");
                 let has_response = type_set.contains("give") || type_set.contains("event");
@@ -501,7 +513,7 @@ impl StoryWeaver {
                   END) AS type_div
              SET s.signal_count = sig_count,
                  s.type_diversity = type_div,
-                 s.last_updated = datetime($now)"
+                 s.last_updated = datetime($now)",
         )
         .param("id", story_id.to_string())
         .param("now", crate::writer::format_datetime_pub(&Utc::now()));
@@ -515,7 +527,7 @@ impl StoryWeaver {
         let q = query(
             "MATCH (s:Story {id: $id})
              WHERE s.arc = 'fading'
-             SET s.was_fading = true"
+             SET s.was_fading = true",
         )
         .param("id", story_id.to_string());
 
@@ -650,10 +662,7 @@ mod tests {
     #[test]
     fn containment_check_logic() {
         // Simulate the containment check from phase_materialize
-        let hub_signals: HashSet<String> = ["a", "b", "c"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let hub_signals: HashSet<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
         let story_signals: HashSet<&str> = ["a", "b", "d", "e"].iter().copied().collect();
 
         // 2 of 3 hub signals are in the story = 0.66 containment
@@ -662,15 +671,16 @@ mod tests {
             .filter(|id| story_signals.contains(id.as_str()))
             .count();
         let containment = intersection as f64 / hub_signals.len() as f64;
-        assert!(containment >= CONTAINMENT_THRESHOLD, "Should absorb at 0.66");
+        assert!(
+            containment >= CONTAINMENT_THRESHOLD,
+            "Should absorb at 0.66"
+        );
     }
 
     #[test]
     fn containment_below_threshold_creates_new_story() {
-        let hub_signals: HashSet<String> = ["a", "b", "c", "d"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let hub_signals: HashSet<String> =
+            ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
         let story_signals: HashSet<&str> = ["a", "e", "f", "g"].iter().copied().collect();
 
         // 1 of 4 hub signals are in the story = 0.25 containment

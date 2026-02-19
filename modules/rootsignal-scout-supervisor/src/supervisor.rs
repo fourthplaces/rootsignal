@@ -82,31 +82,19 @@ impl Supervisor {
         }
 
         // Phase 1: Auto-fix checks (deterministic, safe to run anytime)
-        stats.auto_fix = auto_fix::run_auto_fixes(
-            &self.client,
-            self.city.center_lat,
-            self.city.center_lng,
-        )
-        .await?;
+        stats.auto_fix =
+            auto_fix::run_auto_fixes(&self.client, self.city.center_lat, self.city.center_lng)
+                .await?;
 
         // Phase 2: Heuristic triage (cheap graph queries, no LLM)
         let suspects = triage::triage_suspects(&self.client, &from, &to).await?;
-        stats.signals_checked = suspects.iter()
-            .filter(|s| s.label != "Story")
-            .count() as u64;
-        stats.stories_checked = suspects.iter()
-            .filter(|s| s.label == "Story")
-            .count() as u64;
+        stats.signals_checked = suspects.iter().filter(|s| s.label != "Story").count() as u64;
+        stats.stories_checked = suspects.iter().filter(|s| s.label == "Story").count() as u64;
 
         // Phase 3: LLM flag checks on suspects (budget-capped)
         let budget = BudgetTracker::new(self.max_llm_checks);
-        let mut llm_issues = llm::check_suspects(
-            suspects,
-            &self.anthropic_api_key,
-            &self.city.slug,
-            &budget,
-        )
-        .await;
+        let mut llm_issues =
+            llm::check_suspects(suspects, &self.anthropic_api_key, &self.city.slug, &budget).await;
 
         // Set city on all issues (LLM module doesn't have city context)
         for issue in &mut llm_issues {
@@ -142,7 +130,10 @@ impl Supervisor {
             match source_penalty::apply_source_penalties(&self.client).await {
                 Ok(penalty_stats) => {
                     stats.sources_penalized = penalty_stats.sources_penalized;
-                    info!(penalized = penalty_stats.sources_penalized, "Applied source penalties");
+                    info!(
+                        penalized = penalty_stats.sources_penalized,
+                        "Applied source penalties"
+                    );
                 }
                 Err(e) => warn!(error = %e, "Failed to apply source penalties"),
             }

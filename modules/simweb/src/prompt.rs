@@ -12,7 +12,10 @@ pub fn search_system(world: &World) -> String {
                 .published
                 .map(|d| format!(" (published: {d})"))
                 .unwrap_or_default();
-            format!("- {} [{}]{}: {}", s.url, s.kind, date_str, s.content_description)
+            format!(
+                "- {} [{}]{}: {}",
+                s.url, s.kind, date_str, s.content_description
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -60,9 +63,7 @@ Return JSON: {{"results": [{{"url": "...", "title": "...", "snippet": "..."}}]}}
 
 /// Build the user prompt for a search query.
 pub fn search_user(query: &str, max_results: usize) -> String {
-    format!(
-        "Search query: \"{query}\"\nReturn up to {max_results} results as JSON."
-    )
+    format!("Search query: \"{query}\"\nReturn up to {max_results} results as JSON.")
 }
 
 /// Build the system prompt for page content generation.

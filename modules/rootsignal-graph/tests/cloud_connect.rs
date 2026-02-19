@@ -14,7 +14,11 @@ async fn cloud_connect() {
         .await
         .expect("Failed to connect");
 
-    let mut result = client.inner().execute(query("RETURN 1 AS ping")).await.unwrap();
+    let mut result = client
+        .inner()
+        .execute(query("RETURN 1 AS ping"))
+        .await
+        .unwrap();
     let row = result.next().await.unwrap().expect("No result row");
     let ping: i64 = row.get("ping").unwrap();
     assert_eq!(ping, 1);

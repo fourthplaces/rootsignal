@@ -103,9 +103,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rootsignal_common::{
-        EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel,
-    };
+    use rootsignal_common::{EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel};
     use uuid::Uuid;
 
     fn test_meta() -> NodeMeta {
@@ -196,7 +194,11 @@ mod tests {
             is_recurring: false,
         });
         let q = score(&node);
-        assert!((q.confidence - 0.15).abs() < 0.01, "Bare event confidence: {}", q.confidence);
+        assert!(
+            (q.confidence - 0.15).abs() < 0.01,
+            "Bare event confidence: {}",
+            q.confidence
+        );
     }
 
     #[test]
@@ -213,7 +215,11 @@ mod tests {
             is_recurring: false,
         });
         let q = score(&node);
-        assert!((q.confidence - 1.0).abs() < 0.01, "Complete event confidence: {}", q.confidence);
+        assert!(
+            (q.confidence - 1.0).abs() < 0.01,
+            "Complete event confidence: {}",
+            q.confidence
+        );
     }
 
     #[test]
@@ -235,14 +241,18 @@ mod tests {
             source_authority: None,
         });
         let q = score(&node);
-        assert!((q.confidence - 0.85).abs() < 0.01, "Notice with location confidence: {}", q.confidence);
+        assert!(
+            (q.confidence - 0.85).abs() < 0.01,
+            "Notice with location confidence: {}",
+            q.confidence
+        );
     }
 
     #[test]
     fn tension_without_location_scores_low() {
         // Tension: location is the only applicable field. Without it (0/1), geo = Low (0.3)
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
-        use rootsignal_common::{TensionNode, Severity};
+        use rootsignal_common::{Severity, TensionNode};
         let mut meta = test_meta();
         meta.location = None;
         let node = Node::Tension(TensionNode {
@@ -252,7 +262,11 @@ mod tests {
             what_would_help: None,
         });
         let q = score(&node);
-        assert!((q.confidence - 0.15).abs() < 0.01, "Bare tension confidence: {}", q.confidence);
+        assert!(
+            (q.confidence - 0.15).abs() < 0.01,
+            "Bare tension confidence: {}",
+            q.confidence
+        );
     }
 
     #[test]

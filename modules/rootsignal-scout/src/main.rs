@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -10,9 +10,10 @@ use tracing_subscriber::EnvFilter;
 use rootsignal_common::{CityNode, Config, Node, NodeType, StoryNode};
 use rootsignal_graph::{
     cause_heat::compute_cause_heat,
-    migrate::{migrate, backfill_source_diversity, backfill_source_canonical_keys},
-    query, GraphClient, GraphWriter,
+    migrate::{backfill_source_canonical_keys, backfill_source_diversity, migrate},
+    query,
     reader::{node_type_label, row_to_node, row_to_story},
+    GraphClient, GraphWriter,
 };
 use rootsignal_scout::{bootstrap, scout::Scout, scraper::SerperSearcher};
 
@@ -61,9 +62,12 @@ async fn main() -> Result<()> {
     }
 
     // Connect to Neo4j
-    let client =
-        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
-            .await?;
+    let client = GraphClient::connect(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+    )
+    .await?;
 
     if cli.dump {
         return dump_city(&client, &config.city).await;
@@ -78,16 +82,21 @@ async fn main() -> Result<()> {
     let writer = GraphWriter::new(client.clone());
     let city_node = match writer.get_city(&config.city).await? {
         Some(node) => {
-            info!(slug = node.slug.as_str(), name = node.name.as_str(), "Loaded city from graph");
+            info!(
+                slug = node.slug.as_str(),
+                name = node.name.as_str(),
+                "Loaded city from graph"
+            );
             node
         }
         None => {
             // Cold start — create from env vars + bootstrap
-            let city_name = config.city_name.as_deref()
-                .unwrap_or(&config.city);
-            let center_lat = config.city_lat
+            let city_name = config.city_name.as_deref().unwrap_or(&config.city);
+            let center_lat = config
+                .city_lat
                 .expect("CITY_LAT required for cold start (no city in graph)");
-            let center_lng = config.city_lng
+            let center_lng = config
+                .city_lng
                 .expect("CITY_LNG required for cold start (no city in graph)");
             let radius_km = config.city_radius_km.unwrap_or(30.0);
 
@@ -117,7 +126,10 @@ async fn main() -> Result<()> {
             // Run cold start bootstrapper to generate seed sources
             let searcher = SerperSearcher::new(&config.serper_api_key);
             let bootstrapper = bootstrap::Bootstrapper::new(
-                &writer, &searcher, &config.anthropic_api_key, node.clone(),
+                &writer,
+                &searcher,
+                &config.anthropic_api_key,
+                node.clone(),
             );
             let sources_created = bootstrapper.run().await?;
             info!(sources_created, "Cold start bootstrap complete");
@@ -137,7 +149,7 @@ async fn main() -> Result<()> {
         "MATCH (t:Tension)
          WHERE t.lat IS NULL
          SET t.lat = $lat, t.lng = $lng
-         RETURN count(t) AS cnt"
+         RETURN count(t) AS cnt",
     )
     .param("lat", city_node.center_lat)
     .param("lng", city_node.center_lng);
@@ -177,8 +189,12 @@ async fn main() -> Result<()> {
     // Actor extraction — extract actors from signals that have none
     info!("Starting actor extraction...");
     let sweep_stats = rootsignal_scout::actor_extractor::run_actor_extraction(
-        &writer_ref, &client, &config.anthropic_api_key, &city_name,
-    ).await;
+        &writer_ref,
+        &client,
+        &config.anthropic_api_key,
+        &city_name,
+    )
+    .await;
     info!("{sweep_stats}");
 
     // Compute cause heat (cross-story signal boosting via embedding similarity)
@@ -191,7 +207,9 @@ async fn main() -> Result<()> {
 async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     // Load city node to get geo bounds
     let writer = GraphWriter::new(client.clone());
-    let city = writer.get_city(city_slug).await?
+    let city = writer
+        .get_city(city_slug)
+        .await?
         .with_context(|| format!("City '{}' not found in graph", city_slug))?;
 
     let lat_delta = city.radius_km / 111.0;
@@ -208,7 +226,7 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
            AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
            AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
          RETURN s
-         ORDER BY s.energy DESC"
+         ORDER BY s.energy DESC",
     )
     .param("min_lat", min_lat)
     .param("max_lat", max_lat)
@@ -229,7 +247,13 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     // For each story, fetch its raw signals (no filtering, no fuzzing)
     for story in story_nodes {
         let mut signals = Vec::new();
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+        for nt in &[
+            NodeType::Event,
+            NodeType::Give,
+            NodeType::Ask,
+            NodeType::Notice,
+            NodeType::Tension,
+        ] {
             let label = node_type_label(*nt);
             let cypher = format!(
                 "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label}) RETURN n ORDER BY n.confidence DESC"
@@ -248,7 +272,13 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
 
     // Fetch ungrouped signals (not in any story) within the bounding box
     let mut ungrouped = Vec::new();
-    for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+    for nt in &[
+        NodeType::Event,
+        NodeType::Give,
+        NodeType::Ask,
+        NodeType::Notice,
+        NodeType::Tension,
+    ] {
         let label = node_type_label(*nt);
         let cypher = format!(
             "MATCH (n:{label})
@@ -283,13 +313,17 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
 
 fn dotenv_load() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join(".env");
     if let Ok(content) = std::fs::read_to_string(&path) {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((key, value)) = line.split_once('=') {
                 if std::env::var(key.trim()).is_err() {
                     std::env::set_var(key.trim(), value.trim());

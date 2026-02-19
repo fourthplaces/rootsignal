@@ -72,7 +72,11 @@ async fn create_signal(
         .param("source_url", source_url)
         .param("now", now);
 
-    client.inner().run(q).await.expect("Failed to create signal");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create signal");
 }
 
 /// Helper: create a Story node and link it to signals via CONTAINS edges.
@@ -105,7 +109,7 @@ async fn create_story_with_signals(
             source_domains: [],
             corroboration_depth: 0,
             status: $status
-        })"
+        })",
     )
     .param("id", story_id.to_string())
     .param("headline", headline)
@@ -128,7 +132,11 @@ async fn create_story_with_signals(
         let q = query(&cypher)
             .param("story_id", story_id.to_string())
             .param("signal_id", sig_id.to_string());
-        client.inner().run(q).await.expect("Failed to link signal to story");
+        client
+            .inner()
+            .run(q)
+            .await
+            .expect("Failed to link signal to story");
     }
 }
 
@@ -205,7 +213,10 @@ async fn triangulated_story_signals_rank_above_echo() {
     .await;
 
     // Query via reader — triangulated story signals should appear first
-    let results = reader.list_recent(20, None).await.expect("list_recent failed");
+    let results = reader
+        .list_recent(20, None)
+        .await
+        .expect("list_recent failed");
 
     assert!(
         results.len() >= 4,
@@ -221,9 +232,7 @@ async fn triangulated_story_signals_rank_above_echo() {
         .map(|n| n.meta().unwrap().title.clone())
         .collect();
 
-    let triangulated_first = first_four_titles
-        .iter()
-        .all(|t| t.contains("Triangulated"));
+    let triangulated_first = first_four_titles.iter().all(|t| t.contains("Triangulated"));
 
     assert!(
         triangulated_first,
@@ -299,7 +308,11 @@ async fn find_nodes_near_prefers_triangulated() {
         .await
         .expect("find_nodes_near failed");
 
-    assert!(results.len() >= 2, "should find both signals, got {}", results.len());
+    assert!(
+        results.len() >= 2,
+        "should find both signals, got {}",
+        results.len()
+    );
 
     // Triangulated signal (type_diversity=3) should rank above echo (type_diversity=1)
     let first_title = &results[0].meta().unwrap().title;
@@ -322,7 +335,16 @@ async fn story_status_reflects_triangulation() {
     let mut echo_sigs = Vec::new();
     for i in 0..5 {
         let id = Uuid::new_v4();
-        create_signal(&client, "Notice", id, &format!("Notice {i}"), &format!("https://n{i}.com"), 0.7, 0.0).await;
+        create_signal(
+            &client,
+            "Notice",
+            id,
+            &format!("Notice {i}"),
+            &format!("https://n{i}.com"),
+            0.7,
+            0.0,
+        )
+        .await;
         echo_sigs.push((id, "Notice"));
     }
     let refs: Vec<(Uuid, &str)> = echo_sigs.iter().map(|(id, l)| (*id, *l)).collect();
@@ -336,37 +358,84 @@ async fn story_status_reflects_triangulation() {
         (Uuid::new_v4(), "Event"),
     ];
     for (id, label) in &c_sigs {
-        create_signal(&client, label, *id, &format!("Confirmed {label}"), &format!("https://c-{label}.org"), 0.7, 0.0).await;
+        create_signal(
+            &client,
+            label,
+            *id,
+            &format!("Confirmed {label}"),
+            &format!("https://c-{label}.org"),
+            0.7,
+            0.0,
+        )
+        .await;
     }
-    create_story_with_signals(&client, confirmed_id, "Confirmed story", "confirmed", 3, 3, 0.9, &c_sigs).await;
+    create_story_with_signals(
+        &client,
+        confirmed_id,
+        "Confirmed story",
+        "confirmed",
+        3,
+        3,
+        0.9,
+        &c_sigs,
+    )
+    .await;
 
     // Create an "emerging" story (type_diversity=1, 2 signals — below echo threshold)
     let emerging_id = Uuid::new_v4();
-    let e_sigs: Vec<(Uuid, &str)> = vec![
-        (Uuid::new_v4(), "Ask"),
-        (Uuid::new_v4(), "Ask"),
-    ];
+    let e_sigs: Vec<(Uuid, &str)> = vec![(Uuid::new_v4(), "Ask"), (Uuid::new_v4(), "Ask")];
     for (id, label) in &e_sigs {
-        create_signal(&client, label, *id, "Emerging ask", "https://emerging.org", 0.5, 0.0).await;
+        create_signal(
+            &client,
+            label,
+            *id,
+            "Emerging ask",
+            "https://emerging.org",
+            0.5,
+            0.0,
+        )
+        .await;
     }
-    create_story_with_signals(&client, emerging_id, "Emerging story", "emerging", 1, 1, 0.3, &e_sigs).await;
+    create_story_with_signals(
+        &client,
+        emerging_id,
+        "Emerging story",
+        "emerging",
+        1,
+        1,
+        0.3,
+        &e_sigs,
+    )
+    .await;
 
     // Query stories by status
     let reader = PublicGraphReader::new(client.clone());
 
-    let echo_stories = reader.top_stories_by_energy(10, Some("echo")).await.unwrap();
+    let echo_stories = reader
+        .top_stories_by_energy(10, Some("echo"))
+        .await
+        .unwrap();
     assert_eq!(echo_stories.len(), 1, "should have 1 echo story");
     assert_eq!(echo_stories[0].type_diversity, 1);
 
-    let confirmed_stories = reader.top_stories_by_energy(10, Some("confirmed")).await.unwrap();
+    let confirmed_stories = reader
+        .top_stories_by_energy(10, Some("confirmed"))
+        .await
+        .unwrap();
     assert_eq!(confirmed_stories.len(), 1, "should have 1 confirmed story");
     assert_eq!(confirmed_stories[0].type_diversity, 3);
 
-    let emerging_stories = reader.top_stories_by_energy(10, Some("emerging")).await.unwrap();
+    let emerging_stories = reader
+        .top_stories_by_energy(10, Some("emerging"))
+        .await
+        .unwrap();
     assert_eq!(emerging_stories.len(), 1, "should have 1 emerging story");
 
     // Energy ordering: confirmed > echo > emerging
     let all = reader.top_stories_by_energy(10, None).await.unwrap();
     assert_eq!(all.len(), 3);
-    assert_eq!(all[0].status, "confirmed", "confirmed should have highest energy");
+    assert_eq!(
+        all[0].status, "confirmed",
+        "confirmed should have highest energy"
+    );
 }

@@ -1,6 +1,6 @@
 use std::net::IpAddr;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_graphql::{Context, Object, Result, SimpleObject};
@@ -8,11 +8,13 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, Config, DiscoveryMethod, SourceNode, SourceRole, SourceType, SubmissionNode};
+use rootsignal_common::{
+    CityNode, Config, DiscoveryMethod, SourceNode, SourceRole, SourceType, SubmissionNode,
+};
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_graph::GraphClient;
 use rootsignal_graph::cause_heat::compute_cause_heat;
+use rootsignal_graph::GraphClient;
 use rootsignal_scout::scout::Scout;
 
 use crate::jwt::{self, JwtService};
@@ -158,7 +160,8 @@ impl MutationRoot {
         if verified {
             let jwt_service = ctx.data_unchecked::<JwtService>();
             let is_admin = config.admin_numbers.contains(&phone);
-            let token = jwt_service.create_token(&phone, is_admin)
+            let token = jwt_service
+                .create_token(&phone, is_admin)
                 .map_err(|e| async_graphql::Error::new(format!("Token creation failed: {e}")))?;
 
             // Set the JWT cookie via response headers
@@ -184,11 +187,7 @@ impl MutationRoot {
 
     /// Create a new city by geocoding a location string.
     #[graphql(guard = "AdminGuard")]
-    async fn create_city(
-        &self,
-        ctx: &Context<'_>,
-        location: String,
-    ) -> Result<CreateCityResult> {
+    async fn create_city(&self, ctx: &Context<'_>, location: String) -> Result<CreateCityResult> {
         let location = location.trim().to_string();
         if location.is_empty() {
             return Err("Location cannot be empty".into());
@@ -199,7 +198,8 @@ impl MutationRoot {
         let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
 
         // Geocode
-        let (lat, lon, display_name) = geocode_location(&location).await
+        let (lat, lon, display_name) = geocode_location(&location)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
 
         // Derive slug
@@ -232,7 +232,9 @@ impl MutationRoot {
             last_scout_completed_at: None,
         };
 
-        writer.upsert_city(&city).await
+        writer
+            .upsert_city(&city)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create city: {e}")))?;
 
         // Run cold-start bootstrapper (non-fatal)
@@ -271,8 +273,7 @@ impl MutationRoot {
         if url.len() > 2048 {
             return Err("URL too long (max 2048 characters)".into());
         }
-        let parsed = url::Url::parse(&url)
-            .map_err(|_| async_graphql::Error::new("Invalid URL"))?;
+        let parsed = url::Url::parse(&url).map_err(|_| async_graphql::Error::new("Invalid URL"))?;
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err("URL must use http or https scheme".into());
         }
@@ -307,7 +308,9 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        writer.upsert_source(&source).await
+        writer
+            .upsert_source(&source)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
         info!(url, city = city_slug.as_str(), "Source added by admin");
@@ -320,11 +323,7 @@ impl MutationRoot {
 
     /// Run scout for a city. Returns immediately; scout runs in background.
     #[graphql(guard = "AdminGuard")]
-    async fn run_scout(
-        &self,
-        ctx: &Context<'_>,
-        city_slug: String,
-    ) -> Result<ScoutResult> {
+    async fn run_scout(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
@@ -364,11 +363,7 @@ impl MutationRoot {
 
     /// Stop the currently running scout.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(
-        &self,
-        ctx: &Context<'_>,
-        city_slug: String,
-    ) -> Result<ScoutResult> {
+    async fn stop_scout(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
         let cancel = ctx.data_unchecked::<ScoutCancel>();
         info!(city = city_slug.as_str(), "Scout stop requested");
         cancel.0.store(true, Ordering::Relaxed);
@@ -380,14 +375,12 @@ impl MutationRoot {
 
     /// Reset a stuck scout lock.
     #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_lock(
-        &self,
-        ctx: &Context<'_>,
-        city_slug: String,
-    ) -> Result<ScoutResult> {
+    async fn reset_scout_lock(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         info!(city = city_slug.as_str(), "Scout lock reset requested");
-        writer.release_scout_lock(&city_slug).await
+        writer
+            .release_scout_lock(&city_slug)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to release lock: {e}")))?;
         Ok(ScoutResult {
             success: true,
@@ -414,8 +407,7 @@ impl MutationRoot {
         if url.len() > 2048 {
             return Err("URL too long (max 2048 characters)".into());
         }
-        let parsed = url::Url::parse(&url)
-            .map_err(|_| async_graphql::Error::new("Invalid URL"))?;
+        let parsed = url::Url::parse(&url).map_err(|_| async_graphql::Error::new("Invalid URL"))?;
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err("URL must use http or https scheme".into());
         }
@@ -458,7 +450,9 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        writer.upsert_source(&source).await
+        writer
+            .upsert_source(&source)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
         // Create Submission node if reason provided
@@ -490,7 +484,9 @@ fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {
 
     // We need to block on the mutex - use try_lock to avoid async issues
     // In practice, contention is very low
-    let mut guard = limiter.0.try_lock()
+    let mut guard = limiter
+        .0
+        .try_lock()
         .map_err(|_| async_graphql::Error::new("Rate limiter busy, try again"))?;
 
     let entries = guard.entry(client_ip.0).or_default();
@@ -627,7 +623,11 @@ async fn run_scout(
 }
 
 /// Start the background scout interval loop (called from main).
-pub fn start_scout_interval(client: GraphClient, config: rootsignal_common::Config, interval_hours: u64) {
+pub fn start_scout_interval(
+    client: GraphClient,
+    config: rootsignal_common::Config,
+    interval_hours: u64,
+) {
     use std::sync::atomic::AtomicBool;
     info!(interval_hours, "Starting multi-city scout interval loop");
 

@@ -100,7 +100,11 @@ pub async fn all_signals(client: &GraphClient) -> Vec<SignalRow> {
 /// All signals ordered by confidence DESC.
 pub async fn signals_by_confidence(client: &GraphClient) -> Vec<SignalRow> {
     let mut signals = all_signals(client).await;
-    signals.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    signals.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     signals
 }
 
@@ -162,8 +166,16 @@ pub async fn tension_signals(client: &GraphClient) -> Vec<TensionRow> {
             id,
             title: row.get("title").unwrap_or_default(),
             confidence: row.get::<f64>("confidence").unwrap_or_default() as f32,
-            category: if category.is_empty() { None } else { Some(category) },
-            what_would_help: if what_would_help.is_empty() { None } else { Some(what_would_help) },
+            category: if category.is_empty() {
+                None
+            } else {
+                Some(category)
+            },
+            what_would_help: if what_would_help.is_empty() {
+                None
+            } else {
+                Some(what_would_help)
+            },
         });
     }
 

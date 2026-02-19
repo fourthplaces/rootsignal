@@ -97,7 +97,10 @@ impl Evolver {
             let failures = collect_failures(&champion);
 
             if failures.is_empty() {
-                info!(generation = gen, "No failures to target — champion is perfect");
+                info!(
+                    generation = gen,
+                    "No failures to target — champion is perfect"
+                );
                 break;
             }
 
@@ -111,21 +114,13 @@ impl Evolver {
                 .await;
 
             // Clone champion scores to avoid borrow conflict with champion reassignment
-            let champion_scores: Option<Vec<ScenarioScore>> = champion
-                .fitness
-                .as_ref()
-                .map(|f| f.scenario_scores.clone());
+            let champion_scores: Option<Vec<ScenarioScore>> =
+                champion.fitness.as_ref().map(|f| f.scenario_scores.clone());
 
             for mutation in mutations {
-                let mutant = champion.child_extractor(
-                    mutation.prompt,
-                    mutation.reasoning,
-                );
+                let mutant = champion.child_extractor(mutation.prompt, mutation.reasoning);
 
-                info!(
-                    mutant_id = mutant.id.as_str(),
-                    "Evaluating mutant"
-                );
+                info!(mutant_id = mutant.id.as_str(), "Evaluating mutant");
 
                 let scores = match self.evaluate_genome(&mutant, gym, &mut run_fn).await {
                     Ok(s) => s,
@@ -216,9 +211,9 @@ impl Evolver {
         let mut scores = Vec::new();
 
         for scenario in gym.scenarios() {
-            let (verdict, audit) = run_fn(genome, scenario).await.map_err(|e| {
-                anyhow!("Failed to evaluate scenario '{}': {}", scenario.name, e)
-            })?;
+            let (verdict, audit) = run_fn(genome, scenario)
+                .await
+                .map_err(|e| anyhow!("Failed to evaluate scenario '{}': {}", scenario.name, e))?;
 
             scores.push(ScenarioScore {
                 name: scenario.name.clone(),
@@ -349,7 +344,10 @@ fn collect_test_failures(genome: &ScoutGenome) -> Vec<crate::improve::TestFailur
             verdict_score: s.verdict_score,
             verdict_reasoning: format!("score={:.2}", s.verdict_score),
             audit_failures: if s.audit_passed < s.audit_total {
-                vec![format!("{}/{} audit checks passed", s.audit_passed, s.audit_total)]
+                vec![format!(
+                    "{}/{} audit checks passed",
+                    s.audit_passed, s.audit_total
+                )]
             } else {
                 vec![]
             },

@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use rootsignal_common::{StoryArc, StoryCategory, StorySynthesis, ActionGuidance};
+use rootsignal_common::{ActionGuidance, StoryArc, StoryCategory, StorySynthesis};
 
 /// LLM response schema for story synthesis.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -88,7 +88,8 @@ impl Synthesizer {
         velocity: f64,
         age_days: f64,
     ) -> Result<StorySynthesis, Box<dyn std::error::Error + Send + Sync>> {
-        self.synthesize_with_context(headline, signals, velocity, age_days, false, None).await
+        self.synthesize_with_context(headline, signals, velocity, age_days, false, None)
+            .await
     }
 
     /// Synthesize with additional context about story state.
@@ -107,7 +108,11 @@ impl Synthesizer {
             .iter()
             .take(20)
             .map(|s| {
-                let url_part = s.action_url.as_deref().map(|u| format!(" (action: {u})")).unwrap_or_default();
+                let url_part = s
+                    .action_url
+                    .as_deref()
+                    .map(|u| format!(" (action: {u})"))
+                    .unwrap_or_default();
                 format!("- [{}] {}: {}{}", s.node_type, s.title, s.summary, url_part)
             })
             .collect();

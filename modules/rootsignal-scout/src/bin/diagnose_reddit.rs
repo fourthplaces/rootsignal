@@ -75,14 +75,24 @@ async fn main() -> Result<()> {
     }
 
     let comment_count = posts.len() - unique_threads.len();
-    println!("  → {} unique threads, ~{} are comments\n", unique_threads.len(), comment_count);
+    println!(
+        "  → {} unique threads, ~{} are comments\n",
+        unique_threads.len(),
+        comment_count
+    );
 
     for (i, post) in posts.iter().enumerate() {
         let url = post.url.as_deref().unwrap_or("(no url)");
         let is_comment = url.matches('/').count() > 8; // rough heuristic
         let tag = if is_comment { " [COMMENT]" } else { "" };
         let preview: String = post.content.chars().take(100).collect();
-        println!("  {:>2}. ({:>4} chars){} {}", i + 1, post.content.len(), tag, preview);
+        println!(
+            "  {:>2}. ({:>4} chars){} {}",
+            i + 1,
+            post.content.len(),
+            tag,
+            preview
+        );
     }
     println!();
 
@@ -114,18 +124,36 @@ async fn main() -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        println!("  Batch {} ({} posts, {} chars)...", batch_idx + 1, batch.len(), combined_text.len());
+        println!(
+            "  Batch {} ({} posts, {} chars)...",
+            batch_idx + 1,
+            batch.len(),
+            combined_text.len()
+        );
 
         match extractor.extract(&combined_text, SUBREDDIT_URL).await {
             Ok(result) => {
                 println!("  → {} signals extracted\n", result.nodes.len());
                 for (j, node) in result.nodes.iter().enumerate() {
                     let meta = node.meta().unwrap();
-                    println!("    {:>2}. [{:?}] \"{}\"", j + 1, node.node_type(), meta.title);
-                    println!("        loc_name={:?}  lat={:?}  sensitivity={:?}",
-                        meta.location_name, meta.location.as_ref().map(|l| l.lat), meta.sensitivity);
+                    println!(
+                        "    {:>2}. [{:?}] \"{}\"",
+                        j + 1,
+                        node.node_type(),
+                        meta.title
+                    );
+                    println!(
+                        "        loc_name={:?}  lat={:?}  sensitivity={:?}",
+                        meta.location_name,
+                        meta.location.as_ref().map(|l| l.lat),
+                        meta.sensitivity
+                    );
                     if let Node::Tension(t) = node {
-                        println!("        severity={:?}  what_would_help={}", t.severity, trunc(t.what_would_help.as_deref().unwrap_or("none"), 80));
+                        println!(
+                            "        severity={:?}  what_would_help={}",
+                            t.severity,
+                            trunc(t.what_would_help.as_deref().unwrap_or("none"), 80)
+                        );
                     }
                 }
                 println!();
@@ -155,8 +183,13 @@ async fn main() -> Result<()> {
 
     for (i, node) in all_nodes.iter().enumerate() {
         let meta = node.meta().unwrap();
-        println!("  {:>2}. [{:?}] conf={:.3} \"{}\"",
-            i + 1, node.node_type(), meta.confidence, trunc(&meta.title, 60));
+        println!(
+            "  {:>2}. [{:?}] conf={:.3} \"{}\"",
+            i + 1,
+            node.node_type(),
+            meta.confidence,
+            trunc(&meta.title, 60)
+        );
     }
     println!();
 
@@ -173,40 +206,74 @@ async fn main() -> Result<()> {
 
     for mut node in all_nodes {
         let has_coords = node.meta().and_then(|m| m.location.as_ref()).is_some();
-        let loc_name = node.meta().and_then(|m| m.location_name.as_deref()).unwrap_or("").to_string();
+        let loc_name = node
+            .meta()
+            .and_then(|m| m.location_name.as_deref())
+            .unwrap_or("")
+            .to_string();
 
         if has_coords {
             let loc = node.meta().unwrap().location.as_ref().unwrap();
             let dist = rootsignal_common::haversine_km(CENTER_LAT, CENTER_LNG, loc.lat, loc.lng);
             if dist <= RADIUS_KM {
-                println!("  ✓ PASS (coords in radius, {:.1}km) \"{}\"", dist, node.meta().unwrap().title);
+                println!(
+                    "  ✓ PASS (coords in radius, {:.1}km) \"{}\"",
+                    dist,
+                    node.meta().unwrap().title
+                );
                 geo_passed.push(node);
             } else {
-                println!("  ✗ KILLED (coords outside radius, {:.1}km) \"{}\"", dist, node.meta().unwrap().title);
+                println!(
+                    "  ✗ KILLED (coords outside radius, {:.1}km) \"{}\"",
+                    dist,
+                    node.meta().unwrap().title
+                );
                 geo_killed.push(node.meta().unwrap().title.clone());
             }
         } else if !loc_name.is_empty() && loc_name != "<UNKNOWN>" {
             let loc_lower = loc_name.to_lowercase();
-            if GEO_TERMS.iter().any(|term| loc_lower.contains(&term.to_lowercase())) {
-                println!("  ✓ PASS (loc_name matches geo_term) loc=\"{}\" \"{}\"", loc_name, node.meta().unwrap().title);
+            if GEO_TERMS
+                .iter()
+                .any(|term| loc_lower.contains(&term.to_lowercase()))
+            {
+                println!(
+                    "  ✓ PASS (loc_name matches geo_term) loc=\"{}\" \"{}\"",
+                    loc_name,
+                    node.meta().unwrap().title
+                );
                 geo_passed.push(node);
             } else if is_city_local {
-                println!("  ~ PASS with 0.8x penalty (city-local, no geo_term match) loc=\"{}\" \"{}\"", loc_name, node.meta().unwrap().title);
+                println!(
+                    "  ~ PASS with 0.8x penalty (city-local, no geo_term match) loc=\"{}\" \"{}\"",
+                    loc_name,
+                    node.meta().unwrap().title
+                );
                 if let Some(meta) = node_meta_mut(&mut node) {
                     meta.confidence *= 0.8;
                 }
                 geo_passed.push(node);
             } else {
-                println!("  ✗ KILLED (non-local, no geo_term match) loc=\"{}\" \"{}\"", loc_name, node.meta().unwrap().title);
+                println!(
+                    "  ✗ KILLED (non-local, no geo_term match) loc=\"{}\" \"{}\"",
+                    loc_name,
+                    node.meta().unwrap().title
+                );
                 geo_killed.push(node.meta().unwrap().title.clone());
             }
         } else {
-            println!("  ✓ PASS (no coords, no loc_name — benefit of doubt) \"{}\"", node.meta().unwrap().title);
+            println!(
+                "  ✓ PASS (no coords, no loc_name — benefit of doubt) \"{}\"",
+                node.meta().unwrap().title
+            );
             geo_passed.push(node);
         }
     }
 
-    println!("\n  Geo result: {} passed, {} killed\n", geo_passed.len(), geo_killed.len());
+    println!(
+        "\n  Geo result: {} passed, {} killed\n",
+        geo_passed.len(),
+        geo_killed.len()
+    );
 
     // ================================================================
     // STAGE 5: Within-Batch Title Dedup
@@ -220,17 +287,27 @@ async fn main() -> Result<()> {
     let mut title_dedup_killed = Vec::new();
 
     for node in geo_passed {
-        let key = (node.meta().unwrap().title.trim().to_lowercase(), node.node_type());
+        let key = (
+            node.meta().unwrap().title.trim().to_lowercase(),
+            node.node_type(),
+        );
         if seen.insert(key) {
             println!("  ✓ PASS \"{}\"", node.meta().unwrap().title);
             title_dedup_passed.push(node);
         } else {
-            println!("  ✗ KILLED (batch title dup) \"{}\"", node.meta().unwrap().title);
+            println!(
+                "  ✗ KILLED (batch title dup) \"{}\"",
+                node.meta().unwrap().title
+            );
             title_dedup_killed.push(node.meta().unwrap().title.clone());
         }
     }
 
-    println!("\n  Title dedup result: {} passed, {} killed\n", title_dedup_passed.len(), title_dedup_killed.len());
+    println!(
+        "\n  Title dedup result: {} passed, {} killed\n",
+        title_dedup_passed.len(),
+        title_dedup_killed.len()
+    );
 
     // ================================================================
     // STAGE 6: Global Title+Type Dedup (against Neo4j)
@@ -253,22 +330,40 @@ async fn main() -> Result<()> {
     let mut global_dedup_killed = Vec::new();
 
     for node in title_dedup_passed {
-        let key = (node.meta().unwrap().title.trim().to_lowercase(), node.node_type());
+        let key = (
+            node.meta().unwrap().title.trim().to_lowercase(),
+            node.node_type(),
+        );
         if let Some((existing_id, existing_url)) = global_matches.get(&key) {
             if existing_url.as_str() == SUBREDDIT_URL {
-                println!("  ✗ KILLED (same-source title match in graph, id={}) \"{}\"", existing_id, node.meta().unwrap().title);
+                println!(
+                    "  ✗ KILLED (same-source title match in graph, id={}) \"{}\"",
+                    existing_id,
+                    node.meta().unwrap().title
+                );
             } else {
-                println!("  ✗ CORROBORATE (cross-source title match, id={}, from \"{}\") \"{}\"",
-                    existing_id, trunc(existing_url, 50), node.meta().unwrap().title);
+                println!(
+                    "  ✗ CORROBORATE (cross-source title match, id={}, from \"{}\") \"{}\"",
+                    existing_id,
+                    trunc(existing_url, 50),
+                    node.meta().unwrap().title
+                );
             }
             global_dedup_killed.push(node.meta().unwrap().title.clone());
         } else {
-            println!("  ✓ PASS (no global title match) \"{}\"", node.meta().unwrap().title);
+            println!(
+                "  ✓ PASS (no global title match) \"{}\"",
+                node.meta().unwrap().title
+            );
             global_dedup_passed.push(node);
         }
     }
 
-    println!("\n  Global dedup result: {} passed, {} killed/corroborated\n", global_dedup_passed.len(), global_dedup_killed.len());
+    println!(
+        "\n  Global dedup result: {} passed, {} killed/corroborated\n",
+        global_dedup_passed.len(),
+        global_dedup_killed.len()
+    );
 
     // ================================================================
     // STAGE 7: Embedding Dedup (against Neo4j vector index)
@@ -326,7 +421,8 @@ async fn main() -> Result<()> {
 
                 println!("  --- Checking each signal against graph index (threshold 0.85) ---\n");
 
-                for (node, embedding) in global_dedup_passed.into_iter().zip(embeddings.into_iter()) {
+                for (node, embedding) in global_dedup_passed.into_iter().zip(embeddings.into_iter())
+                {
                     let node_type = node.node_type();
                     let title = node.meta().unwrap().title.clone();
 
@@ -334,17 +430,33 @@ async fn main() -> Result<()> {
                         Ok(Some(dup)) => {
                             let is_same = dup.source_url.contains("reddit.com/r/Minneapolis");
                             if is_same {
-                                println!("  ✗ KILLED (same-source embed dup, sim={:.3}, id={}) \"{}\"",
-                                    dup.similarity, dup.id, title);
-                                println!("    matched: id={} from {}", dup.id, trunc(&dup.source_url, 50));
+                                println!(
+                                    "  ✗ KILLED (same-source embed dup, sim={:.3}, id={}) \"{}\"",
+                                    dup.similarity, dup.id, title
+                                );
+                                println!(
+                                    "    matched: id={} from {}",
+                                    dup.id,
+                                    trunc(&dup.source_url, 50)
+                                );
                             } else if dup.similarity >= 0.92 {
-                                println!("  ✗ CORROBORATE (cross-source, sim={:.3}, id={}) \"{}\"",
-                                    dup.similarity, dup.id, title);
-                                println!("    matched: id={} from {}", dup.id, trunc(&dup.source_url, 50));
+                                println!(
+                                    "  ✗ CORROBORATE (cross-source, sim={:.3}, id={}) \"{}\"",
+                                    dup.similarity, dup.id, title
+                                );
+                                println!(
+                                    "    matched: id={} from {}",
+                                    dup.id,
+                                    trunc(&dup.source_url, 50)
+                                );
                             } else {
                                 println!("  ~ NEAR-MISS (sim={:.3}, below 0.92 cross-source threshold) \"{}\"",
                                     dup.similarity, title);
-                                println!("    near: id={} from {}", dup.id, trunc(&dup.source_url, 50));
+                                println!(
+                                    "    near: id={} from {}",
+                                    dup.id,
+                                    trunc(&dup.source_url, 50)
+                                );
                                 embed_passed.push((title.clone(), node_type));
                             }
                             embed_killed.push(title.clone());
@@ -360,8 +472,11 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                println!("\n  Embedding dedup result: {} passed, {} killed/corroborated\n",
-                    embed_passed.len(), embed_killed.len());
+                println!(
+                    "\n  Embedding dedup result: {} passed, {} killed/corroborated\n",
+                    embed_passed.len(),
+                    embed_killed.len()
+                );
 
                 // ================================================================
                 // SUMMARY
@@ -371,21 +486,40 @@ async fn main() -> Result<()> {
                 println!("╚══════════════════════════════════════════════════════════════╝\n");
                 println!("  Apify posts returned:      {}", posts.len());
                 println!("  LLM signals extracted:     {}", total_extracted);
-                println!("  After quality scoring:     {} (all pass, just sets confidence)", total_extracted);
-                println!("  After geo-filter:          {} (killed: {})", total_extracted - geo_killed.len(), geo_killed.len());
+                println!(
+                    "  After quality scoring:     {} (all pass, just sets confidence)",
+                    total_extracted
+                );
+                println!(
+                    "  After geo-filter:          {} (killed: {})",
+                    total_extracted - geo_killed.len(),
+                    geo_killed.len()
+                );
                 for t in &geo_killed {
                     println!("    killed: \"{}\"", trunc(t, 70));
                 }
-                println!("  After batch title dedup:   {} (killed: {})", total_extracted - geo_killed.len() - title_dedup_killed.len(), title_dedup_killed.len());
+                println!(
+                    "  After batch title dedup:   {} (killed: {})",
+                    total_extracted - geo_killed.len() - title_dedup_killed.len(),
+                    title_dedup_killed.len()
+                );
                 for t in &title_dedup_killed {
                     println!("    killed: \"{}\"", trunc(t, 70));
                 }
                 let global_dedup_count = embed_passed.len() + embed_killed.len();
-                println!("  After global title dedup:  {} (killed: {})", global_dedup_count, global_dedup_killed.len());
+                println!(
+                    "  After global title dedup:  {} (killed: {})",
+                    global_dedup_count,
+                    global_dedup_killed.len()
+                );
                 for t in &global_dedup_killed {
                     println!("    killed: \"{}\"", trunc(t, 70));
                 }
-                println!("  After embedding dedup:     {} (killed: {})", embed_passed.len(), embed_killed.len());
+                println!(
+                    "  After embedding dedup:     {} (killed: {})",
+                    embed_passed.len(),
+                    embed_killed.len()
+                );
                 for t in &embed_killed {
                     println!("    killed: \"{}\"", trunc(t, 70));
                 }
@@ -407,12 +541,18 @@ fn cosine_sim(a: &[f32], b: &[f32]) -> f64 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
     (dot / (norm_a * norm_b)) as f64
 }
 
 fn trunc(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() } else { format!("{}...", &s[..max]) }
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
+    }
 }
 
 fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
@@ -428,13 +568,17 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
 
 fn dotenv_load() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join(".env");
     if let Ok(content) = std::fs::read_to_string(&path) {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((key, value)) = line.split_once('=') {
                 if std::env::var(key.trim()).is_err() {
                     std::env::set_var(key.trim(), value.trim());

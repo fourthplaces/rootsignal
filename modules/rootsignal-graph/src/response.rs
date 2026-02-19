@@ -23,7 +23,9 @@ impl ResponseMapper {
 
     /// For each active Tension/Ask, find Give/Event signals that might respond to it.
     /// Uses embedding similarity as a cheap filter, then LLM as a verifier.
-    pub async fn map_responses(&self) -> Result<ResponseMappingStats, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn map_responses(
+        &self,
+    ) -> Result<ResponseMappingStats, Box<dyn std::error::Error + Send + Sync>> {
         let mut stats = ResponseMappingStats::default();
 
         // Get active tensions with embeddings
@@ -46,20 +48,28 @@ impl ResponseMapper {
 
             // LLM verification on top candidates (max 5)
             let tension_info = self.get_signal_info(*tension_id).await?;
-            let Some(tension_info) = tension_info else { continue };
+            let Some(tension_info) = tension_info else {
+                continue;
+            };
 
             for (candidate_id, candidate_similarity) in candidates.iter().take(5) {
                 let candidate_info = self.get_signal_info(*candidate_id).await?;
-                let Some(candidate_info) = candidate_info else { continue };
+                let Some(candidate_info) = candidate_info else {
+                    continue;
+                };
 
                 match self.verify_response(&tension_info, &candidate_info).await {
                     Ok(Some(explanation)) => {
-                        if let Err(e) = self.writer.create_response_edge(
-                            *candidate_id,
-                            *tension_id,
-                            *candidate_similarity,
-                            &explanation,
-                        ).await {
+                        if let Err(e) = self
+                            .writer
+                            .create_response_edge(
+                                *candidate_id,
+                                *tension_id,
+                                *candidate_similarity,
+                                &explanation,
+                            )
+                            .await
+                        {
                             warn!(error = %e, "Failed to create RESPONDS_TO edge");
                         } else {
                             stats.edges_created += 1;
@@ -155,8 +165,7 @@ If yes, respond with a brief explanation (1 sentence) of how B helps address A.
 If no, respond with just "NO".
 
 Respond with ONLY the explanation or "NO"."#,
-            tension.title, tension.summary,
-            candidate.title, candidate.summary,
+            tension.title, tension.summary, candidate.title, candidate.summary,
         );
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");

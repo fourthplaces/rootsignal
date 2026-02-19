@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::types::{SupervisorStats, ValidationIssue};
 use super::backend::NotifyBackend;
+use crate::types::{SupervisorStats, ValidationIssue};
 
 /// No-op notification backend for testing.
 pub struct NoopBackend;

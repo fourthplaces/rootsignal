@@ -83,7 +83,11 @@ impl Judge {
         let system = prompt::judge_system();
         let user = prompt::judge_user(world, &criteria.checks, agent_output);
 
-        info!(world = world.name, checks = criteria.checks.len(), "Judge evaluating");
+        info!(
+            world = world.name,
+            checks = criteria.checks.len(),
+            "Judge evaluating"
+        );
 
         let response = self.claude.chat_completion(system, &user).await?;
 
@@ -153,6 +157,10 @@ pub async fn generate_random_world(api_key: &str) -> Result<World> {
     let world: World = serde_json::from_str(json_str)
         .map_err(|e| anyhow!("Failed to parse generated world: {e}"))?;
 
-    info!(name = world.name, sites = world.sites.len(), "Random world generated");
+    info!(
+        name = world.name,
+        sites = world.sites.len(),
+        "Random world generated"
+    );
     Ok(world)
 }
