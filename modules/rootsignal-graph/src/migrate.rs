@@ -285,6 +285,15 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     g.run(query("CREATE INDEX source_role IF NOT EXISTS FOR (s:Source) ON (s.source_role)")).await?;
     info!("Source role index created");
 
+    // --- Place node constraints and indexes ---
+    g.run(query("CREATE CONSTRAINT place_id_unique IF NOT EXISTS FOR (p:Place) REQUIRE p.id IS UNIQUE")).await?;
+    g.run(query("CREATE INDEX place_slug IF NOT EXISTS FOR (p:Place) ON (p.slug)")).await?;
+    g.run(query("CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)")).await?;
+    info!("Place constraints and indexes created");
+
+    // --- Convert RESPONDS_TO gathering edges to DRAWN_TO ---
+    convert_gathering_edges(client).await?;
+
     // --- Reclassify query sources: web → *_query for listing pages ---
     reclassify_query_sources(client).await?;
 
@@ -725,5 +734,39 @@ pub async fn backfill_scrape_count(client: &GraphClient) -> Result<(), neo4rs::E
     }
 
     info!("scrape_count backfill complete");
+    Ok(())
+}
+
+/// Convert existing RESPONDS_TO edges with gathering_type to DRAWN_TO edges.
+/// Idempotent — WHERE clause matches nothing after the first run.
+pub async fn convert_gathering_edges(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Converting gathering edges from RESPONDS_TO to DRAWN_TO...");
+
+    let q = query(
+        "MATCH (sig)-[old:RESPONDS_TO]->(t:Tension)
+         WHERE old.gathering_type IS NOT NULL
+         MERGE (sig)-[new:DRAWN_TO]->(t)
+         SET new.match_strength = old.match_strength,
+             new.explanation = old.explanation,
+             new.gathering_type = old.gathering_type
+         DELETE old
+         RETURN count(old) AS converted"
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let converted: i64 = row.get("converted").unwrap_or(0);
+                if converted > 0 {
+                    info!(converted, "Converted gathering RESPONDS_TO edges to DRAWN_TO");
+                }
+            }
+        }
+        Err(e) => warn!("Gathering edge conversion failed (non-fatal): {e}"),
+    }
+
+    info!("Gathering edge conversion complete");
     Ok(())
 }

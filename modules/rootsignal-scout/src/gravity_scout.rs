@@ -530,9 +530,9 @@ impl<'a> GravityScout<'a> {
             }
         };
 
-        // Wire gravity edge to the target tension
+        // Wire DRAWN_TO edge to the target tension
         self.writer
-            .create_gravity_edge(
+            .create_drawn_to_edge(
                 signal_id,
                 target.tension_id,
                 gathering.match_strength.clamp(0.0, 1.0),
@@ -542,7 +542,7 @@ impl<'a> GravityScout<'a> {
             .await?;
         stats.edges_created += 1;
 
-        // Wire additional gravity edges for also_addresses
+        // Wire additional DRAWN_TO edges for also_addresses
         if !gathering.also_addresses.is_empty() {
             if let Err(e) = self
                 .wire_also_addresses(
@@ -557,9 +557,23 @@ impl<'a> GravityScout<'a> {
             }
         }
 
-        // Venue seeding: create future source for the venue
+        // Place creation: promote venue string to first-class Place node
         if let Some(ref venue) = gathering.venue {
             if !venue.is_empty() {
+                match self
+                    .writer
+                    .find_or_create_place(venue, &self.city_slug, self.city.center_lat, self.city.center_lng)
+                    .await
+                {
+                    Ok(place_id) => {
+                        if let Err(e) = self.writer.create_gathers_at_edge(signal_id, place_id).await {
+                            warn!(venue, error = %e, "Failed to create GATHERS_AT edge (non-fatal)");
+                        }
+                    }
+                    Err(e) => warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)"),
+                }
+
+                // Venue seeding: create future source for the venue
                 let venue_query = format!("{} {} community events", venue, self.city.name);
                 if let Err(e) = self
                     .create_future_query(&venue_query, target, stats)
@@ -698,7 +712,7 @@ impl<'a> GravityScout<'a> {
                     "Wiring gravity also_addresses edge"
                 );
                 self.writer
-                    .create_gravity_edge(
+                    .create_drawn_to_edge(
                         signal_id,
                         tension_id,
                         sim.clamp(0.0, 1.0),

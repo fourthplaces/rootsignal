@@ -434,13 +434,15 @@ impl PublicGraphReader {
         story_id: Uuid,
     ) -> Result<Vec<(Uuid, Vec<serde_json::Value>)>, neo4rs::Error> {
         let cypher =
-            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[rel:RESPONDS_TO]-(resp)
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[rel:RESPONDS_TO|DRAWN_TO]-(resp)
              WHERE resp:Give OR resp:Event OR resp:Ask
              RETURN t.id AS tension_id, resp.id AS resp_id, resp.title AS resp_title,
                     resp.summary AS resp_summary,
                     labels(resp) AS resp_labels,
                     rel.match_strength AS match_strength,
-                    rel.explanation AS explanation";
+                    rel.explanation AS explanation,
+                    type(rel) AS edge_type,
+                    rel.gathering_type AS gathering_type";
 
         let q = query(cypher).param("id", story_id.to_string());
         let mut stream = self.client.graph.execute(q).await?;
@@ -458,6 +460,8 @@ impl PublicGraphReader {
             let node_type = labels.iter().find(|l| *l != "Node").cloned().unwrap_or_default();
             let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
             let explanation: String = row.get("explanation").unwrap_or_default();
+            let edge_type: String = row.get("edge_type").unwrap_or_default();
+            let gathering_type: Option<String> = row.get::<String>("gathering_type").ok();
 
             map.entry(tid).or_default().push(serde_json::json!({
                 "id": rid_str,
@@ -466,6 +470,8 @@ impl PublicGraphReader {
                 "node_type": node_type,
                 "match_strength": match_strength,
                 "explanation": explanation,
+                "edge_type": edge_type,
+                "gathering_type": gathering_type,
             }));
         }
 
@@ -705,7 +711,7 @@ impl PublicGraphReader {
         for nt in &[NodeType::Give, NodeType::Event, NodeType::Ask] {
             let label = node_type_label(*nt);
             let cypher = format!(
-                "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO]-(n:{label})
+                "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO|DRAWN_TO]-(n:{label})
                  RETURN n, rel.match_strength AS match_strength, rel.explanation AS explanation
                  ORDER BY n.confidence DESC"
             );

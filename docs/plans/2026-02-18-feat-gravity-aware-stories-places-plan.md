@@ -8,7 +8,7 @@ date: 2026-02-18
 
 ## Overview
 
-Replace `RESPONDS_TO` + `gathering_type` property hack with a dedicated `DRAWN_TO` edge type. Promote venue strings to first-class `Place` graph nodes with `GATHERS_AT` edges. Update story weaver, reader, API, and migration to treat gatherings as structurally distinct from instrumental responses.
+Replace `RESPONDS_TO` + `gathering_type` property hack with a dedicated `DRAWN_TO` edge type. Promote venue strings to first-class `Place` graph nodes with `GATHERS_AT` edges. Update story weaver and reader to treat gatherings as structurally distinct from instrumental responses.
 
 **Brainstorm:** [docs/brainstorms/2026-02-18-gravity-aware-stories-brainstorm.md](../brainstorms/2026-02-18-gravity-aware-stories-brainstorm.md)
 
@@ -43,7 +43,6 @@ Place
   id: UUID
   name: String
   slug: String           (normalized: lowercase, strip punctuation, collapse whitespace)
-  place_type: String     ("church", "park", "community center", etc.)
   city: String           (city slug — scoped dedup)
   lat: f64               (city-center initially, geocoded: false)
   lng: f64
@@ -53,35 +52,48 @@ Place
 Signal ──GATHERS_AT──▶ Place
 ```
 
-### Key Decisions (from brainstorm)
+### Key Decisions (from brainstorm + pressure test)
 
 - **Place dedup: slug + city only.** No embeddings. "First Baptist Church" and "First United Methodist Church" have high cosine similarity but are different buildings. `MERGE ON (slug, city)`.
-- **`gathering_count: u32` on Story nodes.** Convenience counter, recomputed in Phase B from `DRAWN_TO` edge count.
 - **Geocoding deferred.** Places start with city-center + `geocoded: false`. Real coordinates in a future phase.
-- **`SourceRole::Gravity` variant.** The ontology split carries through the pipeline.
 - **cause_heat unchanged.** It's embedding-based all-pairs cosine similarity — no edge walking. `DRAWN_TO` signals radiate heat automatically via embedding proximity.
+- **No venue backfill.** Existing venue strings were never persisted to signal node properties — only used for future query seeding. Places are created going forward only.
+- **Slug function in `rootsignal-common`.** First algorithmic slug generation in the codebase — must be reusable and testable, not buried in `writer.rs`.
 
-### Critical Design Notes (from spec-flow analysis)
+### Critical Design Notes (from spec-flow + pressure test)
 
 1. **Place slug dedup is city-scoped.** `MERGE (p:Place {slug: $slug, city: $city})` — "Lake Street Church" in Minneapolis ≠ "Lake Street Church" in St. Paul.
-2. **A signal can have BOTH `RESPONDS_TO` AND `DRAWN_TO` to the same tension.** A legal clinic that also hosts a vigil. `DRAWN_TO` takes precedence for display — the signal is tagged as a gathering with instrumental properties. `RESPONDS_TO` is not duplicated.
+2. **A signal can have BOTH `RESPONDS_TO` AND `DRAWN_TO` to the same tension.** A legal clinic that also hosts a vigil. `DRAWN_TO` takes precedence for display. `RESPONDS_TO` is not duplicated.
 3. **Curiosity uninvestigated check must include `DRAWN_TO`.** `find_curiosity_targets` at `writer.rs:2323` filters `NOT (n)-[:RESPONDS_TO]->(:Tension)` — must become `NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)`.
-4. **Tension merge must re-point `DRAWN_TO` edges.** When dedup merges tensions, both `RESPONDS_TO` and `DRAWN_TO` edges from the absorbed tension must be re-pointed.
+4. **Tension merge must re-point `DRAWN_TO` edges.** `merge_duplicate_tensions` at `writer.rs:2625` only re-points `RESPONDS_TO`. Without this fix, `DETACH DELETE` on the absorbed tension silently destroys all `DRAWN_TO` edges. **Must ship in Phase 1.**
 5. **`PlaceNode` is a standalone struct** (like `StoryNode`, `CityNode`), NOT in the `NodeType` signal enum. Places aren't signals.
-6. **Reader methods tag edge type with `type(r)`.** Union queries use `CASE WHEN type(r) = 'DRAWN_TO' THEN r.gathering_type ELSE null END` to make the distinction explicit.
+6. **Label guards on `create_drawn_to_edge`.** Must follow `create_response_edge` pattern: `WHERE (s:Give OR s:Event OR s:Ask)` — no label-less full scans.
+7. **Defensive MERGE semantics.** `create_drawn_to_edge` must use `ON CREATE SET` / `ON MATCH SET` (matching existing `create_gravity_edge`), not bare `SET`.
+8. **`wire_also_addresses` also calls `create_gravity_edge`.** Both callsites in gravity_scout.rs must switch to `create_drawn_to_edge`.
+9. **Null deserialization.** `gathering_type` on `TensionRespondent` must use `.ok()` to produce `Option<String>`, not `.unwrap_or_default()` which would convert null to empty string.
+
+### Deferred (YAGNI)
+
+These are intentionally cut from this iteration:
+
+- **`SourceRole::Gravity`** — nothing dispatches on it. Gravity scout runs independently, not via source-role scheduling. Add when gravity sources need distinct routing.
+- **`gathering_count` on Story** — denormalized cache maintained in 2 places with no consumer. Compute from edges on demand when a consumer needs it.
+- **`place_type` on PlaceNode** — no consumer filters or displays it. Add when type-based queries are needed.
+- **Place reader methods** (`get_places_by_city`, `get_place_with_signals`, `get_cross_tension_places`) — no UI or consumer exists. Build when a frontend needs them.
+- **`GqlPlace` + Place GraphQL queries** — no frontend work planned. Add with the Place UI.
+- **Venue backfill migration** — existing venue data was never persisted to node properties. Places are created going forward only.
 
 ## Implementation Phases
 
-### Phase 1: Types + Migration
+### Phase 1: Types + Writer + Data Migration
 
-Add types and schema. No behavior changes yet.
+Types, write methods, edge conversion, and tension merge fix. One atomic PR — migration runs before any behavioral change.
 
 **`modules/rootsignal-common/src/types.rs`:**
 
-- [ ] Add `EdgeType::DrawnTo` variant (line 700)
-- [ ] Add `EdgeType::GathersAt` variant (line 700)
-- [ ] Add `SourceRole::Gravity` variant (line 544) + Display + `from_str_loose`
-- [ ] Add `PlaceNode` struct (after `CityNode` at line 406):
+- [x] Add `EdgeType::DrawnTo` variant (line 700)
+- [x] Add `EdgeType::GathersAt` variant (line 700)
+- [x] Add `PlaceNode` struct (after `CityNode` at line 406):
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +101,6 @@ pub struct PlaceNode {
     pub id: Uuid,
     pub name: String,
     pub slug: String,
-    pub place_type: String,
     pub city: String,
     pub lat: f64,
     pub lng: f64,
@@ -98,59 +109,83 @@ pub struct PlaceNode {
 }
 ```
 
-- [ ] Add `gathering_count: u32` to `StoryNode` (line 354) with `#[serde(default)]`
-- [ ] Add `TensionRespondent.edge_type: String` field and `gathering_type: Option<String>` field
+- [x] Add `TensionRespondent.edge_type: String` and `gathering_type: Option<String>` fields (struct is in `writer.rs:3337`, not `types.rs`)
+
+**`modules/rootsignal-common/src/lib.rs` (or new `slug.rs`):**
+
+- [x] Add `pub fn slugify(name: &str) -> String` — lowercase, strip non-alphanumeric (keep spaces), collapse whitespace, replace spaces with hyphens. Reusable utility alongside `extract_domain`, `haversine_km`.
 
 **`modules/rootsignal-graph/src/migrate.rs`:**
 
-- [ ] Add Place uniqueness constraint: `CREATE CONSTRAINT place_id_unique IF NOT EXISTS FOR (n:Place) REQUIRE n.id IS UNIQUE`
-- [ ] Add Place composite index: `CREATE INDEX place_slug_city IF NOT EXISTS FOR (n:Place) ON (n.slug, n.city)`
-- [ ] Add Place city index: `CREATE INDEX place_city IF NOT EXISTS FOR (n:Place) ON (n.city)`
+- [x] Add Place uniqueness constraint: `CREATE CONSTRAINT place_id_unique IF NOT EXISTS FOR (p:Place) REQUIRE p.id IS UNIQUE`
+- [x] Add Place slug+city index — used two single-property indexes (slug, city) for Memgraph compatibility
+- [x] Add Place city index: `CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)`
+- [x] Data migration — convert existing gathering edges (idempotent, single Cypher statement):
 
-### Phase 2: Graph Writer — Place + DRAWN_TO
-
-Add write methods. Gravity scout still calls old method until Phase 3.
+```cypher
+MATCH (sig)-[old:RESPONDS_TO]->(t:Tension)
+WHERE old.gathering_type IS NOT NULL
+MERGE (sig)-[new:DRAWN_TO]->(t)
+SET new.match_strength = old.match_strength,
+    new.explanation = old.explanation,
+    new.gathering_type = old.gathering_type
+DELETE old
+```
 
 **`modules/rootsignal-graph/src/writer.rs`:**
 
-- [ ] New `find_or_create_place(&self, name: &str, place_type: &str, city: &str, lat: f64, lng: f64) -> Result<Uuid>`:
-  - Slugify name: lowercase, strip non-alphanumeric (keep spaces), collapse whitespace, replace spaces with hyphens
-  - `MERGE (p:Place {slug: $slug, city: $city}) ON CREATE SET p.id = $id, p.name = $name, p.place_type = $type, p.lat = $lat, p.lng = $lng, p.geocoded = false, p.created_at = datetime() RETURN p.id`
+- [x] New `find_or_create_place(&self, name: &str, city: &str, lat: f64, lng: f64) -> Result<Uuid>`:
+  - Use `rootsignal_common::slugify(name)` for slug
+  - `MERGE (p:Place {slug: $slug, city: $city}) ON CREATE SET p.id = $id, p.name = $name, p.lat = $lat, p.lng = $lng, p.geocoded = false, p.created_at = datetime() RETURN p.id`
 
-- [ ] New `create_drawn_to_edge(&self, signal_id: Uuid, tension_id: Uuid, match_strength: f64, explanation: &str, gathering_type: &str)`:
-  - Pattern follows `create_response_edge` at line 1823
-  - `MATCH (s {id: $sid}), (t:Tension {id: $tid}) MERGE (s)-[r:DRAWN_TO]->(t) SET r.match_strength = $ms, r.explanation = $exp, r.gathering_type = $gt`
+- [x] New `create_drawn_to_edge(&self, signal_id: Uuid, tension_id: Uuid, match_strength: f64, explanation: &str, gathering_type: &str)`:
+  - Label guard: `MATCH (s) WHERE s.id = $sid AND (s:Give OR s:Event OR s:Ask)`
+  - Defensive MERGE: `ON CREATE SET r.match_strength = $ms, r.explanation = $exp, r.gathering_type = $gt ON MATCH SET r.match_strength = $ms, r.explanation = $exp, r.gathering_type = $gt`
 
-- [ ] New `create_gathers_at_edge(&self, signal_id: Uuid, place_id: Uuid)`:
+- [x] New `create_gathers_at_edge(&self, signal_id: Uuid, place_id: Uuid)`:
   - `MATCH (s {id: $sid}), (p:Place {id: $pid}) MERGE (s)-[:GATHERS_AT]->(p)`
 
-- [ ] Update `get_existing_gravity_signals` (line 3082): query `DRAWN_TO` edges instead of `RESPONDS_TO WHERE gathering_type IS NOT NULL`
+- [x] Update `merge_duplicate_tensions` (~line 2625): add `DRAWN_TO` re-pointing block parallel to existing `RESPONDS_TO` re-pointing, preserving `gathering_type`:
 
-- [ ] Update `find_curiosity_targets` (line 2323): change `NOT (n)-[:RESPONDS_TO]->(:Tension)` to `NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)`
+```cypher
+MATCH (sig)-[r:DRAWN_TO]->(dup:Tension {id: $dup_id})
+MATCH (survivor:Tension {id: $survivor_id})
+WITH sig, r, survivor, dup
+WHERE NOT (sig)-[:DRAWN_TO]->(survivor)
+CREATE (sig)-[:DRAWN_TO {match_strength: r.match_strength, explanation: r.explanation, gathering_type: r.gathering_type}]->(survivor)
+WITH r, dup
+DELETE r
+```
 
-### Phase 3: Gravity Scout — Wire New Edges
+- [x] Update `get_existing_gravity_signals` (line 3082): query `DRAWN_TO` edges instead of `RESPONDS_TO WHERE gathering_type IS NOT NULL`
+
+- [x] Update `find_curiosity_targets` (line 2323): change `NOT (n)-[:RESPONDS_TO]->(:Tension)` to `NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)`
+
+- [x] Deprecate `create_gravity_edge` (line 3133) — keep temporarily until Phase 2 is merged
+
+### Phase 2: Gravity Scout — Wire New Edges
 
 Switch gravity scout from RESPONDS_TO to DRAWN_TO + Place.
 
 **`modules/rootsignal-scout/src/gravity_scout.rs`:**
 
-- [ ] Replace `create_gravity_edge` call with `create_drawn_to_edge`
-- [ ] After creating signal, if `gathering.venue` is Some:
-  1. Call `find_or_create_place(venue, place_type, city, city_lat, city_lng)` — use city-center coords, `geocoded: false`
+- [x] Replace `create_gravity_edge` call with `create_drawn_to_edge` (primary callsite)
+- [x] Replace `create_gravity_edge` call in `wire_also_addresses` with `create_drawn_to_edge`
+- [x] After creating signal, if `gathering.venue` is Some:
+  1. Call `find_or_create_place(venue, city, city_lat, city_lng)` — use city-center coords, `geocoded: false`
   2. Call `create_gathers_at_edge(signal_id, place_id)`
-- [ ] Extract `place_type` from LLM output. Add `place_type: Option<String>` to `GravityGathering` struct. Update prompt to ask for place type (church, park, community center, school, library, etc.). Default to `"unknown"` if not provided.
 
 **`modules/rootsignal-graph/src/writer.rs`:**
 
-- [ ] Deprecate/remove `create_gravity_edge` (line 3133) once all callers updated
+- [x] Remove deprecated `create_gravity_edge` (line 3133)
 
-### Phase 4: Story Weaver — Union Queries
+### Phase 3: Story Weaver + Reader — Union Queries
 
-Update story materialization and growth to see gatherings.
+Make downstream consumers see `DRAWN_TO` edges. Ship as one PR — no reason to expose gatherings in the weaver but not in the reader.
 
 **`modules/rootsignal-graph/src/writer.rs`:**
 
-- [ ] Update `find_tension_hubs` (line 2431):
+- [x] Update `find_tension_hubs` (line 2431):
 
 ```cypher
 MATCH (t:Tension)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
@@ -161,68 +196,23 @@ WITH t, collect({
     strength: r.match_strength,
     explanation: r.explanation,
     edge_type: type(r),
-    gathering_type: CASE WHEN type(r) = 'DRAWN_TO' THEN r.gathering_type ELSE null END
+    gathering_type: r.gathering_type
 }) AS respondents
 WHERE size(respondents) >= 2
 ```
 
-- [ ] Update `find_story_growth` (line 2494): same `RESPONDS_TO|DRAWN_TO` union pattern
+- [x] Update `find_story_growth` (line 2494): same `RESPONDS_TO|DRAWN_TO` union pattern with `type(r)` and `r.gathering_type`
 
-- [ ] Update `TensionRespondent` struct to carry `edge_type` and `gathering_type`
-
-**`modules/rootsignal-graph/src/story_weaver.rs`:**
-
-- [ ] In `phase_materialize` (line 117): compute `gathering_count` from respondents where `edge_type == "DRAWN_TO"`, write to Story node
-- [ ] In `phase_grow` (line 265): recompute `gathering_count` from current graph state
-
-### Phase 5: Reader + API
-
-Expose gatherings and places to consumers.
+- [x] Update `TensionRespondent` deserialization: use `.ok()` for `gathering_type` to get `Option<String>` (not `.unwrap_or_default()`) — done in Phase 1
 
 **`modules/rootsignal-graph/src/reader.rs`:**
 
-- [ ] Update `get_story_tension_responses` (line 432): union `RESPONDS_TO|DRAWN_TO`, tag `edge_type` and `gathering_type` in response JSON
-- [ ] New `get_places_by_city(city: &str) -> Vec<PlaceNode>`: `MATCH (p:Place {city: $city}) RETURN p ORDER BY p.name`
-- [ ] New `get_place_with_signals(place_id: Uuid)`: Place + its gathering signals via `GATHERS_AT`
-- [ ] New `get_cross_tension_places(city: &str)`: Places with gatherings across 2+ tensions
+- [x] Update `get_story_tension_responses` (line 432): union `RESPONDS_TO|DRAWN_TO`, add `type(rel) AS edge_type` and `rel.gathering_type AS gathering_type` to response JSON
+- [x] Update tension response query at line 706: add `DRAWN_TO` to relationship type union
 
 **`modules/rootsignal-api/src/graphql/types.rs`:**
 
-- [ ] Add `gathering_count` to `GqlStory` (line 431)
-- [ ] Add `edge_type` and `gathering_type` to story response items
-- [ ] New `GqlPlace` type with id, name, slug, place_type, city, lat, lng
-- [ ] New queries: `places(city: String)`, `place(id: ID)`, `crossTensionPlaces(city: String)`
-
-### Phase 6: Migration — Convert Existing Data
-
-Convert existing `RESPONDS_TO` + `gathering_type` edges to `DRAWN_TO`. Extract venue strings to Place nodes.
-
-**`modules/rootsignal-graph/src/migrate.rs`:**
-
-- [ ] Data migration (run once, idempotent):
-
-```cypher
-// Convert gathering edges: RESPONDS_TO with gathering_type → DRAWN_TO
-MATCH (sig)-[old:RESPONDS_TO]->(t:Tension)
-WHERE old.gathering_type IS NOT NULL
-MERGE (sig)-[new:DRAWN_TO]->(t)
-SET new.match_strength = old.match_strength,
-    new.explanation = old.explanation,
-    new.gathering_type = old.gathering_type
-DELETE old
-```
-
-- [ ] Venue extraction (idempotent — MERGE on slug+city):
-
-```cypher
-// Extract venue strings from signals with DRAWN_TO edges to Place nodes
-MATCH (sig)-[:DRAWN_TO]->(:Tension)
-WHERE sig.venue IS NOT NULL AND sig.venue <> ''
-WITH sig, sig.venue AS venue_name, sig.city AS city
-// (slug computation in Rust, not Cypher — call find_or_create_place per signal)
-```
-
-**Implementation note:** The venue→Place extraction should happen in Rust (calling `find_or_create_place` per signal) because slug normalization is non-trivial in Cypher. Run as a one-time migration function, not raw Cypher.
+- [x] ~~Add `edge_type` and `gathering_type` to story response items in `GqlStory`~~ — YAGNI: GraphQL `responses()` maps to `GqlSignal` (no edge metadata). REST endpoint already has the data via `get_story_tension_responses`. New GraphQL type deferred until frontend needs it.
 
 ## Acceptance Criteria
 
@@ -233,10 +223,9 @@ WITH sig, sig.venue AS venue_name, sig.city AS city
 - [ ] Place dedup works: same slug + city merges, different cities stay separate
 - [ ] `find_tension_hubs` returns both `RESPONDS_TO` and `DRAWN_TO` signals
 - [ ] `find_story_growth` returns both `RESPONDS_TO` and `DRAWN_TO` signals
-- [ ] Story nodes have `gathering_count` reflecting `DRAWN_TO` edge count
 - [ ] `find_curiosity_targets` excludes signals with `DRAWN_TO` edges (not just `RESPONDS_TO`)
+- [ ] Tension merge re-points `DRAWN_TO` edges (not just `RESPONDS_TO`)
 - [ ] Reader API exposes `edge_type` and `gathering_type` on story responses
-- [ ] Place queries work: by-city, by-id, cross-tension
 - [ ] Existing data migrated: old `RESPONDS_TO` with `gathering_type` → `DRAWN_TO`
 
 ### Non-Functional
@@ -250,17 +239,18 @@ WITH sig, sig.venue AS venue_name, sig.city AS city
 
 ### Unit Tests
 
-- [ ] `find_or_create_place` — dedup by slug+city, idempotent
-- [ ] `create_drawn_to_edge` — creates edge with properties
-- [ ] Slug normalization: "Lake Street Church" → "lake-street-church", "Lake St. Church!!!" → "lake-st-church"
-- [ ] `TensionRespondent` serialization with edge_type/gathering_type fields
+- [ ] `slugify` — "Lake Street Church" → "lake-street-church", "Lake St. Church!!!" → "lake-st-church", unicode, multiple spaces
+- [ ] `find_or_create_place` — dedup by slug+city, idempotent, returns existing ID on match
+- [ ] `create_drawn_to_edge` — creates edge with properties, label guard rejects non-signal nodes
+- [ ] `TensionRespondent` deserialization: `RESPONDS_TO` edge produces `gathering_type: None`, `DRAWN_TO` edge produces `gathering_type: Some("vigil")`
+- [ ] Tension merge re-points both `RESPONDS_TO` and `DRAWN_TO` edges
 
 ### Integration Tests
 
 - [ ] Full gravity scout run creates `DRAWN_TO` edge + `Place` node + `GATHERS_AT` edge
 - [ ] Story weaver materializes story from 2+ signals where some are `DRAWN_TO`
-- [ ] `gathering_count` computed correctly on Story
-- [ ] Migration converts existing data without data loss
+- [ ] Migration converts existing `RESPONDS_TO` + `gathering_type` edges to `DRAWN_TO` without data loss
+- [ ] `wire_also_addresses` creates `DRAWN_TO` (not `RESPONDS_TO`)
 
 ### Litmus Test Additions
 
@@ -273,20 +263,21 @@ WITH sig, sig.venue AS venue_name, sig.city AS city
 |------|-----------|
 | Slug collisions (different places, same slug in same city) | Accept in v1. v1.1 adds spatial distance composite dedup |
 | Place proliferation from inconsistent LLM venue names | Slug normalization absorbs most variants. Review counts periodically |
-| Migration breaks existing stories | Run migration after schema changes, before next scout run. Backup first |
-| `type(r)` not supported in Memgraph | Verify — Memgraph supports `type()` function. Fallback: separate queries |
+| Composite index syntax unsupported in Memgraph | Verify before deploying. Fallback: two single-property indexes (slug, city) |
+| Reaper orphans Place nodes (deletes last signal with GATHERS_AT) | Accept in v1. Add periodic orphan cleanup: `MATCH (p:Place) WHERE NOT ()-[:GATHERS_AT]->(p) DELETE p` |
+| `type(r)` returns SCREAMING_CASE ("DRAWN_TO") vs serde snake_case ("drawn_to") | Use raw string comparison in Rust, not EdgeType enum deserialization |
 
 ## Files Changed (Summary)
 
 | File | Changes |
 |------|---------|
-| `modules/rootsignal-common/src/types.rs` | `PlaceNode`, `EdgeType::DrawnTo`, `EdgeType::GathersAt`, `SourceRole::Gravity`, `StoryNode.gathering_count`, `TensionRespondent` fields |
-| `modules/rootsignal-graph/src/migrate.rs` | Place constraints + indexes, data migration |
-| `modules/rootsignal-graph/src/writer.rs` | `find_or_create_place`, `create_drawn_to_edge`, `create_gathers_at_edge`, update `find_tension_hubs`, `find_story_growth`, `find_curiosity_targets`, `get_existing_gravity_signals` |
-| `modules/rootsignal-graph/src/story_weaver.rs` | `gathering_count` computation in phase_materialize/phase_grow |
-| `modules/rootsignal-graph/src/reader.rs` | Update `get_story_tension_responses`, new Place queries |
-| `modules/rootsignal-scout/src/gravity_scout.rs` | Switch to `create_drawn_to_edge`, create Place + GATHERS_AT |
-| `modules/rootsignal-api/src/graphql/types.rs` | `GqlPlace`, `gathering_count` on GqlStory, Place queries |
+| `modules/rootsignal-common/src/types.rs` | `PlaceNode`, `EdgeType::DrawnTo`, `EdgeType::GathersAt` |
+| `modules/rootsignal-common/src/lib.rs` | `slugify()` utility function |
+| `modules/rootsignal-graph/src/migrate.rs` | Place constraints + indexes, edge conversion migration |
+| `modules/rootsignal-graph/src/writer.rs` | `find_or_create_place`, `create_drawn_to_edge`, `create_gathers_at_edge`, update `merge_duplicate_tensions`, `find_tension_hubs`, `find_story_growth`, `find_curiosity_targets`, `get_existing_gravity_signals`, `TensionRespondent` fields |
+| `modules/rootsignal-graph/src/reader.rs` | Update `get_story_tension_responses` (line 432), tension response query (line 706) |
+| `modules/rootsignal-scout/src/gravity_scout.rs` | Switch to `create_drawn_to_edge` (both callsites), create Place + GATHERS_AT |
+| `modules/rootsignal-api/src/graphql/types.rs` | `edge_type` and `gathering_type` on story response items |
 
 ## References
 
