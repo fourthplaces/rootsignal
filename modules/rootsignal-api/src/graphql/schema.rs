@@ -1,20 +1,35 @@
 use std::sync::Arc;
 
 use async_graphql::dataloader::DataLoader;
-use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
+use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleObject};
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_graph::PublicGraphReader;
+use rootsignal_common::{CityNode, Node, NodeType};
+use rootsignal_graph::{GraphWriter, PublicGraphReader};
 
+use super::context::{AdminGuard, AuthContext};
 use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader};
+use super::mutations::MutationRoot;
 use super::types::*;
 
-pub type ApiSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
+pub type ApiSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
 pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
+    // ========== Public queries ==========
+
+    /// Check auth status. Returns claims info if authenticated.
+    async fn me(&self, ctx: &Context<'_>) -> Option<MeResult> {
+        let auth = ctx.data_unchecked::<AuthContext>();
+        auth.0.as_ref().map(|c| MeResult {
+            is_admin: c.is_admin,
+            phone_number: c.phone_number.clone(),
+        })
+    }
+
     /// Find signals near a geographic point.
     async fn signals_near(
         &self,
@@ -25,13 +40,43 @@ impl QueryRoot {
         types: Option<Vec<SignalType>>,
     ) -> Result<Vec<GqlSignal>> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let node_types: Option<Vec<rootsignal_common::NodeType>> =
+        let node_types: Option<Vec<NodeType>> =
             types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
         let radius = radius_km.min(50.0);
         let nodes = reader
             .find_nodes_near(lat, lng, radius, node_types.as_deref())
             .await?;
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
+    }
+
+    /// Find signals near a point, returned as a GeoJSON FeatureCollection string.
+    async fn signals_near_geo_json(
+        &self,
+        ctx: &Context<'_>,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
+        types: Option<Vec<SignalType>>,
+    ) -> Result<String> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let node_types: Option<Vec<NodeType>> =
+            types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
+        let radius = radius_km.min(50.0);
+        let nodes = reader
+            .find_nodes_near(lat, lng, radius, node_types.as_deref())
+            .await?;
+        Ok(serde_json::to_string(&nodes_to_geojson(&nodes))?)
+    }
+
+    /// Get story signals as a GeoJSON FeatureCollection string.
+    async fn story_signals_geo_json(
+        &self,
+        ctx: &Context<'_>,
+        story_id: Uuid,
+    ) -> Result<String> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let signals = reader.get_story_signals(story_id).await?;
+        Ok(serde_json::to_string(&nodes_to_geojson(&signals))?)
     }
 
     /// List recent signals, ordered by triangulation quality.
@@ -42,7 +87,7 @@ impl QueryRoot {
         types: Option<Vec<SignalType>>,
     ) -> Result<Vec<GqlSignal>> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let node_types: Option<Vec<rootsignal_common::NodeType>> =
+        let node_types: Option<Vec<NodeType>> =
             types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
         let limit = limit.unwrap_or(50).min(200);
         let nodes = reader.list_recent(limit, node_types.as_deref()).await?;
@@ -91,6 +136,19 @@ impl QueryRoot {
         Ok(stories.into_iter().map(GqlStory).collect())
     }
 
+    /// List stories by arc.
+    async fn stories_by_arc(
+        &self,
+        ctx: &Context<'_>,
+        arc: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlStory>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let limit = limit.unwrap_or(20).min(100);
+        let stories = reader.stories_by_arc(&arc, limit).await?;
+        Ok(stories.into_iter().map(GqlStory).collect())
+    }
+
     /// List actors in a city.
     async fn actors(
         &self,
@@ -134,9 +192,450 @@ impl QueryRoot {
         let edition = reader.latest_edition(&city).await?;
         Ok(edition.map(GqlEdition))
     }
+
+    // ========== Admin queries (AdminGuard) ==========
+
+    /// Dashboard data for a city.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_dashboard(
+        &self,
+        ctx: &Context<'_>,
+        city: String,
+    ) -> Result<AdminDashboardData> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+
+        let (
+            total_signals,
+            story_count,
+            actor_count,
+            by_type,
+            freshness,
+            confidence,
+            signal_volume,
+            story_arcs,
+            story_categories,
+            tensions,
+            discovery,
+            yield_data,
+            gap_stats,
+            sources,
+            all_cities,
+        ) = tokio::join!(
+            reader.total_count(),
+            reader.story_count(),
+            reader.actor_count(),
+            reader.count_by_type(),
+            reader.freshness_distribution(),
+            reader.confidence_distribution(),
+            reader.signal_volume_by_day(),
+            reader.story_count_by_arc(),
+            reader.story_count_by_category(),
+            writer.get_unmet_tensions(20),
+            writer.get_discovery_performance(&city),
+            writer.get_extraction_yield(&city),
+            writer.get_gap_type_stats(&city),
+            writer.get_active_sources(&city),
+            writer.list_cities(),
+        );
+
+        let sources = sources.unwrap_or_default();
+        let (top_sources, bottom_sources) = discovery.unwrap_or_default();
+        let all_cities = all_cities.unwrap_or_default();
+
+        // Build scout status for each city
+        let mut scout_statuses = Vec::new();
+        for c in &all_cities {
+            let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
+            let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
+            scout_statuses.push(CityScoutStatus {
+                city_name: c.name.clone(),
+                city_slug: c.slug.clone(),
+                last_scouted: c.last_scout_completed_at,
+                sources_due: due,
+                running,
+            });
+        }
+
+        let by_type = by_type.unwrap_or_default();
+        let signal_volume = signal_volume.unwrap_or_default();
+
+        Ok(AdminDashboardData {
+            total_signals: total_signals.unwrap_or(0),
+            total_stories: story_count.unwrap_or(0),
+            total_actors: actor_count.unwrap_or(0),
+            total_sources: sources.len() as u64,
+            active_sources: sources.iter().filter(|s| s.active).count() as u64,
+            total_tensions: tensions.as_ref().map(|t| t.len() as u64).unwrap_or(0),
+            scout_statuses,
+            signal_volume_by_day: signal_volume
+                .iter()
+                .map(|(day, ev, gi, ask, not, ten)| DayVolume {
+                    day: day.clone(),
+                    events: *ev,
+                    gives: *gi,
+                    asks: *ask,
+                    notices: *not,
+                    tensions: *ten,
+                })
+                .collect(),
+            count_by_type: by_type
+                .iter()
+                .map(|(t, c)| TypeCount {
+                    signal_type: format!("{t}"),
+                    count: *c,
+                })
+                .collect(),
+            story_count_by_arc: story_arcs
+                .unwrap_or_default()
+                .iter()
+                .map(|(arc, c)| LabelCount { label: arc.clone(), count: *c })
+                .collect(),
+            story_count_by_category: story_categories
+                .unwrap_or_default()
+                .iter()
+                .map(|(cat, c)| LabelCount { label: cat.clone(), count: *c })
+                .collect(),
+            freshness_distribution: freshness
+                .unwrap_or_default()
+                .iter()
+                .map(|(bucket, c)| LabelCount { label: bucket.clone(), count: *c })
+                .collect(),
+            confidence_distribution: confidence
+                .unwrap_or_default()
+                .iter()
+                .map(|(bucket, c)| LabelCount { label: bucket.clone(), count: *c })
+                .collect(),
+            unmet_tensions: tensions
+                .unwrap_or_default()
+                .iter()
+                .filter(|t| t.unmet)
+                .map(|t| AdminTensionRow {
+                    title: t.title.clone(),
+                    severity: t.severity.clone(),
+                    category: t.category.clone(),
+                    what_would_help: t.what_would_help.clone(),
+                })
+                .collect(),
+            top_sources: top_sources
+                .iter()
+                .take(10)
+                .map(|s| AdminSourceRow {
+                    name: s.canonical_value.clone(),
+                    signals: s.signals_produced,
+                    weight: s.weight,
+                    empty_runs: s.consecutive_empty_runs,
+                })
+                .collect(),
+            bottom_sources: bottom_sources
+                .iter()
+                .take(10)
+                .map(|s| AdminSourceRow {
+                    name: s.canonical_value.clone(),
+                    signals: s.signals_produced,
+                    weight: s.weight,
+                    empty_runs: s.consecutive_empty_runs,
+                })
+                .collect(),
+            extraction_yield: yield_data
+                .unwrap_or_default()
+                .iter()
+                .map(|y| AdminYieldRow {
+                    source_type: y.source_type.clone(),
+                    extracted: y.extracted,
+                    survived: y.survived,
+                    corroborated: y.corroborated,
+                    contradicted: y.contradicted,
+                })
+                .collect(),
+            gap_stats: gap_stats
+                .unwrap_or_default()
+                .iter()
+                .map(|g| AdminGapRow {
+                    gap_type: g.gap_type.clone(),
+                    total: g.total_sources,
+                    successful: g.successful_sources,
+                    avg_weight: g.avg_weight,
+                })
+                .collect(),
+        })
+    }
+
+    /// List all cities with metadata.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_cities(&self, ctx: &Context<'_>) -> Result<Vec<AdminCity>> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let cities = writer.list_cities().await?;
+
+        let mut results = Vec::new();
+        for c in &cities {
+            let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
+            let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
+            results.push(AdminCity::from_city_node(c, running, due));
+        }
+        Ok(results)
+    }
+
+    /// Get city detail.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_city(&self, ctx: &Context<'_>, slug: String) -> Result<Option<AdminCity>> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let city = writer.get_city(&slug).await?;
+        match city {
+            Some(c) => {
+                let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
+                let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
+                Ok(Some(AdminCity::from_city_node(&c, running, due)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// List active sources for a city with schedule preview.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_city_sources(
+        &self,
+        ctx: &Context<'_>,
+        city_slug: String,
+    ) -> Result<Vec<AdminSource>> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let sources = writer.get_active_sources(&city_slug).await?;
+        Ok(sources
+            .iter()
+            .map(|s| {
+                let effective_weight = s.weight * s.quality_penalty;
+                let cadence = s.cadence_hours.unwrap_or_else(|| {
+                    rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
+                });
+                AdminSource {
+                    id: s.id,
+                    url: s.url.clone().unwrap_or_default(),
+                    canonical_value: s.canonical_value.clone(),
+                    source_type: s.source_type.to_string(),
+                    weight: s.weight,
+                    quality_penalty: s.quality_penalty,
+                    effective_weight,
+                    discovery_method: format!("{:?}", s.discovery_method),
+                    last_scraped: s.last_scraped,
+                    cadence_hours: cadence as f64,
+                    signals_produced: s.signals_produced,
+                    active: s.active,
+                }
+            })
+            .collect())
+    }
+
+    /// Scout status for a specific city.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_status(
+        &self,
+        ctx: &Context<'_>,
+        city_slug: String,
+    ) -> Result<CityScoutStatus> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let city = writer.get_city(&city_slug).await?;
+        let running = writer.is_scout_running(&city_slug).await.unwrap_or(false);
+        let due = writer.count_due_sources(&city_slug).await.unwrap_or(0);
+
+        Ok(CityScoutStatus {
+            city_name: city.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            city_slug,
+            last_scouted: city.and_then(|c| c.last_scout_completed_at),
+            sources_due: due,
+            running,
+        })
+    }
 }
 
-pub fn build_schema(reader: Arc<PublicGraphReader>) -> ApiSchema {
+// ========== Admin GQL Types ==========
+
+#[derive(SimpleObject)]
+pub struct MeResult {
+    pub is_admin: bool,
+    pub phone_number: String,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDashboardData {
+    pub total_signals: u64,
+    pub total_stories: u64,
+    pub total_actors: u64,
+    pub total_sources: u64,
+    pub active_sources: u64,
+    pub total_tensions: u64,
+    pub scout_statuses: Vec<CityScoutStatus>,
+    pub signal_volume_by_day: Vec<DayVolume>,
+    pub count_by_type: Vec<TypeCount>,
+    pub story_count_by_arc: Vec<LabelCount>,
+    pub story_count_by_category: Vec<LabelCount>,
+    pub freshness_distribution: Vec<LabelCount>,
+    pub confidence_distribution: Vec<LabelCount>,
+    pub unmet_tensions: Vec<AdminTensionRow>,
+    pub top_sources: Vec<AdminSourceRow>,
+    pub bottom_sources: Vec<AdminSourceRow>,
+    pub extraction_yield: Vec<AdminYieldRow>,
+    pub gap_stats: Vec<AdminGapRow>,
+}
+
+#[derive(SimpleObject)]
+pub struct CityScoutStatus {
+    pub city_name: String,
+    pub city_slug: String,
+    pub last_scouted: Option<DateTime<Utc>>,
+    pub sources_due: u32,
+    pub running: bool,
+}
+
+#[derive(SimpleObject)]
+pub struct DayVolume {
+    pub day: String,
+    pub events: u64,
+    pub gives: u64,
+    pub asks: u64,
+    pub notices: u64,
+    pub tensions: u64,
+}
+
+#[derive(SimpleObject)]
+pub struct TypeCount {
+    pub signal_type: String,
+    pub count: u64,
+}
+
+#[derive(SimpleObject)]
+pub struct LabelCount {
+    pub label: String,
+    pub count: u64,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminTensionRow {
+    pub title: String,
+    pub severity: String,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminSourceRow {
+    pub name: String,
+    pub signals: u32,
+    pub weight: f64,
+    pub empty_runs: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminYieldRow {
+    pub source_type: String,
+    pub extracted: u32,
+    pub survived: u32,
+    pub corroborated: u32,
+    pub contradicted: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminGapRow {
+    pub gap_type: String,
+    pub total: u32,
+    pub successful: u32,
+    pub avg_weight: f64,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminCity {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub active: bool,
+    pub created_at: DateTime<Utc>,
+    pub last_scout_completed_at: Option<DateTime<Utc>>,
+    pub scout_running: bool,
+    pub sources_due: u32,
+}
+
+impl AdminCity {
+    fn from_city_node(c: &CityNode, running: bool, due: u32) -> Self {
+        Self {
+            id: c.id,
+            slug: c.slug.clone(),
+            name: c.name.clone(),
+            center_lat: c.center_lat,
+            center_lng: c.center_lng,
+            radius_km: c.radius_km,
+            active: c.active,
+            created_at: c.created_at,
+            last_scout_completed_at: c.last_scout_completed_at,
+            scout_running: running,
+            sources_due: due,
+        }
+    }
+}
+
+#[derive(SimpleObject)]
+pub struct AdminSource {
+    pub id: Uuid,
+    pub url: String,
+    pub canonical_value: String,
+    pub source_type: String,
+    pub weight: f64,
+    pub quality_penalty: f64,
+    pub effective_weight: f64,
+    pub discovery_method: String,
+    pub last_scraped: Option<DateTime<Utc>>,
+    pub cadence_hours: f64,
+    pub signals_produced: u32,
+    pub active: bool,
+}
+
+// ========== Helpers ==========
+
+fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
+    let features: Vec<serde_json::Value> = nodes
+        .iter()
+        .filter_map(|node| {
+            let meta = node.meta()?;
+            let loc = meta.location?;
+            Some(serde_json::json!({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [loc.lng, loc.lat]
+                },
+                "properties": {
+                    "id": meta.id.to_string(),
+                    "title": meta.title,
+                    "summary": meta.summary,
+                    "node_type": format!("{}", node.node_type()),
+                    "confidence": meta.confidence,
+                    "corroboration_count": meta.corroboration_count,
+                    "source_diversity": meta.source_diversity,
+                    "cause_heat": meta.cause_heat,
+                }
+            }))
+        })
+        .collect();
+
+    serde_json::json!({
+        "type": "FeatureCollection",
+        "features": features,
+    })
+}
+
+pub fn build_schema(
+    reader: Arc<PublicGraphReader>,
+    writer: Arc<GraphWriter>,
+    jwt_service: JwtService,
+    config: Arc<Config>,
+    twilio: Option<Arc<twilio::TwilioService>>,
+    rate_limiter: super::mutations::RateLimiter,
+    scout_cancel: Arc<std::sync::atomic::AtomicBool>,
+    graph_client: Arc<rootsignal_graph::GraphClient>,
+) -> ApiSchema {
+    use super::mutations::ScoutCancel;
+
     let evidence_loader = DataLoader::new(
         EvidenceBySignalLoader {
             reader: reader.clone(),
@@ -156,10 +655,20 @@ pub fn build_schema(reader: Arc<PublicGraphReader>) -> ApiSchema {
         tokio::spawn,
     );
 
-    Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
+    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
+        .data(writer)
+        .data(jwt_service)
+        .data(config)
+        .data(twilio)
+        .data(rate_limiter)
+        .data(ScoutCancel(scout_cancel))
+        .data(graph_client)
         .data(evidence_loader)
         .data(actors_loader)
         .data(story_loader)
         .finish()
 }
+
+use crate::jwt::JwtService;
+use rootsignal_common::Config;
