@@ -15,13 +15,13 @@ use rootsignal_common::{
     CityNode, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
     TensionNode,
 };
-use rootsignal_graph::{CuriosityTarget, CuriosityOutcome, GraphWriter};
+use rootsignal_graph::{TensionLinkerTarget, TensionLinkerOutcome, GraphWriter};
 
 use crate::embedder::TextEmbedder;
 use crate::scraper::{PageScraper, WebSearcher};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
-const MAX_CURIOSITY_TARGETS_PER_RUN: u32 = 10;
+const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
 const MAX_TOOL_TURNS: usize = 8;
 const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 
@@ -40,7 +40,7 @@ unsafe impl Sync for SearcherHandle {}
 
 impl SearcherHandle {
     pub(crate) fn get(&self) -> &dyn WebSearcher {
-        // SAFETY: The CuriosityLoop guarantees the reference outlives all tool calls.
+        // SAFETY: The TensionLinker guarantees the reference outlives all tool calls.
         unsafe { &*self.0 }
     }
 }
@@ -233,7 +233,7 @@ pub struct DiscoveredTension {
 // =============================================================================
 
 #[derive(Debug, Default)]
-pub struct CuriosityStats {
+pub struct TensionLinkerStats {
     pub targets_found: u32,
     pub targets_investigated: u32,
     pub targets_skipped: u32,
@@ -242,11 +242,11 @@ pub struct CuriosityStats {
     pub edges_created: u32,
 }
 
-impl std::fmt::Display for CuriosityStats {
+impl std::fmt::Display for TensionLinkerStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Curiosity: {} targets found, {} investigated, {} skipped, \
+            "Tension linker: {} targets found, {} investigated, {} skipped, \
              {} tensions discovered ({} deduped), {} edges created",
             self.targets_found,
             self.targets_investigated,
@@ -304,23 +304,23 @@ If the signal is self-explanatory (not curious), set curious=false and provide a
 Return at most 3 tensions. Only include tensions you have evidence for.";
 
 // =============================================================================
-// CuriosityLoop
+// TensionLinker
 // =============================================================================
 
-pub struct CuriosityLoop<'a> {
+pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
 }
 
-impl<'a> CuriosityLoop<'a> {
-    /// Create a new curiosity loop.
+impl<'a> TensionLinker<'a> {
+    /// Create a new tension linker.
     ///
     /// SAFETY: The `searcher` and `scraper` references are held via raw pointers inside
     /// tool wrappers. The borrow checker cannot enforce that they outlive the Claude agent's
     /// tool calls. The caller MUST ensure that `searcher` and `scraper` live at least as
-    /// long as this `CuriosityLoop` — which is guaranteed when called from Scout::run()
+    /// long as this `TensionLinker` — which is guaranteed when called from Scout::run()
     /// since Scout owns both.
     pub fn new(
         writer: &'a GraphWriter,
@@ -331,7 +331,7 @@ impl<'a> CuriosityLoop<'a> {
         city: CityNode,
     ) -> Self {
         // SAFETY: Erase the trait object lifetime so the handle can be 'static.
-        // The caller guarantees the references outlive this CuriosityLoop.
+        // The caller guarantees the references outlive this TensionLinker.
         let searcher_handle = Arc::new(SearcherHandle(unsafe {
             std::mem::transmute::<*const dyn WebSearcher, *const dyn WebSearcher>(searcher)
         }));
@@ -355,12 +355,12 @@ impl<'a> CuriosityLoop<'a> {
         }
     }
 
-    pub async fn run(&self) -> CuriosityStats {
-        let mut stats = CuriosityStats::default();
+    pub async fn run(&self) -> TensionLinkerStats {
+        let mut stats = TensionLinkerStats::default();
 
         let targets = match self
             .writer
-            .find_curiosity_targets(MAX_CURIOSITY_TARGETS_PER_RUN)
+            .find_tension_linker_targets(MAX_TENSION_LINKER_TARGETS_PER_RUN)
             .await
         {
             Ok(t) => t,
@@ -411,7 +411,7 @@ impl<'a> CuriosityLoop<'a> {
                             reason = finding.skip_reason.as_deref().unwrap_or("self-explanatory"),
                             "Signal not curious, skipping"
                         );
-                        CuriosityOutcome::Skipped
+                        TensionLinkerOutcome::Skipped
                     } else {
                         stats.targets_investigated += 1;
                         let tensions_count =
@@ -439,9 +439,9 @@ impl<'a> CuriosityLoop<'a> {
                             "Signal investigated"
                         );
                         if any_tension_failed {
-                            CuriosityOutcome::Failed
+                            TensionLinkerOutcome::Failed
                         } else {
-                            CuriosityOutcome::Done
+                            TensionLinkerOutcome::Done
                         }
                     }
                 }
@@ -452,13 +452,13 @@ impl<'a> CuriosityLoop<'a> {
                         error = %e,
                         "Curiosity investigation failed"
                     );
-                    CuriosityOutcome::Failed
+                    TensionLinkerOutcome::Failed
                 }
             };
 
             if let Err(e) = self
                 .writer
-                .mark_curiosity_investigated(target.signal_id, &target.label, outcome)
+                .mark_tension_linker_investigated(target.signal_id, &target.label, outcome)
                 .await
             {
                 warn!(
@@ -474,7 +474,7 @@ impl<'a> CuriosityLoop<'a> {
 
     async fn investigate_signal(
         &self,
-        target: &CuriosityTarget,
+        target: &TensionLinkerTarget,
         tension_landscape: &str,
     ) -> Result<SignalFinding> {
         let system = investigation_system_prompt(&self.city.name, tension_landscape);
@@ -509,9 +509,9 @@ impl<'a> CuriosityLoop<'a> {
 
     async fn process_tension(
         &self,
-        target: &CuriosityTarget,
+        target: &TensionLinkerTarget,
         tension: &DiscoveredTension,
-        stats: &mut CuriosityStats,
+        stats: &mut TensionLinkerStats,
     ) -> Result<()> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn curiosity_stats_display() {
-        let stats = CuriosityStats {
+        let stats = TensionLinkerStats {
             targets_found: 10,
             targets_investigated: 7,
             targets_skipped: 3,

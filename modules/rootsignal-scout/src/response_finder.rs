@@ -14,9 +14,9 @@ use rootsignal_common::{
     NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
     TensionNode, Urgency,
 };
-use rootsignal_graph::{GraphWriter, ResponseHeuristic, ResponseScoutTarget};
+use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
-use crate::curiosity::{
+use crate::tension_linker::{
     ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool,
 };
 use crate::embedder::TextEmbedder;
@@ -86,7 +86,7 @@ pub struct EmergentTension {
 // =============================================================================
 
 #[derive(Debug, Default)]
-pub struct ResponseScoutStats {
+pub struct ResponseFinderStats {
     pub targets_found: u32,
     pub targets_investigated: u32,
     pub responses_discovered: u32,
@@ -97,11 +97,11 @@ pub struct ResponseScoutStats {
     pub future_sources_created: u32,
 }
 
-impl std::fmt::Display for ResponseScoutStats {
+impl std::fmt::Display for ResponseFinderStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Response Scout: {} targets found, {} investigated, \
+            "Response finder: {} targets found, {} investigated, \
              {} responses discovered ({} deduped), {} signals created, \
              {} edges, {} emergent tensions, {} future sources",
             self.targets_found,
@@ -169,7 +169,7 @@ Include the event date when known. Past events are not useful."
 }
 
 fn investigation_user_prompt(
-    target: &ResponseScoutTarget,
+    target: &ResponseFinderTarget,
     existing: &[ResponseHeuristic],
 ) -> String {
     let mut prompt = format!(
@@ -234,10 +234,10 @@ Also report:
 Return valid JSON matching the ResponseFinding schema.";
 
 // =============================================================================
-// ResponseScout
+// ResponseFinder
 // =============================================================================
 
-pub struct ResponseScout<'a> {
+pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
@@ -245,11 +245,11 @@ pub struct ResponseScout<'a> {
     city_slug: String,
 }
 
-impl<'a> ResponseScout<'a> {
-    /// Create a new response scout.
+impl<'a> ResponseFinder<'a> {
+    /// Create a new response finder.
     ///
-    /// SAFETY: Same as CuriosityLoop — the `searcher` and `scraper` references are held via
-    /// raw pointers. The caller MUST ensure they outlive this ResponseScout.
+    /// SAFETY: Same as TensionLinker — the `searcher` and `scraper` references are held via
+    /// raw pointers. The caller MUST ensure they outlive this ResponseFinder.
     pub fn new(
         writer: &'a GraphWriter,
         searcher: &dyn WebSearcher,
@@ -283,24 +283,24 @@ impl<'a> ResponseScout<'a> {
         }
     }
 
-    pub async fn run(&self) -> ResponseScoutStats {
-        let mut stats = ResponseScoutStats::default();
+    pub async fn run(&self) -> ResponseFinderStats {
+        let mut stats = ResponseFinderStats::default();
 
         let targets = match self
             .writer
-            .find_response_scout_targets(MAX_RESPONSE_TARGETS_PER_RUN as u32)
+            .find_response_finder_targets(MAX_RESPONSE_TARGETS_PER_RUN as u32)
             .await
         {
             Ok(t) => t,
             Err(e) => {
-                warn!(error = %e, "Failed to find response scout targets");
+                warn!(error = %e, "Failed to find response finder targets");
                 return stats;
             }
         };
 
         stats.targets_found = targets.len() as u32;
         if targets.is_empty() {
-            info!("No response scout targets found");
+            info!("No response finder targets found");
             return stats;
         }
 
@@ -322,7 +322,7 @@ impl<'a> ResponseScout<'a> {
             }
 
             // Mark scouted regardless of success/failure (timestamp prevents re-investigation)
-            if let Err(e) = self.writer.mark_response_scouted(target.tension_id).await {
+            if let Err(e) = self.writer.mark_response_found(target.tension_id).await {
                 warn!(
                     tension_id = %target.tension_id,
                     error = %e,
@@ -336,8 +336,8 @@ impl<'a> ResponseScout<'a> {
 
     async fn investigate_tension(
         &self,
-        target: &ResponseScoutTarget,
-        stats: &mut ResponseScoutStats,
+        target: &ResponseFinderTarget,
+        stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         // Fetch existing response heuristics
         let existing = self
@@ -431,9 +431,9 @@ impl<'a> ResponseScout<'a> {
 
     async fn process_response(
         &self,
-        target: &ResponseScoutTarget,
+        target: &ResponseFinderTarget,
         response: &DiscoveredResponse,
-        stats: &mut ResponseScoutStats,
+        stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -688,7 +688,7 @@ impl<'a> ResponseScout<'a> {
     async fn process_emergent_tension(
         &self,
         tension: &EmergentTension,
-        stats: &mut ResponseScoutStats,
+        stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -763,7 +763,7 @@ impl<'a> ResponseScout<'a> {
             tension_id = %tension_id,
             title = tension.title.as_str(),
             relationship = tension.relationship.as_str(),
-            "Emergent tension discovered by response scout"
+            "Emergent tension discovered by response finder"
         );
 
         stats.emergent_tensions += 1;
@@ -773,13 +773,13 @@ impl<'a> ResponseScout<'a> {
     async fn create_future_query(
         &self,
         query: &str,
-        target: &ResponseScoutTarget,
-        stats: &mut ResponseScoutStats,
+        target: &ResponseFinderTarget,
+        stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
         let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
         let gap_context = format!(
-            "Response Scout: response discovery for \"{}\"",
+            "Response finder: response discovery for \"{}\"",
             target.title,
         );
 
@@ -799,7 +799,7 @@ impl<'a> ResponseScout<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: 0.3,
+            weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,
@@ -813,7 +813,7 @@ impl<'a> ResponseScout<'a> {
         info!(
             query = query,
             tension = target.title.as_str(),
-            "Future query source created by response scout"
+            "Future query source created by response finder"
         );
 
         Ok(())
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn response_scout_stats_display() {
-        let stats = ResponseScoutStats {
+        let stats = ResponseFinderStats {
             targets_found: 5,
             targets_investigated: 4,
             responses_discovered: 12,

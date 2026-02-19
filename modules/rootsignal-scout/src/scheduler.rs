@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use tracing::info;
 
-use rootsignal_common::{SourceNode, SourceRole};
+use rootsignal_common::{SourceNode, SourceRole, SourceType};
 
 /// Determines which sources to scrape this run based on weight, cadence, and exploration policy.
 pub struct SourceScheduler {
@@ -178,6 +180,230 @@ pub fn cadence_hours_for_weight(weight: f64) -> u32 {
     } else {
         168 // 7 days
     }
+}
+
+/// Like `cadence_hours_for_weight` but applies exponential backoff based on
+/// consecutive empty runs. Queries that keep returning nothing get scraped
+/// less frequently, freeing budget for productive queries.
+///
+/// - 0-1 empties: 1x cadence (benefit of the doubt)
+/// - 2 empties: 2x
+/// - 3 empties: 4x
+/// - 4 empties: 8x
+/// - 5+ empties: dormant (u32::MAX — only resurrected via cold tier scheduling)
+pub fn cadence_hours_with_backoff(weight: f64, consecutive_empty_runs: u32) -> u32 {
+    let base = cadence_hours_for_weight(weight);
+    let multiplier = match consecutive_empty_runs {
+        0..=1 => 1,
+        2 => 2,
+        3 => 4,
+        4 => 8,
+        _ => return u32::MAX, // Dormant
+    };
+    base.saturating_mul(multiplier)
+}
+
+/// Returns true if a web query source should be considered dormant
+/// (only eligible for resurrection via cold-tier scheduling).
+pub fn is_dormant(consecutive_empty_runs: u32) -> bool {
+    consecutive_empty_runs >= 5
+}
+
+// =============================================================================
+// Web Query Tiered Scheduling
+// =============================================================================
+
+/// Result of web query scheduling.
+#[derive(Debug)]
+pub struct WebQueryScheduleResult {
+    /// Canonical keys of queries selected for this run.
+    pub scheduled: Vec<String>,
+    /// How many went into each tier.
+    pub hot: usize,
+    pub warm: usize,
+    pub cold: usize,
+    /// How many were skipped (not scheduled).
+    pub skipped: usize,
+}
+
+/// Schedule web queries for a run using tiered priority.
+///
+/// - **Hot tier (60%)**: Top-scoring by `weight * tension_heat`, non-dormant,
+///   per-tension cap of 3.
+/// - **Warm tier (25%)**: Random sample from mid-range, non-dormant.
+/// - **Cold tier (15%)**: Random sample from never-scraped or dormant queries
+///   (seasonal resurrection).
+///
+/// `max_per_run` defaults to 50 if 0. Env var `MAX_WEB_QUERIES_PER_RUN` overrides.
+pub fn schedule_web_queries(
+    sources: &[SourceNode],
+    max_per_run: usize,
+    now: DateTime<Utc>,
+) -> WebQueryScheduleResult {
+    let max = if max_per_run == 0 {
+        std::env::var("MAX_WEB_QUERIES_PER_RUN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50usize)
+    } else {
+        max_per_run
+    };
+
+    // Filter to active web query sources only
+    let web_queries: Vec<&SourceNode> = sources.iter()
+        .filter(|s| s.source_type == SourceType::WebQuery && s.active)
+        .collect();
+
+    if web_queries.is_empty() {
+        return WebQueryScheduleResult {
+            scheduled: vec![],
+            hot: 0, warm: 0, cold: 0, skipped: 0,
+        };
+    }
+
+    // Partition into non-dormant, dormant, and never-scraped
+    let mut scoreable: Vec<(&SourceNode, f64)> = Vec::new();
+    let mut cold_pool: Vec<&SourceNode> = Vec::new();
+
+    for s in &web_queries {
+        if s.last_scraped.is_none() || is_dormant(s.consecutive_empty_runs) {
+            cold_pool.push(s);
+        } else {
+            let tension_heat = extract_heat_from_gap_context(s.gap_context.as_deref());
+            let score = s.weight as f64 * (1.0 + tension_heat);
+            scoreable.push((s, score));
+        }
+    }
+
+    // Sort scoreable by score descending
+    scoreable.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Tier budgets
+    let hot_budget = (max as f64 * 0.60).ceil() as usize;
+    let warm_budget = (max as f64 * 0.25).ceil() as usize;
+    let cold_budget = max.saturating_sub(hot_budget).saturating_sub(warm_budget).max(
+        (max as f64 * 0.15).ceil() as usize,
+    );
+
+    // Hot tier: top-scoring with per-tension cap
+    let mut hot_selected: Vec<String> = Vec::new();
+    let mut tension_counts: HashMap<String, usize> = HashMap::new();
+    let mut warm_candidates: Vec<&SourceNode> = Vec::new();
+    const PER_TENSION_CAP: usize = 3;
+
+    for (s, _score) in &scoreable {
+        if hot_selected.len() >= hot_budget {
+            warm_candidates.push(s);
+            continue;
+        }
+
+        let tension_key = extract_tension_from_gap_context(s.gap_context.as_deref());
+        let count = tension_counts.entry(tension_key.clone()).or_default();
+        if *count >= PER_TENSION_CAP {
+            warm_candidates.push(s);
+            continue;
+        }
+
+        *count += 1;
+        hot_selected.push(s.canonical_key.clone());
+    }
+
+    // Warm tier: deterministic sample from remaining non-dormant (take every Nth)
+    let warm_selected: Vec<String> = if warm_candidates.is_empty() {
+        vec![]
+    } else {
+        let step = (warm_candidates.len() as f64 / warm_budget.max(1) as f64).ceil() as usize;
+        warm_candidates.iter()
+            .step_by(step.max(1))
+            .take(warm_budget)
+            .map(|s| s.canonical_key.clone())
+            .collect()
+    };
+
+    // Cold tier: deterministic sample from never-scraped + dormant (most stale first)
+    let mut cold_sorted = cold_pool;
+    cold_sorted.sort_by(|a, b| {
+        let a_stale = a.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
+        let b_stale = b.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
+        b_stale.cmp(&a_stale)
+    });
+    let cold_selected: Vec<String> = cold_sorted.iter()
+        .take(cold_budget)
+        .map(|s| s.canonical_key.clone())
+        .collect();
+
+    let total_scheduled = hot_selected.len() + warm_selected.len() + cold_selected.len();
+    let skipped = web_queries.len().saturating_sub(total_scheduled);
+
+    info!(
+        total = web_queries.len(),
+        hot = hot_selected.len(),
+        warm = warm_selected.len(),
+        cold = cold_selected.len(),
+        skipped,
+        "Web query scheduling complete"
+    );
+
+    let mut scheduled = Vec::with_capacity(total_scheduled);
+    let hot_count = hot_selected.len();
+    let warm_count = warm_selected.len();
+    let cold_count = cold_selected.len();
+    scheduled.extend(hot_selected);
+    scheduled.extend(warm_selected);
+    scheduled.extend(cold_selected);
+
+    WebQueryScheduleResult {
+        scheduled,
+        hot: hot_count,
+        warm: warm_count,
+        cold: cold_count,
+        skipped,
+    }
+}
+
+/// Extract tension heat from gap_context string.
+/// Looks for "heat=" pattern (from briefing format) or defaults to 0.0.
+fn extract_heat_from_gap_context(gap_context: Option<&str>) -> f64 {
+    let ctx = match gap_context {
+        Some(c) => c,
+        None => return 0.0,
+    };
+    // Pattern: "heat=0.7" or "cause_heat: 0.7"
+    for pattern in &["heat=", "cause_heat: ", "heat: "] {
+        if let Some(pos) = ctx.find(pattern) {
+            let start = pos + pattern.len();
+            let end = ctx[start..].find(|c: char| !c.is_ascii_digit() && c != '.')
+                .map(|i| start + i)
+                .unwrap_or(ctx.len());
+            if let Ok(heat) = ctx[start..end].parse::<f64>() {
+                return heat;
+            }
+        }
+    }
+    0.0
+}
+
+/// Extract a tension key from gap_context for per-tension capping.
+/// Looks for "Related: ..." or "Tension: ..." patterns.
+fn extract_tension_from_gap_context(gap_context: Option<&str>) -> String {
+    let ctx = match gap_context {
+        Some(c) => c,
+        None => return "unknown".to_string(),
+    };
+    for prefix in &["Related: ", "Tension: ", "response discovery for \""] {
+        if let Some(pos) = ctx.find(prefix) {
+            let start = pos + prefix.len();
+            let rest = &ctx[start..];
+            // Take until next delimiter
+            let end = rest.find(|c: char| c == '|' || c == '"' || c == '\n')
+                .unwrap_or(rest.len());
+            let tension = rest[..end].trim();
+            if !tension.is_empty() && tension != "none" {
+                return tension.to_lowercase();
+            }
+        }
+    }
+    "unknown".to_string()
 }
 
 /// Compute source weight from observable metrics.
@@ -433,5 +659,197 @@ mod tests {
         let result = scheduler.schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 0, "Should NOT be scheduled by cadence");
         assert_eq!(result.exploration.len(), 1, "Should be picked for exploration");
+    }
+
+    // --- Exponential Backoff ---
+
+    #[test]
+    fn backoff_no_penalty_for_first_empty() {
+        let base = cadence_hours_for_weight(0.5); // 72
+        let with_backoff = cadence_hours_with_backoff(0.5, 0);
+        assert_eq!(base, with_backoff, "0 empties: no backoff");
+        let with_backoff = cadence_hours_with_backoff(0.5, 1);
+        assert_eq!(base, with_backoff, "1 empty: no backoff yet");
+    }
+
+    #[test]
+    fn backoff_doubles_at_two_empties() {
+        let base = cadence_hours_for_weight(0.5); // 72
+        let with_backoff = cadence_hours_with_backoff(0.5, 2);
+        assert_eq!(with_backoff, base * 2, "2 empties: 2x");
+    }
+
+    #[test]
+    fn backoff_quadruples_at_three_empties() {
+        let base = cadence_hours_for_weight(0.5); // 72
+        let with_backoff = cadence_hours_with_backoff(0.5, 3);
+        assert_eq!(with_backoff, base * 4, "3 empties: 4x");
+    }
+
+    #[test]
+    fn backoff_8x_at_four_empties() {
+        let base = cadence_hours_for_weight(0.5); // 72
+        let with_backoff = cadence_hours_with_backoff(0.5, 4);
+        assert_eq!(with_backoff, base * 8, "4 empties: 8x");
+    }
+
+    #[test]
+    fn backoff_dormant_at_five_empties() {
+        let cadence = cadence_hours_with_backoff(0.9, 5);
+        assert_eq!(cadence, u32::MAX, "5+ empties: dormant");
+        let cadence = cadence_hours_with_backoff(0.3, 10);
+        assert_eq!(cadence, u32::MAX, "10 empties: still dormant");
+    }
+
+    #[test]
+    fn is_dormant_threshold() {
+        assert!(!is_dormant(4));
+        assert!(is_dormant(5));
+        assert!(is_dormant(10));
+    }
+
+    // --- Web Query Tiered Scheduling ---
+
+    fn make_web_query(
+        weight: f64,
+        last_scraped: Option<DateTime<Utc>>,
+        consecutive_empty_runs: u32,
+        gap_context: Option<&str>,
+    ) -> SourceNode {
+        SourceNode {
+            id: Uuid::new_v4(),
+            canonical_key: format!("test:web_query:{}", Uuid::new_v4()),
+            canonical_value: "test query".to_string(),
+            url: None,
+            source_type: SourceType::WebQuery,
+            discovery_method: DiscoveryMethod::GapAnalysis,
+            city: "test".to_string(),
+            created_at: Utc::now(),
+            last_scraped,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs,
+            active: true,
+            gap_context: gap_context.map(|s| s.to_string()),
+            weight,
+            cadence_hours: None,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: SourceRole::Response,
+            scrape_count: 0,
+        }
+    }
+
+    #[test]
+    fn wq_schedule_empty_input() {
+        let result = schedule_web_queries(&[], 50, Utc::now());
+        assert!(result.scheduled.is_empty());
+        assert_eq!(result.hot, 0);
+        assert_eq!(result.warm, 0);
+        assert_eq!(result.cold, 0);
+    }
+
+    #[test]
+    fn wq_schedule_respects_max_per_run() {
+        let now = Utc::now();
+        let sources: Vec<SourceNode> = (0..100)
+            .map(|_| make_web_query(0.5, Some(now - Duration::hours(48)), 0, None))
+            .collect();
+        let result = schedule_web_queries(&sources, 20, now);
+        assert!(result.scheduled.len() <= 20, "Should not exceed max: {}", result.scheduled.len());
+    }
+
+    #[test]
+    fn wq_schedule_never_scraped_in_cold_tier() {
+        let now = Utc::now();
+        let mut sources: Vec<SourceNode> = (0..5)
+            .map(|_| make_web_query(0.5, Some(now - Duration::hours(48)), 0, None))
+            .collect();
+        // Add never-scraped queries
+        for _ in 0..5 {
+            sources.push(make_web_query(0.3, None, 0, None));
+        }
+        let result = schedule_web_queries(&sources, 50, now);
+        assert!(result.cold > 0, "Never-scraped queries should be in cold tier");
+    }
+
+    #[test]
+    fn wq_schedule_dormant_in_cold_tier() {
+        let now = Utc::now();
+        let mut sources: Vec<SourceNode> = (0..5)
+            .map(|_| make_web_query(0.5, Some(now - Duration::hours(48)), 0, None))
+            .collect();
+        // Add dormant queries (5+ consecutive empty)
+        for _ in 0..3 {
+            sources.push(make_web_query(0.1, Some(now - Duration::days(30)), 7, None));
+        }
+        let result = schedule_web_queries(&sources, 50, now);
+        assert!(result.cold > 0, "Dormant queries should be in cold tier");
+    }
+
+    #[test]
+    fn wq_schedule_per_tension_cap() {
+        let now = Utc::now();
+        // 10 queries all for the same tension
+        let sources: Vec<SourceNode> = (0..10)
+            .map(|_| make_web_query(
+                0.8,
+                Some(now - Duration::hours(48)),
+                0,
+                Some("Related: same tension | Gap: unmet_tension"),
+            ))
+            .collect();
+        let result = schedule_web_queries(&sources, 50, now);
+        // Hot tier should cap at 3 for same tension
+        assert!(result.hot <= 3, "Per-tension cap should limit hot tier: got {}", result.hot);
+    }
+
+    #[test]
+    fn wq_schedule_skips_inactive() {
+        let now = Utc::now();
+        let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
+        source.active = false;
+        let result = schedule_web_queries(&[source], 50, now);
+        assert!(result.scheduled.is_empty(), "Inactive sources should be skipped");
+    }
+
+    #[test]
+    fn wq_schedule_skips_non_web_query() {
+        let now = Utc::now();
+        let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
+        source.source_type = SourceType::Web;
+        let result = schedule_web_queries(&[source], 50, now);
+        assert!(result.scheduled.is_empty(), "Non-web-query sources should be filtered out");
+    }
+
+    // --- Helper extraction tests ---
+
+    #[test]
+    fn extract_heat_parses_gap_context() {
+        assert!((extract_heat_from_gap_context(Some("heat=0.7")) - 0.7).abs() < 0.01);
+        assert!((extract_heat_from_gap_context(Some("cause_heat: 0.85")) - 0.85).abs() < 0.01);
+        assert!((extract_heat_from_gap_context(None) - 0.0).abs() < 0.01);
+        assert!((extract_heat_from_gap_context(Some("no heat here")) - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn extract_tension_parses_gap_context() {
+        assert_eq!(
+            extract_tension_from_gap_context(Some("Curiosity: reason | Gap: unmet_tension | Related: food desert")),
+            "food desert"
+        );
+        assert_eq!(
+            extract_tension_from_gap_context(Some("Tension: Housing crisis")),
+            "housing crisis"
+        );
+        assert_eq!(
+            extract_tension_from_gap_context(Some("Response Scout: response discovery for \"ICE raids\"")),
+            "ice raids"
+        );
+        assert_eq!(
+            extract_tension_from_gap_context(None),
+            "unknown"
+        );
     }
 }

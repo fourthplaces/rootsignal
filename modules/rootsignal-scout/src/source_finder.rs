@@ -21,14 +21,14 @@ const MAX_CURIOSITY_QUERIES: usize = 7;
 
 /// Stats from a discovery run.
 #[derive(Debug, Default)]
-pub struct DiscoveryStats {
+pub struct SourceFinderStats {
     pub actor_sources: u32,
     pub link_sources: u32,
     pub gap_sources: u32,
     pub duplicates_skipped: u32,
 }
 
-impl std::fmt::Display for DiscoveryStats {
+impl std::fmt::Display for SourceFinderStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -321,6 +321,27 @@ where
     }
 }
 
+// --- Initial weight by discovery method ---
+
+/// Assign an initial weight to a new WebQuery source based on how it was created.
+/// Higher weights mean more frequent scraping. Queries from methods with
+/// historically higher yield get more budget.
+pub fn initial_weight_for_method(method: DiscoveryMethod, gap_type: Option<&str>) -> f64 {
+    match method {
+        // Cold start: no signal data to guide us — moderate exploration weight
+        DiscoveryMethod::Curated | DiscoveryMethod::HumanSubmission => 0.5,
+        // Gap analysis targeting an unmet tension: high-value, community-driven
+        DiscoveryMethod::GapAnalysis => match gap_type {
+            Some(gt) if gt == "unmet_tension" => 0.4,
+            _ => 0.3,
+        },
+        // Signal expansion: derived from existing signals, lower novelty
+        DiscoveryMethod::SignalExpansion => 0.2,
+        // Everything else (HashtagDiscovery, SignalReference, etc.)
+        _ => 0.3,
+    }
+}
+
 // --- LLM Prompts ---
 
 pub fn discovery_system_prompt(city_name: &str) -> String {
@@ -382,18 +403,24 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
     )
 }
 
-// --- SourceDiscoverer ---
+// --- SourceFinder ---
 
 /// Discovers new sources from existing graph data.
-pub struct SourceDiscoverer<'a> {
+pub struct SourceFinder<'a> {
     writer: &'a GraphWriter,
     city_slug: String,
     city_name: String,
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
+    embedder: Option<&'a dyn crate::embedder::TextEmbedder>,
 }
 
-impl<'a> SourceDiscoverer<'a> {
+/// Cosine similarity threshold for embedding-based query dedup.
+/// 0.90 catches near-identical reformulations while preserving
+/// queries that target different aspects of the same tension.
+const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
+
+impl<'a> SourceFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
         city_slug: &str,
@@ -410,12 +437,22 @@ impl<'a> SourceDiscoverer<'a> {
             city_name: city_name.to_string(),
             claude,
             budget,
+            embedder: None,
         }
     }
 
+    /// Set an embedder for semantic query deduplication.
+    /// When set, new queries are embedded and checked against existing query
+    /// embeddings before creation. Without an embedder, falls back to
+    /// substring-based dedup only.
+    pub fn with_embedder(mut self, embedder: &'a dyn crate::embedder::TextEmbedder) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
     /// Run all discovery triggers. Returns stats and social topics for topic discovery.
-    pub async fn run(&self) -> (DiscoveryStats, Vec<String>) {
-        let mut stats = DiscoveryStats::default();
+    pub async fn run(&self) -> (SourceFinderStats, Vec<String>) {
+        let mut stats = SourceFinderStats::default();
         let mut social_topics = Vec::new();
 
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
@@ -436,7 +473,7 @@ impl<'a> SourceDiscoverer<'a> {
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
-    async fn discover_from_actors(&self, stats: &mut DiscoveryStats) {
+    async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
         let actors = match self.writer.get_actors_with_domains(&self.city_slug).await {
             Ok(a) => a,
             Err(e) => {
@@ -567,7 +604,7 @@ impl<'a> SourceDiscoverer<'a> {
     }
 
     /// LLM-driven curiosity engine with mechanical fallback.
-    async fn discover_from_curiosity(&self, stats: &mut DiscoveryStats, social_topics: &mut Vec<String>) {
+    async fn discover_from_curiosity(&self, stats: &mut SourceFinderStats, social_topics: &mut Vec<String>) {
         // Guard: no Claude client → mechanical fallback
         let claude = match &self.claude {
             Some(c) => c,
@@ -638,13 +675,42 @@ impl<'a> SourceDiscoverer<'a> {
         for dq in plan.queries.into_iter().take(MAX_CURIOSITY_QUERIES) {
             let query_lower = dq.query.to_lowercase();
 
-            // Dedup: check substring overlap with existing queries
+            // Dedup layer 1: substring overlap with existing queries
             let is_dup = existing_queries.iter().any(|q| {
                 q.contains(&query_lower) || query_lower.contains(q.as_str())
             });
             if is_dup {
                 stats.duplicates_skipped += 1;
                 continue;
+            }
+
+            // Dedup layer 2: embedding similarity against indexed query embeddings
+            if let Some(embedder) = self.embedder {
+                match embedder.embed(&dq.query).await {
+                    Ok(embedding) => {
+                        match self.writer.find_similar_query(&embedding, &self.city_slug, QUERY_DEDUP_SIMILARITY_THRESHOLD).await {
+                            Ok(Some((existing_ck, sim))) => {
+                                info!(
+                                    query = dq.query.as_str(),
+                                    existing_key = existing_ck.as_str(),
+                                    similarity = format!("{sim:.3}").as_str(),
+                                    "Skipping semantically duplicate query"
+                                );
+                                stats.duplicates_skipped += 1;
+                                continue;
+                            }
+                            Ok(None) => {
+                                // Not a duplicate — we'll store the embedding after creation
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Query embedding dedup check failed, proceeding");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Query embedding failed, skipping dedup check");
+                    }
+                }
             }
 
             let cv = dq.query.clone();
@@ -666,9 +732,11 @@ impl<'a> SourceDiscoverer<'a> {
                 _ => SourceRole::Mixed,
             };
 
+            let weight = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
+
             let source = SourceNode {
                 id: Uuid::new_v4(),
-                canonical_key: ck,
+                canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
                 source_type: SourceType::WebQuery,
@@ -682,7 +750,7 @@ impl<'a> SourceDiscoverer<'a> {
                 consecutive_empty_runs: 0,
                 active: true,
                 gap_context: Some(gap_context),
-                weight: 0.3,
+                weight,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
                 quality_penalty: 1.0,
@@ -697,8 +765,17 @@ impl<'a> SourceDiscoverer<'a> {
                         query = dq.query.as_str(),
                         reasoning = dq.reasoning.as_str(),
                         gap_type = dq.gap_type.as_str(),
+                        weight,
                         "LLM discovery: created query source"
                     );
+                    // Store query embedding so future runs can dedup against it
+                    if let Some(embedder) = self.embedder {
+                        if let Ok(embedding) = embedder.embed(&dq.query).await {
+                            if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                                warn!(error = %e, "Failed to store query embedding (non-fatal)");
+                            }
+                        }
+                    }
                 }
                 Err(e) => warn!(error = %e, "Failed to create LLM discovery source"),
             }
@@ -755,7 +832,7 @@ impl<'a> SourceDiscoverer<'a> {
     ///
     /// Sorts tensions by engagement score (corroboration + source_diversity + cause_heat)
     /// so high-engagement tensions fill early query slots — but all tensions are eligible.
-    async fn discover_from_gaps_mechanical(&self, stats: &mut DiscoveryStats) {
+    async fn discover_from_gaps_mechanical(&self, stats: &mut SourceFinderStats) {
         // Get tensions with engagement data, sorted by engagement within unmet-first grouping
         let mut tensions = match self.writer.get_unmet_tensions(20).await {
             Ok(t) => t,
@@ -813,6 +890,8 @@ impl<'a> SourceDiscoverer<'a> {
             let cv = query.clone();
             let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
 
+            let weight = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
+
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
@@ -829,7 +908,7 @@ impl<'a> SourceDiscoverer<'a> {
                 consecutive_empty_runs: 0,
                 active: true,
                 gap_context: Some(format!("Tension: {}", t.title)),
-                weight: 0.3,
+                weight,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
                 quality_penalty: 1.0,
@@ -1610,5 +1689,39 @@ mod tests {
         let prompt = briefing.format_prompt();
         assert!(!prompt.contains("## RESPONSE SHAPE"),
             "Empty response_shapes should not produce RESPONSE SHAPE section");
+    }
+
+    // --- I. Method-Based Initial Weight ---
+
+    #[test]
+    fn initial_weight_cold_start() {
+        let w = initial_weight_for_method(DiscoveryMethod::Curated, None);
+        assert!((w - 0.5).abs() < f64::EPSILON, "Curated should be 0.5: {w}");
+        let w = initial_weight_for_method(DiscoveryMethod::HumanSubmission, None);
+        assert!((w - 0.5).abs() < f64::EPSILON, "HumanSubmission should be 0.5: {w}");
+    }
+
+    #[test]
+    fn initial_weight_gap_analysis_unmet() {
+        let w = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
+        assert!((w - 0.4).abs() < f64::EPSILON, "GapAnalysis+unmet should be 0.4: {w}");
+    }
+
+    #[test]
+    fn initial_weight_gap_analysis_other() {
+        let w = initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("novel_angle"));
+        assert!((w - 0.3).abs() < f64::EPSILON, "GapAnalysis+other should be 0.3: {w}");
+    }
+
+    #[test]
+    fn initial_weight_signal_expansion() {
+        let w = initial_weight_for_method(DiscoveryMethod::SignalExpansion, None);
+        assert!((w - 0.2).abs() < f64::EPSILON, "SignalExpansion should be 0.2: {w}");
+    }
+
+    #[test]
+    fn initial_weight_hashtag_discovery() {
+        let w = initial_weight_for_method(DiscoveryMethod::HashtagDiscovery, None);
+        assert!((w - 0.3).abs() < f64::EPSILON, "HashtagDiscovery should be 0.3: {w}");
     }
 }

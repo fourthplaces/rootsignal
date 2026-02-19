@@ -12,14 +12,14 @@ use crate::sources;
 /// Handles cold-start bootstrapping for a brand-new city.
 /// When no CityNode exists, this generates seed search queries,
 /// performs a news sweep, and creates initial Source nodes.
-pub struct ColdStartBootstrapper<'a> {
+pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
     _searcher: &'a dyn WebSearcher,
     anthropic_api_key: String,
     city_node: CityNode,
 }
 
-impl<'a> ColdStartBootstrapper<'a> {
+impl<'a> Bootstrapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
         searcher: &'a dyn WebSearcher,

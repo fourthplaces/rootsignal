@@ -18,11 +18,11 @@ pub use similarity::SimilarityBuilder;
 pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use writer::{
-    ConsolidationStats, CuriosityOutcome, CuriosityTarget, DuplicateMatch, EvidenceSummary,
-    ExtractionYield, GapTypeStats, GravityScoutTarget, GraphWriter, InvestigationTarget,
-    ReapStats, ResponseHeuristic, ResponseScoutTarget, SignalTypeCounts, SourceBrief,
-    SourceStats, StoryBrief, StoryGrowth, TensionHub, TensionRespondent, TensionResponseShape,
-    UnmetTension,
+    ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
+    GatheringFinderTarget, GraphWriter, InvestigationTarget, ReapStats, ResponseFinderTarget,
+    ResponseHeuristic, SignalTypeCounts, SourceBrief, SourceStats, StoryBrief, StoryGrowth,
+    TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent,
+    TensionResponseShape, UnmetTension,
 };
 
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).

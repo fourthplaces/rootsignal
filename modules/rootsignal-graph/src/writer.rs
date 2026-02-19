@@ -1652,6 +1652,33 @@ impl GraphWriter {
         }
     }
 
+    /// Deactivate web query sources that have proven unproductive.
+    /// Stricter criteria than general `deactivate_dead_sources`:
+    /// - 5+ consecutive empty runs (backoff has already slowed them)
+    /// - 3+ total scrapes (gave it a fair chance)
+    /// - 0 signals ever produced (never contributed anything)
+    /// Protects curated and human-submitted sources.
+    pub async fn deactivate_dead_web_queries(&self, city: &str) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {active: true, city: $city, source_type: 'web_query'})
+             WHERE s.consecutive_empty_runs >= 5
+               AND coalesce(s.scrape_count, 0) >= 3
+               AND s.signals_produced = 0
+               AND s.discovery_method <> 'curated'
+               AND s.discovery_method <> 'human_submission'
+             SET s.active = false
+             RETURN count(s) AS deactivated"
+        )
+        .param("city", city);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
     pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
@@ -1669,6 +1696,58 @@ impl GraphWriter {
             }
         }
         Ok(queries)
+    }
+
+    /// Find an existing active WebQuery source with a semantically similar embedding.
+    /// Uses the `source_query_embedding` vector index. Returns the canonical_key and
+    /// similarity score of the best match above `threshold`, scoped to the given city.
+    pub async fn find_similar_query(
+        &self,
+        embedding: &[f32],
+        city: &str,
+        threshold: f64,
+    ) -> Result<Option<(String, f64)>, neo4rs::Error> {
+        // Neo4j vector search returns top-K results; we filter by city + active + threshold.
+        let q = query(
+            "CALL db.index.vector.queryNodes('source_query_embedding', 5, $embedding)
+             YIELD node, score
+             WHERE node.city = $city AND node.active = true AND node.source_type = 'web_query'
+               AND score >= $threshold
+             RETURN node.canonical_key AS canonical_key, score
+             ORDER BY score DESC
+             LIMIT 1"
+        )
+        .param("embedding", embedding.to_vec())
+        .param("city", city)
+        .param("threshold", threshold);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let ck: String = row.get("canonical_key").unwrap_or_default();
+            let score: f64 = row.get("score").unwrap_or(0.0);
+            if !ck.is_empty() {
+                return Ok(Some((ck, score)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Store an embedding on a Source node's `query_embedding` property.
+    /// Used after creating a new WebQuery source so it can be found by
+    /// `find_similar_query` on subsequent runs.
+    pub async fn set_query_embedding(
+        &self,
+        canonical_key: &str,
+        embedding: &[f32],
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {canonical_key: $key})
+             SET s.query_embedding = $embedding"
+        )
+        .param("key", canonical_key)
+        .param("embedding", embedding.to_vec());
+        self.client.graph.run(q).await?;
+        Ok(())
     }
 
     /// Get implied queries from Give/Event signals recently linked to heated tensions.
@@ -2366,7 +2445,7 @@ impl GraphWriter {
     /// curiosity-investigated yet (or were `failed` with retry budget remaining).
     ///
     /// Pre-pass: signals with `failed` + retry_count >= 3 are auto-promoted to `abandoned`.
-    pub async fn find_curiosity_targets(&self, limit: u32) -> Result<Vec<CuriosityTarget>, neo4rs::Error> {
+    pub async fn find_tension_linker_targets(&self, limit: u32) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
         // Pre-pass: promote exhausted retries to abandoned
         let promote = query(
             "MATCH (n)
@@ -2403,7 +2482,7 @@ impl GraphWriter {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-            targets.push(CuriosityTarget {
+            targets.push(TensionLinkerTarget {
                 signal_id: id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
@@ -2417,20 +2496,20 @@ impl GraphWriter {
     /// Mark a signal with its curiosity investigation outcome.
     ///
     /// - `Done`/`Skipped`/`Abandoned`: permanent — signal won't be retried.
-    /// - `Failed`: increments retry_count — signal reappears in `find_curiosity_targets`
+    /// - `Failed`: increments retry_count — signal reappears in `find_tension_linker_targets`
     ///   until retry_count reaches 3 (then auto-promoted to `Abandoned`).
-    pub async fn mark_curiosity_investigated(
+    pub async fn mark_tension_linker_investigated(
         &self,
         signal_id: Uuid,
         label: &str,
-        outcome: CuriosityOutcome,
+        outcome: TensionLinkerOutcome,
     ) -> Result<(), neo4rs::Error> {
         let label = match label {
             "Event" | "Give" | "Ask" | "Notice" => label,
             _ => return Ok(()),
         };
 
-        let cypher = if outcome == CuriosityOutcome::Failed {
+        let cypher = if outcome == TensionLinkerOutcome::Failed {
             format!(
                 "MATCH (n:{label} {{id: $id}})
                  SET n.curiosity_investigated = $outcome,
@@ -2994,10 +3073,10 @@ impl GraphWriter {
 
     /// Find tensions that need response discovery.
     /// Prioritizes tensions with fewer responses and higher cause_heat.
-    pub async fn find_response_scout_targets(
+    pub async fn find_response_finder_targets(
         &self,
         limit: u32,
-    ) -> Result<Vec<ResponseScoutTarget>, neo4rs::Error> {
+    ) -> Result<Vec<ResponseFinderTarget>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              WHERE t.confidence >= 0.5
@@ -3022,7 +3101,7 @@ impl GraphWriter {
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
                 continue;
             };
-            results.push(ResponseScoutTarget {
+            results.push(ResponseFinderTarget {
                 tension_id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
@@ -3071,7 +3150,7 @@ impl GraphWriter {
     }
 
     /// Mark a tension as having been scouted for responses.
-    pub async fn mark_response_scouted(
+    pub async fn mark_response_found(
         &self,
         tension_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
@@ -3093,10 +3172,10 @@ impl GraphWriter {
     /// Find tensions with active heat that need gravity scouting.
     /// Requires cause_heat >= 0.1 (cold tensions don't create gatherings).
     /// Uses exponential backoff based on consecutive miss count.
-    pub async fn find_gravity_scout_targets(
+    pub async fn find_gathering_finder_targets(
         &self,
         limit: u32,
-    ) -> Result<Vec<GravityScoutTarget>, neo4rs::Error> {
+    ) -> Result<Vec<GatheringFinderTarget>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              WHERE t.confidence >= 0.5
@@ -3126,7 +3205,7 @@ impl GraphWriter {
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
                 continue;
             };
-            results.push(GravityScoutTarget {
+            results.push(GatheringFinderTarget {
                 tension_id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
@@ -3147,7 +3226,7 @@ impl GraphWriter {
 
     /// Fetch existing gravity signals for a tension (gatherings wired via DRAWN_TO),
     /// filtered to signals within `radius_km` of the given city center.
-    pub async fn get_existing_gravity_signals(
+    pub async fn get_existing_gathering_signals(
         &self,
         tension_id: Uuid,
         city_lat: f64,
@@ -3184,7 +3263,7 @@ impl GraphWriter {
 
     /// Mark a tension as having been gravity-scouted.
     /// Resets miss_count to 0 on success, increments on failure.
-    pub async fn mark_gravity_scouted(
+    pub async fn mark_gathering_found(
         &self,
         tension_id: Uuid,
         found_gatherings: bool,
@@ -3786,9 +3865,9 @@ pub struct InvestigationTarget {
     pub is_sensitive: bool,
 }
 
-/// A signal without tension context that the curiosity loop should investigate.
+/// A signal without tension context that the tension linker should investigate.
 #[derive(Debug)]
-pub struct CuriosityTarget {
+pub struct TensionLinkerTarget {
     pub signal_id: Uuid,
     pub title: String,
     pub summary: String,
@@ -3796,9 +3875,9 @@ pub struct CuriosityTarget {
     pub source_url: String,
 }
 
-/// Outcome of a curiosity investigation for a signal.
+/// Outcome of a tension linker investigation for a signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CuriosityOutcome {
+pub enum TensionLinkerOutcome {
     /// All tensions processed successfully.
     Done,
     /// LLM said "not curious" — permanent, won't retry.
@@ -3809,7 +3888,7 @@ pub enum CuriosityOutcome {
     Abandoned,
 }
 
-impl CuriosityOutcome {
+impl TensionLinkerOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Done => "done",
@@ -3852,11 +3931,11 @@ pub struct StoryGrowth {
     pub new_respondents: Vec<TensionRespondent>,
 }
 
-// --- Response Scout types ---
+// --- Response Finder types ---
 
 /// A tension that needs response discovery.
 #[derive(Debug)]
-pub struct ResponseScoutTarget {
+pub struct ResponseFinderTarget {
     pub tension_id: Uuid,
     pub title: String,
     pub summary: String,
@@ -3875,11 +3954,11 @@ pub struct ResponseHeuristic {
     pub signal_type: String,
 }
 
-// --- Gravity Scout types ---
+// --- Gathering Finder types ---
 
-/// A tension that needs gravity scouting (where are people gathering?).
+/// A tension that needs gathering discovery (where are people gathering?).
 #[derive(Debug)]
-pub struct GravityScoutTarget {
+pub struct GatheringFinderTarget {
     pub tension_id: Uuid,
     pub title: String,
     pub summary: String,
@@ -4022,26 +4101,26 @@ mod tests {
         assert!(sim < 0.85, "Expected < 0.85, got {sim}");
     }
 
-    // --- CuriosityOutcome tests ---
+    // --- TensionLinkerOutcome tests ---
 
     #[test]
     fn curiosity_outcome_as_str_roundtrip() {
-        assert_eq!(CuriosityOutcome::Done.as_str(), "done");
-        assert_eq!(CuriosityOutcome::Skipped.as_str(), "skipped");
-        assert_eq!(CuriosityOutcome::Failed.as_str(), "failed");
-        assert_eq!(CuriosityOutcome::Abandoned.as_str(), "abandoned");
+        assert_eq!(TensionLinkerOutcome::Done.as_str(), "done");
+        assert_eq!(TensionLinkerOutcome::Skipped.as_str(), "skipped");
+        assert_eq!(TensionLinkerOutcome::Failed.as_str(), "failed");
+        assert_eq!(TensionLinkerOutcome::Abandoned.as_str(), "abandoned");
     }
 
     #[test]
     fn curiosity_outcome_equality() {
-        assert_eq!(CuriosityOutcome::Done, CuriosityOutcome::Done);
-        assert_ne!(CuriosityOutcome::Done, CuriosityOutcome::Failed);
-        assert_ne!(CuriosityOutcome::Failed, CuriosityOutcome::Abandoned);
+        assert_eq!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Done);
+        assert_ne!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Failed);
+        assert_ne!(TensionLinkerOutcome::Failed, TensionLinkerOutcome::Abandoned);
     }
 
     #[test]
     fn curiosity_outcome_is_copy() {
-        let outcome = CuriosityOutcome::Failed;
+        let outcome = TensionLinkerOutcome::Failed;
         let copied = outcome; // Copy
         assert_eq!(outcome, copied); // Both still usable
     }

@@ -238,7 +238,7 @@ impl MutationRoot {
         // Run cold-start bootstrapper (non-fatal)
         let bootstrap_writer = GraphWriter::new((**graph_client).clone());
         let searcher = rootsignal_scout::scraper::SerperSearcher::new(&config.serper_api_key);
-        let bootstrapper = rootsignal_scout::bootstrap::ColdStartBootstrapper::new(
+        let bootstrapper = rootsignal_scout::bootstrap::Bootstrapper::new(
             &bootstrap_writer,
             &searcher,
             &config.anthropic_api_key,

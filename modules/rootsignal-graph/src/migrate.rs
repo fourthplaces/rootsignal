@@ -300,11 +300,22 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Rename tavily_query → web_query in Source nodes ---
     rename_tavily_to_web_query(client).await?;
 
+    // --- Source query embedding vector index ---
+    g.run(query(
+        "CREATE VECTOR INDEX source_query_embedding IF NOT EXISTS \
+         FOR (s:Source) ON (s.query_embedding) \
+         OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}"
+    )).await?;
+    info!("Source query embedding vector index created");
+
     // --- Backfill source_role on existing Source nodes ---
     backfill_source_roles(client).await?;
 
     // --- Backfill scrape_count on existing Source nodes ---
     backfill_scrape_count(client).await?;
+
+    // --- Deactivate orphaned web query sources ---
+    deactivate_orphaned_web_queries(client).await?;
 
     info!("Schema migration complete");
     Ok(())
@@ -796,5 +807,42 @@ pub async fn rename_tavily_to_web_query(client: &GraphClient) -> Result<(), neo4
     }
 
     info!("tavily_query rename complete");
+    Ok(())
+}
+
+/// Deactivate orphaned WebQuery sources that were created before the attribution
+/// fix but never scraped. These queries accumulated because the feedback loop was
+/// broken — they look "never scraped" forever.
+///
+/// Criteria: web_query + never scraped + older than 7 days + not curated/human.
+/// Idempotent — WHERE clause matches nothing after cleanup.
+pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Deactivating orphaned web query sources...");
+
+    let q = query(
+        "MATCH (s:Source {source_type: 'web_query', active: true})
+         WHERE s.last_scraped IS NULL
+           AND s.created_at < datetime() - duration('P7D')
+           AND s.discovery_method <> 'curated'
+           AND s.discovery_method <> 'human_submission'
+         SET s.active = false
+         RETURN count(s) AS deactivated"
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deactivated: i64 = row.get("deactivated").unwrap_or(0);
+                if deactivated > 0 {
+                    info!(deactivated, "Deactivated orphaned web query sources");
+                }
+            }
+        }
+        Err(e) => warn!("Orphaned web query deactivation failed (non-fatal): {e}"),
+    }
+
+    info!("Orphaned web query deactivation complete");
     Ok(())
 }

@@ -13,9 +13,9 @@ use rootsignal_common::{
     AskNode, CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
     NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, SourceType, Urgency,
 };
-use rootsignal_graph::{GravityScoutTarget, GraphWriter, ResponseHeuristic};
+use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
-use crate::curiosity::{ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool};
+use crate::tension_linker::{ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool};
 use crate::embedder::TextEmbedder;
 use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
@@ -76,7 +76,7 @@ pub struct DiscoveredGathering {
 // =============================================================================
 
 #[derive(Debug, Default)]
-pub struct GravityScoutStats {
+pub struct GatheringFinderStats {
     pub targets_found: u32,
     pub targets_investigated: u32,
     pub targets_no_gravity: u32,
@@ -87,11 +87,11 @@ pub struct GravityScoutStats {
     pub future_sources_created: u32,
 }
 
-impl std::fmt::Display for GravityScoutStats {
+impl std::fmt::Display for GatheringFinderStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Gravity Scout: {} targets found, {} investigated, \
+            "Gathering finder: {} targets found, {} investigated, \
              {} no-gravity, {} gatherings discovered ({} deduped), \
              {} signals created, {} edges, {} future sources",
             self.targets_found,
@@ -202,7 +202,7 @@ and how it relates to the tension (what kind of gravity it represents)."
 }
 
 fn investigation_user_prompt(
-    target: &GravityScoutTarget,
+    target: &GatheringFinderTarget,
     existing: &[ResponseHeuristic],
 ) -> String {
     let mut prompt = format!(
@@ -260,10 +260,10 @@ Also report:
 Return valid JSON matching the GravityFinding schema.";
 
 // =============================================================================
-// GravityScout
+// GatheringFinder
 // =============================================================================
 
-pub struct GravityScout<'a> {
+pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
@@ -271,11 +271,11 @@ pub struct GravityScout<'a> {
     city_slug: String,
 }
 
-impl<'a> GravityScout<'a> {
-    /// Create a new gravity scout.
+impl<'a> GatheringFinder<'a> {
+    /// Create a new gathering finder.
     ///
-    /// SAFETY: Same as CuriosityLoop — the `searcher` and `scraper` references are held via
-    /// raw pointers. The caller MUST ensure they outlive this GravityScout.
+    /// SAFETY: Same as TensionLinker — the `searcher` and `scraper` references are held via
+    /// raw pointers. The caller MUST ensure they outlive this GatheringFinder.
     pub fn new(
         writer: &'a GraphWriter,
         searcher: &dyn WebSearcher,
@@ -309,28 +309,28 @@ impl<'a> GravityScout<'a> {
         }
     }
 
-    pub async fn run(&self) -> GravityScoutStats {
-        let mut stats = GravityScoutStats::default();
+    pub async fn run(&self) -> GatheringFinderStats {
+        let mut stats = GatheringFinderStats::default();
 
         let targets = match self
             .writer
-            .find_gravity_scout_targets(MAX_GRAVITY_TARGETS_PER_RUN as u32)
+            .find_gathering_finder_targets(MAX_GRAVITY_TARGETS_PER_RUN as u32)
             .await
         {
             Ok(t) => t,
             Err(e) => {
-                warn!(error = %e, "Failed to find gravity scout targets");
+                warn!(error = %e, "Failed to find gathering finder targets");
                 return stats;
             }
         };
 
         stats.targets_found = targets.len() as u32;
         if targets.is_empty() {
-            info!("No gravity scout targets found");
+            info!("No gathering finder targets found");
             return stats;
         }
 
-        info!(count = targets.len(), "Gravity scout targets selected");
+        info!(count = targets.len(), "Gathering finder targets selected");
 
         for target in &targets {
             let found_gatherings = match self.investigate_tension(target, &mut stats).await {
@@ -343,7 +343,7 @@ impl<'a> GravityScout<'a> {
                         tension_id = %target.tension_id,
                         title = target.title.as_str(),
                         error = %e,
-                        "Gravity scout investigation failed"
+                        "Gathering finder investigation failed"
                     );
                     false
                 }
@@ -352,7 +352,7 @@ impl<'a> GravityScout<'a> {
             // Mark scouted with backoff (success resets miss count, failure increments)
             if let Err(e) = self
                 .writer
-                .mark_gravity_scouted(target.tension_id, found_gatherings)
+                .mark_gathering_found(target.tension_id, found_gatherings)
                 .await
             {
                 warn!(
@@ -369,13 +369,13 @@ impl<'a> GravityScout<'a> {
     /// Investigate a single tension for gatherings. Returns true if gatherings were found.
     async fn investigate_tension(
         &self,
-        target: &GravityScoutTarget,
-        stats: &mut GravityScoutStats,
+        target: &GatheringFinderTarget,
+        stats: &mut GatheringFinderStats,
     ) -> Result<bool> {
         // Fetch existing gravity signals for context
         let existing = self
             .writer
-            .get_existing_gravity_signals(
+            .get_existing_gathering_signals(
                 target.tension_id,
                 self.city.center_lat,
                 self.city.center_lng,
@@ -489,9 +489,9 @@ impl<'a> GravityScout<'a> {
 
     async fn process_gathering(
         &self,
-        target: &GravityScoutTarget,
+        target: &GatheringFinderTarget,
         gathering: &DiscoveredGathering,
-        stats: &mut GravityScoutStats,
+        stats: &mut GatheringFinderStats,
     ) -> Result<()> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -736,13 +736,13 @@ impl<'a> GravityScout<'a> {
     async fn create_future_query(
         &self,
         query: &str,
-        target: &GravityScoutTarget,
-        stats: &mut GravityScoutStats,
+        target: &GatheringFinderTarget,
+        stats: &mut GatheringFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
         let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
         let gap_context = format!(
-            "Gravity Scout: gathering discovery for \"{}\"",
+            "Gathering finder: gathering discovery for \"{}\"",
             target.title,
         );
 
@@ -762,7 +762,7 @@ impl<'a> GravityScout<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: 0.3,
+            weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,
@@ -776,7 +776,7 @@ impl<'a> GravityScout<'a> {
         info!(
             query = query,
             tension = target.title.as_str(),
-            "Future query source created by gravity scout"
+            "Future query source created by gathering finder"
         );
 
         Ok(())
@@ -877,7 +877,7 @@ mod tests {
 
     #[test]
     fn gravity_scout_stats_display() {
-        let stats = GravityScoutStats {
+        let stats = GatheringFinderStats {
             targets_found: 3,
             targets_investigated: 2,
             targets_no_gravity: 1,
