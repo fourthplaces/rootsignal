@@ -80,6 +80,18 @@ impl ChromeScraper {
             match result {
                 Ok(Ok(output)) => {
                     if output.status.success() {
+                        if output.stdout.is_empty() {
+                            if attempt + 1 < CHROME_MAX_ATTEMPTS {
+                                let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
+                                let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                                warn!(
+                                    url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                                    "Chrome returned empty DOM, retrying after backoff"
+                                );
+                                tokio::time::sleep(backoff + jitter).await;
+                                continue;
+                            }
+                        }
                         return Ok(output.stdout);
                     }
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -117,6 +129,16 @@ impl ChromeScraper {
                     anyhow::bail!("Failed to run Chrome for {url}: {e}");
                 }
                 Err(_) => {
+                    if attempt + 1 < CHROME_MAX_ATTEMPTS {
+                        let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
+                        let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                        warn!(
+                            url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                            "Chrome timed out, retrying after backoff"
+                        );
+                        tokio::time::sleep(backoff + jitter).await;
+                        continue;
+                    }
                     anyhow::bail!("Chrome timed out after 30s for {url}");
                 }
             }
@@ -190,6 +212,84 @@ impl PageScraper for ChromeScraper {
 
     fn name(&self) -> &str {
         "chrome"
+    }
+}
+
+// --- Browserless + Readability scraper ---
+
+pub struct BrowserlessScraper {
+    client: browserless_client::BrowserlessClient,
+}
+
+impl BrowserlessScraper {
+    pub fn new(base_url: &str, token: Option<&str>) -> Self {
+        info!(base_url, "Using BrowserlessScraper");
+        Self {
+            client: browserless_client::BrowserlessClient::new(base_url, token),
+        }
+    }
+}
+
+#[async_trait]
+impl PageScraper for BrowserlessScraper {
+    async fn scrape(&self, url: &str) -> Result<String> {
+        info!(url, scraper = "browserless", "Scraping URL");
+
+        let html = self
+            .client
+            .content(url)
+            .await
+            .context("Browserless content request failed")?;
+
+        if html.is_empty() {
+            warn!(url, scraper = "browserless", "Empty HTML response");
+            return Ok(String::new());
+        }
+
+        let parsed_url = url::Url::parse(url).ok();
+        let config = TransformConfig {
+            readability: true,
+            main_content: true,
+            return_format: ReturnFormat::Markdown,
+            filter_images: true,
+            filter_svg: true,
+            clean_html: true,
+        };
+        let input = TransformInput {
+            url: parsed_url.as_ref(),
+            content: html.as_bytes(),
+            screenshot_bytes: None,
+            encoding: None,
+            selector_config: None,
+            ignore_tags: None,
+        };
+
+        let text = transform_content_input(input, &config);
+
+        if text.trim().is_empty() {
+            warn!(url, scraper = "browserless", "Empty content after Readability extraction");
+            return Ok(String::new());
+        }
+
+        info!(url, scraper = "browserless", bytes = text.len(), "Scraped successfully");
+        Ok(text)
+    }
+
+    async fn scrape_raw(&self, url: &str) -> Result<String> {
+        info!(url, scraper = "browserless", "Scraping raw HTML");
+
+        let html = self
+            .client
+            .content(url)
+            .await
+            .context("Browserless content request failed")?;
+
+        info!(url, scraper = "browserless", bytes = html.len(), "Raw HTML scraped");
+        Ok(html)
+    }
+
+    fn name(&self) -> &str {
+        "browserless"
     }
 }
 

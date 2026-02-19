@@ -20,6 +20,13 @@ services:
       retries: 10
       start_period: 30s
 
+  browserless:
+    image: browserless/chrome
+    restart: unless-stopped
+    environment:
+      MAX_CONCURRENT_SESSIONS: 5
+      CONNECTION_TIMEOUT: 30000
+
   api:
     build:
       context: .
@@ -49,6 +56,22 @@ services:
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       APIFY_API_KEY: ${APIFY_API_KEY:-}
       CITY: ${CITY:-twincities}
+      BROWSERLESS_URL: http://browserless:3000
+
+  admin-app:
+    image: node:22-slim
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./modules/admin-app:/app
+      - admin-node-modules:/app/node_modules
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+      API_URL: http://api:3000
+    command: ["sh", "-c", "npm install && npm run dev"]
 
   scout:
     build:
@@ -74,6 +97,7 @@ services:
       TAVILY_API_KEY: ${TAVILY_API_KEY}
       APIFY_API_KEY: ${APIFY_API_KEY:-}
       CITY: ${CITY:-twincities}
+      BROWSERLESS_URL: http://browserless:3000
       RUST_LOG: info,html5ever=off
     command: ["cargo", "run", "--bin", "scout"]
 
@@ -81,3 +105,4 @@ volumes:
   neo4j-data:
   cargo-registry:
   cargo-target:
+  admin-node-modules:

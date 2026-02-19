@@ -66,7 +66,7 @@ Key differences from response scout:
 - **Requires `cause_heat >= 0.1`** — gravity only forms around active tensions. Cold tensions don't pull people together. The response scout has no heat minimum because instrumental responses can exist for dormant tensions.
 - **Sorted by `cause_heat DESC`** — hottest tensions first. The response scout sorts by `response_count ASC` (most neglected first). Gravity reverses this: the hottest tensions are the most likely to create gatherings.
 - **Exponential backoff** — 7 days after success or first attempt, scaling to 30 days max after 3+ consecutive misses. The response scout uses a fixed 14-day window. Gravity needs adaptive timing because most tensions don't create visible gatherings.
-- **Fewer targets per run** — 3 vs the response scout's 5. Gravity is rarer than instrumental response; investigating fewer hot tensions deeply is better than spreading thin.
+- **Same target count per run** — 5 targets, same as the response scout. Embedded triage makes misses cheap (2-3 Tavily calls with early termination), so the cost of investigating tensions without gatherings is low.
 
 ### Embedded triage (not a separate call)
 
@@ -183,9 +183,9 @@ Cold tensions don't create gatherings. Nobody holds a vigil for a tension that h
 
 Gatherings are temporal and fast-moving. A new vigil series might start mid-week. The singing rebellion might add new locations. 7 days keeps the system responsive to gathering dynamics. (The response scout uses 14 days because instrumental responses change more slowly.)
 
-### Why fewer targets (3 vs 5)?
+### Why 5 targets per run (same as response scout)?
 
-Gravity is rarer than instrumental response. Most tensions don't have visible gatherings — only the hottest, most active ones do. Investigating 3 hot tensions deeply is better than spreading thin across 5.
+Embedded triage makes misses cheap — 2-3 Tavily calls with early termination when there's nothing to find. The cost of investigating a tension without gatherings is low enough that 5 targets per run is sustainable. More coverage means faster convergence to a complete gravity map.
 
 ### Why `gathering_type` on the edge (not a new edge type)?
 
@@ -255,7 +255,7 @@ pub struct DiscoveredGathering {
 ## Constants
 
 ```rust
-const MAX_GRAVITY_TARGETS_PER_RUN: usize = 3;
+const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
 const MAX_TOOL_TURNS: usize = 10;
 const MAX_GATHERINGS_PER_TENSION: usize = 8;
 const MAX_FUTURE_QUERIES_PER_TENSION: usize = 3;
@@ -270,6 +270,14 @@ If the LLM sets `no_gravity: true` but also returns gatherings, the system treat
 ### Cross-tension gravity reveals tension relationships
 
 A gathering that addresses multiple tensions is evidence that those tensions are *connected in the community's experience*. "ICE fear" + "housing instability" might seem unrelated in the graph, but if the same solidarity gathering addresses both, they share gravity. This is captured via multi-tension RESPONDS_TO edges with `gathering_type` — no special handling needed now, but a rich signal for story weaving in the future.
+
+## Multi-City Behavior
+
+See [gravity-multi-city.md](gravity-multi-city.md) for the comprehensive discussion of how the gravity scout works across cities. Key points:
+
+- **Heat is heat.** Target selection is global — the hottest tensions get gravity-scouted in every city. A Palestine tension discovered in Minneapolis will be investigated for NYC gatherings too.
+- **Context is city-scoped.** `get_existing_gravity_signals` filters by geographic bounding box so the LLM doesn't anchor on other cities' gatherings.
+- **Cold start is self-correcting.** A new city's first run investigates globally-hot tensions. By the second or third run, the city has its own hot tensions and venue seeds compounding.
 
 ## Future Work
 

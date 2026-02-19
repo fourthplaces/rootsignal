@@ -108,7 +108,7 @@ impl<'a> ColdStartBootstrapper<'a> {
 - Environmental cleanup, community gardens
 - Community events, festivals
 - Local news about tensions or community issues
-- GoFundMe and community fundraisers
+- Donation drives, crowdfunding, solidarity funds, and community fundraisers
 - Repair cafes, tool libraries
 - School board and education policy
 

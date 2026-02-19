@@ -17,6 +17,7 @@ rootsignal-common = { workspace = true }
 rootsignal-graph = { workspace = true }
 ai-client = { workspace = true }
 apify-client = { workspace = true }
+browserless-client = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
