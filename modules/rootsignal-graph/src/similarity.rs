@@ -35,7 +35,10 @@ impl SimilarityBuilder {
         // Fetch all signal embeddings
         let signals = self.fetch_all_embeddings().await?;
         let count = signals.len();
-        info!(signals = count, "Fetched signal embeddings for similarity computation");
+        info!(
+            signals = count,
+            "Fetched signal embeddings for similarity computation"
+        );
 
         if count < 2 {
             info!("Too few signals for similarity edges");
@@ -53,16 +56,15 @@ impl SimilarityBuilder {
                 if sim >= SIMILARITY_THRESHOLD {
                     let conf_weight = (signals[i].confidence * signals[j].confidence).sqrt();
                     let weight = sim * conf_weight;
-                    edges.push((
-                        signals[i].id.clone(),
-                        signals[j].id.clone(),
-                        weight,
-                    ));
+                    edges.push((signals[i].id.clone(), signals[j].id.clone(), weight));
                 }
             }
         }
 
-        info!(edges = edges.len(), "Computed similarity edges above threshold {}", SIMILARITY_THRESHOLD);
+        info!(
+            edges = edges.len(),
+            "Computed similarity edges above threshold {}", SIMILARITY_THRESHOLD
+        );
 
         if edges.is_empty() {
             return Ok(0);
@@ -109,15 +111,27 @@ impl SimilarityBuilder {
 
     /// Write a batch of edges using UNWIND for efficiency.
     /// Uses MERGE to avoid duplicates.
-    async fn write_edge_batch(&self, batch: &[(String, String, f64)]) -> Result<u64, neo4rs::Error> {
+    async fn write_edge_batch(
+        &self,
+        batch: &[(String, String, f64)],
+    ) -> Result<u64, neo4rs::Error> {
         // Build the edge data as a list of maps
         let edge_data: Vec<neo4rs::BoltType> = batch
             .iter()
             .map(|(from, to, weight)| {
                 neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
-                    (neo4rs::BoltString::from("from"), neo4rs::BoltType::String(neo4rs::BoltString::from(from.as_str()))),
-                    (neo4rs::BoltString::from("to"), neo4rs::BoltType::String(neo4rs::BoltString::from(to.as_str()))),
-                    (neo4rs::BoltString::from("weight"), neo4rs::BoltType::Float(neo4rs::BoltFloat::new(*weight))),
+                    (
+                        neo4rs::BoltString::from("from"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(from.as_str())),
+                    ),
+                    (
+                        neo4rs::BoltString::from("to"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(to.as_str())),
+                    ),
+                    (
+                        neo4rs::BoltString::from("weight"),
+                        neo4rs::BoltType::Float(neo4rs::BoltFloat::new(*weight)),
+                    ),
                 ]))
             })
             .collect();
@@ -148,7 +162,7 @@ impl SimilarityBuilder {
         let q = query(
             "MATCH ()-[e:SIMILAR_TO]->()
              DELETE e
-             RETURN count(e) AS deleted"
+             RETURN count(e) AS deleted",
         );
 
         let mut stream = self.client.graph.execute(q).await?;

@@ -43,10 +43,7 @@ pub async fn triage_suspects(
     suspects.extend(triage_near_duplicates(client, &from_ts, &to_ts).await?);
     suspects.extend(triage_low_confidence_high_visibility(client, &from_ts, &to_ts).await?);
 
-    info!(
-        total = suspects.len(),
-        "Triage complete"
-    );
+    info!(total = suspects.len(), "Triage complete");
 
     Ok(suspects)
 }
@@ -124,7 +121,7 @@ async fn triage_incoherent_stories(
               count(sig2) AS signals_with_actors
          WHERE actor_count < 2 OR (signals_with_actors * 1.0 / size(signals)) < 0.3
          RETURN s.id AS id, s.headline AS title, s.summary AS summary,
-                type_count, actor_count, size(signals) AS signal_count"
+                type_count, actor_count, size(signals) AS signal_count",
     )
     .param("from", from_ts.to_string())
     .param("to", to_ts.to_string());
@@ -145,7 +142,7 @@ async fn triage_incoherent_stories(
         let signals_q = query(
             "MATCH (s:Story {id: $id})-[:CONTAINS]->(sig)
              RETURN labels(sig)[0] AS label, sig.title AS title, sig.summary AS summary
-             LIMIT 20"
+             LIMIT 20",
         )
         .param("id", id_str.clone());
 
@@ -198,7 +195,7 @@ async fn triage_bad_responds_to(
                 tension.title AS tension_title,
                 tension.summary AS tension_summary,
                 r.match_strength AS match_strength,
-                r.explanation AS explanation"
+                r.explanation AS explanation",
     )
     .param("from", from_ts.to_string())
     .param("to", to_ts.to_string());
@@ -257,7 +254,7 @@ async fn triage_near_duplicates(
            AND a.id < b.id
          RETURN a.id AS id_a, labels(a)[0] AS label_a, a.title AS title_a, a.summary AS summary_a,
                 b.id AS id_b, labels(b)[0] AS label_b, b.title AS title_b, b.summary AS summary_b,
-                r.weight AS similarity"
+                r.weight AS similarity",
     )
     .param("from", from_ts.to_string())
     .param("to", to_ts.to_string());
@@ -311,7 +308,7 @@ async fn triage_low_confidence_high_visibility(
          RETURN sig.id AS id, labels(sig)[0] AS label,
                 sig.title AS title, sig.summary AS summary,
                 sig.confidence AS confidence,
-                s.headline AS story_headline"
+                s.headline AS story_headline",
     )
     .param("from", from_ts.to_string())
     .param("to", to_ts.to_string());
@@ -327,9 +324,7 @@ async fn triage_low_confidence_high_visibility(
         let confidence: f64 = row.get("confidence").unwrap_or(0.0);
         let story_headline: String = row.get("story_headline").unwrap_or_default();
 
-        let context = format!(
-            "Confidence: {confidence:.2}\nIn confirmed story: {story_headline}"
-        );
+        let context = format!("Confidence: {confidence:.2}\nIn confirmed story: {story_headline}");
 
         suspects.push(Suspect {
             id,
@@ -342,7 +337,10 @@ async fn triage_low_confidence_high_visibility(
     }
 
     if !suspects.is_empty() {
-        info!(count = suspects.len(), "Low-confidence high-visibility suspects found");
+        info!(
+            count = suspects.len(),
+            "Low-confidence high-visibility suspects found"
+        );
     }
     Ok(suspects)
 }

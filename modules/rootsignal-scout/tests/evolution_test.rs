@@ -12,8 +12,8 @@ use harness::audit::AuditConfig;
 use harness::queries::serialize_graph_state;
 use harness::{city_node_for, TestContext};
 use simweb::{
-    AuditSummary, EvolutionConfig, Evolver, Judge, JudgeCriteria, ScenarioEntry,
-    ScenarioGym, ScenarioSource, ScoutGenome, SimulatedWeb, World,
+    AuditSummary, EvolutionConfig, Evolver, Judge, JudgeCriteria, ScenarioEntry, ScenarioGym,
+    ScenarioSource, ScoutGenome, SimulatedWeb, World,
 };
 
 /// Directory for evolution artifacts (gitignored).
@@ -29,28 +29,52 @@ fn evolution_scenarios_dir() -> PathBuf {
 /// All hand-written scenarios from sim_integration.
 const ALL_SCENARIOS: &[(&str, fn() -> (World, JudgeCriteria))] = &[
     ("stale_minneapolis", || {
-        (scenarios::stale_minneapolis::world(), scenarios::stale_minneapolis::criteria())
+        (
+            scenarios::stale_minneapolis::world(),
+            scenarios::stale_minneapolis::criteria(),
+        )
     }),
     ("organizing_portland", || {
-        (scenarios::organizing_portland::world(), scenarios::organizing_portland::criteria())
+        (
+            scenarios::organizing_portland::world(),
+            scenarios::organizing_portland::criteria(),
+        )
     }),
     ("simmering_cedar_riverside", || {
-        (scenarios::simmering_cedar_riverside::world(), scenarios::simmering_cedar_riverside::criteria())
+        (
+            scenarios::simmering_cedar_riverside::world(),
+            scenarios::simmering_cedar_riverside::criteria(),
+        )
     }),
     ("rural_minnesota", || {
-        (scenarios::rural_minnesota::world(), scenarios::rural_minnesota::criteria())
+        (
+            scenarios::rural_minnesota::world(),
+            scenarios::rural_minnesota::criteria(),
+        )
     }),
     ("hidden_community_minneapolis", || {
-        (scenarios::hidden_community_minneapolis::world(), scenarios::hidden_community_minneapolis::criteria())
+        (
+            scenarios::hidden_community_minneapolis::world(),
+            scenarios::hidden_community_minneapolis::criteria(),
+        )
     }),
     ("shifting_ground", || {
-        (scenarios::shifting_ground::world(), scenarios::shifting_ground::criteria())
+        (
+            scenarios::shifting_ground::world(),
+            scenarios::shifting_ground::criteria(),
+        )
     }),
     ("tension_response_cycle", || {
-        (scenarios::tension_response_cycle::world(), scenarios::tension_response_cycle::criteria())
+        (
+            scenarios::tension_response_cycle::world(),
+            scenarios::tension_response_cycle::criteria(),
+        )
     }),
     ("tension_discovery_bridge", || {
-        (scenarios::tension_discovery_bridge::world(), scenarios::tension_discovery_bridge::criteria())
+        (
+            scenarios::tension_discovery_bridge::world(),
+            scenarios::tension_discovery_bridge::criteria(),
+        )
     }),
 ];
 
@@ -72,7 +96,10 @@ async fn run_scenario_with_genome(
     let scout = ctx.sim_scout_with_genome(sim.clone(), city_node, genome);
     let stats = scout.run().await?;
 
-    eprintln!("=== {scenario_name} (gen {}) stats ===\n{stats}", genome.generation);
+    eprintln!(
+        "=== {scenario_name} (gen {}) stats ===\n{stats}",
+        genome.generation
+    );
 
     // Serialize graph state for judge
     let graph_state = serialize_graph_state(ctx.client()).await;
@@ -81,8 +108,11 @@ async fn run_scenario_with_genome(
     let judge = Judge::new(api_key);
     let verdict = judge.evaluate(world, criteria, &graph_state).await?;
 
-    eprintln!("=== {scenario_name} verdict: {} (score: {:.2}) ===",
-        if verdict.pass { "PASS" } else { "FAIL" }, verdict.score);
+    eprintln!(
+        "=== {scenario_name} verdict: {} (score: {:.2}) ===",
+        if verdict.pass { "PASS" } else { "FAIL" },
+        verdict.score
+    );
 
     // Run structural audit
     let audit_config = AuditConfig::for_sim(world);
@@ -141,8 +171,7 @@ async fn evolution_loop() {
 
     // Build baseline genome from current prompts
     let extractor_prompt = TestContext::baseline_extractor_prompt();
-    let discovery_prompt =
-        rootsignal_scout::source_finder::discovery_system_prompt("{city_name}");
+    let discovery_prompt = rootsignal_scout::source_finder::discovery_system_prompt("{city_name}");
     let baseline = ScoutGenome::baseline(extractor_prompt, discovery_prompt);
 
     // Run evolution
@@ -156,27 +185,28 @@ async fn evolution_loop() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(2);
 
-    let result = evolver
-        .evolve_from(
-            baseline,
-            &mut gym,
-            EvolutionConfig {
-                max_generations,
-                mutations_per_generation,
-            },
-            |genome, scenario| {
-                let ctx_ref = &ctx;
-                let genome = genome.clone();
-                let world = scenario.world.clone();
-                let criteria = scenario.criteria.clone();
-                let name = scenario.name.clone();
-                async move {
-                    run_scenario_with_genome(ctx_ref, &genome, &world, &criteria, &name).await
-                }
-            },
-        )
-        .await
-        .expect("Evolution failed");
+    let result =
+        evolver
+            .evolve_from(
+                baseline,
+                &mut gym,
+                EvolutionConfig {
+                    max_generations,
+                    mutations_per_generation,
+                },
+                |genome, scenario| {
+                    let ctx_ref = &ctx;
+                    let genome = genome.clone();
+                    let world = scenario.world.clone();
+                    let criteria = scenario.criteria.clone();
+                    let name = scenario.name.clone();
+                    async move {
+                        run_scenario_with_genome(ctx_ref, &genome, &world, &criteria, &name).await
+                    }
+                },
+            )
+            .await
+            .expect("Evolution failed");
 
     // Persist results
     save_json(&evolution_dir().join("champion.json"), &result.champion);

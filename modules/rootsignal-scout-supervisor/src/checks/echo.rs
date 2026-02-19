@@ -44,11 +44,9 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
         let echo_score = compute_echo_score(signal_count, type_count, entity_count);
 
         // Write echo_score to the story node
-        let update = query(
-            "MATCH (s:Story {id: $id}) SET s.echo_score = $score",
-        )
-        .param("id", id.to_string())
-        .param("score", echo_score);
+        let update = query("MATCH (s:Story {id: $id}) SET s.echo_score = $score")
+            .param("id", id.to_string())
+            .param("score", echo_score);
 
         if let Err(e) = client.inner().run(update).await {
             tracing::warn!(id = %id, error = %e, "Failed to write echo_score");
@@ -119,21 +117,30 @@ mod tests {
     fn diverse_story_low_echo() {
         // 10 signals, 5 types, 8 entities = genuinely diverse
         let score = compute_echo_score(10, 5, 8);
-        assert!(score < 0.4, "Diverse story should have low echo score, got {score}");
+        assert!(
+            score < 0.4,
+            "Diverse story should have low echo score, got {score}"
+        );
     }
 
     #[test]
     fn echo_chamber_high_score() {
         // 15 signals, 1 type, 1 entity = pure echo
         let score = compute_echo_score(15, 1, 1);
-        assert!(score > 0.7, "Echo chamber should have high score, got {score}");
+        assert!(
+            score > 0.7,
+            "Echo chamber should have high score, got {score}"
+        );
     }
 
     #[test]
     fn moderate_diversity() {
         // 10 signals, 2 types, 3 entities = moderate
         let score = compute_echo_score(10, 2, 3);
-        assert!(score > 0.3 && score < 0.8, "Moderate diversity should have mid score, got {score}");
+        assert!(
+            score > 0.3 && score < 0.8,
+            "Moderate diversity should have mid score, got {score}"
+        );
     }
 
     #[test]

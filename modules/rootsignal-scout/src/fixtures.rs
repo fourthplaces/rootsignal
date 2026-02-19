@@ -20,13 +20,14 @@ use serde::Deserialize;
 use tracing::warn;
 use uuid::Uuid;
 
-use rootsignal_common::{
-    EventNode, Node, NodeMeta, SensitivityLevel,
-};
+use rootsignal_common::{EventNode, Node, NodeMeta, SensitivityLevel};
 
 use crate::embedder::TextEmbedder;
 use crate::extractor::SignalExtractor;
-use crate::scraper::{PageScraper, SearchResult, SocialAccount, SocialPlatform, SocialPost, SocialScraper, WebSearcher};
+use crate::scraper::{
+    PageScraper, SearchResult, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
+    WebSearcher,
+};
 
 // --- FixtureSearcher ---
 
@@ -93,7 +94,11 @@ impl WebSearcher for CorpusSearcher {
                 let score = entry
                     .keywords
                     .iter()
-                    .filter(|kw| query_tokens.iter().any(|qt| qt.contains(kw.as_str()) || kw.contains(qt.as_str())))
+                    .filter(|kw| {
+                        query_tokens
+                            .iter()
+                            .any(|qt| qt.contains(kw.as_str()) || kw.contains(qt.as_str()))
+                    })
                     .count();
                 (score, entry)
             })
@@ -169,7 +174,10 @@ impl WebSearcher for ScenarioSearcher {
             self.scenario, query, max_results
         );
 
-        let response = self.claude.chat_completion(&self.system_prompt, &user_prompt).await?;
+        let response = self
+            .claude
+            .chat_completion(&self.system_prompt, &user_prompt)
+            .await?;
 
         // Parse JSON from response — handle markdown code fences
         let json_str = response
@@ -179,11 +187,12 @@ impl WebSearcher for ScenarioSearcher {
             .and_then(|s| s.strip_suffix("```"))
             .unwrap_or(response.trim());
 
-        let parsed: ScenarioSearchResponse = serde_json::from_str(json_str)
-            .unwrap_or_else(|e| {
-                warn!(error = %e, "Failed to parse ScenarioSearcher response, returning empty");
-                ScenarioSearchResponse { results: Vec::new() }
-            });
+        let parsed: ScenarioSearchResponse = serde_json::from_str(json_str).unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to parse ScenarioSearcher response, returning empty");
+            ScenarioSearchResponse {
+                results: Vec::new(),
+            }
+        });
 
         Ok(parsed
             .results
@@ -280,7 +289,10 @@ impl ScenarioSocialScraper {
             self.scenario, context, limit
         );
 
-        let response = self.claude.chat_completion(&self.system_prompt, &user_prompt).await?;
+        let response = self
+            .claude
+            .chat_completion(&self.system_prompt, &user_prompt)
+            .await?;
 
         let json_str = response
             .trim()
@@ -289,11 +301,10 @@ impl ScenarioSocialScraper {
             .and_then(|s| s.strip_suffix("```"))
             .unwrap_or(response.trim());
 
-        let parsed: ScenarioSocialResponse = serde_json::from_str(json_str)
-            .unwrap_or_else(|e| {
-                warn!(error = %e, "Failed to parse ScenarioSocialScraper response, returning empty");
-                ScenarioSocialResponse { posts: Vec::new() }
-            });
+        let parsed: ScenarioSocialResponse = serde_json::from_str(json_str).unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to parse ScenarioSocialScraper response, returning empty");
+            ScenarioSocialResponse { posts: Vec::new() }
+        });
 
         Ok(parsed
             .posts
@@ -326,7 +337,12 @@ impl SocialScraper for ScenarioSocialScraper {
         self.generate(&context, limit).await
     }
 
-    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
+    async fn search_topics(
+        &self,
+        platform: &SocialPlatform,
+        topics: &[&str],
+        limit: u32,
+    ) -> Result<Vec<SocialPost>> {
         let context = format!(
             "Platform: {:?}, Topics: {}. Generate posts from different accounts discussing these topics.",
             platform, topics.join(", ")
@@ -334,7 +350,11 @@ impl SocialScraper for ScenarioSocialScraper {
         self.generate(&context, limit).await
     }
 
-    async fn search_gofundme(&self, keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+    async fn search_gofundme(
+        &self,
+        keyword: &str,
+        _limit: u32,
+    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
         let _ = keyword;
         Ok(Vec::new())
     }
@@ -366,11 +386,20 @@ impl SocialScraper for FixtureSocialScraper {
         Ok(self.posts.clone())
     }
 
-    async fn search_topics(&self, _platform: &SocialPlatform, _topics: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+    async fn search_topics(
+        &self,
+        _platform: &SocialPlatform,
+        _topics: &[&str],
+        _limit: u32,
+    ) -> Result<Vec<SocialPost>> {
         Ok(self.posts.clone())
     }
 
-    async fn search_gofundme(&self, _keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+    async fn search_gofundme(
+        &self,
+        _keyword: &str,
+        _limit: u32,
+    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
         Ok(Vec::new())
     }
 }
@@ -422,7 +451,11 @@ impl FixtureExtractor {
 
 #[async_trait]
 impl SignalExtractor for FixtureExtractor {
-    async fn extract(&self, _content: &str, _source_url: &str) -> Result<crate::extractor::ExtractionResult> {
+    async fn extract(
+        &self,
+        _content: &str,
+        _source_url: &str,
+    ) -> Result<crate::extractor::ExtractionResult> {
         Ok(crate::extractor::ExtractionResult {
             nodes: self.nodes.clone(),
             implied_queries: Vec::new(),

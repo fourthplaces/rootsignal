@@ -357,7 +357,7 @@ pub struct StoryNode {
     pub type_diversity: u32,
     pub source_domains: Vec<String>,
     pub corroboration_depth: u32,
-    pub status: String,  // "emerging" or "confirmed"
+    pub status: String, // "emerging" or "confirmed"
     // M2: Story synthesis fields
     pub arc: Option<String>,
     pub category: Option<String>,
@@ -752,8 +752,8 @@ pub enum EdgeType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::safety::SensitivityLevel;
+    use chrono::Utc;
 
     fn test_meta() -> NodeMeta {
         NodeMeta {
@@ -787,7 +787,10 @@ mod tests {
         };
         assert_eq!(t.severity, Severity::High);
         assert_eq!(t.category.as_deref(), Some("housing"));
-        assert_eq!(t.what_would_help.as_deref(), Some("affordable housing policy"));
+        assert_eq!(
+            t.what_would_help.as_deref(),
+            Some("affordable housing policy")
+        );
     }
 
     #[test]
@@ -807,14 +810,20 @@ mod tests {
     fn haversine_sf_to_oakland() {
         // SF to Oakland is ~13km
         let dist = haversine_km(37.7749, -122.4194, 37.8044, -122.2712);
-        assert!((dist - 13.0).abs() < 2.0, "SF to Oakland should be ~13km, got {dist}");
+        assert!(
+            (dist - 13.0).abs() < 2.0,
+            "SF to Oakland should be ~13km, got {dist}"
+        );
     }
 
     #[test]
     fn haversine_sf_to_la() {
         // SF to LA is ~559km
         let dist = haversine_km(37.7749, -122.4194, 34.0522, -118.2437);
-        assert!((dist - 559.0).abs() < 10.0, "SF to LA should be ~559km, got {dist}");
+        assert!(
+            (dist - 559.0).abs() < 10.0,
+            "SF to LA should be ~559km, got {dist}"
+        );
     }
 
     #[test]

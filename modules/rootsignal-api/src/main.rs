@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -26,9 +26,9 @@ use twilio::TwilioService;
 mod graphql;
 mod jwt;
 
-use graphql::{build_schema, ApiSchema};
-use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
 use graphql::context::AuthContext;
+use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
+use graphql::{build_schema, ApiSchema};
 use jwt::JwtService;
 
 pub struct AppState {
@@ -106,9 +106,12 @@ async fn main() -> Result<()> {
     let config = Config::web_from_env();
     config.log_redacted();
 
-    let client =
-        GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
-            .await?;
+    let client = GraphClient::connect(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+    )
+    .await?;
 
     rootsignal_graph::migrate::migrate(&client)
         .await
@@ -165,7 +168,9 @@ async fn main() -> Result<()> {
     {
         graphql::mutations::start_scout_interval(client.clone(), config.clone(), scout_interval);
     } else if scout_interval > 0 {
-        info!("SCOUT_INTERVAL_HOURS={scout_interval} but API keys not set — scout interval disabled");
+        info!(
+            "SCOUT_INTERVAL_HOURS={scout_interval} but API keys not set — scout interval disabled"
+        );
     }
 
     let state = Arc::new(AppState {
@@ -230,14 +235,15 @@ async fn main() -> Result<()> {
         ))
         // Logging layer
         .layer(
-            tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(|request: &axum::http::Request<_>| {
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                |request: &axum::http::Request<_>| {
                     tracing::info_span!(
                         "http_request",
                         method = %request.method(),
                         path = %request.uri().path(),
                     )
-                }),
+                },
+            ),
         );
 
     let addr = format!("{host}:{port}");

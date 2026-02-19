@@ -11,11 +11,16 @@ mod harness;
 
 use harness::{search_result, TestContext};
 use rootsignal_common::CityNode;
-use rootsignal_scout::fixtures::{
-    CorpusSearcher, ScenarioSearcher, ScenarioSocialScraper,
-};
+use rootsignal_scout::fixtures::{CorpusSearcher, ScenarioSearcher, ScenarioSocialScraper};
 
-fn city_node(name: &str, slug: &str, lat: f64, lng: f64, radius_km: f64, geo_terms: &[&str]) -> CityNode {
+fn city_node(
+    name: &str,
+    slug: &str,
+    lat: f64,
+    lng: f64,
+    radius_km: f64,
+    geo_terms: &[&str],
+) -> CityNode {
     CityNode {
         id: uuid::Uuid::new_v4(),
         name: name.to_string(),
@@ -52,10 +57,26 @@ async fn event_page_produces_event_signals() {
         .run()
         .await;
 
-    assert!(stats.signals_extracted >= 1, "should extract at least 1 signal, got {}", stats.signals_extracted);
-    assert!(stats.signals_extracted <= 10, "shouldn't hallucinate dozens, got {}", stats.signals_extracted);
-    assert!(stats.by_type[0] >= 1, "should extract at least one Event, got {}", stats.by_type[0]);
-    assert!(stats.signals_stored >= 1, "at least one should survive pipeline, got {}", stats.signals_stored);
+    assert!(
+        stats.signals_extracted >= 1,
+        "should extract at least 1 signal, got {}",
+        stats.signals_extracted
+    );
+    assert!(
+        stats.signals_extracted <= 10,
+        "shouldn't hallucinate dozens, got {}",
+        stats.signals_extracted
+    );
+    assert!(
+        stats.by_type[0] >= 1,
+        "should extract at least one Event, got {}",
+        stats.by_type[0]
+    );
+    assert!(
+        stats.signals_stored >= 1,
+        "at least one should survive pipeline, got {}",
+        stats.signals_stored
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -79,10 +100,19 @@ async fn resource_page_produces_give_signals() {
         .run()
         .await;
 
-    assert!(stats.signals_extracted >= 1, "should extract at least 1 signal, got {}", stats.signals_extracted);
+    assert!(
+        stats.signals_extracted >= 1,
+        "should extract at least 1 signal, got {}",
+        stats.signals_extracted
+    );
     // Food shelf could produce Give (the service) and/or Ask (volunteer needs)
     let give_or_ask = stats.by_type[1] + stats.by_type[2]; // Give + Ask
-    assert!(give_or_ask >= 1, "should extract Give and/or Ask signals, got give={} ask={}", stats.by_type[1], stats.by_type[2]);
+    assert!(
+        give_or_ask >= 1,
+        "should extract Give and/or Ask signals, got give={} ask={}",
+        stats.by_type[1],
+        stats.by_type[2]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -232,14 +262,18 @@ async fn social_posts_produce_signals() {
         },
     ];
 
-    let stats = ctx
-        .scout()
-        .with_social_posts(posts)
-        .run()
-        .await;
+    let stats = ctx.scout().with_social_posts(posts).run().await;
 
-    assert!(stats.social_media_posts >= 2, "should process social posts, got {}", stats.social_media_posts);
-    assert!(stats.signals_extracted >= 1, "social posts should produce signals, got {}", stats.signals_extracted);
+    assert!(
+        stats.social_media_posts >= 2,
+        "should process social posts, got {}",
+        stats.social_media_posts
+    );
+    assert!(
+        stats.signals_extracted >= 1,
+        "social posts should produce signals, got {}",
+        stats.signals_extracted
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +321,14 @@ async fn portland_content_with_portland_profile() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node("Portland, Oregon", "portland", 45.5152, -122.6784, 20.0, &["Portland", "Oregon", "Multnomah", "OR"]))
+        .with_city(city_node(
+            "Portland, Oregon",
+            "portland",
+            45.5152,
+            -122.6784,
+            20.0,
+            &["Portland", "Oregon", "Multnomah", "OR"],
+        ))
         .with_web_content(include_str!("fixtures/portland_bike_repair.txt"))
         .with_search_results(vec![search_result(
             "https://communitycyclingcenter.org/clinics",
@@ -296,10 +337,19 @@ async fn portland_content_with_portland_profile() {
         .run()
         .await;
 
-    assert!(stats.signals_extracted >= 1, "Portland content should extract signals, got {}", stats.signals_extracted);
+    assert!(
+        stats.signals_extracted >= 1,
+        "Portland content should extract signals, got {}",
+        stats.signals_extracted
+    );
     // Bike repair clinics are Events and/or Gives
     let event_or_give = stats.by_type[0] + stats.by_type[1];
-    assert!(event_or_give >= 1, "should extract Event and/or Give, got event={} give={}", stats.by_type[0], stats.by_type[1]);
+    assert!(
+        event_or_give >= 1,
+        "should extract Event and/or Give, got event={} give={}",
+        stats.by_type[0],
+        stats.by_type[1]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +365,22 @@ async fn nyc_mutual_aid_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node("New York City", "nyc", 40.7128, -74.0060, 25.0, &["New York", "NYC", "Brooklyn", "Manhattan", "Queens", "Bronx", "NY"]))
+        .with_city(city_node(
+            "New York City",
+            "nyc",
+            40.7128,
+            -74.0060,
+            25.0,
+            &[
+                "New York",
+                "NYC",
+                "Brooklyn",
+                "Manhattan",
+                "Queens",
+                "Bronx",
+                "NY",
+            ],
+        ))
         .with_web_content(include_str!("fixtures/nyc_mutual_aid.txt"))
         .with_search_results(vec![search_result(
             "https://crownheightsmutualaid.org/update",
@@ -324,10 +389,18 @@ async fn nyc_mutual_aid_extraction() {
         .run()
         .await;
 
-    assert!(stats.signals_extracted >= 1, "NYC mutual aid should extract signals, got {}", stats.signals_extracted);
+    assert!(
+        stats.signals_extracted >= 1,
+        "NYC mutual aid should extract signals, got {}",
+        stats.signals_extracted
+    );
     // Mutual aid pages typically produce Give (distributions), Ask (urgent needs), and Event (meal service)
     let total_typed = stats.by_type.iter().sum::<u32>();
-    assert!(total_typed >= 1, "should produce typed signals, got {:?}", stats.by_type);
+    assert!(
+        total_typed >= 1,
+        "should produce typed signals, got {:?}",
+        stats.by_type
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +416,14 @@ async fn berlin_german_language_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node("Berlin, Germany", "berlin", 52.5200, 13.4050, 20.0, &["Berlin", "Kreuzberg", "Neukölln", "Friedrichshain", "Mitte"]))
+        .with_city(city_node(
+            "Berlin, Germany",
+            "berlin",
+            52.5200,
+            13.4050,
+            20.0,
+            &["Berlin", "Kreuzberg", "Neukölln", "Friedrichshain", "Mitte"],
+        ))
         .with_web_content(include_str!("fixtures/berlin_neighborhood_council.txt"))
         .with_search_results(vec![search_result(
             "https://neukoelln-nord.de/quartiersrat",
@@ -358,7 +438,11 @@ async fn berlin_german_language_extraction() {
         stats.signals_extracted,
     );
     // Neighborhood council meeting is an Event
-    assert!(stats.by_type[0] >= 1, "should extract at least one Event, got {}", stats.by_type[0]);
+    assert!(
+        stats.by_type[0] >= 1,
+        "should extract at least one Event, got {}",
+        stats.by_type[0]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +573,22 @@ async fn nyc_community_discussion_extracts_responses() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node("New York City", "nyc", 40.7128, -74.0060, 25.0, &["New York", "NYC", "Brooklyn", "Manhattan", "Queens", "Bronx", "NY"]))
+        .with_city(city_node(
+            "New York City",
+            "nyc",
+            40.7128,
+            -74.0060,
+            25.0,
+            &[
+                "New York",
+                "NYC",
+                "Brooklyn",
+                "Manhattan",
+                "Queens",
+                "Bronx",
+                "NY",
+            ],
+        ))
         .with_web_content(include_str!("fixtures/nyc_noise_complaint_discussion.txt"))
         .with_search_results(vec![search_result(
             "https://reddit.com/r/CrownHeights/comments/xyz789",
@@ -662,7 +761,10 @@ async fn reddit_astroturf_detected() {
             .iter()
             .filter(|s| {
                 let t = s.title.to_lowercase();
-                t.contains("food") || t.contains("cleanup") || t.contains("mutual aid") || t.contains("park")
+                t.contains("food")
+                    || t.contains("cleanup")
+                    || t.contains("mutual aid")
+                    || t.contains("park")
             })
             .collect();
         let astroturf_signals: Vec<_> = signals
@@ -674,12 +776,19 @@ async fn reddit_astroturf_detected() {
             .collect();
 
         if !organic_signals.is_empty() && !astroturf_signals.is_empty() {
-            let max_organic = organic_signals.iter().map(|s| s.confidence).fold(0.0f32, f32::max);
-            let max_astroturf = astroturf_signals.iter().map(|s| s.confidence).fold(0.0f32, f32::max);
+            let max_organic = organic_signals
+                .iter()
+                .map(|s| s.confidence)
+                .fold(0.0f32, f32::max);
+            let max_astroturf = astroturf_signals
+                .iter()
+                .map(|s| s.confidence)
+                .fold(0.0f32, f32::max);
             assert!(
                 max_organic >= max_astroturf,
                 "organic signals ({:.2}) should have >= confidence than astroturf ({:.2})",
-                max_organic, max_astroturf,
+                max_organic,
+                max_astroturf,
             );
         }
     }
@@ -741,7 +850,10 @@ async fn tension_signals_rank_higher_than_routine() {
     assert!(
         has_urgent,
         "top 3 signals by confidence should include Tension or Ask; got: {:?}",
-        top_n.iter().map(|s| (&s.title, &s.node_type, s.confidence)).collect::<Vec<_>>(),
+        top_n
+            .iter()
+            .map(|s| (&s.title, &s.node_type, s.confidence))
+            .collect::<Vec<_>>(),
     );
 }
 
@@ -806,7 +918,8 @@ async fn corroborated_signal_has_multiple_evidence() {
     assert!(
         stats2.signals_deduplicated >= 1 || stats2.signals_stored == 0,
         "newspaper article should corroborate existing signal; deduped={}, stored={}",
-        stats2.signals_deduplicated, stats2.signals_stored,
+        stats2.signals_deduplicated,
+        stats2.signals_stored,
     );
 
     // Check evidence count on corroborated signals
@@ -821,7 +934,8 @@ async fn corroborated_signal_has_multiple_evidence() {
         assert!(
             evidence.len() >= 2,
             "corroborated signal should have >= 2 evidence nodes; got {} for '{}'",
-            evidence.len(), signal.title,
+            evidence.len(),
+            signal.title,
         );
     }
 }
@@ -895,11 +1009,12 @@ async fn coordinated_social_posts_detected() {
          session' for the Hennepin Avenue reconstruction project, but the event is actually \
          organized by the developer's PR firm, not the city. All 4 pages were created in the \
          last month and have no other content.",
-    ).with_system_prompt(
+    )
+    .with_system_prompt(
         "Generate posts from 4 different Facebook pages that are clearly coordinated. \
          Same event described with near-identical language. Each post should have a different \
          page name but suspiciously similar phrasing. Include hashtags. \
-         Return JSON: {\"posts\": [{\"content\": \"...\", \"author\": \"...\", \"url\": \"...\"}]}"
+         Return JSON: {\"posts\": [{\"content\": \"...\", \"author\": \"...\", \"url\": \"...\"}]}",
     );
 
     let searcher = ScenarioSearcher::new(
@@ -994,6 +1109,9 @@ async fn city_wide_signals_get_center_coordinates() {
         !city_precision.is_empty(),
         "at least one signal should have city-level precision (backfilled), \
          precisions found: {:?}",
-        geo_signals.iter().map(|s| &s.geo_precision).collect::<Vec<_>>(),
+        geo_signals
+            .iter()
+            .map(|s| &s.geo_precision)
+            .collect::<Vec<_>>(),
     );
 }

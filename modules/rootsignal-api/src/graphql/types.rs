@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, EvidenceNode, EventNode, GiveNode, NodeMeta, NoticeNode,
-    StoryNode, TensionNode, Node,
+    ActorNode, AskNode, EventNode, EvidenceNode, GiveNode, Node, NodeMeta, NoticeNode, StoryNode,
+    TensionNode,
 };
 use rootsignal_graph::PublicGraphReader;
 
@@ -422,7 +422,10 @@ impl GqlTensionSignal {
     async fn responses(&self, ctx: &Context<'_>) -> Result<Vec<GqlSignal>> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
         let nodes = reader.tension_responses(self.0.meta.id).await?;
-        Ok(nodes.into_iter().map(|tr| GqlSignal::from(tr.node)).collect())
+        Ok(nodes
+            .into_iter()
+            .map(|tr| GqlSignal::from(tr.node))
+            .collect())
     }
 }
 
@@ -567,4 +570,3 @@ impl GqlActor {
         Ok(stories.into_iter().map(GqlStory).collect())
     }
 }
-

@@ -95,7 +95,7 @@ async fn run_actor_extraction_inner(
            AND NOT ()-[:ACTED_IN]->(n)
          RETURN n.id AS id, n.title AS title, n.summary AS summary
          ORDER BY n.extracted_at DESC
-         LIMIT 200"
+         LIMIT 200",
     );
 
     let mut stream = client.inner().execute(q).await?;
@@ -119,7 +119,10 @@ async fn run_actor_extraction_inner(
         return Ok(stats);
     }
 
-    info!(count = signals.len(), "Actor extractor: found signals without actors");
+    info!(
+        count = signals.len(),
+        "Actor extractor: found signals without actors"
+    );
 
     let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
 

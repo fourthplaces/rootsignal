@@ -163,8 +163,8 @@ fn load_generated_scenario(path: &Path) -> anyhow::Result<ScenarioEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{Geography, World};
     use crate::judge::JudgeCriteria;
+    use crate::world::{Geography, World};
 
     fn test_world() -> World {
         World {
@@ -195,14 +195,12 @@ mod tests {
 
     #[test]
     fn from_entries_works() {
-        let entries = vec![
-            ScenarioEntry {
-                name: "test".to_string(),
-                world: test_world(),
-                criteria: test_criteria(),
-                source: ScenarioSource::HandWritten,
-            },
-        ];
+        let entries = vec![ScenarioEntry {
+            name: "test".to_string(),
+            world: test_world(),
+            criteria: test_criteria(),
+            source: ScenarioSource::HandWritten,
+        }];
         let gym = ScenarioGym::from_entries(entries);
         assert_eq!(gym.scenarios().len(), 1);
         assert_eq!(gym.hand_written_count(), 1);

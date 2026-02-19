@@ -1,7 +1,11 @@
 use rootsignal_common::SourceType;
 
 /// Build a canonical key: `city_slug:source_type:canonical_value`.
-pub fn make_canonical_key(city_slug: &str, source_type: SourceType, canonical_value: &str) -> String {
+pub fn make_canonical_key(
+    city_slug: &str,
+    source_type: SourceType,
+    canonical_value: &str,
+) -> String {
     format!("{}:{}:{}", city_slug, source_type, canonical_value)
 }
 

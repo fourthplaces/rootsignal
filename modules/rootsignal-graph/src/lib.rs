@@ -1,6 +1,7 @@
 pub mod cause_heat;
 pub mod client;
 pub mod cluster;
+pub mod migrate;
 pub mod reader;
 pub mod response;
 pub mod similarity;
@@ -9,7 +10,6 @@ pub mod synthesizer;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
 pub mod writer;
-pub mod migrate;
 
 pub use client::GraphClient;
 pub use cluster::Clusterer;
@@ -21,8 +21,8 @@ pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
     GatheringFinderTarget, GraphWriter, InvestigationTarget, ReapStats, ResponseFinderTarget,
     ResponseHeuristic, SignalTypeCounts, SourceBrief, SourceStats, StoryBrief, StoryGrowth,
-    TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent,
-    TensionResponseShape, UnmetTension,
+    TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent, TensionResponseShape,
+    UnmetTension,
 };
 
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).

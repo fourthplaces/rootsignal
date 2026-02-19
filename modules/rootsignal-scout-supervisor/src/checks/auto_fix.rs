@@ -18,7 +18,8 @@ pub async fn run_auto_fixes(
     stats.orphaned_edges_deleted = fix_orphaned_acted_in_edges(client).await?;
     stats.actors_merged = fix_duplicate_actors(client).await?;
     stats.empty_signals_deleted = fix_empty_signals(client).await?;
-    stats.fake_coords_nulled = fix_fake_city_center_coords(client, city_center_lat, city_center_lng).await?;
+    stats.fake_coords_nulled =
+        fix_fake_city_center_coords(client, city_center_lat, city_center_lng).await?;
 
     info!("{stats}");
     Ok(stats)
@@ -30,7 +31,7 @@ async fn fix_orphaned_evidence(client: &GraphClient) -> Result<u64, neo4rs::Erro
         "MATCH (ev:Evidence)
          WHERE NOT ()-[:SOURCED_FROM]->(ev)
          DETACH DELETE ev
-         RETURN count(ev) AS deleted"
+         RETURN count(ev) AS deleted",
     );
 
     let mut stream = client.inner().execute(q).await?;
@@ -53,7 +54,7 @@ async fn fix_orphaned_acted_in_edges(client: &GraphClient) -> Result<u64, neo4rs
         "MATCH (a:Actor)
          WHERE NOT (a)<-[:ACTED_IN]-()
          DETACH DELETE a
-         RETURN count(a) AS deleted"
+         RETURN count(a) AS deleted",
     );
 
     let mut stream = client.inner().execute(q).await?;
@@ -86,7 +87,7 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error
          RETURN a1.id AS keep_id, a2.id AS drop_id,
                 a1.name AS keep_name, a2.name AS drop_name,
                 CASE WHEN a1_count >= a2_count THEN a1.id ELSE a2.id END AS winner_id,
-                CASE WHEN a1_count >= a2_count THEN a2.id ELSE a1.id END AS loser_id"
+                CASE WHEN a1_count >= a2_count THEN a2.id ELSE a1.id END AS loser_id",
     );
 
     let mut stream = client.inner().execute(q).await?;
@@ -109,7 +110,7 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error
             "MATCH (loser:Actor {id: $loser_id})<-[r:ACTED_IN]-(sig)
              MATCH (winner:Actor {id: $winner_id})
              CREATE (sig)-[:ACTED_IN {role: r.role}]->(winner)
-             DELETE r"
+             DELETE r",
         )
         .param("loser_id", loser_id.clone())
         .param("winner_id", winner_id.clone());
@@ -123,8 +124,8 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error
         }
 
         // Delete the loser Actor
-        let delete = query("MATCH (a:Actor {id: $id}) DETACH DELETE a")
-            .param("id", loser_id.clone());
+        let delete =
+            query("MATCH (a:Actor {id: $id}) DETACH DELETE a").param("id", loser_id.clone());
 
         match client.inner().run(delete).await {
             Ok(_) => merged += 1,

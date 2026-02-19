@@ -3,9 +3,9 @@ use tracing::{info, warn};
 
 use ai_client::claude::Claude;
 
+use super::triage::{Suspect, SuspectType};
 use crate::budget::BudgetTracker;
 use crate::types::{IssueType, Severity, ValidationIssue};
-use super::triage::{Suspect, SuspectType};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const SONNET_MODEL: &str = "claude-sonnet-4-5-20250929";
@@ -34,18 +34,10 @@ pub async fn check_suspects(
         }
 
         let result = match suspect.check_type {
-            SuspectType::Misclassification => {
-                check_misclassification(&haiku, &suspect).await
-            }
-            SuspectType::IncoherentStory => {
-                check_incoherent_story(&sonnet, &suspect).await
-            }
-            SuspectType::BadRespondsTo => {
-                check_bad_responds_to(&sonnet, &suspect).await
-            }
-            SuspectType::NearDuplicate => {
-                check_near_duplicate(&haiku, &suspect).await
-            }
+            SuspectType::Misclassification => check_misclassification(&haiku, &suspect).await,
+            SuspectType::IncoherentStory => check_incoherent_story(&sonnet, &suspect).await,
+            SuspectType::BadRespondsTo => check_bad_responds_to(&sonnet, &suspect).await,
+            SuspectType::NearDuplicate => check_near_duplicate(&haiku, &suspect).await,
             SuspectType::LowConfidenceHighVisibility => {
                 // No LLM check needed — the heuristic itself is the flag
                 Ok(Some(ValidationIssue::new(
@@ -58,7 +50,8 @@ pub async fn check_suspects(
                         "Signal '{}' has very low confidence but appears in a confirmed story. {}",
                         suspect.title, suspect.context,
                     ),
-                    "Review signal quality. Consider removing from story or improving evidence.".to_string(),
+                    "Review signal quality. Consider removing from story or improving evidence."
+                        .to_string(),
                 )))
             }
         };
@@ -94,7 +87,8 @@ async fn check_misclassification(
     claude: &Claude,
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
-    let system = "You are a signal classifier. Given a signal's title, summary, and source evidence, \
+    let system =
+        "You are a signal classifier. Given a signal's title, summary, and source evidence, \
         determine if it is correctly classified. Signal types are: Event (time-bound gathering), \
         Give (available resource/service), Ask (community need requesting help), \
         Notice (official advisory/policy), Tension (community conflict or systemic problem). \
@@ -111,7 +105,7 @@ async fn check_misclassification(
     if response.starts_with("WRONG:") {
         let suggested_type = response.strip_prefix("WRONG:").unwrap_or("unknown").trim();
         Ok(Some(ValidationIssue::new(
-            "",  // city set by caller
+            "", // city set by caller
             IssueType::Misclassification,
             Severity::Warning,
             suspect.id,

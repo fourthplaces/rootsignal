@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use tracing::warn;
 
-use crate::types::{Severity, SupervisorStats, ValidationIssue};
 use super::backend::NotifyBackend;
+use crate::types::{Severity, SupervisorStats, ValidationIssue};
 
 /// Slack incoming webhook notification backend.
 pub struct SlackWebhook {
@@ -28,7 +28,8 @@ impl SlackWebhook {
     }
 
     async fn post(&self, payload: serde_json::Value) -> anyhow::Result<()> {
-        let resp = self.http
+        let resp = self
+            .http
             .post(&self.webhook_url)
             .json(&payload)
             .send()
@@ -86,26 +87,39 @@ impl NotifyBackend for SlackWebhook {
             return Ok(());
         }
 
-        let mut lines = vec![
-            ":broom: *Scout Supervisor Run Complete*".to_string(),
-        ];
+        let mut lines = vec![":broom: *Scout Supervisor Run Complete*".to_string()];
 
         if has_fixes {
             lines.push("*Auto-fixes applied:*".to_string());
             if auto.orphaned_evidence_deleted > 0 {
-                lines.push(format!("  - Orphaned evidence deleted: {}", auto.orphaned_evidence_deleted));
+                lines.push(format!(
+                    "  - Orphaned evidence deleted: {}",
+                    auto.orphaned_evidence_deleted
+                ));
             }
             if auto.orphaned_edges_deleted > 0 {
-                lines.push(format!("  - Orphaned actors deleted: {}", auto.orphaned_edges_deleted));
+                lines.push(format!(
+                    "  - Orphaned actors deleted: {}",
+                    auto.orphaned_edges_deleted
+                ));
             }
             if auto.actors_merged > 0 {
-                lines.push(format!("  - Duplicate actors merged: {}", auto.actors_merged));
+                lines.push(format!(
+                    "  - Duplicate actors merged: {}",
+                    auto.actors_merged
+                ));
             }
             if auto.empty_signals_deleted > 0 {
-                lines.push(format!("  - Empty signals deleted: {}", auto.empty_signals_deleted));
+                lines.push(format!(
+                    "  - Empty signals deleted: {}",
+                    auto.empty_signals_deleted
+                ));
             }
             if auto.fake_coords_nulled > 0 {
-                lines.push(format!("  - Fake coordinates nulled: {}", auto.fake_coords_nulled));
+                lines.push(format!(
+                    "  - Fake coordinates nulled: {}",
+                    auto.fake_coords_nulled
+                ));
             }
         }
 

@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use tracing::warn;
 
-use crate::types::{SupervisorStats, ValidationIssue};
 use super::backend::NotifyBackend;
 use super::slack::SlackWebhook;
+use crate::types::{SupervisorStats, ValidationIssue};
 
 /// Routes notifications to different backends based on configuration.
 /// Supports separate Slack channels for auto-fix digests vs flagged issues.
@@ -24,10 +24,10 @@ impl NotifyRouter {
     pub fn from_env() -> Option<Self> {
         let default_url = std::env::var("SLACK_WEBHOOK_URL").ok()?;
 
-        let flags_url = std::env::var("SLACK_WEBHOOK_URL_FLAGS")
-            .unwrap_or_else(|_| default_url.clone());
-        let digest_url = std::env::var("SLACK_WEBHOOK_URL_DIGEST")
-            .unwrap_or_else(|_| default_url.clone());
+        let flags_url =
+            std::env::var("SLACK_WEBHOOK_URL_FLAGS").unwrap_or_else(|_| default_url.clone());
+        let digest_url =
+            std::env::var("SLACK_WEBHOOK_URL_DIGEST").unwrap_or_else(|_| default_url.clone());
 
         Some(Self {
             flags_backend: Box::new(SlackWebhook::new(flags_url)),

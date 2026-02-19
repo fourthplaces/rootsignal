@@ -36,7 +36,10 @@ impl<'a> Bootstrapper<'a> {
 
     /// Run the cold start bootstrap. Returns number of sources discovered.
     pub async fn run(&self) -> Result<u32> {
-        info!(city = self.city_node.name.as_str(), "Starting cold start bootstrap...");
+        info!(
+            city = self.city_node.name.as_str(),
+            "Starting cold start bootstrap..."
+        );
 
         // Step 1: Generate seed queries using Claude Haiku
         let queries = self.generate_seed_queries().await?;
@@ -115,10 +118,8 @@ impl<'a> Bootstrapper<'a> {
 Return ONLY the queries, one per line. No numbering, no explanations."#
         );
 
-        let claude = ai_client::claude::Claude::new(
-            &self.anthropic_api_key,
-            "claude-haiku-4-5-20251001",
-        );
+        let claude =
+            ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
 
         let response = claude.complete(&prompt).await?;
 
@@ -169,28 +170,47 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         };
 
         let mut sources = vec![
-            make(SourceType::EventbriteQuery, &format!(
-                "https://www.eventbrite.com/d/united-states--{}/community/",
-                city_name_encoded
-            ), SourceRole::Response),
-            make(SourceType::EventbriteQuery, &format!(
-                "https://www.eventbrite.com/d/united-states--{}/volunteer/",
-                city_name_encoded
-            ), SourceRole::Response),
-            make(SourceType::VolunteerMatchQuery, &format!(
-                "https://www.volunteermatch.org/search?l={}&k=&v=true",
-                city_name_encoded
-            ), SourceRole::Response),
-            make(SourceType::GoFundMeQuery, &format!(
-                "https://www.gofundme.com/discover/search?q={}&location={}",
-                slug, city_name_encoded
-            ), SourceRole::Response),
+            make(
+                SourceType::EventbriteQuery,
+                &format!(
+                    "https://www.eventbrite.com/d/united-states--{}/community/",
+                    city_name_encoded
+                ),
+                SourceRole::Response,
+            ),
+            make(
+                SourceType::EventbriteQuery,
+                &format!(
+                    "https://www.eventbrite.com/d/united-states--{}/volunteer/",
+                    city_name_encoded
+                ),
+                SourceRole::Response,
+            ),
+            make(
+                SourceType::VolunteerMatchQuery,
+                &format!(
+                    "https://www.volunteermatch.org/search?l={}&k=&v=true",
+                    city_name_encoded
+                ),
+                SourceRole::Response,
+            ),
+            make(
+                SourceType::GoFundMeQuery,
+                &format!(
+                    "https://www.gofundme.com/discover/search?q={}&location={}",
+                    slug, city_name_encoded
+                ),
+                SourceRole::Response,
+            ),
         ];
 
         // Reddit — discover relevant subreddits via LLM
         match self.discover_subreddits().await {
             Ok(subreddits) => {
-                info!(count = subreddits.len(), "Discovered subreddits for {}", city_name);
+                info!(
+                    count = subreddits.len(),
+                    "Discovered subreddits for {}", city_name
+                );
                 for sub in subreddits {
                     sources.push(make(
                         SourceType::Reddit,
@@ -224,16 +244,19 @@ Return ONLY the subreddit names (without r/ prefix), one per line. No numbering,
 Maximum 8 subreddits."#
         );
 
-        let claude = ai_client::claude::Claude::new(
-            &self.anthropic_api_key,
-            "claude-haiku-4-5-20251001",
-        );
+        let claude =
+            ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
 
         let response = claude.complete(&prompt).await?;
 
         let subreddits: Vec<String> = response
             .lines()
-            .map(|l| l.trim().trim_start_matches("r/").trim_start_matches("/r/").to_string())
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches("r/")
+                    .trim_start_matches("/r/")
+                    .to_string()
+            })
             .filter(|l| !l.is_empty() && !l.contains(' ') && l.len() >= 2)
             .take(8)
             .collect();
@@ -261,10 +284,7 @@ pub async fn tension_seed_queries(
 
     for (title, what_would_help) in &tensions {
         let help_text = what_would_help.as_deref().unwrap_or(title);
-        let query = format!(
-            "organizations helping with {} in {}",
-            help_text, city
-        );
+        let query = format!("organizations helping with {} in {}", help_text, city);
 
         let cv = query.clone();
         let ck = sources::make_canonical_key(&city_node.slug, SourceType::WebQuery, &cv);
@@ -293,6 +313,9 @@ pub async fn tension_seed_queries(
         });
     }
 
-    info!(queries = all_sources.len(), "Generated tension-seeded queries");
+    info!(
+        queries = all_sources.len(),
+        "Generated tension-seeded queries"
+    );
     Ok(all_sources)
 }

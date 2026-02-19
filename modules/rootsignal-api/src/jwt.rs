@@ -84,7 +84,11 @@ fn phone_to_uuid(phone: &str) -> Uuid {
 
 /// Build a Set-Cookie header that sets the JWT token.
 pub fn jwt_cookie(token: &str) -> String {
-    let secure = if cfg!(debug_assertions) { "" } else { "; Secure" };
+    let secure = if cfg!(debug_assertions) {
+        ""
+    } else {
+        "; Secure"
+    };
     format!(
         "{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={TOKEN_DURATION_SECS}{secure}"
     )

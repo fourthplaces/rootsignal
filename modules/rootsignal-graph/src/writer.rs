@@ -4,9 +4,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EvidenceNode,
-    EventNode, GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode,
-    SourceRole, SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
+    ActorNode, AskNode, CityNode, ClusterSnapshot, DiscoveryMethod, EventNode, EvidenceNode,
+    GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
+    SourceType, StoryNode, TensionNode, ASK_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
@@ -23,11 +23,7 @@ impl GraphWriter {
     }
 
     /// Create a typed node in the graph. Returns the node's UUID.
-    pub async fn create_node(
-        &self,
-        node: &Node,
-        embedding: &[f32],
-    ) -> Result<Uuid, neo4rs::Error> {
+    pub async fn create_node(&self, node: &Node, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         match node {
             Node::Event(n) => self.create_event(n, embedding).await,
             Node::Give(n) => self.create_give(n, embedding).await,
@@ -42,11 +38,7 @@ impl GraphWriter {
         }
     }
 
-    async fn create_event(
-        &self,
-        n: &EventNode,
-        embedding: &[f32],
-    ) -> Result<Uuid, neo4rs::Error> {
+    async fn create_event(&self, n: &EventNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (e:Event {
                 id: $id,
@@ -116,11 +108,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_give(
-        &self,
-        n: &GiveNode,
-        embedding: &[f32],
-    ) -> Result<Uuid, neo4rs::Error> {
+    async fn create_give(&self, n: &GiveNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (g:Give {
                 id: $id,
@@ -176,11 +164,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_ask(
-        &self,
-        n: &AskNode,
-        embedding: &[f32],
-    ) -> Result<Uuid, neo4rs::Error> {
+    async fn create_ask(&self, n: &AskNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (a:Ask {
                 id: $id,
@@ -221,17 +205,13 @@ impl GraphWriter {
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
         )
-
-        .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
-            "urgency",
-            urgency_str(n.urgency),
+            "location_name",
+            n.meta.location_name.as_deref().unwrap_or(""),
         )
+        .param("urgency", urgency_str(n.urgency))
         .param("what_needed", n.what_needed.as_deref().unwrap_or(""))
-        .param(
-            "action_url",
-            n.action_url.clone().unwrap_or_default(),
-        )
+        .param("action_url", n.action_url.clone().unwrap_or_default())
         .param("goal", n.goal.clone().unwrap_or_default())
         .param("embedding", embedding_to_f64(embedding));
 
@@ -287,8 +267,10 @@ impl GraphWriter {
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
         )
-
-        .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
+        .param(
+            "location_name",
+            n.meta.location_name.as_deref().unwrap_or(""),
+        )
         .param("severity", severity_str(n.severity))
         .param("category", n.category.clone().unwrap_or_default())
         .param(
@@ -297,7 +279,10 @@ impl GraphWriter {
                 .map(|dt| format_datetime(&dt))
                 .unwrap_or_default(),
         )
-        .param("source_authority", n.source_authority.clone().unwrap_or_default())
+        .param(
+            "source_authority",
+            n.source_authority.clone().unwrap_or_default(),
+        )
         .param("embedding", embedding_to_f64(embedding));
 
         let q = add_location_params(q, &n.meta);
@@ -351,14 +336,16 @@ impl GraphWriter {
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
         )
-
-        .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param(
-            "severity",
-            severity_str(n.severity),
+            "location_name",
+            n.meta.location_name.as_deref().unwrap_or(""),
         )
+        .param("severity", severity_str(n.severity))
         .param("category", n.category.as_deref().unwrap_or(""))
-        .param("what_would_help", n.what_would_help.as_deref().unwrap_or(""))
+        .param(
+            "what_would_help",
+            n.what_would_help.as_deref().unwrap_or(""),
+        )
         .param("embedding", embedding_to_f64(embedding));
 
         let q = add_location_params(q, &n.meta);
@@ -408,7 +395,10 @@ impl GraphWriter {
         .param("content_hash", evidence.content_hash.as_str())
         .param("snippet", evidence.snippet.clone().unwrap_or_default())
         .param("relevance", evidence.relevance.clone().unwrap_or_default())
-        .param("evidence_confidence", evidence.evidence_confidence.unwrap_or(0.0) as f64)
+        .param(
+            "evidence_confidence",
+            evidence.evidence_confidence.unwrap_or(0.0) as f64,
+        )
         .param("signal_id", signal_node_id.to_string());
 
         self.client.graph.run(q).await?;
@@ -455,7 +445,13 @@ impl GraphWriter {
     ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
         let mut best: Option<DuplicateMatch> = None;
 
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+        for nt in &[
+            NodeType::Event,
+            NodeType::Give,
+            NodeType::Ask,
+            NodeType::Notice,
+            NodeType::Tension,
+        ] {
             if let Some(m) = self.vector_search(*nt, embedding, threshold).await? {
                 if best.as_ref().map_or(true, |b| m.similarity > b.similarity) {
                     best = Some(m);
@@ -589,7 +585,12 @@ impl GraphWriter {
         }
 
         // Query each label once with all titles for that type
-        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice] {
+        for nt in &[
+            NodeType::Event,
+            NodeType::Give,
+            NodeType::Ask,
+            NodeType::Notice,
+        ] {
             let label = match nt {
                 NodeType::Event => "Event",
                 NodeType::Give => "Give",
@@ -659,7 +660,9 @@ impl GraphWriter {
         self.client.graph.run(q).await?;
 
         // Recompute source diversity from all evidence nodes
-        let (diversity, external_ratio) = self.compute_source_diversity(node_id, node_type, entity_mappings).await?;
+        let (diversity, external_ratio) = self
+            .compute_source_diversity(node_id, node_type, entity_mappings)
+            .await?;
 
         let q = query(&format!(
             "MATCH (n:{} {{id: $id}})
@@ -856,8 +859,9 @@ impl GraphWriter {
             "OPTIONAL MATCH (existing:ScoutLock {city: $city})
              WITH existing WHERE existing IS NULL
              CREATE (lock:ScoutLock {city: $city, started_at: datetime()})
-             RETURN lock IS NOT NULL AS acquired"
-        ).param("city", city);
+             RETURN lock IS NOT NULL AS acquired",
+        )
+        .param("city", city);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -896,9 +900,10 @@ impl GraphWriter {
     pub async fn set_city_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
         self.client
             .graph
-            .run(query(
-                "MATCH (c:City {slug: $slug}) SET c.last_scout_completed_at = datetime()"
-            ).param("slug", slug))
+            .run(
+                query("MATCH (c:City {slug: $slug}) SET c.last_scout_completed_at = datetime()")
+                    .param("slug", slug),
+            )
             .await?;
         Ok(())
     }
@@ -921,7 +926,10 @@ impl GraphWriter {
     }
 
     /// Get the earliest time a source becomes due for scraping.
-    pub async fn next_source_due(&self, city: &str) -> Result<Option<chrono::DateTime<Utc>>, neo4rs::Error> {
+    pub async fn next_source_due(
+        &self,
+        city: &str,
+    ) -> Result<Option<chrono::DateTime<Utc>>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {city: $city, active: true})
              WHERE s.last_scraped IS NOT NULL
@@ -932,7 +940,9 @@ impl GraphWriter {
         if let Some(row) = result.next().await? {
             let next_due_str: String = row.get("next_due").unwrap_or_default();
             if !next_due_str.is_empty() {
-                if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&next_due_str, "%Y-%m-%dT%H:%M:%S%.f") {
+                if let Ok(ndt) =
+                    chrono::NaiveDateTime::parse_from_str(&next_due_str, "%Y-%m-%dT%H:%M:%S%.f")
+                {
                     return Ok(Some(ndt.and_utc()));
                 }
             }
@@ -965,7 +975,7 @@ impl GraphWriter {
                 source_domains: $source_domains,
                 corroboration_depth: $corroboration_depth,
                 status: $status
-            })"
+            })",
         )
         .param("id", story.id.to_string())
         .param("headline", story.headline.as_str())
@@ -976,7 +986,6 @@ impl GraphWriter {
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
-
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -987,7 +996,9 @@ impl GraphWriter {
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
-            _ => q.param::<Option<f64>>("centroid_lat", None).param::<Option<f64>>("centroid_lng", None),
+            _ => q
+                .param::<Option<f64>>("centroid_lat", None)
+                .param::<Option<f64>>("centroid_lng", None),
         };
 
         self.client.graph.run(q).await?;
@@ -1014,7 +1025,7 @@ impl GraphWriter {
                  s.type_diversity = $type_diversity,
                  s.source_domains = $source_domains,
                  s.corroboration_depth = $corroboration_depth,
-                 s.status = $status"
+                 s.status = $status",
         )
         .param("id", story.id.to_string())
         .param("headline", story.headline.as_str())
@@ -1024,7 +1035,6 @@ impl GraphWriter {
         .param("velocity", story.velocity)
         .param("energy", story.energy)
         .param("dominant_type", story.dominant_type.as_str())
-
         .param("sensitivity", story.sensitivity.as_str())
         .param("source_count", story.source_count as i64)
         .param("entity_count", story.entity_count as i64)
@@ -1035,7 +1045,9 @@ impl GraphWriter {
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
-            _ => q.param::<Option<f64>>("centroid_lat", None).param::<Option<f64>>("centroid_lng", None),
+            _ => q
+                .param::<Option<f64>>("centroid_lat", None)
+                .param::<Option<f64>>("centroid_lng", None),
         };
 
         self.client.graph.run(q).await?;
@@ -1064,7 +1076,7 @@ impl GraphWriter {
     pub async fn clear_story_signals(&self, story_id: Uuid) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Story {id: $story_id})-[r:CONTAINS]->()
-             DELETE r"
+             DELETE r",
         )
         .param("story_id", story_id.to_string());
 
@@ -1081,7 +1093,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (new:Story {id: $new_id})
              MATCH (old:Story {id: $old_id})
-             MERGE (new)-[:EVOLVED_FROM]->(old)"
+             MERGE (new)-[:EVOLVED_FROM]->(old)",
         )
         .param("new_id", new_story_id.to_string())
         .param("old_id", old_story_id.to_string());
@@ -1091,7 +1103,10 @@ impl GraphWriter {
     }
 
     /// Create a cluster snapshot for velocity tracking.
-    pub async fn create_cluster_snapshot(&self, snapshot: &ClusterSnapshot) -> Result<(), neo4rs::Error> {
+    pub async fn create_cluster_snapshot(
+        &self,
+        snapshot: &ClusterSnapshot,
+    ) -> Result<(), neo4rs::Error> {
         let q = query(
             "CREATE (cs:ClusterSnapshot {
                 id: $id,
@@ -1099,7 +1114,7 @@ impl GraphWriter {
                 signal_count: $signal_count,
                 entity_count: $entity_count,
                 run_at: datetime($run_at)
-            })"
+            })",
         )
         .param("id", snapshot.id.to_string())
         .param("story_id", snapshot.story_id.to_string())
@@ -1117,7 +1132,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (s:Story)
              OPTIONAL MATCH (s)-[:CONTAINS]->(n)
-             RETURN s.id AS story_id, collect(n.id) AS signal_ids"
+             RETURN s.id AS story_id, collect(n.id) AS signal_ids",
         );
 
         let mut results = Vec::new();
@@ -1151,7 +1166,7 @@ impl GraphWriter {
                  s.narrative = $narrative,
                  s.arc = $arc,
                  s.category = $category,
-                 s.action_guidance = $action_guidance"
+                 s.action_guidance = $action_guidance",
         )
         .param("id", story_id.to_string())
         .param("headline", headline)
@@ -1169,7 +1184,7 @@ impl GraphWriter {
     pub async fn archive_story(&self, story_id: Uuid) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Story {id: $id})
-             DETACH DELETE s"
+             DETACH DELETE s",
         )
         .param("id", story_id.to_string());
 
@@ -1178,14 +1193,17 @@ impl GraphWriter {
     }
 
     /// Get the snapshot signal count from 7 days ago for velocity calculation.
-    pub async fn get_snapshot_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
+    pub async fn get_snapshot_count_7d_ago(
+        &self,
+        story_id: Uuid,
+    ) -> Result<Option<u32>, neo4rs::Error> {
         let q = query(
             "MATCH (cs:ClusterSnapshot {story_id: $story_id})
              WHERE datetime(cs.run_at) >= datetime() - duration('P8D')
                AND datetime(cs.run_at) <= datetime() - duration('P6D')
              RETURN cs.signal_count AS cnt
              ORDER BY cs.run_at ASC
-             LIMIT 1"
+             LIMIT 1",
         )
         .param("story_id", story_id.to_string());
 
@@ -1219,7 +1237,7 @@ impl GraphWriter {
                 c.center_lng = $center_lng,
                 c.radius_km = $radius_km,
                 c.geo_terms = $geo_terms,
-                c.active = $active"
+                c.active = $active",
         )
         .param("id", city.id.to_string())
         .param("slug", city.slug.as_str())
@@ -1232,7 +1250,11 @@ impl GraphWriter {
         .param("created_at", format_datetime(&city.created_at));
 
         self.client.graph.run(q).await?;
-        info!(slug = city.slug.as_str(), name = city.name.as_str(), "City node upserted");
+        info!(
+            slug = city.slug.as_str(),
+            name = city.name.as_str(),
+            "City node upserted"
+        );
         Ok(())
     }
 
@@ -1244,7 +1266,7 @@ impl GraphWriter {
                     c.center_lat AS center_lat, c.center_lng AS center_lng,
                     c.radius_km AS radius_km, c.geo_terms AS geo_terms,
                     c.active AS active, c.created_at AS created_at,
-                    c.last_scout_completed_at AS last_scout_completed_at"
+                    c.last_scout_completed_at AS last_scout_completed_at",
         )
         .param("slug", slug);
 
@@ -1257,9 +1279,10 @@ impl GraphWriter {
             };
 
             let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                .map(|ndt| ndt.and_utc())
-                .unwrap_or_else(|_| Utc::now());
+            let created_at =
+                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+                    .map(|ndt| ndt.and_utc())
+                    .unwrap_or_else(|_| Utc::now());
 
             let last_scout_completed_at = {
                 let s: String = row.get("last_scout_completed_at").unwrap_or_default();
@@ -1298,7 +1321,7 @@ impl GraphWriter {
                     c.radius_km AS radius_km, c.geo_terms AS geo_terms,
                     c.active AS active, c.created_at AS created_at,
                     c.last_scout_completed_at AS last_scout_completed_at
-             ORDER BY c.name"
+             ORDER BY c.name",
         );
 
         let mut cities = Vec::new();
@@ -1311,9 +1334,10 @@ impl GraphWriter {
             };
 
             let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                .map(|ndt| ndt.and_utc())
-                .unwrap_or_else(|_| Utc::now());
+            let created_at =
+                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+                    .map(|ndt| ndt.and_utc())
+                    .unwrap_or_else(|_| Utc::now());
 
             let last_scout_completed_at = {
                 let s: String = row.get("last_scout_completed_at").unwrap_or_default();
@@ -1347,14 +1371,18 @@ impl GraphWriter {
     /// Accepts city tuples of (slug, center_lat, center_lng, radius_km).
     /// Signal counts use geographic bounding box on signal lat/lng.
     /// Returns Vec<(slug, source_count, signal_count)>.
-    pub async fn get_city_counts(&self, cities: &[(String, f64, f64, f64)]) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
+    pub async fn get_city_counts(
+        &self,
+        cities: &[(String, f64, f64, f64)],
+    ) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
         let mut results = Vec::new();
         for (slug, lat, lng, radius_km) in cities {
             // Source count by slug
             let sq = query(
                 "MATCH (src:Source {city: $city, active: true})
-                 RETURN count(src) AS cnt"
-            ).param("city", slug.as_str());
+                 RETURN count(src) AS cnt",
+            )
+            .param("city", slug.as_str());
             let mut stream = self.client.graph.execute(sq).await?;
             let source_count: i64 = match stream.next().await? {
                 Some(row) => row.get("cnt").unwrap_or(0),
@@ -1370,7 +1398,7 @@ impl GraphWriter {
                    AND n.lat <> 0.0
                    AND n.lat >= $min_lat AND n.lat <= $max_lat
                    AND n.lng >= $min_lng AND n.lng <= $max_lng
-                 RETURN count(n) AS cnt"
+                 RETURN count(n) AS cnt",
             )
             .param("min_lat", lat - lat_delta)
             .param("max_lat", lat + lat_delta)
@@ -1455,7 +1483,7 @@ impl GraphWriter {
             })
             WITH sub
             MATCH (s:Source {canonical_key: $canonical_key})
-            MERGE (sub)-[:SUBMITTED_FOR]->(s)"
+            MERGE (sub)-[:SUBMITTED_FOR]->(s)",
         )
         .param("id", submission.id.to_string())
         .param("url", submission.url.as_str())
@@ -1486,7 +1514,7 @@ impl GraphWriter {
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
-                    s.scrape_count AS scrape_count"
+                    s.scrape_count AS scrape_count",
         )
         .param("city", city);
 
@@ -1514,8 +1542,7 @@ impl GraphWriter {
                 _ => DiscoveryMethod::Curated,
             };
 
-            let created_at = row_datetime_opt(&row, "created_at")
-                .unwrap_or_else(Utc::now);
+            let created_at = row_datetime_opt(&row, "created_at").unwrap_or_else(Utc::now);
 
             let last_scraped = row_datetime_opt(&row, "last_scraped");
             let last_produced_signal = row_datetime_opt(&row, "last_produced_signal");
@@ -1537,11 +1564,20 @@ impl GraphWriter {
                 last_produced_signal,
                 signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
                 signals_corroborated: row.get::<i64>("signals_corroborated").unwrap_or(0) as u32,
-                consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0) as u32,
+                consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0)
+                    as u32,
                 active: row.get("active").unwrap_or(true),
-                gap_context: if gap_context.is_empty() { None } else { Some(gap_context) },
+                gap_context: if gap_context.is_empty() {
+                    None
+                } else {
+                    Some(gap_context)
+                },
                 weight: row.get("weight").unwrap_or(0.5),
-                cadence_hours: if cadence > 0 { Some(cadence as u32) } else { None },
+                cadence_hours: if cadence > 0 {
+                    Some(cadence as u32)
+                } else {
+                    None
+                },
                 avg_signals_per_scrape: row.get("avg_signals_per_scrape").unwrap_or(0.0),
                 quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
                 source_role: SourceRole::from_str_loose(
@@ -1569,7 +1605,7 @@ impl GraphWriter {
                      s.last_produced_signal = datetime($now),
                      s.signals_produced = s.signals_produced + $count,
                      s.consecutive_empty_runs = 0,
-                     s.scrape_count = coalesce(s.scrape_count, 0) + 1"
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
             )
             .param("key", canonical_key)
             .param("now", format_datetime(&now))
@@ -1580,7 +1616,7 @@ impl GraphWriter {
                 "MATCH (s:Source {canonical_key: $key})
                  SET s.last_scraped = datetime($now),
                      s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
-                     s.scrape_count = coalesce(s.scrape_count, 0) + 1"
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
             )
             .param("key", canonical_key)
             .param("now", format_datetime(&now));
@@ -1598,7 +1634,7 @@ impl GraphWriter {
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {canonical_key: $key})
-             SET s.weight = $weight, s.cadence_hours = $cadence"
+             SET s.weight = $weight, s.cadence_hours = $cadence",
         )
         .param("key", canonical_key)
         .param("weight", weight)
@@ -1608,17 +1644,14 @@ impl GraphWriter {
     }
 
     /// Count tension signals produced by a specific source.
-    pub async fn count_source_tensions(
-        &self,
-        canonical_key: &str,
-    ) -> Result<u32, neo4rs::Error> {
+    pub async fn count_source_tensions(&self, canonical_key: &str) -> Result<u32, neo4rs::Error> {
         // Look up URL from canonical_key, then count Tension nodes with matching source_url
         let q = query(
             "MATCH (s:Source {canonical_key: $key})
              WITH s.url AS url, s.canonical_value AS cv
              OPTIONAL MATCH (t:Tension)
              WHERE t.source_url = url OR t.source_url CONTAINS cv
-             RETURN count(t) AS cnt"
+             RETURN count(t) AS cnt",
         )
         .param("key", canonical_key);
 
@@ -1632,14 +1665,18 @@ impl GraphWriter {
 
     /// Deactivate sources that have had too many consecutive empty runs.
     /// Protects curated and human-submitted sources. Scoped to a single city.
-    pub async fn deactivate_dead_sources(&self, city: &str, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
+    pub async fn deactivate_dead_sources(
+        &self,
+        city: &str,
+        max_empty_runs: u32,
+    ) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {active: true, city: $city})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
-             RETURN count(s) AS deactivated"
+             RETURN count(s) AS deactivated",
         )
         .param("city", city)
         .param("max", max_empty_runs as i64);
@@ -1667,7 +1704,7 @@ impl GraphWriter {
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
-             RETURN count(s) AS deactivated"
+             RETURN count(s) AS deactivated",
         )
         .param("city", city);
 
@@ -1683,7 +1720,7 @@ impl GraphWriter {
     pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {city: $city, active: true, source_type: 'web_query'})
-             RETURN s.canonical_value AS query"
+             RETURN s.canonical_value AS query",
         )
         .param("city", city);
 
@@ -1715,7 +1752,7 @@ impl GraphWriter {
                AND score >= $threshold
              RETURN node.canonical_key AS canonical_key, score
              ORDER BY score DESC
-             LIMIT 1"
+             LIMIT 1",
         )
         .param("embedding", embedding.to_vec())
         .param("city", city)
@@ -1742,7 +1779,7 @@ impl GraphWriter {
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {canonical_key: $key})
-             SET s.query_embedding = $embedding"
+             SET s.query_embedding = $embedding",
         )
         .param("key", canonical_key)
         .param("embedding", embedding.to_vec());
@@ -1766,7 +1803,7 @@ impl GraphWriter {
                AND size(s.implied_queries) > 0
                AND coalesce(t.cause_heat, 0.0) >= 0.1
              WITH DISTINCT s
-             RETURN s.implied_queries AS queries, s.id AS id"
+             RETURN s.implied_queries AS queries, s.id AS id",
         );
 
         let mut all_queries = Vec::new();
@@ -1788,7 +1825,7 @@ impl GraphWriter {
                 let clear_q = query(
                     "MATCH (s {id: $id})
                      WHERE s:Give OR s:Event
-                     SET s.implied_queries = null"
+                     SET s.implied_queries = null",
                 )
                 .param("id", id.as_str());
                 if let Err(e) = self.client.graph.run(clear_q).await {
@@ -1824,7 +1861,7 @@ impl GraphWriter {
                     t.what_would_help AS what_would_help,
                     coalesce(t.cause_heat, 0.0) AS cause_heat,
                     give_count, event_count, ask_count,
-                    sample_titles"
+                    sample_titles",
         )
         .param("limit", limit as i64);
 
@@ -1857,7 +1894,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (b:BlockedSource)
              WHERE $url CONTAINS b.url_pattern OR b.url_pattern = $url
-             RETURN b LIMIT 1"
+             RETURN b LIMIT 1",
         )
         .param("url", url);
 
@@ -1872,7 +1909,7 @@ impl GraphWriter {
              RETURN count(s) AS total,
                     count(CASE WHEN s.active THEN 1 END) AS active,
                     count(CASE WHEN s.discovery_method = 'curated' THEN 1 END) AS curated,
-                    count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered"
+                    count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
         )
         .param("city", city);
 
@@ -1910,7 +1947,7 @@ impl GraphWriter {
              ON MATCH SET
                 a.name = $name,
                 a.last_active = datetime($last_active),
-                a.signal_count = a.signal_count + 1"
+                a.signal_count = a.signal_count + 1",
         )
         .param("id", actor.id.to_string())
         .param("entity_id", actor.entity_id.as_str())
@@ -1953,7 +1990,7 @@ impl GraphWriter {
     pub async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor) WHERE toLower(a.name) = toLower($name)
-             RETURN a.id AS id LIMIT 1"
+             RETURN a.id AS id LIMIT 1",
         )
         .param("name", name);
 
@@ -1968,10 +2005,13 @@ impl GraphWriter {
     }
 
     /// Find an actor by entity_id.
-    pub async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>, neo4rs::Error> {
+    pub async fn find_actor_by_entity_id(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<Uuid>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {entity_id: $entity_id})
-             RETURN a.id AS id LIMIT 1"
+             RETURN a.id AS id LIMIT 1",
         )
         .param("entity_id", entity_id);
 
@@ -1990,7 +2030,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (a:Actor)
              WHERE any(d IN a.domains WHERE $domain CONTAINS d)
-             RETURN a.id AS id LIMIT 1"
+             RETURN a.id AS id LIMIT 1",
         )
         .param("domain", domain);
 
@@ -2013,7 +2053,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (a:Actor {id: $id})
              SET a.signal_count = a.signal_count + 1,
-                 a.last_active = datetime($now)"
+                 a.last_active = datetime($now)",
         )
         .param("id", actor_id.to_string())
         .param("now", format_datetime(&now));
@@ -2047,12 +2087,15 @@ impl GraphWriter {
     }
 
     /// Get recent tension titles and what_would_help for discovery queries.
-    pub async fn get_recent_tensions(&self, limit: u32) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
+    pub async fn get_recent_tensions(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              RETURN t.title AS title, t.what_would_help AS help
              ORDER BY t.extracted_at DESC
-             LIMIT $limit"
+             LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2085,7 +2128,7 @@ impl GraphWriter {
                       WHEN response_signals > tension_signals THEN 'response'
                       WHEN tension_signals > response_signals THEN 'tension'
                       ELSE 'mixed'
-                    END AS dominant_role"
+                    END AS dominant_role",
         )
         .param("city", city);
 
@@ -2122,7 +2165,7 @@ impl GraphWriter {
                       (COALESCE(t.corroboration_count, 0) + COALESCE(t.source_diversity, 0)) DESC,
                       t.cause_heat DESC,
                       t.severity DESC
-             LIMIT $limit"
+             LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2138,11 +2181,19 @@ impl GraphWriter {
                 severity: row.get("severity").unwrap_or_default(),
                 what_would_help: {
                     let h: String = row.get("what_would_help").unwrap_or_default();
-                    if h.is_empty() { None } else { Some(h) }
+                    if h.is_empty() {
+                        None
+                    } else {
+                        Some(h)
+                    }
                 },
                 category: {
                     let c: String = row.get("category").unwrap_or_default();
-                    if c.is_empty() { None } else { Some(c) }
+                    if c.is_empty() {
+                        None
+                    } else {
+                        Some(c)
+                    }
                 },
                 unmet: row.get("unmet").unwrap_or(true),
                 corroboration_count: row.get::<i64>("corroboration_count").unwrap_or(0) as u32,
@@ -2161,7 +2212,7 @@ impl GraphWriter {
              RETURN s.headline AS headline, s.arc AS arc, s.energy AS energy,
                     s.signal_count AS signal_count, s.type_diversity AS type_diversity,
                     s.dominant_type AS dominant_type, s.source_count AS source_count
-             ORDER BY s.energy DESC LIMIT $limit"
+             ORDER BY s.energy DESC LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2172,7 +2223,11 @@ impl GraphWriter {
                 headline: row.get("headline").unwrap_or_default(),
                 arc: {
                     let a: String = row.get("arc").unwrap_or_default();
-                    if a.is_empty() { None } else { Some(a) }
+                    if a.is_empty() {
+                        None
+                    } else {
+                        Some(a)
+                    }
                 },
                 energy: row.get("energy").unwrap_or(0.0),
                 signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
@@ -2185,7 +2240,10 @@ impl GraphWriter {
     }
 
     /// Aggregate counts of each active signal type. Reveals systemic imbalances.
-    pub async fn get_signal_type_counts(&self, _city: &str) -> Result<SignalTypeCounts, neo4rs::Error> {
+    pub async fn get_signal_type_counts(
+        &self,
+        _city: &str,
+    ) -> Result<SignalTypeCounts, neo4rs::Error> {
         let mut counts = SignalTypeCounts::default();
 
         for (label, field) in &[
@@ -2232,7 +2290,7 @@ impl GraphWriter {
                     s.weight AS weight, s.consecutive_empty_runs AS cer,
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.weight DESC
-             LIMIT 5"
+             LIMIT 5",
         )
         .param("city", city);
 
@@ -2246,7 +2304,11 @@ impl GraphWriter {
                 consecutive_empty_runs: row.get::<i64>("cer").unwrap_or(0) as u32,
                 gap_context: {
                     let gc: String = row.get("gc").unwrap_or_default();
-                    if gc.is_empty() { None } else { Some(gc) }
+                    if gc.is_empty() {
+                        None
+                    } else {
+                        Some(gc)
+                    }
                 },
                 active: row.get("active").unwrap_or(true),
             });
@@ -2261,7 +2323,7 @@ impl GraphWriter {
                     s.weight AS weight, s.consecutive_empty_runs AS cer,
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.consecutive_empty_runs DESC
-             LIMIT 5"
+             LIMIT 5",
         )
         .param("city", city);
 
@@ -2275,7 +2337,11 @@ impl GraphWriter {
                 consecutive_empty_runs: row.get::<i64>("cer").unwrap_or(0) as u32,
                 gap_context: {
                     let gc: String = row.get("gc").unwrap_or_default();
-                    if gc.is_empty() { None } else { Some(gc) }
+                    if gc.is_empty() {
+                        None
+                    } else {
+                        Some(gc)
+                    }
                 },
                 active: row.get("active").unwrap_or(true),
             });
@@ -2289,7 +2355,7 @@ impl GraphWriter {
         let q = query(
             "MATCH (t:Tension)
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
-             RETURN t.id AS id, t.embedding AS embedding"
+             RETURN t.id AS id, t.embedding AS embedding",
         );
 
         let mut results = Vec::new();
@@ -2310,7 +2376,9 @@ impl GraphWriter {
 
     /// Find signals that warrant investigation. Returns candidates across 3 priority
     /// categories with per-source-domain dedup (max 1 per domain to prevent budget exhaustion).
-    pub async fn find_investigation_targets(&self) -> Result<Vec<InvestigationTarget>, neo4rs::Error> {
+    pub async fn find_investigation_targets(
+        &self,
+    ) -> Result<Vec<InvestigationTarget>, neo4rs::Error> {
         let mut targets = Vec::new();
         let mut seen_domains = std::collections::HashSet::new();
 
@@ -2326,7 +2394,8 @@ impl GraphWriter {
                     t.source_url AS source_url, t.sensitivity AS sensitivity
              LIMIT 10"
         );
-        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
+            .await?;
 
         // Priority 2: High-urgency asks (urgency high/critical, < 2 evidence nodes)
         let q = query(
@@ -2340,7 +2409,8 @@ impl GraphWriter {
                     a.source_url AS source_url, a.sensitivity AS sensitivity
              LIMIT 10"
         );
-        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
+            .await?;
 
         // Priority 3: Thin-story signals (from emerging stories, < 2 evidence nodes)
         let q = query(
@@ -2360,7 +2430,8 @@ impl GraphWriter {
                     n.source_url AS source_url, n.sensitivity AS sensitivity
              LIMIT 10"
         );
-        self.collect_investigation_targets(&mut targets, &mut seen_domains, q).await?;
+        self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
+            .await?;
 
         Ok(targets)
     }
@@ -2417,7 +2488,11 @@ impl GraphWriter {
     }
 
     /// Mark a signal as investigated (sets investigated_at, 7-day cooldown).
-    pub async fn mark_investigated(&self, signal_id: Uuid, node_type: NodeType) -> Result<(), neo4rs::Error> {
+    pub async fn mark_investigated(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+    ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
             NodeType::Event => "Event",
             NodeType::Give => "Give",
@@ -2445,14 +2520,17 @@ impl GraphWriter {
     /// curiosity-investigated yet (or were `failed` with retry budget remaining).
     ///
     /// Pre-pass: signals with `failed` + retry_count >= 3 are auto-promoted to `abandoned`.
-    pub async fn find_tension_linker_targets(&self, limit: u32) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
+    pub async fn find_tension_linker_targets(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
         // Pre-pass: promote exhausted retries to abandoned
         let promote = query(
             "MATCH (n)
              WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
                AND n.curiosity_investigated = 'failed'
                AND n.curiosity_retry_count >= 3
-             SET n.curiosity_investigated = 'abandoned'"
+             SET n.curiosity_investigated = 'abandoned'",
         );
         self.client.graph.run(promote).await?;
 
@@ -2470,7 +2548,7 @@ impl GraphWriter {
                          WHEN n:Notice THEN 'Notice'
                     END AS label
              ORDER BY n.extracted_at DESC
-             LIMIT $limit"
+             LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2536,7 +2614,7 @@ impl GraphWriter {
             "MATCH (t:Tension)
              RETURN t.title AS title, t.summary AS summary
              ORDER BY t.extracted_at DESC
-             LIMIT 50"
+             LIMIT 50",
         );
 
         let mut tensions = Vec::new();
@@ -2570,7 +2648,7 @@ impl GraphWriter {
                     t.category AS category, t.what_would_help AS what_would_help,
                     respondents
              ORDER BY size(respondents) DESC
-             LIMIT $limit"
+             LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2635,7 +2713,7 @@ impl GraphWriter {
              }) AS new_respondents
              WHERE size(new_respondents) >= 1
              RETURN story.id AS story_id, t.id AS tension_id, new_respondents
-             LIMIT $limit"
+             LIMIT $limit",
         )
         .param("limit", limit as i64);
 
@@ -2653,7 +2731,8 @@ impl GraphWriter {
                 Err(_) => continue,
             };
 
-            let respondent_maps: Vec<neo4rs::BoltMap> = row.get("new_respondents").unwrap_or_default();
+            let respondent_maps: Vec<neo4rs::BoltMap> =
+                row.get("new_respondents").unwrap_or_default();
             let mut new_respondents = Vec::new();
             for map in respondent_maps {
                 let sig_id_str = map.get::<String>("sig_id").unwrap_or_default();
@@ -2687,7 +2766,7 @@ impl GraphWriter {
             "MATCH (n)
              WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
                AND n.curiosity_investigated = 'abandoned'
-             RETURN count(n) AS cnt"
+             RETURN count(n) AS cnt",
         );
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -2710,7 +2789,7 @@ impl GraphWriter {
             "MATCH (t:Tension)
              WHERE t.embedding IS NOT NULL
              RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
-             ORDER BY t.extracted_at ASC"
+             ORDER BY t.extracted_at ASC",
         );
 
         struct TensionEmbed {
@@ -2789,7 +2868,7 @@ impl GraphWriter {
                  WHERE NOT (s)-[:CONTAINS]->(survivor)
                  CREATE (s)-[:CONTAINS]->(survivor)
                  WITH r
-                 DELETE r"
+                 DELETE r",
             )
             .param("dup_id", dup_id.as_str())
             .param("survivor_id", survivor_id.as_str());
@@ -2798,16 +2877,14 @@ impl GraphWriter {
             // Bump survivor's corroboration count
             let q = query(
                 "MATCH (t:Tension {id: $survivor_id})
-                 SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1"
+                 SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1",
             )
             .param("survivor_id", survivor_id.as_str());
             self.client.graph.run(q).await?;
 
             // Delete the duplicate and any remaining edges
-            let q = query(
-                "MATCH (t:Tension {id: $dup_id}) DETACH DELETE t"
-            )
-            .param("dup_id", dup_id.as_str());
+            let q = query("MATCH (t:Tension {id: $dup_id}) DETACH DELETE t")
+                .param("dup_id", dup_id.as_str());
             self.client.graph.run(q).await?;
 
             info!(
@@ -2924,11 +3001,12 @@ impl GraphWriter {
             "MATCH (s:Source {city: $city})
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND s.gap_context IS NOT NULL
-             RETURN s.gap_context AS gc, s.signals_produced AS sp, s.weight AS weight"
+             RETURN s.gap_context AS gc, s.signals_produced AS sp, s.weight AS weight",
         )
         .param("city", city);
 
-        let mut map: std::collections::HashMap<String, (u32, u32, f64)> = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<String, (u32, u32, f64)> =
+            std::collections::HashMap::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let gc: String = row.get("gc").unwrap_or_default();
@@ -2936,29 +3014,39 @@ impl GraphWriter {
             let weight: f64 = row.get("weight").unwrap_or(0.0);
 
             // Parse gap_type from "... | Gap: <type> | ..."
-            let gap_type = gc.find("| Gap: ")
+            let gap_type = gc
+                .find("| Gap: ")
                 .and_then(|start| {
                     let after = &gc[start + 7..];
                     let end = after.find(" |").unwrap_or(after.len());
                     let gt = after[..end].trim();
-                    if gt.is_empty() { None } else { Some(gt.to_string()) }
+                    if gt.is_empty() {
+                        None
+                    } else {
+                        Some(gt.to_string())
+                    }
                 })
                 .unwrap_or_else(|| "unknown".to_string());
 
             let entry = map.entry(gap_type).or_insert((0, 0, 0.0));
             entry.0 += 1; // total
-            if sp > 0 { entry.1 += 1; } // successful
+            if sp > 0 {
+                entry.1 += 1;
+            } // successful
             entry.2 += weight; // sum of weights
         }
 
-        let mut results: Vec<GapTypeStats> = map.into_iter()
-            .map(|(gap_type, (total, successful, weight_sum))| {
-                GapTypeStats {
-                    gap_type,
-                    total_sources: total,
-                    successful_sources: successful,
-                    avg_weight: if total > 0 { weight_sum / total as f64 } else { 0.0 },
-                }
+        let mut results: Vec<GapTypeStats> = map
+            .into_iter()
+            .map(|(gap_type, (total, successful, weight_sum))| GapTypeStats {
+                gap_type,
+                total_sources: total,
+                successful_sources: successful,
+                avg_weight: if total > 0 {
+                    weight_sum / total as f64
+                } else {
+                    0.0
+                },
             })
             .collect();
         results.sort_by(|a, b| b.total_sources.cmp(&a.total_sources));
@@ -2966,17 +3054,21 @@ impl GraphWriter {
     }
 
     /// Get extraction yield metrics grouped by source_type for a city.
-    pub async fn get_extraction_yield(&self, city: &str) -> Result<Vec<ExtractionYield>, neo4rs::Error> {
+    pub async fn get_extraction_yield(
+        &self,
+        city: &str,
+    ) -> Result<Vec<ExtractionYield>, neo4rs::Error> {
         // Base metrics from Source nodes
         let q = query(
             "MATCH (s:Source {city: $city})
              WHERE s.active = true
              RETURN s.source_type AS st, s.signals_produced AS sp,
-                    s.signals_corroborated AS sc, s.url AS url"
+                    s.signals_corroborated AS sc, s.url AS url",
         )
         .param("city", city);
 
-        let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> = std::collections::HashMap::new();
+        let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> =
+            std::collections::HashMap::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let st: String = row.get("st").unwrap_or_default();
@@ -3002,7 +3094,7 @@ impl GraphWriter {
                         "MATCH (n)
                          WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
                            AND n.source_url = $url
-                         RETURN count(n) AS cnt"
+                         RETURN count(n) AS cnt",
                     )
                     .param("url", url.as_str());
 
@@ -3021,7 +3113,7 @@ impl GraphWriter {
                         "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence {relevance: 'CONTRADICTING'})
                          WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
                            AND n.source_url = $url
-                         RETURN count(DISTINCT n) AS cnt"
+                         RETURN count(DISTINCT n) AS cnt",
                     )
                     .param("url", url.as_str());
 
@@ -3047,14 +3139,17 @@ impl GraphWriter {
 
     /// Get the snapshot entity count from 7 days ago for velocity calculation.
     /// Velocity is driven by entity diversity growth — a flood from one source doesn't move the needle.
-    pub async fn get_snapshot_entity_count_7d_ago(&self, story_id: Uuid) -> Result<Option<u32>, neo4rs::Error> {
+    pub async fn get_snapshot_entity_count_7d_ago(
+        &self,
+        story_id: Uuid,
+    ) -> Result<Option<u32>, neo4rs::Error> {
         let q = query(
             "MATCH (cs:ClusterSnapshot {story_id: $story_id})
              WHERE datetime(cs.run_at) >= datetime() - duration('P8D')
                AND datetime(cs.run_at) <= datetime() - duration('P6D')
              RETURN cs.entity_count AS cnt
              ORDER BY cs.run_at ASC
-             LIMIT 1"
+             LIMIT 1",
         )
         .param("story_id", story_id.to_string());
 
@@ -3108,11 +3203,19 @@ impl GraphWriter {
                 severity: row.get("severity").unwrap_or_default(),
                 category: {
                     let s: String = row.get("category").unwrap_or_default();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
                 what_would_help: {
                     let s: String = row.get("what_would_help").unwrap_or_default();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
                 cause_heat: row.get("cause_heat").unwrap_or(0.0),
                 response_count: {
@@ -3150,10 +3253,7 @@ impl GraphWriter {
     }
 
     /// Mark a tension as having been scouted for responses.
-    pub async fn mark_response_found(
-        &self,
-        tension_id: Uuid,
-    ) -> Result<(), neo4rs::Error> {
+    pub async fn mark_response_found(&self, tension_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
         let q = query(
             "MATCH (t:Tension {id: $id})
@@ -3212,11 +3312,19 @@ impl GraphWriter {
                 severity: row.get("severity").unwrap_or_default(),
                 category: {
                     let s: String = row.get("category").unwrap_or_default();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
                 what_would_help: {
                     let s: String = row.get("what_would_help").unwrap_or_default();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
                 cause_heat: row.get("cause_heat").unwrap_or(0.0),
             });
@@ -3380,10 +3488,7 @@ impl GraphWriter {
 
     /// Refresh a signal's `last_confirmed_active` timestamp by ID alone.
     /// Used by gravity scout on the dedup path to prevent recurring gatherings from aging out.
-    pub async fn touch_signal_timestamp(
-        &self,
-        signal_id: Uuid,
-    ) -> Result<(), neo4rs::Error> {
+    pub async fn touch_signal_timestamp(&self, signal_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
         let q = query(
             "MATCH (n)
@@ -3530,10 +3635,7 @@ impl GraphWriter {
     }
 
     /// Look up a Resource node by its slug. Returns the UUID if found.
-    pub async fn find_resource_by_slug(
-        &self,
-        slug: &str,
-    ) -> Result<Option<Uuid>, neo4rs::Error> {
+    pub async fn find_resource_by_slug(&self, slug: &str) -> Result<Option<Uuid>, neo4rs::Error> {
         let q = query(
             "MATCH (r:Resource {slug: $slug})
              RETURN r.id AS resource_id",
@@ -3588,7 +3690,10 @@ impl GraphWriter {
 
     /// Merge near-duplicate Resource nodes based on embedding similarity.
     /// Picks the highest signal_count as canonical, re-points edges, deletes duplicates.
-    pub async fn consolidate_resources(&self, threshold: f64) -> Result<ConsolidationStats, neo4rs::Error> {
+    pub async fn consolidate_resources(
+        &self,
+        threshold: f64,
+    ) -> Result<ConsolidationStats, neo4rs::Error> {
         let mut stats = ConsolidationStats::default();
 
         // Load all resources with embeddings
@@ -3613,7 +3718,11 @@ impl GraphWriter {
             let embedding: Vec<f64> = row.get("emb").unwrap_or_default();
             let _signal_count: i64 = row.get("sc").unwrap_or(0);
             if !embedding.is_empty() {
-                resources.push(ResourceEmbed { id, slug, embedding });
+                resources.push(ResourceEmbed {
+                    id,
+                    slug,
+                    embedding,
+                });
             }
         }
 
@@ -3719,8 +3828,8 @@ impl GraphWriter {
             self.client.graph.run(q).await?;
 
             // Delete the duplicate
-            let q = query("MATCH (r:Resource {id: $id}) DETACH DELETE r")
-                .param("id", dup_id.as_str());
+            let q =
+                query("MATCH (r:Resource {id: $id}) DETACH DELETE r").param("id", dup_id.as_str());
             self.client.graph.run(q).await?;
 
             stats.nodes_merged += 1;
@@ -3819,7 +3928,7 @@ pub struct SourceBrief {
 /// Evidence linked to a signal — used for confidence revision.
 #[derive(Debug, Clone)]
 pub struct EvidenceSummary {
-    pub relevance: String,    // "DIRECT", "SUPPORTING", "CONTRADICTING"
+    pub relevance: String, // "DIRECT", "SUPPORTING", "CONTRADICTING"
     pub confidence: f32,
 }
 
@@ -3828,7 +3937,7 @@ pub struct EvidenceSummary {
 pub struct GapTypeStats {
     pub gap_type: String,
     pub total_sources: u32,
-    pub successful_sources: u32,  // signals_produced > 0
+    pub successful_sources: u32, // signals_produced > 0
     pub avg_weight: f64,
 }
 
@@ -3836,10 +3945,10 @@ pub struct GapTypeStats {
 #[derive(Debug, Clone)]
 pub struct ExtractionYield {
     pub source_type: String,
-    pub extracted: u32,      // from Source.signals_produced
-    pub survived: u32,       // count of signals still in graph
-    pub corroborated: u32,   // from Source.signals_corroborated
-    pub contradicted: u32,   // signals with CONTRADICTING evidence
+    pub extracted: u32,    // from Source.signals_produced
+    pub survived: u32,     // count of signals still in graph
+    pub corroborated: u32, // from Source.signals_corroborated
+    pub contradicted: u32, // signals with CONTRADICTING evidence
 }
 
 /// Response shape analysis for a tension — what types of responses exist and what's absent.
@@ -3973,7 +4082,9 @@ pub struct GatheringFinderTarget {
 fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
     match &meta.location {
         Some(loc) => q.param("lat", loc.lat).param("lng", loc.lng),
-        None => q.param::<Option<f64>>("lat", None).param::<Option<f64>>("lng", None),
+        None => q
+            .param::<Option<f64>>("lat", None)
+            .param::<Option<f64>>("lng", None),
     }
 }
 
@@ -4056,7 +4167,9 @@ fn row_datetime_opt(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc>> {
         return Some(ndt.and_utc());
     }
     // Fall back to string parsing (legacy or manually stored values)
-    row.get::<String>(key).ok().and_then(|s| parse_datetime_opt(&s))
+    row.get::<String>(key)
+        .ok()
+        .and_then(|s| parse_datetime_opt(&s))
 }
 
 #[cfg(test)]
@@ -4115,7 +4228,10 @@ mod tests {
     fn curiosity_outcome_equality() {
         assert_eq!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Done);
         assert_ne!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Failed);
-        assert_ne!(TensionLinkerOutcome::Failed, TensionLinkerOutcome::Abandoned);
+        assert_ne!(
+            TensionLinkerOutcome::Failed,
+            TensionLinkerOutcome::Abandoned
+        );
     }
 
     #[test]

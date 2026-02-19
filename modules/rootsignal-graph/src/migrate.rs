@@ -197,7 +197,10 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     info!("Actor constraints and indexes created");
 
     // --- Edge index for SIMILAR_TO weight ---
-    g.run(query("CREATE INDEX similar_to_weight IF NOT EXISTS FOR ()-[r:SIMILAR_TO]-() ON (r.weight)")).await?;
+    g.run(query(
+        "CREATE INDEX similar_to_weight IF NOT EXISTS FOR ()-[r:SIMILAR_TO]-() ON (r.weight)",
+    ))
+    .await?;
     info!("Edge indexes created");
 
     // --- City node constraints and indexes ---
@@ -210,7 +213,10 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         g.run(query(c)).await?;
     }
 
-    g.run(query("CREATE INDEX city_active IF NOT EXISTS FOR (c:City) ON (c.active)")).await?;
+    g.run(query(
+        "CREATE INDEX city_active IF NOT EXISTS FOR (c:City) ON (c.active)",
+    ))
+    .await?;
     info!("City constraints and indexes created");
 
     // --- Source node constraints and indexes ---
@@ -269,19 +275,34 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     info!("Supervisor constraints and indexes created");
 
     // --- Source role index ---
-    g.run(query("CREATE INDEX source_role IF NOT EXISTS FOR (s:Source) ON (s.source_role)")).await?;
+    g.run(query(
+        "CREATE INDEX source_role IF NOT EXISTS FOR (s:Source) ON (s.source_role)",
+    ))
+    .await?;
     info!("Source role index created");
 
     // --- Place node constraints and indexes ---
-    g.run(query("CREATE CONSTRAINT place_id_unique IF NOT EXISTS FOR (p:Place) REQUIRE p.id IS UNIQUE")).await?;
-    g.run(query("CREATE INDEX place_slug IF NOT EXISTS FOR (p:Place) ON (p.slug)")).await?;
-    g.run(query("CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)")).await?;
+    g.run(query(
+        "CREATE CONSTRAINT place_id_unique IF NOT EXISTS FOR (p:Place) REQUIRE p.id IS UNIQUE",
+    ))
+    .await?;
+    g.run(query(
+        "CREATE INDEX place_slug IF NOT EXISTS FOR (p:Place) ON (p.slug)",
+    ))
+    .await?;
+    g.run(query(
+        "CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)",
+    ))
+    .await?;
     info!("Place constraints and indexes created");
 
     // --- Resource node constraints and indexes ---
     g.run(query("CREATE CONSTRAINT resource_id_unique IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE")).await?;
     g.run(query("CREATE CONSTRAINT resource_slug_unique IF NOT EXISTS FOR (r:Resource) REQUIRE r.slug IS UNIQUE")).await?;
-    g.run(query("CREATE INDEX resource_name IF NOT EXISTS FOR (r:Resource) ON (r.name)")).await?;
+    g.run(query(
+        "CREATE INDEX resource_name IF NOT EXISTS FOR (r:Resource) ON (r.name)",
+    ))
+    .await?;
     g.run(query("CREATE VECTOR INDEX resource_embedding IF NOT EXISTS FOR (r:Resource) ON (r.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}")).await?;
     info!("Resource constraints and indexes created");
 
@@ -341,7 +362,7 @@ pub async fn reclassify_query_sources(client: &GraphClient) -> Result<(), neo4rs
             "MATCH (s:Source) WHERE s.source_type = 'web' AND s.url CONTAINS $domain \
              SET s.source_type = $new_type, \
                  s.canonical_key = s.city + ':' + $new_type + ':' + s.canonical_value \
-             RETURN count(s) AS updated"
+             RETURN count(s) AS updated",
         )
         .param("domain", *domain)
         .param("new_type", *new_type);
@@ -363,7 +384,7 @@ pub async fn reclassify_query_sources(client: &GraphClient) -> Result<(), neo4rs
     let cleanup = query(
         "MATCH (n) WHERE n.source_url CONTAINS 'eventbrite.com/d/' \
          DETACH DELETE n \
-         RETURN count(n) AS deleted"
+         RETURN count(n) AS deleted",
     );
 
     match g.execute(cleanup).await {
@@ -475,7 +496,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
          WHERE size(evs) > 1
          UNWIND evs[1..] AS dup
          DETACH DELETE dup
-         RETURN count(dup) AS deleted"
+         RETURN count(dup) AS deleted",
     );
 
     match g.execute(dedup_q).await {
@@ -550,17 +571,18 @@ pub async fn backfill_source_canonical_keys(client: &GraphClient) -> Result<(), 
 
     // Step 1: Normalize city names to slugs
     let city_mappings = [
-        ("Twin Cities (Minneapolis-St. Paul, Minnesota)", "twincities"),
+        (
+            "Twin Cities (Minneapolis-St. Paul, Minnesota)",
+            "twincities",
+        ),
         ("New York City", "nyc"),
         ("Portland, Oregon", "portland"),
         ("Berlin, Germany", "berlin"),
     ];
     for (name, slug) in &city_mappings {
-        let q = query(
-            "MATCH (s:Source) WHERE s.city = $name SET s.city = $slug"
-        )
-        .param("name", *name)
-        .param("slug", *slug);
+        let q = query("MATCH (s:Source) WHERE s.city = $name SET s.city = $slug")
+            .param("name", *name)
+            .param("slug", *slug);
         match g.run(q).await {
             Ok(_) => {}
             Err(e) => warn!("City slug backfill failed for {name}: {e}"),
@@ -615,7 +637,7 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
           s.url CONTAINS 'startribune.com' OR \
           s.url CONTAINS 'minnpost.com') \
          SET s.source_role = 'tension' \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
     match g.execute(tension_q).await {
         Ok(mut stream) => {
@@ -638,7 +660,7 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
           (s.url IS NOT NULL AND s.url ENDS WITH '.org' AND s.source_type = 'web') OR \
           (s.url IS NOT NULL AND s.url CONTAINS '.org/' AND s.source_type = 'web')) \
          SET s.source_role = 'response' \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
     match g.execute(response_q).await {
         Ok(mut stream) => {
@@ -660,7 +682,7 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
           toLower(s.gap_context) CONTAINS 'volunteer' OR \
           toLower(s.gap_context) CONTAINS 'program') \
          SET s.source_role = 'response' \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
     match g.execute(gap_response_q).await {
         Ok(mut stream) => {
@@ -680,7 +702,7 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
           toLower(s.gap_context) CONTAINS 'problem' OR \
           toLower(s.gap_context) CONTAINS 'complaint') \
          SET s.source_role = 'tension' \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
     match g.execute(gap_tension_q).await {
         Ok(mut stream) => {
@@ -698,7 +720,7 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
     let mixed_q = query(
         "MATCH (s:Source) WHERE s.source_role IS NULL \
          SET s.source_role = 'mixed' \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
     match g.execute(mixed_q).await {
         Ok(mut stream) => {
@@ -726,7 +748,7 @@ pub async fn backfill_scrape_count(client: &GraphClient) -> Result<(), neo4rs::E
     let q = query(
         "MATCH (s:Source) WHERE s.scrape_count IS NULL \
          SET s.scrape_count = 0 \
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
 
     match g.execute(q).await {
@@ -760,7 +782,7 @@ pub async fn convert_gathering_edges(client: &GraphClient) -> Result<(), neo4rs:
              new.explanation = old.explanation,
              new.gathering_type = old.gathering_type
          DELETE old
-         RETURN count(old) AS converted"
+         RETURN count(old) AS converted",
     );
 
     match g.execute(q).await {
@@ -768,7 +790,10 @@ pub async fn convert_gathering_edges(client: &GraphClient) -> Result<(), neo4rs:
             if let Some(row) = stream.next().await? {
                 let converted: i64 = row.get("converted").unwrap_or(0);
                 if converted > 0 {
-                    info!(converted, "Converted gathering RESPONDS_TO edges to DRAWN_TO");
+                    info!(
+                        converted,
+                        "Converted gathering RESPONDS_TO edges to DRAWN_TO"
+                    );
                 }
             }
         }
@@ -791,7 +816,7 @@ pub async fn rename_tavily_to_web_query(client: &GraphClient) -> Result<(), neo4
         "MATCH (s:Source {source_type: 'tavily_query'})
          SET s.source_type = 'web_query',
              s.canonical_key = replace(s.canonical_key, ':tavily_query:', ':web_query:')
-         RETURN count(s) AS updated"
+         RETURN count(s) AS updated",
     );
 
     match g.execute(q).await {
@@ -828,7 +853,7 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
            AND s.discovery_method <> 'curated'
            AND s.discovery_method <> 'human_submission'
          SET s.active = false
-         RETURN count(s) AS deactivated"
+         RETURN count(s) AS deactivated",
     );
 
     match g.execute(q).await {

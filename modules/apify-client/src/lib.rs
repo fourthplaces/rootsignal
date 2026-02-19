@@ -5,8 +5,8 @@ pub use error::{ApifyError, Result};
 pub use types::{
     DiscoveredPost, FacebookPost, FacebookScraperInput, GoFundMeCampaign, GoFundMeScraperInput,
     InstagramHashtagInput, InstagramPost, InstagramScraperInput, RedditPost, RedditScraperInput,
-    RunData, StartUrl, TikTokPost, TikTokScraperInput, TikTokSearchInput,
-    Tweet, TweetAuthor, TweetScraperInput, TweetSearchInput,
+    RunData, StartUrl, TikTokPost, TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor,
+    TweetScraperInput, TweetSearchInput,
 };
 
 use serde::de::DeserializeOwned;
@@ -460,7 +460,11 @@ impl ApifyClient {
 
     /// Search TikTok by keywords. Uses the clockworks/tiktok-scraper actor
     /// with searchQueries instead of profiles.
-    pub async fn search_tiktok_keywords(&self, keywords: &[&str], limit: u32) -> Result<Vec<TikTokPost>> {
+    pub async fn search_tiktok_keywords(
+        &self,
+        keywords: &[&str],
+        limit: u32,
+    ) -> Result<Vec<TikTokPost>> {
         tracing::info!(?keywords, limit, "Starting TikTok keyword search");
 
         let input = TikTokSearchInput {
@@ -494,7 +498,10 @@ impl ApifyClient {
         let posts: Vec<TikTokPost> = self
             .get_dataset_items(&completed.default_dataset_id)
             .await?;
-        tracing::info!(count = posts.len(), "Fetched TikTok posts from keyword search");
+        tracing::info!(
+            count = posts.len(),
+            "Fetched TikTok posts from keyword search"
+        );
 
         Ok(posts)
     }

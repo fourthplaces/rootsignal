@@ -15,7 +15,9 @@ use harness::audit::{AuditConfig, AuditReport};
 use harness::queries::serialize_graph_state_for_city;
 use harness::{city_node_for, seed_sources_from_world, TestContext};
 use rootsignal_graph::query;
-use simweb::{generate_random_world, Improver, Judge, JudgeCriteria, SimulatedWeb, TestFailure, World};
+use simweb::{
+    generate_random_world, Improver, Judge, JudgeCriteria, SimulatedWeb, TestFailure, World,
+};
 
 /// Snapshot directory (checked into git).
 fn snapshots_dir() -> PathBuf {
@@ -37,7 +39,10 @@ async fn load_or_generate_sim(
         match SimulatedWeb::from_snapshot(world.clone(), api_key, snapshot_path) {
             Ok(sim) => return Arc::new(sim),
             Err(e) => {
-                eprintln!("Warning: failed to load snapshot {}: {e}, regenerating", snapshot_path.display());
+                eprintln!(
+                    "Warning: failed to load snapshot {}: {e}, regenerating",
+                    snapshot_path.display()
+                );
             }
         }
     }
@@ -74,10 +79,14 @@ async fn run_scenario(
     let slug = &city_slug;
 
     // Collect URLs belonging to this city's sources
-    let url_q = query(
-        "MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL RETURN s.url AS url"
-    ).param("slug", slug.as_str());
-    let mut url_stream = ctx.client().inner().execute(url_q).await.expect("Failed to query source URLs");
+    let url_q = query("MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL RETURN s.url AS url")
+        .param("slug", slug.as_str());
+    let mut url_stream = ctx
+        .client()
+        .inner()
+        .execute(url_q)
+        .await
+        .expect("Failed to query source URLs");
     let mut city_urls: Vec<String> = Vec::new();
     while let Some(row) = url_stream.next().await.expect("row failed") {
         city_urls.push(row.get::<String>("url").unwrap_or_default());
@@ -89,16 +98,24 @@ async fn run_scenario(
             "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
              WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
              AND ev.source_url IN $urls \
-             DETACH DELETE n, ev"
-        ).param("urls", city_urls.clone());
-        ctx.client().inner().run(clean_signals).await.expect("Failed to clean signals");
+             DETACH DELETE n, ev",
+        )
+        .param("urls", city_urls.clone());
+        ctx.client()
+            .inner()
+            .run(clean_signals)
+            .await
+            .expect("Failed to clean signals");
     }
 
     // Delete sources for this city
-    let clean_sources = query(
-        "MATCH (s:Source {city: $slug}) DETACH DELETE s"
-    ).param("slug", slug.as_str());
-    ctx.client().inner().run(clean_sources).await.expect("Failed to clean sources");
+    let clean_sources =
+        query("MATCH (s:Source {city: $slug}) DETACH DELETE s").param("slug", slug.as_str());
+    ctx.client()
+        .inner()
+        .run(clean_sources)
+        .await
+        .expect("Failed to clean sources");
 
     // Seed sources into Neo4j so the scout has something to schedule
     seed_sources_from_world(&writer, &world, &city_node.slug).await;
@@ -165,8 +182,16 @@ async fn sim_stale_minneapolis() {
     );
 
     let (verdict, audit) = run_scenario(&ctx, world, criteria, "stale_minneapolis", false).await;
-    assert!(verdict.pass, "stale_minneapolis failed: {}", verdict.reasoning);
-    assert!(audit.failed == 0, "stale_minneapolis: {} audit checks failed", audit.failed);
+    assert!(
+        verdict.pass,
+        "stale_minneapolis failed: {}",
+        verdict.reasoning
+    );
+    assert!(
+        audit.failed == 0,
+        "stale_minneapolis: {} audit checks failed",
+        audit.failed
+    );
 }
 
 #[tokio::test]
@@ -182,8 +207,16 @@ async fn sim_organizing_portland() {
     );
 
     let (verdict, audit) = run_scenario(&ctx, world, criteria, "organizing_portland", false).await;
-    assert!(verdict.pass, "organizing_portland failed: {}", verdict.reasoning);
-    assert!(audit.failed == 0, "organizing_portland: {} audit checks failed", audit.failed);
+    assert!(
+        verdict.pass,
+        "organizing_portland failed: {}",
+        verdict.reasoning
+    );
+    assert!(
+        audit.failed == 0,
+        "organizing_portland: {} audit checks failed",
+        audit.failed
+    );
 }
 
 #[tokio::test]
@@ -198,20 +231,18 @@ async fn sim_simmering_cedar_riverside() {
         scenarios::simmering_cedar_riverside::criteria(),
     );
 
-    let (verdict, audit) = run_scenario(
-        &ctx,
-        world,
-        criteria,
-        "simmering_cedar_riverside",
-        false,
-    )
-    .await;
+    let (verdict, audit) =
+        run_scenario(&ctx, world, criteria, "simmering_cedar_riverside", false).await;
     assert!(
         verdict.pass,
         "simmering_cedar_riverside failed: {}",
         verdict.reasoning
     );
-    assert!(audit.failed == 0, "simmering_cedar_riverside: {} audit checks failed", audit.failed);
+    assert!(
+        audit.failed == 0,
+        "simmering_cedar_riverside: {} audit checks failed",
+        audit.failed
+    );
 }
 
 #[tokio::test]
@@ -227,8 +258,16 @@ async fn sim_rural_minnesota() {
     );
 
     let (verdict, audit) = run_scenario(&ctx, world, criteria, "rural_minnesota", false).await;
-    assert!(verdict.pass, "rural_minnesota failed: {}", verdict.reasoning);
-    assert!(audit.failed == 0, "rural_minnesota: {} audit checks failed", audit.failed);
+    assert!(
+        verdict.pass,
+        "rural_minnesota failed: {}",
+        verdict.reasoning
+    );
+    assert!(
+        audit.failed == 0,
+        "rural_minnesota: {} audit checks failed",
+        audit.failed
+    );
 }
 
 #[tokio::test]
@@ -243,20 +282,18 @@ async fn sim_hidden_community_minneapolis() {
         scenarios::hidden_community_minneapolis::criteria(),
     );
 
-    let (verdict, audit) = run_scenario(
-        &ctx,
-        world,
-        criteria,
-        "hidden_community_minneapolis",
-        false,
-    )
-    .await;
+    let (verdict, audit) =
+        run_scenario(&ctx, world, criteria, "hidden_community_minneapolis", false).await;
     assert!(
         verdict.pass,
         "hidden_community_minneapolis failed: {}",
         verdict.reasoning
     );
-    assert!(audit.failed == 0, "hidden_community_minneapolis: {} audit checks failed", audit.failed);
+    assert!(
+        audit.failed == 0,
+        "hidden_community_minneapolis: {} audit checks failed",
+        audit.failed
+    );
 }
 
 #[tokio::test]
@@ -272,8 +309,16 @@ async fn sim_shifting_ground() {
     );
 
     let (verdict, audit) = run_scenario(&ctx, world, criteria, "shifting_ground", false).await;
-    assert!(verdict.pass, "shifting_ground failed: {}", verdict.reasoning);
-    assert!(audit.failed == 0, "shifting_ground: {} audit checks failed", audit.failed);
+    assert!(
+        verdict.pass,
+        "shifting_ground failed: {}",
+        verdict.reasoning
+    );
+    assert!(
+        audit.failed == 0,
+        "shifting_ground: {} audit checks failed",
+        audit.failed
+    );
 }
 
 // =============================================================================
@@ -292,7 +337,8 @@ async fn sim_tension_response_cycle() {
         scenarios::tension_response_cycle::criteria(),
     );
 
-    let (verdict, _audit) = run_scenario(&ctx, world, criteria, "tension_response_cycle", false).await;
+    let (verdict, _audit) =
+        run_scenario(&ctx, world, criteria, "tension_response_cycle", false).await;
     assert!(
         verdict.pass,
         "tension_response_cycle failed: {}",
@@ -312,14 +358,8 @@ async fn sim_tension_discovery_bridge() {
         scenarios::tension_discovery_bridge::criteria(),
     );
 
-    let (verdict, _audit) = run_scenario(
-        &ctx,
-        world,
-        criteria,
-        "tension_discovery_bridge",
-        false,
-    )
-    .await;
+    let (verdict, _audit) =
+        run_scenario(&ctx, world, criteria, "tension_discovery_bridge", false).await;
     assert!(
         verdict.pass,
         "tension_discovery_bridge failed: {}",
@@ -349,7 +389,11 @@ async fn pinned_stale_minneapolis() {
         "pinned stale_minneapolis failed: {}",
         verdict.reasoning
     );
-    assert!(audit.failed == 0, "pinned stale_minneapolis: {} audit checks failed", audit.failed);
+    assert!(
+        audit.failed == 0,
+        "pinned stale_minneapolis: {} audit checks failed",
+        audit.failed
+    );
 }
 
 // =============================================================================
@@ -381,8 +425,12 @@ async fn discovery_random_world() {
     };
 
     eprintln!("=== Random world: {} ===", world.name);
-    eprintln!("Sites: {}, Profiles: {}, Facts: {}",
-        world.sites.len(), world.social_profiles.len(), world.facts.len());
+    eprintln!(
+        "Sites: {}, Profiles: {}, Facts: {}",
+        world.sites.len(),
+        world.social_profiles.len(),
+        world.facts.len()
+    );
 
     // Use permissive criteria — we're exploring, not asserting
     let criteria = JudgeCriteria {
@@ -406,7 +454,10 @@ async fn discovery_random_world() {
             verdict.score
         );
         for issue in &verdict.issues {
-            eprintln!("  [{:?}] {}: {}", issue.severity, issue.category, issue.description);
+            eprintln!(
+                "  [{:?}] {}: {}",
+                issue.severity, issue.category, issue.description
+            );
         }
     }
     if audit.failed > 0 {
@@ -421,28 +472,52 @@ async fn discovery_random_world() {
 /// Scenario loader: name + (world, criteria) factory.
 const ALL_SCENARIOS: &[(&str, fn() -> (World, JudgeCriteria))] = &[
     ("stale_minneapolis", || {
-        (scenarios::stale_minneapolis::world(), scenarios::stale_minneapolis::criteria())
+        (
+            scenarios::stale_minneapolis::world(),
+            scenarios::stale_minneapolis::criteria(),
+        )
     }),
     ("organizing_portland", || {
-        (scenarios::organizing_portland::world(), scenarios::organizing_portland::criteria())
+        (
+            scenarios::organizing_portland::world(),
+            scenarios::organizing_portland::criteria(),
+        )
     }),
     ("simmering_cedar_riverside", || {
-        (scenarios::simmering_cedar_riverside::world(), scenarios::simmering_cedar_riverside::criteria())
+        (
+            scenarios::simmering_cedar_riverside::world(),
+            scenarios::simmering_cedar_riverside::criteria(),
+        )
     }),
     ("rural_minnesota", || {
-        (scenarios::rural_minnesota::world(), scenarios::rural_minnesota::criteria())
+        (
+            scenarios::rural_minnesota::world(),
+            scenarios::rural_minnesota::criteria(),
+        )
     }),
     ("hidden_community_minneapolis", || {
-        (scenarios::hidden_community_minneapolis::world(), scenarios::hidden_community_minneapolis::criteria())
+        (
+            scenarios::hidden_community_minneapolis::world(),
+            scenarios::hidden_community_minneapolis::criteria(),
+        )
     }),
     ("shifting_ground", || {
-        (scenarios::shifting_ground::world(), scenarios::shifting_ground::criteria())
+        (
+            scenarios::shifting_ground::world(),
+            scenarios::shifting_ground::criteria(),
+        )
     }),
     ("tension_response_cycle", || {
-        (scenarios::tension_response_cycle::world(), scenarios::tension_response_cycle::criteria())
+        (
+            scenarios::tension_response_cycle::world(),
+            scenarios::tension_response_cycle::criteria(),
+        )
     }),
     ("tension_discovery_bridge", || {
-        (scenarios::tension_discovery_bridge::world(), scenarios::tension_discovery_bridge::criteria())
+        (
+            scenarios::tension_discovery_bridge::world(),
+            scenarios::tension_discovery_bridge::criteria(),
+        )
     }),
 ];
 
@@ -490,7 +565,11 @@ async fn improvement_loop() {
         }
     }
 
-    eprintln!("=== Improvement loop: {}/{} scenarios failed ===", failures.len(), ALL_SCENARIOS.len());
+    eprintln!(
+        "=== Improvement loop: {}/{} scenarios failed ===",
+        failures.len(),
+        ALL_SCENARIOS.len()
+    );
 
     if failures.is_empty() {
         eprintln!("All scenarios passed — no blind spots to analyze");
@@ -516,16 +595,25 @@ async fn improvement_loop() {
 
     eprintln!("=== Blind spots: {} ===", report.blind_spots.len());
     for spot in &report.blind_spots {
-        eprintln!("  [{:?}] {}: {} (from: {})", spot.severity, spot.category, spot.description, spot.source);
+        eprintln!(
+            "  [{:?}] {}: {} (from: {})",
+            spot.severity, spot.category, spot.description, spot.source
+        );
     }
 
-    eprintln!("=== Prompt suggestions: {} ===", report.prompt_suggestions.len());
+    eprintln!(
+        "=== Prompt suggestions: {} ===",
+        report.prompt_suggestions.len()
+    );
     for fix in &report.prompt_suggestions {
         eprintln!("  {}: {} → {}", fix.target, fix.issue, fix.suggestion);
     }
 
     // Run suggested scenarios to validate they expose the weakness
-    eprintln!("=== Running {} suggested scenarios ===", report.suggested_scenarios.len());
+    eprintln!(
+        "=== Running {} suggested scenarios ===",
+        report.suggested_scenarios.len()
+    );
     for world in &report.suggested_scenarios {
         let criteria = match improver.criteria_for(world).await {
             Ok(c) => c,
@@ -536,11 +624,16 @@ async fn improvement_loop() {
         };
 
         let scenario_name = format!("improve_{}", world.name.to_lowercase().replace(' ', "_"));
-        let (verdict, _audit) = run_scenario(&ctx, world.clone(), criteria, &scenario_name, false).await;
+        let (verdict, _audit) =
+            run_scenario(&ctx, world.clone(), criteria, &scenario_name, false).await;
         eprintln!(
             "  {} → {} (score: {:.2})",
             world.name,
-            if verdict.pass { "PASS" } else { "FAIL (confirms blind spot)" },
+            if verdict.pass {
+                "PASS"
+            } else {
+                "FAIL (confirms blind spot)"
+            },
             verdict.score,
         );
     }

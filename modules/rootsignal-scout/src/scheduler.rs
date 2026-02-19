@@ -87,8 +87,14 @@ impl SourceScheduler {
         // Pick exploration sources — deterministic: sort by staleness (most stale first)
         let mut exploration_candidates: Vec<_> = exploration_candidates.into_iter().collect();
         exploration_candidates.sort_by(|a, b| {
-            let a_stale = a.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
-            let b_stale = b.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
+            let a_stale = a
+                .last_scraped
+                .map(|t| (now - t).num_days())
+                .unwrap_or(i64::MAX);
+            let b_stale = b
+                .last_scraped
+                .map(|t| (now - t).num_days())
+                .unwrap_or(i64::MAX);
             b_stale.cmp(&a_stale) // most stale first
         });
 
@@ -150,7 +156,8 @@ impl SourceScheduler {
             None => return true, // Never scraped — always due
         };
 
-        let cadence_hours = source.cadence_hours
+        let cadence_hours = source
+            .cadence_hours
             .unwrap_or_else(|| cadence_hours_for_weight(source.weight));
         let hours_since = (now - last).num_hours();
 
@@ -250,14 +257,18 @@ pub fn schedule_web_queries(
     };
 
     // Filter to active web query sources only
-    let web_queries: Vec<&SourceNode> = sources.iter()
+    let web_queries: Vec<&SourceNode> = sources
+        .iter()
         .filter(|s| s.source_type == SourceType::WebQuery && s.active)
         .collect();
 
     if web_queries.is_empty() {
         return WebQueryScheduleResult {
             scheduled: vec![],
-            hot: 0, warm: 0, cold: 0, skipped: 0,
+            hot: 0,
+            warm: 0,
+            cold: 0,
+            skipped: 0,
         };
     }
 
@@ -281,9 +292,10 @@ pub fn schedule_web_queries(
     // Tier budgets
     let hot_budget = (max as f64 * 0.60).ceil() as usize;
     let warm_budget = (max as f64 * 0.25).ceil() as usize;
-    let cold_budget = max.saturating_sub(hot_budget).saturating_sub(warm_budget).max(
-        (max as f64 * 0.15).ceil() as usize,
-    );
+    let cold_budget = max
+        .saturating_sub(hot_budget)
+        .saturating_sub(warm_budget)
+        .max((max as f64 * 0.15).ceil() as usize);
 
     // Hot tier: top-scoring with per-tension cap
     let mut hot_selected: Vec<String> = Vec::new();
@@ -313,7 +325,8 @@ pub fn schedule_web_queries(
         vec![]
     } else {
         let step = (warm_candidates.len() as f64 / warm_budget.max(1) as f64).ceil() as usize;
-        warm_candidates.iter()
+        warm_candidates
+            .iter()
             .step_by(step.max(1))
             .take(warm_budget)
             .map(|s| s.canonical_key.clone())
@@ -323,11 +336,18 @@ pub fn schedule_web_queries(
     // Cold tier: deterministic sample from never-scraped + dormant (most stale first)
     let mut cold_sorted = cold_pool;
     cold_sorted.sort_by(|a, b| {
-        let a_stale = a.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
-        let b_stale = b.last_scraped.map(|t| (now - t).num_days()).unwrap_or(i64::MAX);
+        let a_stale = a
+            .last_scraped
+            .map(|t| (now - t).num_days())
+            .unwrap_or(i64::MAX);
+        let b_stale = b
+            .last_scraped
+            .map(|t| (now - t).num_days())
+            .unwrap_or(i64::MAX);
         b_stale.cmp(&a_stale)
     });
-    let cold_selected: Vec<String> = cold_sorted.iter()
+    let cold_selected: Vec<String> = cold_sorted
+        .iter()
         .take(cold_budget)
         .map(|s| s.canonical_key.clone())
         .collect();
@@ -372,7 +392,8 @@ fn extract_heat_from_gap_context(gap_context: Option<&str>) -> f64 {
     for pattern in &["heat=", "cause_heat: ", "heat: "] {
         if let Some(pos) = ctx.find(pattern) {
             let start = pos + pattern.len();
-            let end = ctx[start..].find(|c: char| !c.is_ascii_digit() && c != '.')
+            let end = ctx[start..]
+                .find(|c: char| !c.is_ascii_digit() && c != '.')
                 .map(|i| start + i)
                 .unwrap_or(ctx.len());
             if let Ok(heat) = ctx[start..end].parse::<f64>() {
@@ -395,7 +416,8 @@ fn extract_tension_from_gap_context(gap_context: Option<&str>) -> String {
             let start = pos + prefix.len();
             let rest = &ctx[start..];
             // Take until next delimiter
-            let end = rest.find(|c: char| c == '|' || c == '"' || c == '\n')
+            let end = rest
+                .find(|c: char| c == '|' || c == '"' || c == '\n')
                 .unwrap_or(rest.len());
             let tension = rest[..end].trim();
             if !tension.is_empty() && tension != "none" {
@@ -569,7 +591,10 @@ mod tests {
 
         let result = scheduler.schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 10);
-        assert!(!result.exploration.is_empty(), "Should have exploration picks");
+        assert!(
+            !result.exploration.is_empty(),
+            "Should have exploration picks"
+        );
         assert!(result.exploration.len() <= 3);
         for e in &result.exploration {
             assert_eq!(e.reason, ScheduleReason::Exploration);
@@ -591,12 +616,18 @@ mod tests {
         // New source with 1 scrape, 1 signal — should be smoothed toward prior
         let w = compute_weight(1, 0, 1, 0, Some(now), now);
         // Without smoothing: 1.0. With smoothing (k=3, prior=0.3): (1.0*1 + 0.3*3)/(1+3) = 1.9/4 = 0.475
-        assert!(w < 0.6, "Bayesian smoothing should reduce weight for n=1: {w}");
+        assert!(
+            w < 0.6,
+            "Bayesian smoothing should reduce weight for n=1: {w}"
+        );
 
         // Source with 10 scrapes, 5 signals — no smoothing needed
         let w = compute_weight(5, 0, 10, 0, Some(now), now);
         // actual_yield = 0.5, no smoothing
-        assert!((w - 0.5).abs() < 0.1, "Established source weight should be ~0.5: {w}");
+        assert!(
+            (w - 0.5).abs() < 0.1,
+            "Established source weight should be ~0.5: {w}"
+        );
     }
 
     #[test]
@@ -605,7 +636,10 @@ mod tests {
         // Use 5 signals out of 10 scrapes (base_yield=0.5) so bonus is visible before clamping
         let base = compute_weight(5, 0, 10, 0, Some(now), now);
         let with_tension = compute_weight(5, 0, 10, 3, Some(now), now);
-        assert!(with_tension > base, "Tension bonus should increase weight: base={base}, with_tension={with_tension}");
+        assert!(
+            with_tension > base,
+            "Tension bonus should increase weight: base={base}, with_tension={with_tension}"
+        );
     }
 
     #[test]
@@ -613,7 +647,10 @@ mod tests {
         let now = Utc::now();
         let recent = compute_weight(5, 0, 10, 0, Some(now - Duration::days(5)), now);
         let stale = compute_weight(5, 0, 10, 0, Some(now - Duration::days(60)), now);
-        assert!(stale < recent, "Stale source should have lower weight: recent={recent}, stale={stale}");
+        assert!(
+            stale < recent,
+            "Stale source should have lower weight: recent={recent}, stale={stale}"
+        );
     }
 
     #[test]
@@ -621,7 +658,10 @@ mod tests {
         let now = Utc::now();
         // 0 signals, 50 scrapes, very stale → should hit floor of 0.1
         let w = compute_weight(0, 0, 50, 0, Some(now - Duration::days(90)), now);
-        assert!((w - 0.1).abs() < 0.01, "Weight should be clamped to floor: {w}");
+        assert!(
+            (w - 0.1).abs() < 0.01,
+            "Weight should be clamped to floor: {w}"
+        );
     }
 
     #[test]
@@ -630,7 +670,10 @@ mod tests {
         // Use 5 signals out of 10 scrapes so bonus is visible before clamping
         let base = compute_weight(5, 0, 10, 0, Some(now), now);
         let corroborated = compute_weight(5, 3, 10, 0, Some(now), now);
-        assert!(corroborated > base, "Corroboration should boost weight: base={base}, corroborated={corroborated}");
+        assert!(
+            corroborated > base,
+            "Corroboration should boost weight: base={base}, corroborated={corroborated}"
+        );
     }
 
     #[test]
@@ -638,14 +681,20 @@ mod tests {
         let now = Utc::now();
         // 5 signals from 20 scrapes = 25% yield
         let w = compute_weight(5, 0, 20, 0, Some(now), now);
-        assert!(w < 0.35, "5 signals / 20 scrapes should give low weight: {w}");
+        assert!(
+            w < 0.35,
+            "5 signals / 20 scrapes should give low weight: {w}"
+        );
 
         // Bug behavior: 5 signals / 5 "scrapes" = 100% yield
         let w_bug = compute_weight(5, 0, 5, 0, Some(now), now);
         assert!(w_bug > 0.5, "Bug inflates weight: {w_bug}");
 
         // Confirm they're meaningfully different
-        assert!(w_bug > w * 1.5, "Bug should produce significantly higher weight");
+        assert!(
+            w_bug > w * 1.5,
+            "Bug should produce significantly higher weight"
+        );
     }
 
     #[test]
@@ -657,8 +706,16 @@ mod tests {
         // With min_stale_days=5, IS eligible for exploration (6 >= 5).
         let sources = vec![make_source(0.15, Some(now - Duration::days(6)))];
         let result = scheduler.schedule(&sources, now);
-        assert_eq!(result.scheduled.len(), 0, "Should NOT be scheduled by cadence");
-        assert_eq!(result.exploration.len(), 1, "Should be picked for exploration");
+        assert_eq!(
+            result.scheduled.len(),
+            0,
+            "Should NOT be scheduled by cadence"
+        );
+        assert_eq!(
+            result.exploration.len(),
+            1,
+            "Should be picked for exploration"
+        );
     }
 
     // --- Exponential Backoff ---
@@ -757,7 +814,11 @@ mod tests {
             .map(|_| make_web_query(0.5, Some(now - Duration::hours(48)), 0, None))
             .collect();
         let result = schedule_web_queries(&sources, 20, now);
-        assert!(result.scheduled.len() <= 20, "Should not exceed max: {}", result.scheduled.len());
+        assert!(
+            result.scheduled.len() <= 20,
+            "Should not exceed max: {}",
+            result.scheduled.len()
+        );
     }
 
     #[test]
@@ -771,7 +832,10 @@ mod tests {
             sources.push(make_web_query(0.3, None, 0, None));
         }
         let result = schedule_web_queries(&sources, 50, now);
-        assert!(result.cold > 0, "Never-scraped queries should be in cold tier");
+        assert!(
+            result.cold > 0,
+            "Never-scraped queries should be in cold tier"
+        );
     }
 
     #[test]
@@ -793,16 +857,22 @@ mod tests {
         let now = Utc::now();
         // 10 queries all for the same tension
         let sources: Vec<SourceNode> = (0..10)
-            .map(|_| make_web_query(
-                0.8,
-                Some(now - Duration::hours(48)),
-                0,
-                Some("Related: same tension | Gap: unmet_tension"),
-            ))
+            .map(|_| {
+                make_web_query(
+                    0.8,
+                    Some(now - Duration::hours(48)),
+                    0,
+                    Some("Related: same tension | Gap: unmet_tension"),
+                )
+            })
             .collect();
         let result = schedule_web_queries(&sources, 50, now);
         // Hot tier should cap at 3 for same tension
-        assert!(result.hot <= 3, "Per-tension cap should limit hot tier: got {}", result.hot);
+        assert!(
+            result.hot <= 3,
+            "Per-tension cap should limit hot tier: got {}",
+            result.hot
+        );
     }
 
     #[test]
@@ -811,7 +881,10 @@ mod tests {
         let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
         source.active = false;
         let result = schedule_web_queries(&[source], 50, now);
-        assert!(result.scheduled.is_empty(), "Inactive sources should be skipped");
+        assert!(
+            result.scheduled.is_empty(),
+            "Inactive sources should be skipped"
+        );
     }
 
     #[test]
@@ -820,7 +893,10 @@ mod tests {
         let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
         source.source_type = SourceType::Web;
         let result = schedule_web_queries(&[source], 50, now);
-        assert!(result.scheduled.is_empty(), "Non-web-query sources should be filtered out");
+        assert!(
+            result.scheduled.is_empty(),
+            "Non-web-query sources should be filtered out"
+        );
     }
 
     // --- Helper extraction tests ---
@@ -836,7 +912,9 @@ mod tests {
     #[test]
     fn extract_tension_parses_gap_context() {
         assert_eq!(
-            extract_tension_from_gap_context(Some("Curiosity: reason | Gap: unmet_tension | Related: food desert")),
+            extract_tension_from_gap_context(Some(
+                "Curiosity: reason | Gap: unmet_tension | Related: food desert"
+            )),
             "food desert"
         );
         assert_eq!(
@@ -844,12 +922,11 @@ mod tests {
             "housing crisis"
         );
         assert_eq!(
-            extract_tension_from_gap_context(Some("Response Scout: response discovery for \"ICE raids\"")),
+            extract_tension_from_gap_context(Some(
+                "Response Scout: response discovery for \"ICE raids\""
+            )),
             "ice raids"
         );
-        assert_eq!(
-            extract_tension_from_gap_context(None),
-            "unknown"
-        );
+        assert_eq!(extract_tension_from_gap_context(None), "unknown");
     }
 }

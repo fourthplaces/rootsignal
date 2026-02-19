@@ -20,7 +20,7 @@ impl SupervisorState {
     pub async fn last_run(&self) -> Result<Option<DateTime<Utc>>, neo4rs::Error> {
         let q = query(
             "MATCH (s:SupervisorState {city: $city})
-             RETURN s.last_run AS last_run"
+             RETURN s.last_run AS last_run",
         )
         .param("city", self.city.clone());
 
@@ -70,7 +70,7 @@ impl SupervisorState {
                            s.min_confidence = 0.0,
                            s.dedup_threshold_recommendation = 0.92,
                            s.version = 1
-             ON MATCH SET s.last_run = datetime($last_run)"
+             ON MATCH SET s.last_run = datetime($last_run)",
         )
         .param("city", self.city.clone())
         .param("id", Uuid::new_v4().to_string())
@@ -96,7 +96,7 @@ impl SupervisorState {
             "OPTIONAL MATCH (existing:SupervisorLock)
              WITH existing WHERE existing IS NULL
              CREATE (lock:SupervisorLock {started_at: datetime()})
-             RETURN lock IS NOT NULL AS acquired"
+             RETURN lock IS NOT NULL AS acquired",
         );
 
         let mut result = self.client.inner().execute(q).await?;

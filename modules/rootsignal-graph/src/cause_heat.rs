@@ -26,10 +26,7 @@ struct SignalEmbed {
 ///    and Notices absorb heat from nearby Tensions but do not generate it.
 /// 4. Normalize to 0.0–1.0
 /// 5. Write back to graph
-pub async fn compute_cause_heat(
-    client: &GraphClient,
-    threshold: f64,
-) -> Result<(), neo4rs::Error> {
+pub async fn compute_cause_heat(client: &GraphClient, threshold: f64) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
     info!(threshold, "Computing cause heat...");
@@ -103,13 +100,7 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
     // Precompute norms
     let norms: Vec<f64> = signals
         .iter()
-        .map(|s| {
-            s.embedding
-                .iter()
-                .map(|x| x * x)
-                .sum::<f64>()
-                .sqrt()
-        })
+        .map(|s| s.embedding.iter().map(|x| x * x).sum::<f64>().sqrt())
         .collect();
 
     // Compute raw cause_heat for each signal
@@ -127,7 +118,12 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
             if signals[j].label != "Tension" {
                 continue;
             }
-            let sim = cosine_similarity(&signals[i].embedding, &signals[j].embedding, norms[i], norms[j]);
+            let sim = cosine_similarity(
+                &signals[i].embedding,
+                &signals[j].embedding,
+                norms[i],
+                norms[j],
+            );
             if sim > threshold {
                 heat += sim * signals[j].source_diversity as f64;
             }
@@ -266,7 +262,11 @@ mod tests {
         ];
         let heats = compute_heats(&signals, 0.7);
 
-        assert!(heats[0] > 0.5, "Event near tension should get heat, got {}", heats[0]);
+        assert!(
+            heats[0] > 0.5,
+            "Event near tension should get heat, got {}",
+            heats[0]
+        );
         // Tension also gets heat from... no other tensions → zero
         // (only one tension in the graph)
         assert_eq!(heats[1], 0.0, "Lone tension has no tension neighbors");
@@ -283,7 +283,10 @@ mod tests {
         let heats = compute_heats(&signals, 0.7);
 
         for (i, h) in heats.iter().enumerate() {
-            assert_eq!(*h, 0.0, "Event {i} should have zero heat without nearby tension");
+            assert_eq!(
+                *h, 0.0,
+                "Event {i} should have zero heat without nearby tension"
+            );
         }
     }
 
@@ -298,9 +301,21 @@ mod tests {
         ];
         let heats = compute_heats(&signals, 0.7);
 
-        assert!(heats[0] > 0.5, "ICE raids should get heat from immigrant_fear, got {}", heats[0]);
-        assert!(heats[1] > 0.5, "Immigrant fear should get heat from ICE raids, got {}", heats[1]);
-        assert!(heats[2] < 0.01, "Unrelated tension gets no corroboration, got {}", heats[2]);
+        assert!(
+            heats[0] > 0.5,
+            "ICE raids should get heat from immigrant_fear, got {}",
+            heats[0]
+        );
+        assert!(
+            heats[1] > 0.5,
+            "Immigrant fear should get heat from ICE raids, got {}",
+            heats[1]
+        );
+        assert!(
+            heats[2] < 0.01,
+            "Unrelated tension gets no corroboration, got {}",
+            heats[2]
+        );
     }
 
     #[test]
@@ -314,8 +329,16 @@ mod tests {
         ];
         let heats = compute_heats(&signals, 0.7);
 
-        assert!(heats[0] > 0.5, "Workshop near tension should get heat, got {}", heats[0]);
-        assert!(heats[2] < 0.01, "Happy hour far from tension gets nothing, got {}", heats[2]);
+        assert!(
+            heats[0] > 0.5,
+            "Workshop near tension should get heat, got {}",
+            heats[0]
+        );
+        assert!(
+            heats[2] < 0.01,
+            "Happy hour far from tension gets nothing, got {}",
+            heats[2]
+        );
     }
 
     #[test]
@@ -366,7 +389,10 @@ mod tests {
         let min = event_heats.iter().cloned().fold(f64::MAX, f64::min);
         let max = event_heats.iter().cloned().fold(0.0_f64, f64::max);
         assert!(min > 0.0, "All events near tension should get heat");
-        assert!((max - min) < 0.1, "Events equidistant from tension should get similar heat");
+        assert!(
+            (max - min) < 0.1,
+            "Events equidistant from tension should get similar heat"
+        );
 
         // The tension itself gets zero (no other tensions nearby)
         assert_eq!(heats[64], 0.0);
@@ -385,8 +411,16 @@ mod tests {
         ];
         let heats = compute_heats(&signals, 0.7);
 
-        assert!(heats[0] > 0.5, "Food shelf near housing tensions should get heat, got {}", heats[0]);
-        assert!(heats[4] < 0.01, "Park event far from any tension gets nothing, got {}", heats[4]);
+        assert!(
+            heats[0] > 0.5,
+            "Food shelf near housing tensions should get heat, got {}",
+            heats[0]
+        );
+        assert!(
+            heats[4] < 0.01,
+            "Park event far from any tension gets nothing, got {}",
+            heats[4]
+        );
     }
 
     #[test]
@@ -401,9 +435,12 @@ mod tests {
         ];
         let heats = compute_heats(&signals, 0.7);
 
-        assert!(heats[0] > heats[2],
+        assert!(
+            heats[0] > heats[2],
             "Event near diverse tension ({}) should outrank event near single-source tension ({})",
-            heats[0], heats[2]);
+            heats[0],
+            heats[2]
+        );
     }
 
     #[test]
@@ -421,9 +458,18 @@ mod tests {
         let heats_duped = compute_heats(&signals_with_dupes, 0.7);
 
         // The duplicate tensions self-corroborate and get nonzero heat
-        assert!(heats_duped[1] > 0.0, "Dup tension 1 gets unearned corroboration heat");
-        assert!(heats_duped[2] > 0.0, "Dup tension 2 gets unearned corroboration heat");
-        assert!(heats_duped[3] > 0.0, "Dup tension 3 gets unearned corroboration heat");
+        assert!(
+            heats_duped[1] > 0.0,
+            "Dup tension 1 gets unearned corroboration heat"
+        );
+        assert!(
+            heats_duped[2] > 0.0,
+            "Dup tension 2 gets unearned corroboration heat"
+        );
+        assert!(
+            heats_duped[3] > 0.0,
+            "Dup tension 3 gets unearned corroboration heat"
+        );
 
         // After merging: one tension, no self-corroboration
         let signals_merged = vec![
@@ -433,7 +479,10 @@ mod tests {
         let heats_merged = compute_heats(&signals_merged, 0.7);
 
         // The merged tension gets zero (no other tension to corroborate with)
-        assert_eq!(heats_merged[1], 0.0, "Merged tension should have zero heat (no corroboration)");
+        assert_eq!(
+            heats_merged[1], 0.0,
+            "Merged tension should have zero heat (no corroboration)"
+        );
         // The Give still gets heat from the single tension
         assert_eq!(heats_merged[0], 1.0, "Give gets all the heat after merge");
     }
@@ -458,9 +507,11 @@ mod tests {
         ];
         let heats_corroborated = compute_heats(&signals_corroborated, 0.7);
         // Now housing tension gets heat from rent_burden
-        assert!(heats_corroborated[0] > 0.0,
+        assert!(
+            heats_corroborated[0] > 0.0,
             "Housing tension should get heat from corroborating rent tension, got {}",
-            heats_corroborated[0]);
+            heats_corroborated[0]
+        );
     }
 
     /// Integration test: run cause_heat against a live Neo4j instance.
@@ -468,13 +519,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn cause_heat_live() {
-        let client = crate::GraphClient::connect(
-            "bolt://localhost:7687",
-            "neo4j",
-            "rootsignal",
-        )
-        .await
-        .expect("Failed to connect to Neo4j");
+        let client = crate::GraphClient::connect("bolt://localhost:7687", "neo4j", "rootsignal")
+            .await
+            .expect("Failed to connect to Neo4j");
 
         compute_cause_heat(&client, 0.7)
             .await
@@ -488,7 +535,7 @@ mod tests {
              RETURN n.title AS title, n.cause_heat AS heat,
                     n.source_diversity AS div, labels(n) AS labels
              ORDER BY n.cause_heat DESC
-             LIMIT 15"
+             LIMIT 15",
         );
 
         let mut stream = client.graph.execute(q).await.unwrap();
@@ -499,7 +546,11 @@ mod tests {
             let heat: f64 = row.get("heat").unwrap_or(0.0);
             let div: i64 = row.get("div").unwrap_or(0);
             let labels: Vec<String> = row.get("labels").unwrap_or_default();
-            let label = labels.iter().find(|l| *l != "Node").cloned().unwrap_or_default();
+            let label = labels
+                .iter()
+                .find(|l| *l != "Node")
+                .cloned()
+                .unwrap_or_default();
             println!("  heat={heat:.3}  div={div}  [{label}] {title}");
             count += 1;
         }
@@ -510,7 +561,7 @@ mod tests {
             "MATCH (n)
              WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
                AND (n.cause_heat IS NULL OR n.cause_heat = 0)
-             RETURN count(n) AS cnt"
+             RETURN count(n) AS cnt",
         );
         let mut stream = client.graph.execute(q).await.unwrap();
         if let Some(row) = stream.next().await.unwrap() {

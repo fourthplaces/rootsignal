@@ -18,7 +18,9 @@ use rootsignal_graph::{query, GraphClient, GraphWriter};
 /// Spin up a fresh Neo4j container and run migrations.
 async fn setup() -> (impl std::any::Any, GraphClient) {
     let (container, client) = rootsignal_graph::testutil::neo4j_container().await;
-    rootsignal_graph::migrate::migrate(&client).await.expect("migration failed");
+    rootsignal_graph::migrate::migrate(&client)
+        .await
+        .expect("migration failed");
     (container, client)
 }
 
@@ -35,13 +37,7 @@ fn dummy_embedding() -> String {
 }
 
 /// Helper: create a signal node with minimal required properties.
-async fn create_signal(
-    client: &GraphClient,
-    label: &str,
-    id: Uuid,
-    title: &str,
-    source_url: &str,
-) {
+async fn create_signal(client: &GraphClient, label: &str, id: Uuid, title: &str, source_url: &str) {
     create_signal_at(client, label, id, title, source_url, 44.9778, -93.2650).await;
 }
 
@@ -85,7 +81,11 @@ async fn create_signal_at(
         .param("source_url", source_url)
         .param("now", now);
 
-    client.inner().run(q).await.expect("Failed to create signal");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create signal");
 }
 
 /// Helper: create an Event with a specific starts_at using the CASE/datetime pattern.
@@ -124,11 +124,11 @@ async fn create_event_with_date(
         }})"
     );
     let q = query(&cypher)
-    .param("id", id.to_string())
-    .param("title", title)
-    .param("summary", format!("Test event: {title}"))
-    .param("starts_at", starts_at)
-    .param("now", now);
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", format!("Test event: {title}"))
+        .param("starts_at", starts_at)
+        .param("now", now);
 
     client.inner().run(q).await.expect("Failed to create event");
 }
@@ -157,7 +157,7 @@ async fn create_actor_and_link(
             first_seen: datetime($now),
             last_active: datetime($now),
             typical_roles: [$role]
-        })"
+        })",
     )
     .param("id", actor_id.to_string())
     .param("entity_id", format!("test-entity-{}", actor_id))
@@ -176,7 +176,11 @@ async fn create_actor_and_link(
         .param("signal_id", signal_id.to_string())
         .param("role", role);
 
-    client.inner().run(q).await.expect("Failed to link actor to signal");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to link actor to signal");
 }
 
 // ---------------------------------------------------------------------------
@@ -188,11 +192,17 @@ async fn event_date_stored_as_datetime() {
     let (_container, client) = setup().await;
 
     let id = Uuid::new_v4();
-    create_event_with_date(&client, id, "Test dated event", "2026-03-15T18:00:00.000000").await;
+    create_event_with_date(
+        &client,
+        id,
+        "Test dated event",
+        "2026-03-15T18:00:00.000000",
+    )
+    .await;
 
     let q = query(
         "MATCH (e:Event {id: $id})
-         RETURN valueType(e.starts_at) AS vtype, e.starts_at IS NOT NULL AS has_date"
+         RETURN valueType(e.starts_at) AS vtype, e.starts_at IS NOT NULL AS has_date",
     )
     .param("id", id.to_string());
 
@@ -222,7 +232,7 @@ async fn event_null_date_stored_as_null() {
 
     let q = query(
         "MATCH (e:Event {id: $id})
-         RETURN e.starts_at IS NULL AS is_null"
+         RETURN e.starts_at IS NULL AS is_null",
     )
     .param("id", id.to_string());
 
@@ -254,7 +264,7 @@ async fn events_sortable_by_starts_at() {
         "MATCH (e:Event)
          WHERE e.starts_at IS NOT NULL
          RETURN e.title AS title
-         ORDER BY e.starts_at"
+         ORDER BY e.starts_at",
     );
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -264,7 +274,12 @@ async fn events_sortable_by_starts_at() {
         titles.push(title);
     }
 
-    assert_eq!(titles.len(), 2, "should get 2 dated events, got {}", titles.len());
+    assert_eq!(
+        titles.len(),
+        2,
+        "should get 2 dated events, got {}",
+        titles.len()
+    );
     assert_eq!(titles[0], "March event", "March should sort before April");
     assert_eq!(titles[1], "April event", "April should sort after March");
 }
@@ -280,14 +295,35 @@ async fn topic_keyword_search() {
     let id1 = Uuid::new_v4();
     let id2 = Uuid::new_v4();
     let id3 = Uuid::new_v4();
-    create_signal(&client, "Give", id1, "Free food at community center", "https://food.org").await;
-    create_signal(&client, "Ask", id2, "Volunteers needed for food drive", "https://drive.org").await;
-    create_signal(&client, "Event", id3, "Housing forum downtown", "https://housing.org").await;
+    create_signal(
+        &client,
+        "Give",
+        id1,
+        "Free food at community center",
+        "https://food.org",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Ask",
+        id2,
+        "Volunteers needed for food drive",
+        "https://drive.org",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Event",
+        id3,
+        "Housing forum downtown",
+        "https://housing.org",
+    )
+    .await;
 
     let q = query(
         "MATCH (n)
          WHERE (n:Give OR n:Ask OR n:Event) AND toLower(n.title) CONTAINS 'food'
-         RETURN n.title AS title"
+         RETURN n.title AS title",
     );
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -297,7 +333,12 @@ async fn topic_keyword_search() {
         found.push(title);
     }
 
-    assert_eq!(found.len(), 2, "should find 2 food-related signals, got {}", found.len());
+    assert_eq!(
+        found.len(),
+        2,
+        "should find 2 food-related signals, got {}",
+        found.len()
+    );
     assert!(found.iter().all(|t| t.to_lowercase().contains("food")));
 }
 
@@ -357,7 +398,7 @@ async fn geo_bounding_box_query() {
         "MATCH (n:Event)
          WHERE n.lat > 44.9 AND n.lat < 45.0
            AND n.lng > -93.3 AND n.lng < -93.2
-         RETURN n.title AS title"
+         RETURN n.title AS title",
     );
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -367,7 +408,12 @@ async fn geo_bounding_box_query() {
         found.push(title);
     }
 
-    assert_eq!(found.len(), 1, "should find 1 in-range event, got {}", found.len());
+    assert_eq!(
+        found.len(),
+        1,
+        "should find 1 in-range event, got {}",
+        found.len()
+    );
     assert_eq!(found[0], "Inside event");
 }
 
@@ -383,7 +429,11 @@ async fn source_diversity_ranking() {
     let emb = dummy_embedding();
 
     // Create signals with different source_diversity values
-    for (diversity, title) in [(5, "Multi-source signal"), (1, "Single-source signal"), (3, "Mid-source signal")] {
+    for (diversity, title) in [
+        (5, "Multi-source signal"),
+        (1, "Single-source signal"),
+        (3, "Mid-source signal"),
+    ] {
         let id = Uuid::new_v4();
         let cypher = format!(
             "CREATE (n:Event {{
@@ -409,7 +459,7 @@ async fn source_diversity_ranking() {
     let q = query(
         "MATCH (n:Event)
          RETURN n.title AS title, n.source_diversity AS diversity
-         ORDER BY n.source_diversity DESC"
+         ORDER BY n.source_diversity DESC",
     );
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -419,7 +469,11 @@ async fn source_diversity_ranking() {
         diversities.push(d);
     }
 
-    assert_eq!(diversities, vec![5, 3, 1], "should be sorted DESC by source_diversity");
+    assert_eq!(
+        diversities,
+        vec![5, 3, 1],
+        "should be sorted DESC by source_diversity"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -431,14 +485,29 @@ async fn actor_linked_via_acted_in() {
     let (_container, client) = setup().await;
 
     let signal_id = Uuid::new_v4();
-    create_signal(&client, "Event", signal_id, "Community cleanup", "https://cleanup.org").await;
+    create_signal(
+        &client,
+        "Event",
+        signal_id,
+        "Community cleanup",
+        "https://cleanup.org",
+    )
+    .await;
 
     let actor_id = Uuid::new_v4();
-    create_actor_and_link(&client, actor_id, "Neighborhood Council", signal_id, "Event", "organizer").await;
+    create_actor_and_link(
+        &client,
+        actor_id,
+        "Neighborhood Council",
+        signal_id,
+        "Event",
+        "organizer",
+    )
+    .await;
 
     let q = query(
         "MATCH (a:Actor)-[r:ACTED_IN]->(n:Event {id: $signal_id})
-         RETURN a.name AS name, r.role AS role"
+         RETURN a.name AS name, r.role AS role",
     )
     .param("signal_id", signal_id.to_string());
 
@@ -463,14 +532,35 @@ async fn cross_type_topic_search() {
     let ask_id = Uuid::new_v4();
     let give_id = Uuid::new_v4();
     let unrelated_id = Uuid::new_v4();
-    create_signal(&client, "Ask", ask_id, "Winter coats needed for families", "https://ask.org").await;
-    create_signal(&client, "Give", give_id, "Free winter coats available", "https://give.org").await;
-    create_signal(&client, "Give", unrelated_id, "Free tutoring available", "https://tutor.org").await;
+    create_signal(
+        &client,
+        "Ask",
+        ask_id,
+        "Winter coats needed for families",
+        "https://ask.org",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Free winter coats available",
+        "https://give.org",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Give",
+        unrelated_id,
+        "Free tutoring available",
+        "https://tutor.org",
+    )
+    .await;
 
     let q = query(
         "MATCH (n)
          WHERE (n:Ask OR n:Give) AND toLower(n.title) CONTAINS 'coat'
-         RETURN labels(n)[0] AS type, n.title AS title"
+         RETURN labels(n)[0] AS type, n.title AS title",
     );
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -481,7 +571,12 @@ async fn cross_type_topic_search() {
         results.push((label, title));
     }
 
-    assert_eq!(results.len(), 2, "should find both Ask and Give about coats, got {}", results.len());
+    assert_eq!(
+        results.len(),
+        2,
+        "should find both Ask and Give about coats, got {}",
+        results.len()
+    );
 
     let types: Vec<&str> = results.iter().map(|(t, _)| t.as_str()).collect();
     assert!(types.contains(&"Ask"), "should include Ask");
@@ -499,7 +594,14 @@ async fn same_source_no_duplicate_evidence() {
 
     // Create a signal
     let signal_id = Uuid::new_v4();
-    create_signal(&client, "Event", signal_id, "Cleanup day", "https://source-a.org").await;
+    create_signal(
+        &client,
+        "Event",
+        signal_id,
+        "Cleanup day",
+        "https://source-a.org",
+    )
+    .await;
 
     // Create evidence from URL A — first time
     let ev1 = EvidenceNode {
@@ -511,7 +613,10 @@ async fn same_source_no_duplicate_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev1, signal_id).await.expect("create evidence 1");
+    writer
+        .create_evidence(&ev1, signal_id)
+        .await
+        .expect("create evidence 1");
 
     // Create evidence from URL A again — simulates re-scrape with changed content
     let ev2 = EvidenceNode {
@@ -523,7 +628,10 @@ async fn same_source_no_duplicate_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev2, signal_id).await.expect("create evidence 2");
+    writer
+        .create_evidence(&ev2, signal_id)
+        .await
+        .expect("create evidence 2");
 
     // Call it a third time for good measure
     let ev3 = EvidenceNode {
@@ -535,12 +643,15 @@ async fn same_source_no_duplicate_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev3, signal_id).await.expect("create evidence 3");
+    writer
+        .create_evidence(&ev3, signal_id)
+        .await
+        .expect("create evidence 3");
 
     // Should have exactly 1 evidence node, not 3
     let q = query(
         "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN count(ev) AS cnt, ev.content_hash AS hash"
+         RETURN count(ev) AS cnt, ev.content_hash AS hash",
     )
     .param("id", signal_id.to_string());
 
@@ -550,8 +661,14 @@ async fn same_source_no_duplicate_evidence() {
     let cnt: i64 = row.get("cnt").expect("no cnt");
     let hash: String = row.get("hash").expect("no hash");
 
-    assert_eq!(cnt, 1, "should have exactly 1 evidence node from same source, got {cnt}");
-    assert_eq!(hash, "hash_v3", "content_hash should be updated to latest scrape");
+    assert_eq!(
+        cnt, 1,
+        "should have exactly 1 evidence node from same source, got {cnt}"
+    );
+    assert_eq!(
+        hash, "hash_v3",
+        "content_hash should be updated to latest scrape"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +681,14 @@ async fn cross_source_creates_new_evidence() {
     let writer = GraphWriter::new(client.clone());
 
     let signal_id = Uuid::new_v4();
-    create_signal(&client, "Event", signal_id, "Community meeting", "https://source-a.org").await;
+    create_signal(
+        &client,
+        "Event",
+        signal_id,
+        "Community meeting",
+        "https://source-a.org",
+    )
+    .await;
 
     // Evidence from URL A
     let ev_a = EvidenceNode {
@@ -576,7 +700,10 @@ async fn cross_source_creates_new_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev_a, signal_id).await.expect("create evidence A");
+    writer
+        .create_evidence(&ev_a, signal_id)
+        .await
+        .expect("create evidence A");
 
     // Evidence from URL B — different source, should create a new evidence node
     let ev_b = EvidenceNode {
@@ -588,7 +715,10 @@ async fn cross_source_creates_new_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev_b, signal_id).await.expect("create evidence B");
+    writer
+        .create_evidence(&ev_b, signal_id)
+        .await
+        .expect("create evidence B");
 
     // Evidence from URL C — third independent source
     let ev_c = EvidenceNode {
@@ -600,12 +730,15 @@ async fn cross_source_creates_new_evidence() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev_c, signal_id).await.expect("create evidence C");
+    writer
+        .create_evidence(&ev_c, signal_id)
+        .await
+        .expect("create evidence C");
 
     // Should have 3 evidence nodes (one per source)
     let q = query(
         "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN count(ev) AS cnt"
+         RETURN count(ev) AS cnt",
     )
     .param("id", signal_id.to_string());
 
@@ -613,7 +746,10 @@ async fn cross_source_creates_new_evidence() {
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let cnt: i64 = row.get("cnt").expect("no cnt");
-    assert_eq!(cnt, 3, "should have 3 evidence nodes from 3 different sources, got {cnt}");
+    assert_eq!(
+        cnt, 3,
+        "should have 3 evidence nodes from 3 different sources, got {cnt}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -626,7 +762,14 @@ async fn same_source_does_not_inflate_corroboration() {
     let writer = GraphWriter::new(client.clone());
 
     let signal_id = Uuid::new_v4();
-    create_signal(&client, "Event", signal_id, "Annual parade", "https://parade.org").await;
+    create_signal(
+        &client,
+        "Event",
+        signal_id,
+        "Annual parade",
+        "https://parade.org",
+    )
+    .await;
 
     // Initial evidence
     let ev = EvidenceNode {
@@ -638,7 +781,10 @@ async fn same_source_does_not_inflate_corroboration() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev, signal_id).await.expect("create evidence");
+    writer
+        .create_evidence(&ev, signal_id)
+        .await
+        .expect("create evidence");
 
     // Simulate 5 same-source re-scrapes: refresh_signal (not corroborate) + create_evidence (MERGE)
     for i in 0..5 {
@@ -656,37 +802,51 @@ async fn same_source_does_not_inflate_corroboration() {
             relevance: None,
             evidence_confidence: None,
         };
-        writer.create_evidence(&ev, signal_id).await.expect("create evidence");
+        writer
+            .create_evidence(&ev, signal_id)
+            .await
+            .expect("create evidence");
     }
 
     // corroboration_count should still be 0 (initial value, never incremented)
     let q = query(
         "MATCH (n:Event {id: $id})
-         RETURN n.corroboration_count AS corr"
+         RETURN n.corroboration_count AS corr",
     )
     .param("id", signal_id.to_string());
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let corr: i64 = row.get("corr").expect("no corr");
-    assert_eq!(corr, 0, "corroboration_count should stay 0 after same-source refreshes, got {corr}");
+    assert_eq!(
+        corr, 0,
+        "corroboration_count should stay 0 after same-source refreshes, got {corr}"
+    );
 
     // Should still have exactly 1 evidence node
     let q = query(
         "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN count(ev) AS cnt"
+         RETURN count(ev) AS cnt",
     )
     .param("id", signal_id.to_string());
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let cnt: i64 = row.get("cnt").expect("no cnt");
-    assert_eq!(cnt, 1, "should have exactly 1 evidence node after 5 same-source refreshes, got {cnt}");
+    assert_eq!(
+        cnt, 1,
+        "should have exactly 1 evidence node after 5 same-source refreshes, got {cnt}"
+    );
 
     // Now simulate a REAL cross-source corroboration
     let entity_mappings = vec![];
     writer
-        .corroborate(signal_id, rootsignal_common::NodeType::Event, Utc::now(), &entity_mappings)
+        .corroborate(
+            signal_id,
+            rootsignal_common::NodeType::Event,
+            Utc::now(),
+            &entity_mappings,
+        )
         .await
         .expect("corroborate failed");
 
@@ -699,13 +859,16 @@ async fn same_source_does_not_inflate_corroboration() {
         relevance: None,
         evidence_confidence: None,
     };
-    writer.create_evidence(&ev_cross, signal_id).await.expect("cross-source evidence");
+    writer
+        .create_evidence(&ev_cross, signal_id)
+        .await
+        .expect("cross-source evidence");
 
     // Now corroboration_count should be 1, evidence count should be 2
     let q = query(
         "MATCH (n:Event {id: $id})
          OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
 
@@ -713,8 +876,14 @@ async fn same_source_does_not_inflate_corroboration() {
     let row = stream.next().await.expect("stream error").expect("no row");
     let corr: i64 = row.get("corr").expect("no corr");
     let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
-    assert_eq!(corr, 1, "corroboration_count should be 1 after one real cross-source, got {corr}");
-    assert_eq!(ev_cnt, 2, "should have 2 evidence nodes (1 same-source + 1 cross-source), got {ev_cnt}");
+    assert_eq!(
+        corr, 1,
+        "corroboration_count should be 1 after one real cross-source, got {corr}"
+    );
+    assert_eq!(
+        ev_cnt, 2,
+        "should have 2 evidence nodes (1 same-source + 1 cross-source), got {ev_cnt}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -762,13 +931,17 @@ async fn deduplicate_evidence_migration() {
                  relevance: '',
                  evidence_confidence: 0.0
              })
-             CREATE (n)-[:SOURCED_FROM]->(ev)"
+             CREATE (n)-[:SOURCED_FROM]->(ev)",
         )
         .param("signal_id", signal_id.to_string())
         .param("ev_id", ev_id.to_string())
         .param("now", now.clone())
         .param("hash", format!("hash_{i}"));
-        client.inner().run(q).await.expect("create duplicate evidence");
+        client
+            .inner()
+            .run(q)
+            .await
+            .expect("create duplicate evidence");
     }
 
     // Also add 1 legitimate cross-source evidence
@@ -784,23 +957,30 @@ async fn deduplicate_evidence_migration() {
              relevance: '',
              evidence_confidence: 0.0
          })
-         CREATE (n)-[:SOURCED_FROM]->(ev)"
+         CREATE (n)-[:SOURCED_FROM]->(ev)",
     )
     .param("signal_id", signal_id.to_string())
     .param("ev_id", cross_ev_id.to_string())
     .param("now", now);
-    client.inner().run(q).await.expect("create cross-source evidence");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("create cross-source evidence");
 
     // Verify the mess: 15 evidence nodes, corroboration_count = 13
     let q = query(
         "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
-    assert_eq!(ev_cnt, 15, "pre-migration: should have 15 evidence nodes, got {ev_cnt}");
+    assert_eq!(
+        ev_cnt, 15,
+        "pre-migration: should have 15 evidence nodes, got {ev_cnt}"
+    );
 
     // Run the dedup migration
     rootsignal_graph::migrate::deduplicate_evidence(&client)
@@ -812,7 +992,7 @@ async fn deduplicate_evidence_migration() {
     let q = query(
         "MATCH (n:Event {id: $id})
          OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt"
+         RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -820,13 +1000,19 @@ async fn deduplicate_evidence_migration() {
 
     let corr: i64 = row.get("corr").expect("no corr");
     let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
-    assert_eq!(ev_cnt, 2, "post-migration: should have 2 evidence nodes (1 per source), got {ev_cnt}");
-    assert_eq!(corr, 1, "post-migration: corroboration_count should be 1 (2 sources - 1), got {corr}");
+    assert_eq!(
+        ev_cnt, 2,
+        "post-migration: should have 2 evidence nodes (1 per source), got {ev_cnt}"
+    );
+    assert_eq!(
+        corr, 1,
+        "post-migration: corroboration_count should be 1 (2 sources - 1), got {corr}"
+    );
 
     // Verify the distinct source URLs are correct
     let q = query(
         "MATCH (n:Event {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
-         RETURN ev.source_url AS url ORDER BY url"
+         RETURN ev.source_url AS url ORDER BY url",
     )
     .param("id", signal_id.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -835,7 +1021,10 @@ async fn deduplicate_evidence_migration() {
         let url: String = row.get("url").expect("no url");
         urls.push(url);
     }
-    assert_eq!(urls, vec!["https://independent.org", "https://source-a.org"]);
+    assert_eq!(
+        urls,
+        vec!["https://independent.org", "https://source-a.org"]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -865,9 +1054,15 @@ async fn city_proximity_signal_lookup() {
             embedding: {emb}
         }})"
     );
-    client.inner().run(
-        query(&cypher).param("id", mpls_id.to_string()).param("now", now.clone())
-    ).await.expect("create mpls signal");
+    client
+        .inner()
+        .run(
+            query(&cypher)
+                .param("id", mpls_id.to_string())
+                .param("now", now.clone()),
+        )
+        .await
+        .expect("create mpls signal");
 
     // Create signal in St. Paul (inside ~50km radius of Minneapolis center)
     let stp_id = Uuid::new_v4();
@@ -884,9 +1079,15 @@ async fn city_proximity_signal_lookup() {
             embedding: {emb}
         }})"
     );
-    client.inner().run(
-        query(&cypher).param("id", stp_id.to_string()).param("now", now.clone())
-    ).await.expect("create stp signal");
+    client
+        .inner()
+        .run(
+            query(&cypher)
+                .param("id", stp_id.to_string())
+                .param("now", now.clone()),
+        )
+        .await
+        .expect("create stp signal");
 
     // Create signal in Duluth (outside ~50km radius — ~250km away)
     let duluth_id = Uuid::new_v4();
@@ -903,9 +1104,15 @@ async fn city_proximity_signal_lookup() {
             embedding: {emb}
         }})"
     );
-    client.inner().run(
-        query(&cypher).param("id", duluth_id.to_string()).param("now", now.clone())
-    ).await.expect("create duluth signal");
+    client
+        .inner()
+        .run(
+            query(&cypher)
+                .param("id", duluth_id.to_string())
+                .param("now", now.clone()),
+        )
+        .await
+        .expect("create duluth signal");
 
     // Create signal at (0,0) — should be excluded
     let zero_id = Uuid::new_v4();
@@ -921,9 +1128,15 @@ async fn city_proximity_signal_lookup() {
             embedding: {emb}
         }})"
     );
-    client.inner().run(
-        query(&cypher).param("id", zero_id.to_string()).param("now", now)
-    ).await.expect("create zero signal");
+    client
+        .inner()
+        .run(
+            query(&cypher)
+                .param("id", zero_id.to_string())
+                .param("now", now),
+        )
+        .await
+        .expect("create zero signal");
 
     // Query via PublicGraphReader with Minneapolis center + 50km radius
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
@@ -932,15 +1145,34 @@ async fn city_proximity_signal_lookup() {
         .await
         .expect("list_recent_for_city failed");
 
-    let titles: Vec<&str> = results.iter().filter_map(|n| n.meta().map(|m| m.title.as_str())).collect();
+    let titles: Vec<&str> = results
+        .iter()
+        .filter_map(|n| n.meta().map(|m| m.title.as_str()))
+        .collect();
 
     // Should include Minneapolis and St. Paul signals
-    assert!(titles.contains(&"Minneapolis food shelf"), "Missing Minneapolis signal; got: {:?}", titles);
-    assert!(titles.contains(&"St Paul community event"), "Missing St Paul signal; got: {:?}", titles);
+    assert!(
+        titles.contains(&"Minneapolis food shelf"),
+        "Missing Minneapolis signal; got: {:?}",
+        titles
+    );
+    assert!(
+        titles.contains(&"St Paul community event"),
+        "Missing St Paul signal; got: {:?}",
+        titles
+    );
 
     // Should NOT include Duluth or zero-coordinate signal
-    assert!(!titles.contains(&"Duluth harbor event"), "Duluth signal should be outside radius; got: {:?}", titles);
-    assert!(!titles.contains(&"Zero-coordinate signal"), "Zero-coordinate signal should be excluded; got: {:?}", titles);
+    assert!(
+        !titles.contains(&"Duluth harbor event"),
+        "Duluth signal should be outside radius; got: {:?}",
+        titles
+    );
+    assert!(
+        !titles.contains(&"Zero-coordinate signal"),
+        "Zero-coordinate signal should be excluded; got: {:?}",
+        titles
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -965,7 +1197,7 @@ async fn city_proximity_story_lookup() {
             source_count: 2, entity_count: 1, type_diversity: 2,
             source_domains: ['reddit.com'], corroboration_depth: 1,
             status: 'active'
-        })"
+        })",
     )
     .param("id", mpls_story_id.to_string())
     .param("now", now.clone());
@@ -983,7 +1215,7 @@ async fn city_proximity_story_lookup() {
             source_count: 1, entity_count: 1, type_diversity: 1,
             source_domains: ['duluthnewstribune.com'], corroboration_depth: 0,
             status: 'emerging'
-        })"
+        })",
     )
     .param("id", duluth_story_id.to_string())
     .param("now", now.clone());
@@ -1000,7 +1232,7 @@ async fn city_proximity_story_lookup() {
             source_count: 1, entity_count: 0, type_diversity: 1,
             source_domains: ['reddit.com'], corroboration_depth: 0,
             status: 'emerging'
-        })"
+        })",
     )
     .param("id", no_geo_story_id.to_string())
     .param("now", now);
@@ -1015,9 +1247,21 @@ async fn city_proximity_story_lookup() {
 
     let headlines: Vec<&str> = results.iter().map(|s| s.headline.as_str()).collect();
 
-    assert!(headlines.contains(&"Minneapolis housing crisis"), "Missing Minneapolis story; got: {:?}", headlines);
-    assert!(!headlines.contains(&"Duluth port expansion"), "Duluth story should be outside radius; got: {:?}", headlines);
-    assert!(!headlines.contains(&"Online-only discussion"), "No-centroid story should be excluded; got: {:?}", headlines);
+    assert!(
+        headlines.contains(&"Minneapolis housing crisis"),
+        "Missing Minneapolis story; got: {:?}",
+        headlines
+    );
+    assert!(
+        !headlines.contains(&"Duluth port expansion"),
+        "Duluth story should be outside radius; got: {:?}",
+        headlines
+    );
+    assert!(
+        !headlines.contains(&"Online-only discussion"),
+        "No-centroid story should be excluded; got: {:?}",
+        headlines
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1297,10 @@ async fn source_last_scraped_round_trip() {
         scrape_count: 0,
     };
 
-    writer.upsert_source(&source).await.expect("upsert_source failed");
+    writer
+        .upsert_source(&source)
+        .await
+        .expect("upsert_source failed");
 
     // Record a scrape (stores last_scraped via Cypher datetime())
     let scrape_time = Utc::now();
@@ -1064,19 +1311,31 @@ async fn source_last_scraped_round_trip() {
 
     // Read back via get_active_sources — the bug caused last_scraped to be None
     // because row.get::<String>() silently failed on Neo4j DateTime types
-    let sources = writer.get_active_sources("test-city").await.expect("get_active_sources failed");
+    let sources = writer
+        .get_active_sources("test-city")
+        .await
+        .expect("get_active_sources failed");
     assert_eq!(sources.len(), 1, "should find 1 source");
 
     let s = &sources[0];
-    assert!(s.last_scraped.is_some(), "last_scraped should be Some after record_source_scrape, got None");
-    assert!(s.last_produced_signal.is_some(), "last_produced_signal should be Some when signals > 0");
+    assert!(
+        s.last_scraped.is_some(),
+        "last_scraped should be Some after record_source_scrape, got None"
+    );
+    assert!(
+        s.last_produced_signal.is_some(),
+        "last_produced_signal should be Some when signals > 0"
+    );
     assert_eq!(s.signals_produced, 3);
     assert_eq!(s.scrape_count, 1);
     assert_eq!(s.consecutive_empty_runs, 0);
 
     // Also verify created_at survived the round-trip (not just defaulting to now)
     let age = Utc::now() - s.created_at;
-    assert!(age.num_seconds() < 60, "created_at should be recent, not a fallback value");
+    assert!(
+        age.num_seconds() < 60,
+        "created_at should be recent, not a fallback value"
+    );
 }
 
 /// Helper: create a Tension with a specific embedding vector.
@@ -1089,7 +1348,11 @@ async fn create_tension_with_embedding(
     let now = neo4j_dt(&Utc::now());
     let emb_str = format!(
         "[{}]",
-        embedding.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(",")
+        embedding
+            .iter()
+            .map(|v| format!("{v}"))
+            .collect::<Vec<_>>()
+            .join(",")
     );
     let cypher = format!(
         "CREATE (t:Tension {{
@@ -1122,7 +1385,11 @@ async fn create_tension_with_embedding(
         .param("summary", format!("Test tension: {title}"))
         .param("now", now);
 
-    client.inner().run(q).await.expect("Failed to create tension");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create tension");
 }
 
 #[tokio::test]
@@ -1144,22 +1411,53 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let mut emb3 = base_emb.clone();
     emb3[3] = 0.05; // tiny perturbation
 
-    create_tension_with_embedding(&client, id1, "Youth Violence in North Minneapolis", &base_emb).await;
-    create_tension_with_embedding(&client, id2, "Youth Violence Spike in North Minneapolis", &emb2).await;
-    create_tension_with_embedding(&client, id3, "Youth Violence and Lack of Safe Spaces", &emb3).await;
+    create_tension_with_embedding(
+        &client,
+        id1,
+        "Youth Violence in North Minneapolis",
+        &base_emb,
+    )
+    .await;
+    create_tension_with_embedding(
+        &client,
+        id2,
+        "Youth Violence Spike in North Minneapolis",
+        &emb2,
+    )
+    .await;
+    create_tension_with_embedding(
+        &client,
+        id3,
+        "Youth Violence and Lack of Safe Spaces",
+        &emb3,
+    )
+    .await;
 
     // Create one unrelated tension
     let id_unrelated = Uuid::new_v4();
     let mut unrelated_emb = vec![0.0f64; 1024];
     unrelated_emb[500] = 1.0; // completely different
-    create_tension_with_embedding(&client, id_unrelated, "Housing Affordability Crisis", &unrelated_emb).await;
+    create_tension_with_embedding(
+        &client,
+        id_unrelated,
+        "Housing Affordability Crisis",
+        &unrelated_emb,
+    )
+    .await;
 
     // Create a signal that RESPONDS_TO one of the duplicates
     let signal_id = Uuid::new_v4();
-    create_signal(&client, "Give", signal_id, "NAZ Tutoring", "https://example.com/naz").await;
+    create_signal(
+        &client,
+        "Give",
+        signal_id,
+        "NAZ Tutoring",
+        "https://example.com/naz",
+    )
+    .await;
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'test'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'test'}]->(t)",
     )
     .param("gid", signal_id.to_string())
     .param("tid", id2.to_string());
@@ -1173,7 +1471,10 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     assert_eq!(count, 4, "Should have 4 tensions before merge");
 
     // Run merge
-    let merged = writer.merge_duplicate_tensions(0.85).await.expect("merge failed");
+    let merged = writer
+        .merge_duplicate_tensions(0.85)
+        .await
+        .expect("merge failed");
     assert_eq!(merged, 2, "Should merge 2 duplicates (keep 1 of 3)");
 
     // Verify: 2 tensions after merge (1 youth violence survivor + 1 housing)
@@ -1186,13 +1487,21 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     // Verify: the RESPONDS_TO edge was re-pointed to the survivor (id1, the oldest)
     let q = query(
         "MATCH (g:Give {id: $gid})-[:RESPONDS_TO]->(t:Tension)
-         RETURN t.id AS tid"
+         RETURN t.id AS tid",
     )
     .param("gid", signal_id.to_string());
     let mut stream = client.inner().execute(q).await.unwrap();
-    let row = stream.next().await.unwrap().expect("Should have RESPONDS_TO edge");
+    let row = stream
+        .next()
+        .await
+        .unwrap()
+        .expect("Should have RESPONDS_TO edge");
     let tid: String = row.get("tid").unwrap();
-    assert_eq!(tid, id1.to_string(), "Edge should point to survivor (oldest tension)");
+    assert_eq!(
+        tid,
+        id1.to_string(),
+        "Edge should point to survivor (oldest tension)"
+    );
 
     // Verify: survivor got corroboration bumped
     let q = query("MATCH (t:Tension {id: $id}) RETURN t.corroboration_count AS cnt")
@@ -1200,13 +1509,20 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let mut stream = client.inner().execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let corr: i64 = row.get("cnt").unwrap();
-    assert_eq!(corr, 2, "Survivor should have corroboration_count = 2 (absorbed 2 dupes)");
+    assert_eq!(
+        corr, 2,
+        "Survivor should have corroboration_count = 2 (absorbed 2 dupes)"
+    );
 
     // Verify: unrelated tension untouched
     let q = query("MATCH (t:Tension {id: $id}) RETURN t.title AS title")
         .param("id", id_unrelated.to_string());
     let mut stream = client.inner().execute(q).await.unwrap();
-    let row = stream.next().await.unwrap().expect("Unrelated tension should survive");
+    let row = stream
+        .next()
+        .await
+        .unwrap()
+        .expect("Unrelated tension should survive");
     let title: String = row.get("title").unwrap();
     assert_eq!(title, "Housing Affordability Crisis");
 }
@@ -1225,7 +1541,10 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
     create_tension_with_embedding(&client, Uuid::new_v4(), "Youth Violence", &emb1).await;
     create_tension_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
 
-    let merged = writer.merge_duplicate_tensions(0.85).await.expect("merge failed");
+    let merged = writer
+        .merge_duplicate_tensions(0.85)
+        .await
+        .expect("merge failed");
     assert_eq!(merged, 0, "No duplicates should be merged");
 
     let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
@@ -1287,7 +1606,11 @@ async fn create_tension_for_response_finder(
         .param("confidence", confidence)
         .param("cause_heat", 0.5);
 
-    client.inner().run(q).await.expect("Failed to create tension");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create tension");
 }
 
 #[tokio::test]
@@ -1303,13 +1626,20 @@ async fn response_finder_targets_finds_unscouted_tensions() {
     create_tension_for_response_finder(&client, t1, "ICE Enforcement Fear", 0.7, None).await;
     // t2: scouted recently — should NOT be found
     create_tension_for_response_finder(
-        &client, t2, "Housing Crisis", 0.8,
+        &client,
+        t2,
+        "Housing Crisis",
+        0.8,
         Some("2026-02-17T00:00:00"),
-    ).await;
+    )
+    .await;
     // t3: low confidence (below 0.5) — should NOT be found
     create_tension_for_response_finder(&client, t3, "Emergent Tension", 0.3, None).await;
 
-    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_response_finder_targets(10)
+        .await
+        .expect("query failed");
 
     assert_eq!(targets.len(), 1, "Only 1 target should qualify");
     assert_eq!(targets[0].tension_id, t1);
@@ -1326,12 +1656,23 @@ async fn response_finder_targets_includes_stale_scouted_tensions() {
 
     // Scouted 30 days ago — should be found (>14 day threshold)
     create_tension_for_response_finder(
-        &client, t1, "Old Tension", 0.7,
+        &client,
+        t1,
+        "Old Tension",
+        0.7,
         Some("2026-01-15T00:00:00"),
-    ).await;
+    )
+    .await;
 
-    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
-    assert_eq!(targets.len(), 1, "Stale-scouted tension should be re-eligible");
+    let targets = writer
+        .find_response_finder_targets(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        targets.len(),
+        1,
+        "Stale-scouted tension should be re-eligible"
+    );
     assert_eq!(targets[0].tension_id, t1);
 }
 
@@ -1348,19 +1689,36 @@ async fn response_finder_targets_sorted_by_response_count_then_heat() {
 
     // Give t1 a response edge, t2 has none
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Food Shelf", "https://example.com/food").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Food Shelf",
+        "https://example.com/food",
+    )
+    .await;
     let edge_q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give_id.to_string())
     .param("tid", t1.to_string());
-    client.inner().run(edge_q).await.expect("edge creation failed");
+    client
+        .inner()
+        .run(edge_q)
+        .await
+        .expect("edge creation failed");
 
-    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_response_finder_targets(10)
+        .await
+        .expect("query failed");
     assert_eq!(targets.len(), 2);
     // t2 (0 responses) should come first
-    assert_eq!(targets[0].tension_id, t2, "Neglected tension should sort first");
+    assert_eq!(
+        targets[0].tension_id, t2,
+        "Neglected tension should sort first"
+    );
     assert_eq!(targets[0].response_count, 0);
     assert_eq!(targets[1].tension_id, t1);
     assert_eq!(targets[1].response_count, 1);
@@ -1375,7 +1733,14 @@ async fn get_existing_responses_returns_heuristics() {
     create_tension_for_response_finder(&client, tension_id, "Housing Crisis", 0.7, None).await;
 
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Rent Assistance Program", "https://example.com/rent").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Rent Assistance Program",
+        "https://example.com/rent",
+    )
+    .await;
 
     let edge_q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
@@ -1383,9 +1748,16 @@ async fn get_existing_responses_returns_heuristics() {
     )
     .param("gid", give_id.to_string())
     .param("tid", tension_id.to_string());
-    client.inner().run(edge_q).await.expect("edge creation failed");
+    client
+        .inner()
+        .run(edge_q)
+        .await
+        .expect("edge creation failed");
 
-    let heuristics = writer.get_existing_responses(tension_id).await.expect("query failed");
+    let heuristics = writer
+        .get_existing_responses(tension_id)
+        .await
+        .expect("query failed");
     assert_eq!(heuristics.len(), 1);
     assert_eq!(heuristics[0].title, "Rent Assistance Program");
     assert_eq!(heuristics[0].signal_type, "Give");
@@ -1400,15 +1772,28 @@ async fn mark_response_found_sets_timestamp() {
     create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
 
     // Before marking — should be a target
-    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_response_finder_targets(10)
+        .await
+        .expect("query failed");
     assert_eq!(targets.len(), 1);
 
     // Mark as scouted
-    writer.mark_response_found(tension_id).await.expect("mark failed");
+    writer
+        .mark_response_found(tension_id)
+        .await
+        .expect("mark failed");
 
     // After marking — should NOT be a target (scouted < 14 days ago)
-    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
-    assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
+    let targets = writer
+        .find_response_finder_targets(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        targets.len(),
+        0,
+        "Recently scouted tension should not be a target"
+    );
 }
 
 #[tokio::test]
@@ -1420,9 +1805,18 @@ async fn create_response_edge_wires_give_to_tension() {
     create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
 
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Mutual Aid Network", "https://example.com/aid").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Mutual Aid Network",
+        "https://example.com/aid",
+    )
+    .await;
 
-    writer.create_response_edge(give_id, tension_id, 0.85, "provides mutual aid").await
+    writer
+        .create_response_edge(give_id, tension_id, 0.85, "provides mutual aid")
+        .await
         .expect("create_response_edge failed");
 
     // Verify edge exists
@@ -1438,7 +1832,10 @@ async fn create_response_edge_wires_give_to_tension() {
     let strength: f64 = row.get("strength").unwrap();
     let explanation: String = row.get("explanation").unwrap();
 
-    assert!((strength - 0.85).abs() < 0.001, "match_strength should be 0.85");
+    assert!(
+        (strength - 0.85).abs() < 0.001,
+        "match_strength should be 0.85"
+    );
     assert_eq!(explanation, "provides mutual aid");
 }
 
@@ -1499,7 +1896,11 @@ async fn create_tension_for_gathering_finder(
         .param("confidence", confidence)
         .param("cause_heat", cause_heat);
 
-    client.inner().run(q).await.expect("Failed to create tension for gravity scout");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create tension for gravity scout");
 }
 
 #[tokio::test]
@@ -1511,11 +1912,15 @@ async fn gathering_finder_targets_requires_minimum_heat() {
     let t2 = Uuid::new_v4();
 
     // t1: has heat — should be found
-    create_tension_for_gathering_finder(&client, t1, "ICE Enforcement Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, t1, "ICE Enforcement Fear", 0.7, 0.5, None, None)
+        .await;
     // t2: no heat (0.0) — should NOT be found
     create_tension_for_gathering_finder(&client, t2, "Cold Tension", 0.7, 0.0, None, None).await;
 
-    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_gathering_finder_targets(10)
+        .await
+        .expect("query failed");
     assert_eq!(targets.len(), 1, "Only hot tension should qualify");
     assert_eq!(targets[0].tension_id, t1);
 }
@@ -1533,10 +1938,16 @@ async fn gathering_finder_targets_sorted_by_heat_desc() {
     // t2: high heat
     create_tension_for_gathering_finder(&client, t2, "Hot", 0.7, 0.9, None, None).await;
 
-    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_gathering_finder_targets(10)
+        .await
+        .expect("query failed");
     assert_eq!(targets.len(), 2);
     // Hottest first
-    assert_eq!(targets[0].tension_id, t2, "Hottest tension should sort first");
+    assert_eq!(
+        targets[0].tension_id, t2,
+        "Hottest tension should sort first"
+    );
     assert_eq!(targets[1].tension_id, t1);
 }
 
@@ -1549,12 +1960,25 @@ async fn gathering_finder_respects_scouted_timestamp() {
 
     // Scouted 3 days ago — should NOT be found (7-day base window)
     create_tension_for_gathering_finder(
-        &client, t1, "Recent", 0.7, 0.5,
-        Some("2026-02-15T00:00:00"), Some(0),
-    ).await;
+        &client,
+        t1,
+        "Recent",
+        0.7,
+        0.5,
+        Some("2026-02-15T00:00:00"),
+        Some(0),
+    )
+    .await;
 
-    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
-    assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
+    let targets = writer
+        .find_gathering_finder_targets(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        targets.len(),
+        0,
+        "Recently scouted tension should not be a target"
+    );
 }
 
 #[tokio::test]
@@ -1566,21 +1990,43 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
 
     // Scouted 15 days ago with miss_count=2 — needs 21 days, so should NOT be found
     create_tension_for_gathering_finder(
-        &client, t1, "Two misses", 0.7, 0.5,
-        Some("2026-02-03T00:00:00"), Some(2),
-    ).await;
+        &client,
+        t1,
+        "Two misses",
+        0.7,
+        0.5,
+        Some("2026-02-03T00:00:00"),
+        Some(2),
+    )
+    .await;
 
-    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
-    assert_eq!(targets.len(), 0, "miss_count=2 requires 21-day window, only 15 days elapsed");
+    let targets = writer
+        .find_gathering_finder_targets(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        targets.len(),
+        0,
+        "miss_count=2 requires 21-day window, only 15 days elapsed"
+    );
 
     // Now try with miss_count=1 — needs 14 days, 15 days elapsed, should be found
     let t2 = Uuid::new_v4();
     create_tension_for_gathering_finder(
-        &client, t2, "One miss", 0.7, 0.5,
-        Some("2026-02-03T00:00:00"), Some(1),
-    ).await;
+        &client,
+        t2,
+        "One miss",
+        0.7,
+        0.5,
+        Some("2026-02-03T00:00:00"),
+        Some(1),
+    )
+    .await;
 
-    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
+    let targets = writer
+        .find_gathering_finder_targets(10)
+        .await
+        .expect("query failed");
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].tension_id, t2);
 }
@@ -1594,12 +2040,21 @@ async fn gathering_finder_backoff_resets_on_success() {
 
     // Start with miss_count=3
     create_tension_for_gathering_finder(
-        &client, t1, "Was cold", 0.7, 0.5,
-        Some("2026-01-01T00:00:00"), Some(3),
-    ).await;
+        &client,
+        t1,
+        "Was cold",
+        0.7,
+        0.5,
+        Some("2026-01-01T00:00:00"),
+        Some(3),
+    )
+    .await;
 
     // Mark as scouted with success — should reset miss_count to 0
-    writer.mark_gathering_found(t1, true).await.expect("mark failed");
+    writer
+        .mark_gathering_found(t1, true)
+        .await
+        .expect("mark failed");
 
     // Verify miss_count is 0
     let q = query(
@@ -1619,13 +2074,27 @@ async fn create_drawn_to_edge_includes_gathering_type() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None)
+        .await;
 
     let event_id = Uuid::new_v4();
-    create_signal(&client, "Event", event_id, "Singing Rebellion", "https://example.com/singing").await;
+    create_signal(
+        &client,
+        "Event",
+        event_id,
+        "Singing Rebellion",
+        "https://example.com/singing",
+    )
+    .await;
 
     writer
-        .create_drawn_to_edge(event_id, tension_id, 0.9, "solidarity through singing", "singing")
+        .create_drawn_to_edge(
+            event_id,
+            tension_id,
+            0.9,
+            "solidarity through singing",
+            "singing",
+        )
         .await
         .expect("create_drawn_to_edge failed");
 
@@ -1652,10 +2121,26 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(
+        &client,
+        tension_id,
+        "Housing Crisis",
+        0.7,
+        0.5,
+        None,
+        None,
+    )
+    .await;
 
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Tenant Solidarity Fund", "https://example.com/fund").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Tenant Solidarity Fund",
+        "https://example.com/fund",
+    )
+    .await;
 
     // First: create a regular response edge
     writer
@@ -1666,7 +2151,13 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     // Then: create a DRAWN_TO edge for the same signal→tension
     // These are now separate edge types, so both should exist
     writer
-        .create_drawn_to_edge(give_id, tension_id, 0.9, "solidarity fund", "solidarity fund")
+        .create_drawn_to_edge(
+            give_id,
+            tension_id,
+            0.9,
+            "solidarity fund",
+            "solidarity fund",
+        )
         .await
         .expect("create_drawn_to_edge failed");
 
@@ -1705,7 +2196,14 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
     let writer = GraphWriter::new(client.clone());
 
     let event_id = Uuid::new_v4();
-    create_signal(&client, "Event", event_id, "Weekly Vigil", "https://example.com/vigil").await;
+    create_signal(
+        &client,
+        "Event",
+        event_id,
+        "Weekly Vigil",
+        "https://example.com/vigil",
+    )
+    .await;
 
     // Get initial timestamp
     let q = query(
@@ -1719,7 +2217,10 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
 
     // Wait a tiny bit and touch
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    writer.touch_signal_timestamp(event_id).await.expect("touch failed");
+    writer
+        .touch_signal_timestamp(event_id)
+        .await
+        .expect("touch failed");
 
     // Verify timestamp was updated
     let q2 = query(
@@ -1731,7 +2232,10 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
     let row2 = stream2.next().await.unwrap().expect("Should have row");
     let updated_lca: String = format!("{:?}", row2.get::<chrono::NaiveDateTime>("lca"));
 
-    assert_ne!(initial_lca, updated_lca, "last_confirmed_active should have been updated");
+    assert_ne!(
+        initial_lca, updated_lca,
+        "last_confirmed_active should have been updated"
+    );
 }
 
 #[tokio::test]
@@ -1740,35 +2244,83 @@ async fn get_existing_gathering_signals_filters_by_city() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "Immigration Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(
+        &client,
+        tension_id,
+        "Immigration Fear",
+        0.7,
+        0.5,
+        None,
+        None,
+    )
+    .await;
 
     // Minneapolis gathering (lat 44.9778, lng -93.2650)
     let mpls_event = Uuid::new_v4();
-    create_signal_at(&client, "Event", mpls_event, "Singing Rebellion at Lake Street Church",
-        "https://example.com/singing", 44.9778, -93.2650).await;
-    writer.create_drawn_to_edge(mpls_event, tension_id, 0.9, "solidarity through singing", "singing")
-        .await.expect("edge failed");
+    create_signal_at(
+        &client,
+        "Event",
+        mpls_event,
+        "Singing Rebellion at Lake Street Church",
+        "https://example.com/singing",
+        44.9778,
+        -93.2650,
+    )
+    .await;
+    writer
+        .create_drawn_to_edge(
+            mpls_event,
+            tension_id,
+            0.9,
+            "solidarity through singing",
+            "singing",
+        )
+        .await
+        .expect("edge failed");
 
     // NYC gathering (lat 40.7128, lng -74.0060)
     let nyc_event = Uuid::new_v4();
-    create_signal_at(&client, "Event", nyc_event, "Union Square Immigration Vigil",
-        "https://example.com/vigil", 40.7128, -74.0060).await;
-    writer.create_drawn_to_edge(nyc_event, tension_id, 0.85, "solidarity vigil", "vigil")
-        .await.expect("edge failed");
+    create_signal_at(
+        &client,
+        "Event",
+        nyc_event,
+        "Union Square Immigration Vigil",
+        "https://example.com/vigil",
+        40.7128,
+        -74.0060,
+    )
+    .await;
+    writer
+        .create_drawn_to_edge(nyc_event, tension_id, 0.85, "solidarity vigil", "vigil")
+        .await
+        .expect("edge failed");
 
     // When querying from NYC, should only see the NYC gathering
-    let nyc_results = writer.get_existing_gathering_signals(
-        tension_id, 40.7128, -74.0060, 50.0,
-    ).await.expect("query failed");
-    assert_eq!(nyc_results.len(), 1, "Should only see NYC gathering, not Minneapolis");
+    let nyc_results = writer
+        .get_existing_gathering_signals(tension_id, 40.7128, -74.0060, 50.0)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        nyc_results.len(),
+        1,
+        "Should only see NYC gathering, not Minneapolis"
+    );
     assert_eq!(nyc_results[0].title, "Union Square Immigration Vigil");
 
     // When querying from Minneapolis, should only see the Minneapolis gathering
-    let mpls_results = writer.get_existing_gathering_signals(
-        tension_id, 44.9778, -93.2650, 50.0,
-    ).await.expect("query failed");
-    assert_eq!(mpls_results.len(), 1, "Should only see Minneapolis gathering, not NYC");
-    assert_eq!(mpls_results[0].title, "Singing Rebellion at Lake Street Church");
+    let mpls_results = writer
+        .get_existing_gathering_signals(tension_id, 44.9778, -93.2650, 50.0)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        mpls_results.len(),
+        1,
+        "Should only see Minneapolis gathering, not NYC"
+    );
+    assert_eq!(
+        mpls_results[0].title,
+        "Singing Rebellion at Lake Street Church"
+    );
 }
 
 // =============================================================================
@@ -1818,16 +2370,15 @@ async fn create_give_with_implied_queries(
         .param("now", now)
         .param("queries", queries);
 
-    client.inner().run(q).await.expect("Failed to create give with implied_queries");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create give with implied_queries");
 }
 
 /// Helper: create a WebQuery source node.
-async fn create_web_query_source(
-    client: &GraphClient,
-    city: &str,
-    query_text: &str,
-    active: bool,
-) {
+async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &str, active: bool) {
     let now = neo4j_dt(&Utc::now());
     let id = Uuid::new_v4();
     let q = query(
@@ -1849,7 +2400,7 @@ async fn create_web_query_source(
             quality_penalty: 1.0,
             source_role: 'mixed',
             scrape_count: 0
-        })"
+        })",
     )
     .param("id", id.to_string())
     .param("key", format!("{city}:web_query:{query_text}"))
@@ -1858,7 +2409,11 @@ async fn create_web_query_source(
     .param("now", now)
     .param("active", active);
 
-    client.inner().run(q).await.expect("Failed to create web query source");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create web query source");
 }
 
 // ---------------------------------------------------------------------------
@@ -1872,16 +2427,44 @@ async fn tension_response_shape_correct_breakdown() {
 
     // Create a high-heat tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_response_finder(&client, tension_id, "Immigration Enforcement Fear", 0.7, None).await;
+    create_tension_for_response_finder(
+        &client,
+        tension_id,
+        "Immigration Enforcement Fear",
+        0.7,
+        None,
+    )
+    .await;
     // Bump cause_heat above 0.1 (create_tension_for_response_finder sets 0.5)
 
     // Create 2 Gives and 1 Ask linked via RESPONDS_TO
     let give1_id = Uuid::new_v4();
     let give2_id = Uuid::new_v4();
     let ask_id = Uuid::new_v4();
-    create_signal(&client, "Give", give1_id, "ILCM Legal Clinic", "https://example.com/ilcm").await;
-    create_signal(&client, "Give", give2_id, "Emergency Bail Fund", "https://example.com/bail").await;
-    create_signal(&client, "Ask", ask_id, "Volunteer interpreters needed", "https://example.com/interpreters").await;
+    create_signal(
+        &client,
+        "Give",
+        give1_id,
+        "ILCM Legal Clinic",
+        "https://example.com/ilcm",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Give",
+        give2_id,
+        "Emergency Bail Fund",
+        "https://example.com/bail",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Ask",
+        ask_id,
+        "Volunteer interpreters needed",
+        "https://example.com/interpreters",
+    )
+    .await;
 
     for (sig_id, label) in [(give1_id, "Give"), (give2_id, "Give"), (ask_id, "Ask")] {
         let cypher = format!(
@@ -1894,7 +2477,10 @@ async fn tension_response_shape_correct_breakdown() {
         client.inner().run(q).await.expect("edge creation failed");
     }
 
-    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
+    let shapes = writer
+        .get_tension_response_shape(10)
+        .await
+        .expect("query failed");
     assert_eq!(shapes.len(), 1, "Should have 1 tension with responses");
 
     let shape = &shapes[0];
@@ -1902,11 +2488,20 @@ async fn tension_response_shape_correct_breakdown() {
     assert_eq!(shape.give_count, 2, "Should have 2 Give responses");
     assert_eq!(shape.event_count, 0, "Should have 0 Event responses");
     assert_eq!(shape.ask_count, 1, "Should have 1 Ask response");
-    assert!(shape.cause_heat >= 0.1, "Tension should have heat above threshold");
+    assert!(
+        shape.cause_heat >= 0.1,
+        "Tension should have heat above threshold"
+    );
     assert_eq!(shape.sample_titles.len(), 3, "Should have 3 sample titles");
-    assert!(shape.sample_titles.contains(&"ILCM Legal Clinic".to_string()));
-    assert!(shape.sample_titles.contains(&"Emergency Bail Fund".to_string()));
-    assert!(shape.sample_titles.contains(&"Volunteer interpreters needed".to_string()));
+    assert!(shape
+        .sample_titles
+        .contains(&"ILCM Legal Clinic".to_string()));
+    assert!(shape
+        .sample_titles
+        .contains(&"Emergency Bail Fund".to_string()));
+    assert!(shape
+        .sample_titles
+        .contains(&"Volunteer interpreters needed".to_string()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1922,10 +2517,17 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
     let hot_id = Uuid::new_v4();
     create_tension_for_response_finder(&client, hot_id, "Hot Tension", 0.7, None).await;
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Some Service", "https://example.com/svc").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Some Service",
+        "https://example.com/svc",
+    )
+    .await;
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give_id.to_string())
     .param("tid", hot_id.to_string());
@@ -1933,12 +2535,20 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
 
     // Cold tension (cause_heat = 0.0) with responses — should NOT appear
     let cold_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, cold_id, "Cold Tension", 0.7, 0.0, None, None).await;
+    create_tension_for_gathering_finder(&client, cold_id, "Cold Tension", 0.7, 0.0, None, None)
+        .await;
     let give2_id = Uuid::new_v4();
-    create_signal(&client, "Give", give2_id, "Cold Service", "https://example.com/cold").await;
+    create_signal(
+        &client,
+        "Give",
+        give2_id,
+        "Cold Service",
+        "https://example.com/cold",
+    )
+    .await;
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give2_id.to_string())
     .param("tid", cold_id.to_string());
@@ -1965,17 +2575,31 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
         .param("now", now);
     client.inner().run(q).await.expect("create tension");
     let give3_id = Uuid::new_v4();
-    create_signal(&client, "Give", give3_id, "Low Conf Service", "https://example.com/lowconf").await;
+    create_signal(
+        &client,
+        "Give",
+        give3_id,
+        "Low Conf Service",
+        "https://example.com/lowconf",
+    )
+    .await;
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give3_id.to_string())
     .param("tid", low_conf_id.to_string());
     client.inner().run(q).await.expect("edge failed");
 
-    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
-    assert_eq!(shapes.len(), 1, "Only the hot, high-confidence tension should appear");
+    let shapes = writer
+        .get_tension_response_shape(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        shapes.len(),
+        1,
+        "Only the hot, high-confidence tension should appear"
+    );
     assert_eq!(shapes[0].title, "Hot Tension");
 }
 
@@ -1992,8 +2616,15 @@ async fn tension_response_shape_excludes_zero_responses() {
     let t1 = Uuid::new_v4();
     create_tension_for_response_finder(&client, t1, "No Responses", 0.7, None).await;
 
-    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
-    assert_eq!(shapes.len(), 0, "Tension with no responses should not appear in response shape");
+    let shapes = writer
+        .get_tension_response_shape(10)
+        .await
+        .expect("query failed");
+    assert_eq!(
+        shapes.len(),
+        0,
+        "Tension with no responses should not appear in response shape"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2007,7 +2638,16 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(
+        &client,
+        tension_id,
+        "Housing Crisis",
+        0.7,
+        0.5,
+        None,
+        None,
+    )
+    .await;
 
     // Create a Give with implied_queries
     let give_id = Uuid::new_v4();
@@ -2015,34 +2655,46 @@ async fn recently_linked_signals_collects_and_clears_queries() {
         &client,
         give_id,
         "Rent Assistance Program",
-        &["emergency housing Minneapolis", "tenant legal aid Minneapolis"],
-    ).await;
+        &[
+            "emergency housing Minneapolis",
+            "tenant legal aid Minneapolis",
+        ],
+    )
+    .await;
 
     // Link Give → Tension via RESPONDS_TO
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'provides rent help'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'provides rent help'}]->(t)",
     )
     .param("gid", give_id.to_string())
     .param("tid", tension_id.to_string());
     client.inner().run(q).await.expect("edge creation failed");
 
     // First call: should collect the queries
-    let queries = writer.get_recently_linked_signals_with_queries("twincities").await
+    let queries = writer
+        .get_recently_linked_signals_with_queries("twincities")
+        .await
         .expect("query failed");
     assert_eq!(queries.len(), 2, "Should collect 2 implied queries");
     assert!(queries.contains(&"emergency housing Minneapolis".to_string()));
     assert!(queries.contains(&"tenant legal aid Minneapolis".to_string()));
 
     // Second call: should return empty — queries were cleared after first collection
-    let queries_again = writer.get_recently_linked_signals_with_queries("twincities").await
+    let queries_again = writer
+        .get_recently_linked_signals_with_queries("twincities")
+        .await
         .expect("query failed");
-    assert_eq!(queries_again.len(), 0, "Queries should be cleared after collection");
+    assert_eq!(
+        queries_again.len(),
+        0,
+        "Queries should be cleared after collection"
+    );
 
     // Verify the property is null on the node
     let q = query(
         "MATCH (g:Give {id: $id})
-         RETURN g.implied_queries IS NULL AS is_null"
+         RETURN g.implied_queries IS NULL AS is_null",
     )
     .param("id", give_id.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -2062,7 +2714,8 @@ async fn recently_linked_signals_ignores_cold_tensions() {
 
     // Create a COLD tension (heat = 0.0)
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None)
+        .await;
 
     // Create a Give with implied_queries linked to the cold tension
     let give_id = Uuid::new_v4();
@@ -2071,19 +2724,26 @@ async fn recently_linked_signals_ignores_cold_tensions() {
         give_id,
         "Some Service",
         &["should not be collected"],
-    ).await;
+    )
+    .await;
 
     let q = query(
         "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
-         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give_id.to_string())
     .param("tid", tension_id.to_string());
     client.inner().run(q).await.expect("edge failed");
 
-    let queries = writer.get_recently_linked_signals_with_queries("twincities").await
+    let queries = writer
+        .get_recently_linked_signals_with_queries("twincities")
+        .await
         .expect("query failed");
-    assert_eq!(queries.len(), 0, "Should not collect queries from signals linked to cold tensions");
+    assert_eq!(
+        queries.len(),
+        0,
+        "Should not collect queries from signals linked to cold tensions"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2097,7 +2757,8 @@ async fn recently_linked_signals_works_with_drawn_to() {
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None)
+        .await;
 
     // Create an Event with implied_queries
     let now = neo4j_dt(&Utc::now());
@@ -2117,7 +2778,10 @@ async fn recently_linked_signals_works_with_drawn_to() {
             embedding: {emb}
         }})"
     );
-    let queries = vec!["immigration vigil Minneapolis".to_string(), "ICE response events".to_string()];
+    let queries = vec![
+        "immigration vigil Minneapolis".to_string(),
+        "ICE response events".to_string(),
+    ];
     let q = query(&cypher)
         .param("id", event_id.to_string())
         .param("now", now)
@@ -2130,9 +2794,15 @@ async fn recently_linked_signals_works_with_drawn_to() {
         .await
         .expect("create_drawn_to failed");
 
-    let collected = writer.get_recently_linked_signals_with_queries("twincities").await
+    let collected = writer
+        .get_recently_linked_signals_with_queries("twincities")
+        .await
         .expect("query failed");
-    assert_eq!(collected.len(), 2, "Should collect queries from DRAWN_TO-linked events");
+    assert_eq!(
+        collected.len(),
+        2,
+        "Should collect queries from DRAWN_TO-linked events"
+    );
     assert!(collected.contains(&"immigration vigil Minneapolis".to_string()));
 }
 
@@ -2145,17 +2815,43 @@ async fn active_web_queries_filters_inactive() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
-    create_web_query_source(&client, "twincities", "immigration services Minneapolis", true).await;
-    create_web_query_source(&client, "twincities", "food shelf volunteer Minneapolis", true).await;
+    create_web_query_source(
+        &client,
+        "twincities",
+        "immigration services Minneapolis",
+        true,
+    )
+    .await;
+    create_web_query_source(
+        &client,
+        "twincities",
+        "food shelf volunteer Minneapolis",
+        true,
+    )
+    .await;
     create_web_query_source(&client, "twincities", "deactivated old query", false).await;
     create_web_query_source(&client, "nyc", "immigration services NYC", true).await;
 
-    let queries = writer.get_active_web_queries("twincities").await.expect("query failed");
-    assert_eq!(queries.len(), 2, "Should find 2 active twincities queries, got {}", queries.len());
+    let queries = writer
+        .get_active_web_queries("twincities")
+        .await
+        .expect("query failed");
+    assert_eq!(
+        queries.len(),
+        2,
+        "Should find 2 active twincities queries, got {}",
+        queries.len()
+    );
     assert!(queries.contains(&"immigration services Minneapolis".to_string()));
     assert!(queries.contains(&"food shelf volunteer Minneapolis".to_string()));
-    assert!(!queries.iter().any(|q| q.contains("deactivated")), "Should not include inactive queries");
-    assert!(!queries.iter().any(|q| q.contains("NYC")), "Should not include other city queries");
+    assert!(
+        !queries.iter().any(|q| q.contains("deactivated")),
+        "Should not include inactive queries"
+    );
+    assert!(
+        !queries.iter().any(|q| q.contains("NYC")),
+        "Should not include other city queries"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2172,12 +2868,13 @@ async fn implied_queries_round_trip_neo4j() {
         give_id,
         "Test Give",
         &["query one", "query two", "query three"],
-    ).await;
+    )
+    .await;
 
     // Read back as native list
     let q = query(
         "MATCH (g:Give {id: $id})
-         RETURN g.implied_queries AS queries, size(g.implied_queries) AS len"
+         RETURN g.implied_queries AS queries, size(g.implied_queries) AS len",
     )
     .param("id", give_id.to_string());
 
@@ -2224,13 +2921,16 @@ async fn empty_implied_queries_stored_as_null() {
 
     let q = query(
         "MATCH (g:Give {id: $id})
-         RETURN g.implied_queries IS NULL AS is_null"
+         RETURN g.implied_queries IS NULL AS is_null",
     )
     .param("id", give_id.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let is_null: bool = row.get("is_null").expect("no is_null");
-    assert!(is_null, "Empty implied_queries should be stored as null, not empty list");
+    assert!(
+        is_null,
+        "Empty implied_queries should be stored as null, not empty list"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2266,12 +2966,15 @@ async fn signal_expansion_source_created_with_correct_method() {
         scrape_count: 0,
     };
 
-    writer.upsert_source(&source).await.expect("upsert_source failed");
+    writer
+        .upsert_source(&source)
+        .await
+        .expect("upsert_source failed");
 
     // Verify the source was created with SignalExpansion discovery method
     let q = query(
         "MATCH (s:Source {canonical_key: $key})
-         RETURN s.discovery_method AS dm, s.gap_context AS gc, s.active AS active"
+         RETURN s.discovery_method AS dm, s.gap_context AS gc, s.active AS active",
     )
     .param("key", "twincities:web_query:emergency housing Minneapolis");
 
@@ -2281,8 +2984,14 @@ async fn signal_expansion_source_created_with_correct_method() {
     let gc: String = row.get("gc").expect("no gc");
     let active: bool = row.get("active").expect("no active");
 
-    assert_eq!(dm, "signal_expansion", "Discovery method should be signal_expansion");
-    assert!(gc.contains("Emergency bail fund"), "Gap context should reference originating signal");
+    assert_eq!(
+        dm, "signal_expansion",
+        "Discovery method should be signal_expansion"
+    );
+    assert!(
+        gc.contains("Emergency bail fund"),
+        "Gap context should reference originating signal"
+    );
     assert!(active, "Source should be active");
 }
 
@@ -2403,7 +3112,14 @@ async fn resource_requires_edge_creation() {
 
     // Create an Ask signal
     let ask_id = Uuid::new_v4();
-    create_signal(&client, "Ask", ask_id, "Need drivers for food delivery", "https://test.com/ask1").await;
+    create_signal(
+        &client,
+        "Ask",
+        ask_id,
+        "Need drivers for food delivery",
+        "https://test.com/ask1",
+    )
+    .await;
 
     // Create a Resource
     let emb = make_embedding(0.4);
@@ -2414,20 +3130,30 @@ async fn resource_requires_edge_creation() {
 
     // Create REQUIRES edge
     writer
-        .create_requires_edge(ask_id, resource_id, 0.9, Some("Saturday mornings"), Some("10 volunteers"))
+        .create_requires_edge(
+            ask_id,
+            resource_id,
+            0.9,
+            Some("Saturday mornings"),
+            Some("10 volunteers"),
+        )
         .await
         .expect("edge creation failed");
 
     // Verify edge exists with properties
     let q = query(
         "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
-         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes"
+         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes",
     )
     .param("sid", ask_id.to_string())
     .param("rid", resource_id.to_string());
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("stream err").expect("no REQUIRES edge found");
+    let row = stream
+        .next()
+        .await
+        .expect("stream err")
+        .expect("no REQUIRES edge found");
     let conf: f64 = row.get("conf").expect("no confidence");
     let qty: String = row.get("qty").expect("no quantity");
     let notes: String = row.get("notes").expect("no notes");
@@ -2443,11 +3169,23 @@ async fn resource_prefers_edge_creation() {
     let writer = GraphWriter::new(client.clone());
 
     let ask_id = Uuid::new_v4();
-    create_signal(&client, "Ask", ask_id, "Court date transport", "https://test.com/ask2").await;
+    create_signal(
+        &client,
+        "Ask",
+        ask_id,
+        "Court date transport",
+        "https://test.com/ask2",
+    )
+    .await;
 
     let emb = make_embedding(0.6);
     let resource_id = writer
-        .find_or_create_resource("Bilingual Spanish", "bilingual-spanish", "Spanish speaker", &emb)
+        .find_or_create_resource(
+            "Bilingual Spanish",
+            "bilingual-spanish",
+            "Spanish speaker",
+            &emb,
+        )
         .await
         .expect("create failed");
 
@@ -2458,13 +3196,17 @@ async fn resource_prefers_edge_creation() {
 
     let q = query(
         "MATCH (s:Ask {id: $sid})-[e:PREFERS]->(r:Resource {id: $rid})
-         RETURN e.confidence AS conf"
+         RETURN e.confidence AS conf",
     )
     .param("sid", ask_id.to_string())
     .param("rid", resource_id.to_string());
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("stream err").expect("no PREFERS edge found");
+    let row = stream
+        .next()
+        .await
+        .expect("stream err")
+        .expect("no PREFERS edge found");
     let conf: f64 = row.get("conf").expect("no confidence");
     assert!((conf - 0.7).abs() < 0.01, "Confidence should be 0.7");
 }
@@ -2475,7 +3217,14 @@ async fn resource_offers_edge_creation() {
     let writer = GraphWriter::new(client.clone());
 
     let give_id = Uuid::new_v4();
-    create_signal(&client, "Give", give_id, "Emergency food pantry", "https://test.com/give1").await;
+    create_signal(
+        &client,
+        "Give",
+        give_id,
+        "Emergency food pantry",
+        "https://test.com/give1",
+    )
+    .await;
 
     let emb = make_embedding(0.3);
     let resource_id = writer
@@ -2490,13 +3239,17 @@ async fn resource_offers_edge_creation() {
 
     let q = query(
         "MATCH (s:Give {id: $sid})-[e:OFFERS]->(r:Resource {id: $rid})
-         RETURN e.confidence AS conf, e.capacity AS cap"
+         RETURN e.confidence AS conf, e.capacity AS cap",
     )
     .param("sid", give_id.to_string())
     .param("rid", resource_id.to_string());
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("stream err").expect("no OFFERS edge found");
+    let row = stream
+        .next()
+        .await
+        .expect("stream err")
+        .expect("no OFFERS edge found");
     let conf: f64 = row.get("conf").expect("no confidence");
     let cap: String = row.get("cap").expect("no capacity");
 
@@ -2510,7 +3263,14 @@ async fn resource_edges_are_idempotent() {
     let writer = GraphWriter::new(client.clone());
 
     let ask_id = Uuid::new_v4();
-    create_signal(&client, "Ask", ask_id, "Need volunteers", "https://test.com/ask3").await;
+    create_signal(
+        &client,
+        "Ask",
+        ask_id,
+        "Need volunteers",
+        "https://test.com/ask3",
+    )
+    .await;
 
     let emb = make_embedding(0.2);
     let resource_id = writer
@@ -2519,13 +3279,19 @@ async fn resource_edges_are_idempotent() {
         .expect("create failed");
 
     // Create same REQUIRES edge twice
-    writer.create_requires_edge(ask_id, resource_id, 0.8, None, None).await.expect("first edge failed");
-    writer.create_requires_edge(ask_id, resource_id, 0.9, Some("updated"), None).await.expect("second edge failed");
+    writer
+        .create_requires_edge(ask_id, resource_id, 0.8, None, None)
+        .await
+        .expect("first edge failed");
+    writer
+        .create_requires_edge(ask_id, resource_id, 0.9, Some("updated"), None)
+        .await
+        .expect("second edge failed");
 
     // Should have exactly ONE edge (MERGE), with updated confidence
     let q = query(
         "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
-         RETURN count(e) AS edge_count, e.confidence AS conf"
+         RETURN count(e) AS edge_count, e.confidence AS conf",
     )
     .param("sid", ask_id.to_string())
     .param("rid", resource_id.to_string());
@@ -2536,7 +3302,10 @@ async fn resource_edges_are_idempotent() {
     let conf: f64 = row.get("conf").expect("no conf");
 
     assert_eq!(count, 1, "MERGE should create only one edge");
-    assert!((conf - 0.9).abs() < 0.01, "Confidence should be updated to 0.9");
+    assert!(
+        (conf - 0.9).abs() < 0.01,
+        "Confidence should be updated to 0.9"
+    );
 }
 
 #[tokio::test]
@@ -2549,9 +3318,30 @@ async fn find_asks_by_single_resource() {
     let ask1 = Uuid::new_v4();
     let ask2 = Uuid::new_v4();
     let give1 = Uuid::new_v4();
-    create_signal(&client, "Ask", ask1, "Deliver meals to elderly", "https://test.com/a1").await;
-    create_signal(&client, "Ask", ask2, "Drive kids to camp", "https://test.com/a2").await;
-    create_signal(&client, "Give", give1, "Free car service", "https://test.com/g1").await;
+    create_signal(
+        &client,
+        "Ask",
+        ask1,
+        "Deliver meals to elderly",
+        "https://test.com/a1",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Ask",
+        ask2,
+        "Drive kids to camp",
+        "https://test.com/a2",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Give",
+        give1,
+        "Free car service",
+        "https://test.com/g1",
+    )
+    .await;
 
     let emb = make_embedding(0.5);
     let vehicle_id = writer
@@ -2559,9 +3349,18 @@ async fn find_asks_by_single_resource() {
         .await
         .expect("create failed");
 
-    writer.create_requires_edge(ask1, vehicle_id, 0.9, None, None).await.unwrap();
-    writer.create_requires_edge(ask2, vehicle_id, 0.85, None, None).await.unwrap();
-    writer.create_offers_edge(give1, vehicle_id, 0.9, None).await.unwrap();
+    writer
+        .create_requires_edge(ask1, vehicle_id, 0.9, None, None)
+        .await
+        .unwrap();
+    writer
+        .create_requires_edge(ask2, vehicle_id, 0.85, None, None)
+        .await
+        .unwrap();
+    writer
+        .create_offers_edge(give1, vehicle_id, 0.9, None)
+        .await
+        .unwrap();
 
     // Query: "I have a car" — should find Asks, not Gives
     let matches = reader
@@ -2572,7 +3371,10 @@ async fn find_asks_by_single_resource() {
     assert_eq!(matches.len(), 2, "Should find 2 Asks requiring vehicle");
     for m in &matches {
         assert!(m.score > 0.0, "Score should be positive");
-        assert!(m.matched_requires.contains(&"vehicle".to_string()), "Should match vehicle");
+        assert!(
+            m.matched_requires.contains(&"vehicle".to_string()),
+            "Should match vehicle"
+        );
     }
 }
 
@@ -2584,8 +3386,22 @@ async fn find_gives_by_resource() {
 
     let give1 = Uuid::new_v4();
     let give2 = Uuid::new_v4();
-    create_signal(&client, "Give", give1, "Food shelf downtown", "https://test.com/g1").await;
-    create_signal(&client, "Give", give2, "Free grocery delivery", "https://test.com/g2").await;
+    create_signal(
+        &client,
+        "Give",
+        give1,
+        "Food shelf downtown",
+        "https://test.com/g1",
+    )
+    .await;
+    create_signal(
+        &client,
+        "Give",
+        give2,
+        "Free grocery delivery",
+        "https://test.com/g2",
+    )
+    .await;
 
     let emb = make_embedding(0.3);
     let food_id = writer
@@ -2593,8 +3409,14 @@ async fn find_gives_by_resource() {
         .await
         .expect("create failed");
 
-    writer.create_offers_edge(give1, food_id, 0.9, Some("Mon-Fri")).await.unwrap();
-    writer.create_offers_edge(give2, food_id, 0.85, None).await.unwrap();
+    writer
+        .create_offers_edge(give1, food_id, 0.9, Some("Mon-Fri"))
+        .await
+        .unwrap();
+    writer
+        .create_offers_edge(give2, food_id, 0.85, None)
+        .await
+        .unwrap();
 
     // Query: "I need food" — should find Gives
     let matches = reader
@@ -2617,31 +3439,76 @@ async fn multi_resource_fuzzy_and_scoring() {
     // Create resources
     let emb_v = make_embedding(0.5);
     let emb_s = make_embedding(0.6);
-    let vehicle_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb_v).await.unwrap();
-    let spanish_id = writer.find_or_create_resource("Bilingual Spanish", "bilingual-spanish", "", &emb_s).await.unwrap();
+    let vehicle_id = writer
+        .find_or_create_resource("Vehicle", "vehicle", "", &emb_v)
+        .await
+        .unwrap();
+    let spanish_id = writer
+        .find_or_create_resource("Bilingual Spanish", "bilingual-spanish", "", &emb_s)
+        .await
+        .unwrap();
 
     // Ask 1: Requires(vehicle) + Requires(bilingual-spanish) — full match for car+Spanish person
     let ask1 = Uuid::new_v4();
-    create_signal(&client, "Ask", ask1, "Court date transport (bilingual)", "https://test.com/a1").await;
-    writer.create_requires_edge(ask1, vehicle_id, 0.9, None, None).await.unwrap();
-    writer.create_requires_edge(ask1, spanish_id, 0.85, None, None).await.unwrap();
+    create_signal(
+        &client,
+        "Ask",
+        ask1,
+        "Court date transport (bilingual)",
+        "https://test.com/a1",
+    )
+    .await;
+    writer
+        .create_requires_edge(ask1, vehicle_id, 0.9, None, None)
+        .await
+        .unwrap();
+    writer
+        .create_requires_edge(ask1, spanish_id, 0.85, None, None)
+        .await
+        .unwrap();
 
     // Ask 2: Requires(vehicle) only — partial match for car+Spanish person
     let ask2 = Uuid::new_v4();
-    create_signal(&client, "Ask", ask2, "Meal delivery drivers", "https://test.com/a2").await;
-    writer.create_requires_edge(ask2, vehicle_id, 0.9, None, None).await.unwrap();
+    create_signal(
+        &client,
+        "Ask",
+        ask2,
+        "Meal delivery drivers",
+        "https://test.com/a2",
+    )
+    .await;
+    writer
+        .create_requires_edge(ask2, vehicle_id, 0.9, None, None)
+        .await
+        .unwrap();
 
     // Ask 3: Requires(vehicle) + Prefers(bilingual-spanish) — full Requires match + Prefers bonus
     let ask3 = Uuid::new_v4();
-    create_signal(&client, "Ask", ask3, "Transport to ICE check-in", "https://test.com/a3").await;
-    writer.create_requires_edge(ask3, vehicle_id, 0.9, None, None).await.unwrap();
-    writer.create_prefers_edge(ask3, spanish_id, 0.7).await.unwrap();
+    create_signal(
+        &client,
+        "Ask",
+        ask3,
+        "Transport to ICE check-in",
+        "https://test.com/a3",
+    )
+    .await;
+    writer
+        .create_requires_edge(ask3, vehicle_id, 0.9, None, None)
+        .await
+        .unwrap();
+    writer
+        .create_prefers_edge(ask3, spanish_id, 0.7)
+        .await
+        .unwrap();
 
     // Query: "I have a car AND speak Spanish"
     let matches = reader
         .find_asks_by_resources(
             &["vehicle".to_string(), "bilingual-spanish".to_string()],
-            44.9778, -93.2650, 50.0, 50,
+            44.9778,
+            -93.2650,
+            50.0,
+            50,
         )
         .await
         .expect("query failed");
@@ -2649,22 +3516,49 @@ async fn multi_resource_fuzzy_and_scoring() {
     assert_eq!(matches.len(), 3, "Should find all 3 Asks");
 
     // Find each by title to check scores
-    let ask1_match = matches.iter().find(|m| m.node.title() == "Court date transport (bilingual)").expect("ask1 not found");
-    let ask2_match = matches.iter().find(|m| m.node.title() == "Meal delivery drivers").expect("ask2 not found");
-    let ask3_match = matches.iter().find(|m| m.node.title() == "Transport to ICE check-in").expect("ask3 not found");
+    let ask1_match = matches
+        .iter()
+        .find(|m| m.node.title() == "Court date transport (bilingual)")
+        .expect("ask1 not found");
+    let ask2_match = matches
+        .iter()
+        .find(|m| m.node.title() == "Meal delivery drivers")
+        .expect("ask2 not found");
+    let ask3_match = matches
+        .iter()
+        .find(|m| m.node.title() == "Transport to ICE check-in")
+        .expect("ask3 not found");
 
     // Ask 1: 2/2 Requires matched = 1.0
-    assert!((ask1_match.score - 1.0).abs() < 0.01, "Ask1 score should be 1.0, got {}", ask1_match.score);
-    assert!(ask1_match.unmatched_requires.is_empty(), "Ask1 should have no unmatched requires");
+    assert!(
+        (ask1_match.score - 1.0).abs() < 0.01,
+        "Ask1 score should be 1.0, got {}",
+        ask1_match.score
+    );
+    assert!(
+        ask1_match.unmatched_requires.is_empty(),
+        "Ask1 should have no unmatched requires"
+    );
 
     // Ask 2: 1/1 Requires matched = 1.0 (vehicle is the only requirement)
-    assert!((ask2_match.score - 1.0).abs() < 0.01, "Ask2 score should be 1.0, got {}", ask2_match.score);
+    assert!(
+        (ask2_match.score - 1.0).abs() < 0.01,
+        "Ask2 score should be 1.0, got {}",
+        ask2_match.score
+    );
 
     // Ask 3: 1/1 Requires matched = 1.0, +0.2 for Prefers match = 1.2
-    assert!((ask3_match.score - 1.2).abs() < 0.01, "Ask3 score should be 1.2, got {}", ask3_match.score);
+    assert!(
+        (ask3_match.score - 1.2).abs() < 0.01,
+        "Ask3 score should be 1.2, got {}",
+        ask3_match.score
+    );
 
     // Results should be sorted by score descending
-    assert!(matches[0].score >= matches[1].score, "Should be sorted by score desc");
+    assert!(
+        matches[0].score >= matches[1].score,
+        "Should be sorted by score desc"
+    );
 }
 
 #[tokio::test]
@@ -2677,16 +3571,31 @@ async fn list_resources_sorted_by_signal_count() {
     let emb2 = make_embedding(0.2);
 
     // Create "food" with 3 signal_count bumps
-    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
-    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
-    writer.find_or_create_resource("Food", "food", "", &emb1).await.unwrap();
+    writer
+        .find_or_create_resource("Food", "food", "", &emb1)
+        .await
+        .unwrap();
+    writer
+        .find_or_create_resource("Food", "food", "", &emb1)
+        .await
+        .unwrap();
+    writer
+        .find_or_create_resource("Food", "food", "", &emb1)
+        .await
+        .unwrap();
 
     // Create "vehicle" with 1 signal_count
-    writer.find_or_create_resource("Vehicle", "vehicle", "", &emb2).await.unwrap();
+    writer
+        .find_or_create_resource("Vehicle", "vehicle", "", &emb2)
+        .await
+        .unwrap();
 
     let resources = reader.list_resources(10).await.expect("list failed");
     assert_eq!(resources.len(), 2);
-    assert_eq!(resources[0].slug, "food", "Food should be first (highest signal_count)");
+    assert_eq!(
+        resources[0].slug, "food",
+        "Food should be first (highest signal_count)"
+    );
     assert_eq!(resources[0].signal_count, 3);
     assert_eq!(resources[1].slug, "vehicle");
     assert_eq!(resources[1].signal_count, 1);
@@ -2700,47 +3609,98 @@ async fn resource_gap_analysis_shows_unmet_needs() {
 
     let emb_v = make_embedding(0.5);
     let emb_f = make_embedding(0.3);
-    let vehicle_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb_v).await.unwrap();
-    let food_id = writer.find_or_create_resource("Food", "food", "", &emb_f).await.unwrap();
+    let vehicle_id = writer
+        .find_or_create_resource("Vehicle", "vehicle", "", &emb_v)
+        .await
+        .unwrap();
+    let food_id = writer
+        .find_or_create_resource("Food", "food", "", &emb_f)
+        .await
+        .unwrap();
 
     // 3 Asks require vehicle, 0 Gives offer it → gap = 3
     for i in 0..3 {
         let ask = Uuid::new_v4();
-        create_signal(&client, "Ask", ask, &format!("Driver needed {i}"), &format!("https://test.com/a{i}")).await;
-        writer.create_requires_edge(ask, vehicle_id, 0.9, None, None).await.unwrap();
+        create_signal(
+            &client,
+            "Ask",
+            ask,
+            &format!("Driver needed {i}"),
+            &format!("https://test.com/a{i}"),
+        )
+        .await;
+        writer
+            .create_requires_edge(ask, vehicle_id, 0.9, None, None)
+            .await
+            .unwrap();
     }
 
     // 2 Asks require food, 2 Gives offer it → gap = 0
     for i in 0..2 {
         let ask = Uuid::new_v4();
-        create_signal(&client, "Ask", ask, &format!("Food needed {i}"), &format!("https://test.com/fa{i}")).await;
-        writer.create_requires_edge(ask, food_id, 0.9, None, None).await.unwrap();
+        create_signal(
+            &client,
+            "Ask",
+            ask,
+            &format!("Food needed {i}"),
+            &format!("https://test.com/fa{i}"),
+        )
+        .await;
+        writer
+            .create_requires_edge(ask, food_id, 0.9, None, None)
+            .await
+            .unwrap();
     }
     for i in 0..2 {
         let give = Uuid::new_v4();
-        create_signal(&client, "Give", give, &format!("Food shelf {i}"), &format!("https://test.com/fg{i}")).await;
-        writer.create_offers_edge(give, food_id, 0.9, None).await.unwrap();
+        create_signal(
+            &client,
+            "Give",
+            give,
+            &format!("Food shelf {i}"),
+            &format!("https://test.com/fg{i}"),
+        )
+        .await;
+        writer
+            .create_offers_edge(give, food_id, 0.9, None)
+            .await
+            .unwrap();
     }
 
-    let gaps = reader.resource_gap_analysis().await.expect("gap analysis failed");
+    let gaps = reader
+        .resource_gap_analysis()
+        .await
+        .expect("gap analysis failed");
     assert!(gaps.len() >= 2, "Should have at least 2 resources");
 
     // Vehicle should be the biggest gap
-    let vehicle_gap = gaps.iter().find(|g| g.resource_slug == "vehicle").expect("vehicle not found");
+    let vehicle_gap = gaps
+        .iter()
+        .find(|g| g.resource_slug == "vehicle")
+        .expect("vehicle not found");
     assert_eq!(vehicle_gap.requires_count, 3);
     assert_eq!(vehicle_gap.offers_count, 0);
     assert_eq!(vehicle_gap.gap, 3);
 
     // Food should be balanced
-    let food_gap = gaps.iter().find(|g| g.resource_slug == "food").expect("food not found");
+    let food_gap = gaps
+        .iter()
+        .find(|g| g.resource_slug == "food")
+        .expect("food not found");
     assert_eq!(food_gap.requires_count, 2);
     assert_eq!(food_gap.offers_count, 2);
     assert_eq!(food_gap.gap, 0);
 
     // Vehicle should appear before food (sorted by gap descending)
-    let v_idx = gaps.iter().position(|g| g.resource_slug == "vehicle").unwrap();
+    let v_idx = gaps
+        .iter()
+        .position(|g| g.resource_slug == "vehicle")
+        .unwrap();
     let f_idx = gaps.iter().position(|g| g.resource_slug == "food").unwrap();
-    assert!(v_idx < f_idx, "Vehicle (gap=3) should rank before food (gap=0)");
+    assert!(
+        v_idx < f_idx,
+        "Vehicle (gap=3) should rank before food (gap=0)"
+    );
 }
 
 #[tokio::test]
@@ -2751,27 +3711,58 @@ async fn consolidate_resources_merges_similar() {
     // Create two similar resources (should merge)
     let emb1 = make_embedding(0.8);
     let emb2 = make_similar_embedding(0.8); // high similarity to emb1
-    let id1 = writer.find_or_create_resource("Vehicle", "vehicle", "Car", &emb1).await.unwrap();
-    let id2 = writer.find_or_create_resource("Car", "car", "Automobile", &emb2).await.unwrap();
+    let id1 = writer
+        .find_or_create_resource("Vehicle", "vehicle", "Car", &emb1)
+        .await
+        .unwrap();
+    let id2 = writer
+        .find_or_create_resource("Car", "car", "Automobile", &emb2)
+        .await
+        .unwrap();
 
     // Create a dissimilar resource (should NOT merge)
     let emb3 = make_dissimilar_embedding();
-    let id3 = writer.find_or_create_resource("Food", "food", "Food assistance", &emb3).await.unwrap();
+    let id3 = writer
+        .find_or_create_resource("Food", "food", "Food assistance", &emb3)
+        .await
+        .unwrap();
 
     // Create edges to the duplicate
     let ask1 = Uuid::new_v4();
     create_signal(&client, "Ask", ask1, "Need a driver", "https://test.com/a1").await;
-    writer.create_requires_edge(ask1, id2, 0.9, Some("weekends"), None).await.unwrap();
+    writer
+        .create_requires_edge(ask1, id2, 0.9, Some("weekends"), None)
+        .await
+        .unwrap();
 
     let ask2 = Uuid::new_v4();
-    create_signal(&client, "Ask", ask2, "Need transport", "https://test.com/a2").await;
-    writer.create_requires_edge(ask2, id1, 0.85, None, None).await.unwrap();
+    create_signal(
+        &client,
+        "Ask",
+        ask2,
+        "Need transport",
+        "https://test.com/a2",
+    )
+    .await;
+    writer
+        .create_requires_edge(ask2, id1, 0.85, None, None)
+        .await
+        .unwrap();
 
     // Run consolidation
-    let stats = writer.consolidate_resources(0.85).await.expect("consolidation failed");
-    assert!(stats.clusters_found >= 1, "Should find at least 1 merge cluster");
+    let stats = writer
+        .consolidate_resources(0.85)
+        .await
+        .expect("consolidation failed");
+    assert!(
+        stats.clusters_found >= 1,
+        "Should find at least 1 merge cluster"
+    );
     assert!(stats.nodes_merged >= 1, "Should merge at least 1 node");
-    assert!(stats.edges_redirected >= 1, "Should redirect at least 1 edge");
+    assert!(
+        stats.edges_redirected >= 1,
+        "Should redirect at least 1 edge"
+    );
 
     // Verify: "car" resource should be deleted
     let q = query("MATCH (r:Resource {slug: 'car'}) RETURN count(r) AS c");
@@ -2785,22 +3776,31 @@ async fn consolidate_resources_merges_similar() {
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let sc: i64 = row.get("sc").expect("no sc");
-    assert!(sc >= 2, "Canonical should have summed signal_count, got {sc}");
+    assert!(
+        sc >= 2,
+        "Canonical should have summed signal_count, got {sc}"
+    );
 
     // Verify: "food" resource should still exist (dissimilar, not merged)
-    let food_found = writer.find_resource_by_slug("food").await.expect("lookup failed");
+    let food_found = writer
+        .find_resource_by_slug("food")
+        .await
+        .expect("lookup failed");
     assert_eq!(food_found, Some(id3), "Food should survive consolidation");
 
     // Verify: ask1's REQUIRES edge now points to vehicle (canonical), not car (deleted)
     let q = query(
         "MATCH (s:Ask {id: $sid})-[:REQUIRES]->(r:Resource)
-         RETURN r.slug AS slug"
+         RETURN r.slug AS slug",
     )
     .param("sid", ask1.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let slug: String = row.get("slug").expect("no slug");
-    assert_eq!(slug, "vehicle", "Edge should be re-pointed to canonical 'vehicle'");
+    assert_eq!(
+        slug, "vehicle",
+        "Edge should be re-pointed to canonical 'vehicle'"
+    );
 }
 
 #[tokio::test]
@@ -2811,11 +3811,23 @@ async fn consolidate_resources_below_threshold_not_merged() {
     // Create two dissimilar resources
     let emb1 = make_embedding(1.0);
     let emb2 = make_dissimilar_embedding();
-    writer.find_or_create_resource("Vehicle", "vehicle", "Car", &emb1).await.unwrap();
-    writer.find_or_create_resource("Food", "food", "Groceries", &emb2).await.unwrap();
+    writer
+        .find_or_create_resource("Vehicle", "vehicle", "Car", &emb1)
+        .await
+        .unwrap();
+    writer
+        .find_or_create_resource("Food", "food", "Groceries", &emb2)
+        .await
+        .unwrap();
 
-    let stats = writer.consolidate_resources(0.85).await.expect("consolidation failed");
-    assert_eq!(stats.clusters_found, 0, "Dissimilar resources should not merge");
+    let stats = writer
+        .consolidate_resources(0.85)
+        .await
+        .expect("consolidation failed");
+    assert_eq!(
+        stats.clusters_found, 0,
+        "Dissimilar resources should not merge"
+    );
     assert_eq!(stats.nodes_merged, 0);
 
     // Both should still exist
@@ -2834,57 +3846,103 @@ async fn consolidate_resources_preserves_edge_properties() {
     // Create two similar resources
     let emb1 = make_embedding(0.9);
     let emb2 = make_similar_embedding(0.9);
-    let _canonical_id = writer.find_or_create_resource("Vehicle", "vehicle", "", &emb1).await.unwrap();
-    let dup_id = writer.find_or_create_resource("Car", "car", "", &emb2).await.unwrap();
+    let _canonical_id = writer
+        .find_or_create_resource("Vehicle", "vehicle", "", &emb1)
+        .await
+        .unwrap();
+    let dup_id = writer
+        .find_or_create_resource("Car", "car", "", &emb2)
+        .await
+        .unwrap();
 
     // Create edges with properties to the duplicate
     let ask = Uuid::new_v4();
     create_signal(&client, "Ask", ask, "Need ride", "https://test.com/r1").await;
-    writer.create_requires_edge(ask, dup_id, 0.88, Some("10 volunteers"), Some("urgent")).await.unwrap();
+    writer
+        .create_requires_edge(ask, dup_id, 0.88, Some("10 volunteers"), Some("urgent"))
+        .await
+        .unwrap();
 
     let give = Uuid::new_v4();
     create_signal(&client, "Give", give, "Free rides", "https://test.com/r2").await;
-    writer.create_offers_edge(give, dup_id, 0.92, Some("evenings only")).await.unwrap();
+    writer
+        .create_offers_edge(give, dup_id, 0.92, Some("evenings only"))
+        .await
+        .unwrap();
 
     let event = Uuid::new_v4();
-    create_signal(&client, "Event", event, "Carpool meetup", "https://test.com/r3").await;
-    writer.create_prefers_edge(event, dup_id, 0.75).await.unwrap();
+    create_signal(
+        &client,
+        "Event",
+        event,
+        "Carpool meetup",
+        "https://test.com/r3",
+    )
+    .await;
+    writer
+        .create_prefers_edge(event, dup_id, 0.75)
+        .await
+        .unwrap();
 
     // Run consolidation
-    writer.consolidate_resources(0.85).await.expect("consolidation failed");
+    writer
+        .consolidate_resources(0.85)
+        .await
+        .expect("consolidation failed");
 
     // Verify REQUIRES edge properties preserved on canonical
     let q = query(
         "MATCH (s:Ask {id: $sid})-[e:REQUIRES]->(r:Resource {slug: 'vehicle'})
-         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes"
+         RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes",
     )
     .param("sid", ask.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("err").expect("REQUIRES edge not found on canonical");
+    let row = stream
+        .next()
+        .await
+        .expect("err")
+        .expect("REQUIRES edge not found on canonical");
     let conf: f64 = row.get("conf").expect("no conf");
     let qty: String = row.get("qty").expect("no qty");
-    assert!((conf - 0.88).abs() < 0.01, "REQUIRES confidence should be preserved");
-    assert_eq!(qty, "10 volunteers", "REQUIRES quantity should be preserved");
+    assert!(
+        (conf - 0.88).abs() < 0.01,
+        "REQUIRES confidence should be preserved"
+    );
+    assert_eq!(
+        qty, "10 volunteers",
+        "REQUIRES quantity should be preserved"
+    );
 
     // Verify OFFERS edge properties preserved
     let q = query(
         "MATCH (s:Give {id: $sid})-[e:OFFERS]->(r:Resource {slug: 'vehicle'})
-         RETURN e.confidence AS conf, e.capacity AS cap"
+         RETURN e.confidence AS conf, e.capacity AS cap",
     )
     .param("sid", give.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("err").expect("OFFERS edge not found on canonical");
+    let row = stream
+        .next()
+        .await
+        .expect("err")
+        .expect("OFFERS edge not found on canonical");
     let cap: String = row.get("cap").expect("no cap");
     assert_eq!(cap, "evenings only", "OFFERS capacity should be preserved");
 
     // Verify PREFERS edge preserved
     let q = query(
         "MATCH (s:Event {id: $sid})-[e:PREFERS]->(r:Resource {slug: 'vehicle'})
-         RETURN e.confidence AS conf"
+         RETURN e.confidence AS conf",
     )
     .param("sid", event.to_string());
     let mut stream = client.inner().execute(q).await.expect("query failed");
-    let row = stream.next().await.expect("err").expect("PREFERS edge not found on canonical");
+    let row = stream
+        .next()
+        .await
+        .expect("err")
+        .expect("PREFERS edge not found on canonical");
     let conf: f64 = row.get("conf").expect("no conf");
-    assert!((conf - 0.75).abs() < 0.01, "PREFERS confidence should be preserved");
+    assert!(
+        (conf - 0.75).abs() < 0.01,
+        "PREFERS confidence should be preserved"
+    );
 }

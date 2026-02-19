@@ -108,7 +108,9 @@ impl SimulatedWeb {
                     let key = format!("{platform}:{identifier}");
                     social_cache.insert(key, posts.clone());
                 }
-                LogEntry::Hashtags { hashtags, posts, .. } => {
+                LogEntry::Hashtags {
+                    hashtags, posts, ..
+                } => {
                     let key = format!("hashtags:{}", hashtags.join(","));
                     social_cache.insert(key, posts.clone());
                 }
@@ -270,8 +272,7 @@ impl SimulatedWeb {
 
         // Find matching profile
         let profile = self.world.social_profiles.iter().find(|p| {
-            p.platform.to_lowercase() == platform.to_lowercase()
-                && p.identifier == identifier
+            p.platform.to_lowercase() == platform.to_lowercase() && p.identifier == identifier
         });
 
         let profile = match profile {
@@ -285,8 +286,7 @@ impl SimulatedWeb {
         };
 
         let system = prompt::social_system(&self.world);
-        let user =
-            prompt::social_profile_user(platform, identifier, &profile.persona, limit);
+        let user = prompt::social_profile_user(platform, identifier, &profile.persona, limit);
 
         let response = self.claude.chat_completion(&system, &user).await?;
         let posts = parse_social_response(&response, platform);
@@ -306,7 +306,12 @@ impl SimulatedWeb {
             });
         }
 
-        info!(platform, identifier, count = posts.len(), "SimulatedWeb social_posts");
+        info!(
+            platform,
+            identifier,
+            count = posts.len(),
+            "SimulatedWeb social_posts"
+        );
         Ok(posts)
     }
 

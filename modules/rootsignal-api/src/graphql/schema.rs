@@ -69,11 +69,7 @@ impl QueryRoot {
     }
 
     /// Get story signals as a GeoJSON FeatureCollection string.
-    async fn story_signals_geo_json(
-        &self,
-        ctx: &Context<'_>,
-        story_id: Uuid,
-    ) -> Result<String> {
+    async fn story_signals_geo_json(&self, ctx: &Context<'_>, story_id: Uuid) -> Result<String> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
         let signals = reader.get_story_signals(story_id).await?;
         Ok(serde_json::to_string(&nodes_to_geojson(&signals))?)
@@ -173,11 +169,7 @@ impl QueryRoot {
 
     /// Dashboard data for a city.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_dashboard(
-        &self,
-        ctx: &Context<'_>,
-        city: String,
-    ) -> Result<AdminDashboardData> {
+    async fn admin_dashboard(&self, ctx: &Context<'_>, city: String) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
 
@@ -265,22 +257,34 @@ impl QueryRoot {
             story_count_by_arc: story_arcs
                 .unwrap_or_default()
                 .iter()
-                .map(|(arc, c)| LabelCount { label: arc.clone(), count: *c })
+                .map(|(arc, c)| LabelCount {
+                    label: arc.clone(),
+                    count: *c,
+                })
                 .collect(),
             story_count_by_category: story_categories
                 .unwrap_or_default()
                 .iter()
-                .map(|(cat, c)| LabelCount { label: cat.clone(), count: *c })
+                .map(|(cat, c)| LabelCount {
+                    label: cat.clone(),
+                    count: *c,
+                })
                 .collect(),
             freshness_distribution: freshness
                 .unwrap_or_default()
                 .iter()
-                .map(|(bucket, c)| LabelCount { label: bucket.clone(), count: *c })
+                .map(|(bucket, c)| LabelCount {
+                    label: bucket.clone(),
+                    count: *c,
+                })
                 .collect(),
             confidence_distribution: confidence
                 .unwrap_or_default()
                 .iter()
-                .map(|(bucket, c)| LabelCount { label: bucket.clone(), count: *c })
+                .map(|(bucket, c)| LabelCount {
+                    label: bucket.clone(),
+                    count: *c,
+                })
                 .collect(),
             unmet_tensions: tensions
                 .unwrap_or_default()
