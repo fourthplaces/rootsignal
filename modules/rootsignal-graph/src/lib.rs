@@ -22,7 +22,8 @@ pub use writer::{
     CuriosityOutcome, CuriosityTarget, DuplicateMatch, EvidenceSummary, ExtractionYield,
     GapTypeStats, GravityScoutTarget, GraphWriter, InvestigationTarget, ReapStats,
     ResponseHeuristic, ResponseScoutTarget, SignalTypeCounts, SourceBrief, SourceStats,
-    StoryBrief, StoryGrowth, TensionHub, TensionRespondent, UnmetTension,
+    StoryBrief, StoryGrowth, TensionHub, TensionRespondent, TensionResponseShape,
+    UnmetTension,
 };
 
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).

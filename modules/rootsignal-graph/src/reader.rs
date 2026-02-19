@@ -1207,6 +1207,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         external_ratio: external_ratio as f32,
         cause_heat,
         mentioned_actors: Vec::new(),
+        implied_queries: Vec::new(),
     };
 
     match node_type {

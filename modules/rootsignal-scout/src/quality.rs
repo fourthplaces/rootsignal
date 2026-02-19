@@ -130,6 +130,7 @@ mod tests {
             external_ratio: 0.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         }
     }
 

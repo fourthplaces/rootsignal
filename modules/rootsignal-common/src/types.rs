@@ -226,6 +226,9 @@ pub struct NodeMeta {
     /// Cross-story cause heat: how much independent community attention exists in this signal's
     /// semantic neighborhood (0.0–1.0). A food shelf Ask rises when the housing crisis is trending.
     pub cause_heat: f64,
+    /// Implied search queries from this signal for expansion discovery.
+    /// Only populated during extraction; cleared after expansion processing.
+    pub implied_queries: Vec<String>,
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
@@ -536,6 +539,8 @@ pub enum DiscoveryMethod {
     TensionSeed,
     /// Submitted by a human via the submission endpoint
     HumanSubmission,
+    /// Expanded from implied queries on extracted signals
+    SignalExpansion,
 }
 
 impl std::fmt::Display for DiscoveryMethod {
@@ -548,6 +553,7 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::ColdStart => write!(f, "cold_start"),
             DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
             DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
+            DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
         }
     }
 }
@@ -758,6 +764,7 @@ mod tests {
             external_ratio: 0.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         }
     }
 

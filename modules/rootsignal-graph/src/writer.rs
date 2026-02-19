@@ -68,6 +68,7 @@ impl GraphWriter {
                 action_url: $action_url,
                 organizer: $organizer,
                 is_recurring: $is_recurring,
+                implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding
@@ -105,6 +106,7 @@ impl GraphWriter {
         .param("action_url", n.action_url.as_str())
         .param("organizer", n.organizer.clone().unwrap_or_default())
         .param("is_recurring", n.is_recurring)
+        .param("implied_queries", n.meta.implied_queries.clone())
         .param("embedding", embedding_to_f64(embedding));
 
         let q = add_location_params(q, &n.meta);
@@ -138,6 +140,7 @@ impl GraphWriter {
                 action_url: $action_url,
                 availability: $availability,
                 is_ongoing: $is_ongoing,
+                implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding
@@ -163,6 +166,7 @@ impl GraphWriter {
         .param("action_url", n.action_url.as_str())
         .param("availability", n.availability.as_deref().unwrap_or(""))
         .param("is_ongoing", n.is_ongoing)
+        .param("implied_queries", n.meta.implied_queries.clone())
         .param("embedding", embedding_to_f64(embedding));
 
         let q = add_location_params(q, &n.meta);
@@ -1506,6 +1510,7 @@ impl GraphWriter {
                 "cold_start" => DiscoveryMethod::ColdStart,
                 "tension_seed" => DiscoveryMethod::TensionSeed,
                 "human_submission" => DiscoveryMethod::HumanSubmission,
+                "signal_expansion" => DiscoveryMethod::SignalExpansion,
                 _ => DiscoveryMethod::Curated,
             };
 
@@ -1645,6 +1650,127 @@ impl GraphWriter {
         } else {
             Ok(0)
         }
+    }
+
+    /// Get all active TavilyQuery canonical_values for a city (used for expansion dedup).
+    pub async fn get_active_tavily_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {city: $city, active: true, source_type: 'tavily_query'})
+             RETURN s.canonical_value AS query"
+        )
+        .param("city", city);
+
+        let mut queries = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let query_str: String = row.get("query").unwrap_or_default();
+            if !query_str.is_empty() {
+                queries.push(query_str);
+            }
+        }
+        Ok(queries)
+    }
+
+    /// Get implied queries from Give/Event signals recently linked to heated tensions.
+    /// These signals were extracted with implied_queries but deferred expansion until
+    /// response mapping connected them to a tension. Clears queries after collection
+    /// to prevent replay on subsequent runs.
+    pub async fn get_recently_linked_signals_with_queries(
+        &self,
+        _city: &str,
+    ) -> Result<Vec<String>, neo4rs::Error> {
+        // Find Give/Event signals with implied_queries that are linked to heated tensions
+        let q = query(
+            "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+             WHERE (s:Give OR s:Event)
+               AND s.implied_queries IS NOT NULL
+               AND size(s.implied_queries) > 0
+               AND coalesce(t.cause_heat, 0.0) >= 0.1
+             WITH DISTINCT s
+             RETURN s.implied_queries AS queries, s.id AS id"
+        );
+
+        let mut all_queries = Vec::new();
+        let mut signal_ids = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            // neo4rs returns List<String> as Vec<String>
+            let queries: Vec<String> = row.get("queries").unwrap_or_default();
+            all_queries.extend(queries);
+            let id: String = row.get("id").unwrap_or_default();
+            if !id.is_empty() {
+                signal_ids.push(id);
+            }
+        }
+
+        // Clear implied_queries on processed signals to prevent replay
+        if !signal_ids.is_empty() {
+            for id in &signal_ids {
+                let clear_q = query(
+                    "MATCH (s {id: $id})
+                     WHERE s:Give OR s:Event
+                     SET s.implied_queries = null"
+                )
+                .param("id", id.as_str());
+                if let Err(e) = self.client.graph.run(clear_q).await {
+                    warn!(id = id.as_str(), error = %e, "Failed to clear implied_queries");
+                }
+            }
+        }
+
+        Ok(all_queries)
+    }
+
+    /// Get tension response shape analysis for discovery briefing.
+    pub async fn get_tension_response_shape(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TensionResponseShape>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.confidence >= 0.5
+               AND coalesce(t.cause_heat, 0.0) >= 0.1
+             WITH t
+             ORDER BY coalesce(t.cause_heat, 0.0) DESC
+             LIMIT $limit
+             OPTIONAL MATCH (r)-[:RESPONDS_TO]->(t)
+             WHERE r:Give OR r:Event OR r:Ask
+             WITH t,
+                  count(CASE WHEN r:Give THEN 1 END) AS give_count,
+                  count(CASE WHEN r:Event THEN 1 END) AS event_count,
+                  count(CASE WHEN r:Ask THEN 1 END) AS ask_count,
+                  collect(DISTINCT r.title)[..5] AS sample_titles
+             WHERE give_count + event_count + ask_count > 0
+             RETURN t.title AS title,
+                    t.what_would_help AS what_would_help,
+                    coalesce(t.cause_heat, 0.0) AS cause_heat,
+                    give_count, event_count, ask_count,
+                    sample_titles"
+        )
+        .param("limit", limit as i64);
+
+        let mut shapes = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let title: String = row.get("title").unwrap_or_default();
+            let what_would_help: Option<String> = row.get("what_would_help").ok();
+            let cause_heat: f64 = row.get("cause_heat").unwrap_or(0.0);
+            let give_count: i64 = row.get("give_count").unwrap_or(0);
+            let event_count: i64 = row.get("event_count").unwrap_or(0);
+            let ask_count: i64 = row.get("ask_count").unwrap_or(0);
+            let sample_titles: Vec<String> = row.get("sample_titles").unwrap_or_default();
+
+            shapes.push(TensionResponseShape {
+                title,
+                what_would_help,
+                cause_heat,
+                give_count: give_count as u32,
+                event_count: event_count as u32,
+                ask_count: ask_count as u32,
+                sample_titles,
+            });
+        }
+        Ok(shapes)
     }
 
     /// Check if a URL matches a blocked source pattern.
@@ -3099,18 +3225,30 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Fetch existing gravity signals for a tension (gatherings wired via DRAWN_TO).
+    /// Fetch existing gravity signals for a tension (gatherings wired via DRAWN_TO),
+    /// filtered to signals within `radius_km` of the given city center.
     pub async fn get_existing_gravity_signals(
         &self,
         tension_id: Uuid,
+        city_lat: f64,
+        city_lng: f64,
+        radius_km: f64,
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * city_lat.to_radians().cos());
         let q = query(
             "MATCH (r)-[rel:DRAWN_TO]->(t:Tension {id: $id})
              WHERE (r:Give OR r:Event OR r:Ask)
+               AND r.lat >= $lat_min AND r.lat <= $lat_max
+               AND r.lng >= $lng_min AND r.lng <= $lng_max
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
-        .param("id", tension_id.to_string());
+        .param("id", tension_id.to_string())
+        .param("lat_min", city_lat - lat_delta)
+        .param("lat_max", city_lat + lat_delta)
+        .param("lng_min", city_lng - lng_delta)
+        .param("lng_max", city_lng + lng_delta);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -3356,6 +3494,18 @@ pub struct ExtractionYield {
     pub survived: u32,       // count of signals still in graph
     pub corroborated: u32,   // from Source.signals_corroborated
     pub contradicted: u32,   // signals with CONTRADICTING evidence
+}
+
+/// Response shape analysis for a tension — what types of responses exist and what's absent.
+#[derive(Debug, Clone)]
+pub struct TensionResponseShape {
+    pub title: String,
+    pub what_would_help: Option<String>,
+    pub cause_heat: f64,
+    pub give_count: u32,
+    pub event_count: u32,
+    pub ask_count: u32,
+    pub sample_titles: Vec<String>,
 }
 
 /// A signal that warrants investigation.

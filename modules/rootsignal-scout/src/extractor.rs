@@ -66,6 +66,10 @@ pub struct ExtractedSignal {
     pub source_url: Option<String>,
     /// What response would address this tension (for Tension signals)
     pub what_would_help: Option<String>,
+    /// Up to 3 search queries this signal implies — expand outward from this
+    /// signal to discover related signals from different perspectives.
+    #[serde(default)]
+    pub implied_queries: Vec<String>,
 }
 
 /// The full extraction response from the LLM.
@@ -96,11 +100,18 @@ where
 
 // StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
 
+/// Result of signal extraction — nodes plus any implied discovery queries.
+#[derive(Default)]
+pub struct ExtractionResult {
+    pub nodes: Vec<Node>,
+    pub implied_queries: Vec<String>,
+}
+
 // --- SignalExtractor trait ---
 
 #[async_trait::async_trait]
 pub trait SignalExtractor: Send + Sync {
-    async fn extract(&self, content: &str, source_url: &str) -> Result<Vec<Node>>;
+    async fn extract(&self, content: &str, source_url: &str) -> Result<ExtractionResult>;
 }
 
 pub struct Extractor {
@@ -126,7 +137,7 @@ impl Extractor {
         &self,
         content: &str,
         source_url: &str,
-    ) -> Result<Vec<Node>> {
+    ) -> Result<ExtractionResult> {
         // Truncate content to avoid token limits
         let content = if content.len() > 30_000 {
             let mut end = 30_000;
@@ -146,6 +157,13 @@ impl Extractor {
             .claude
             .extract("claude-haiku-4-5-20251001", &self.system_prompt, &user_prompt)
             .await?;
+
+        // Collect implied queries before converting to nodes
+        let implied_queries: Vec<String> = response
+            .signals
+            .iter()
+            .flat_map(|s| s.implied_queries.iter().cloned())
+            .collect();
 
         let now = Utc::now();
         let mut nodes = Vec::new();
@@ -211,6 +229,7 @@ impl Extractor {
                 external_ratio: 0.0,
                 cause_heat: 0.0,
                 mentioned_actors,
+                implied_queries: signal.implied_queries.clone(),
             };
 
             let node = match signal.signal_type.as_str() {
@@ -307,15 +326,16 @@ impl Extractor {
         info!(
             source_url,
             count = nodes.len(),
+            implied_queries = implied_queries.len(),
             "Extracted signals"
         );
-        Ok(nodes)
+        Ok(ExtractionResult { nodes, implied_queries })
     }
 }
 
 #[async_trait::async_trait]
 impl SignalExtractor for Extractor {
-    async fn extract(&self, content: &str, source_url: &str) -> Result<Vec<Node>> {
+    async fn extract(&self, content: &str, source_url: &str) -> Result<ExtractionResult> {
         self.extract_impl(content, source_url).await
     }
 }
@@ -401,7 +421,26 @@ Extract the names of organizations, groups, government bodies, or notable indivi
 - Exclude: generic references like "the city" or "local officials" unless a specific body is named
 
 ## Contact Information
-Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs)."#
+Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs).
+
+## IMPLIED QUERIES (optional — signal quality is always the priority)
+
+For signals with a clear community tension connection, provide up to 3
+implied_queries — searches that would discover RELATED community signals
+by expanding outward from this one.
+
+- An Ask for donations → search for the service that helps affected people directly
+- A Give serving a population → search for what else that population needs
+- An Event at a venue → search for other community events at that venue
+- A Tension → search for who's responding and where people are gathering
+- A Notice about policy → search for who's affected and how they're organizing
+
+Always include the city name or neighborhood. Target specific organizations,
+services, and events — not news articles.
+
+DO NOT provide implied_queries for routine community events (farmers markets,
+worship services, recurring social gatherings) that have no tension connection.
+Return an empty array for these."#
     )
 }
 
@@ -454,6 +493,7 @@ mod tests {
             mentioned_actors: None,
             what_would_help: Some("affordable housing policy".to_string()),
             source_url: None,
+            implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
         };
 
         assert_eq!(signal.signal_type, "tension");
@@ -481,6 +521,7 @@ mod tests {
             external_ratio: 0.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
         let give = GiveNode {
             meta,
@@ -511,6 +552,7 @@ mod tests {
             external_ratio: 0.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
         let ask = AskNode {
             meta,
@@ -520,5 +562,91 @@ mod tests {
             goal: None,
         };
         assert!(ask.what_needed.is_none());
+    }
+
+    #[test]
+    fn extracted_signal_json_with_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "tension",
+                "title": "Immigration enforcement fear",
+                "summary": "ICE raids causing fear",
+                "sensitivity": "sensitive",
+                "severity": "high",
+                "category": "safety",
+                "what_would_help": "legal defense, emergency housing",
+                "implied_queries": [
+                    "immigration legal aid Minneapolis",
+                    "emergency housing detained immigrants Minneapolis"
+                ]
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals.len(), 1);
+        assert_eq!(response.signals[0].implied_queries.len(), 2);
+        assert_eq!(response.signals[0].implied_queries[0], "immigration legal aid Minneapolis");
+    }
+
+    #[test]
+    fn extracted_signal_json_missing_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "event",
+                "title": "Farmers market",
+                "summary": "Weekly farmers market",
+                "sensitivity": "general"
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals.len(), 1);
+        assert!(response.signals[0].implied_queries.is_empty(),
+            "Missing implied_queries should default to empty vec");
+    }
+
+    #[test]
+    fn extracted_signal_json_empty_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "give",
+                "title": "Food shelf",
+                "summary": "Free groceries",
+                "sensitivity": "general",
+                "implied_queries": []
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert!(response.signals[0].implied_queries.is_empty());
+    }
+
+    #[test]
+    fn extraction_result_collects_queries() {
+        let result = ExtractionResult {
+            nodes: vec![],
+            implied_queries: vec![
+                "query 1".to_string(),
+                "query 2".to_string(),
+            ],
+        };
+        assert_eq!(result.implied_queries.len(), 2);
+    }
+
+    #[test]
+    fn extraction_result_default_empty() {
+        let result = ExtractionResult::default();
+        assert!(result.nodes.is_empty());
+        assert!(result.implied_queries.is_empty());
+    }
+
+    #[test]
+    fn system_prompt_includes_implied_queries_instructions() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        assert!(
+            prompt.contains("IMPLIED QUERIES"),
+            "system prompt should mention IMPLIED QUERIES section"
+        );
+        assert!(
+            prompt.contains("DO NOT provide implied_queries for routine"),
+            "system prompt should warn against routine event queries"
+        );
     }
 }
