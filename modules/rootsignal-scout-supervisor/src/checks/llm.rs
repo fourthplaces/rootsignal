@@ -94,7 +94,7 @@ async fn check_misclassification(
     claude: &Claude,
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
-    let system = "You are a civic signal classifier. Given a signal's title, summary, and source evidence, \
+    let system = "You are a signal classifier. Given a signal's title, summary, and source evidence, \
         determine if it is correctly classified. Signal types are: Event (time-bound gathering), \
         Give (available resource/service), Ask (community need requesting help), \
         Notice (official advisory/policy), Tension (community conflict or systemic problem). \
@@ -213,7 +213,7 @@ async fn check_near_duplicate(
     claude: &Claude,
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
-    let system = "You are checking whether two civic signals describe the same real-world thing. \
+    let system = "You are checking whether two signals describe the same real-world thing. \
         They may use different words but refer to the same event, resource, need, or issue. \
         Respond with DUPLICATE if they are the same thing, or DISTINCT if they are genuinely different.";
 

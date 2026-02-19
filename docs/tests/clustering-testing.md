@@ -188,7 +188,7 @@ ORDER BY rand() LIMIT 5;" | $MG
 
 **What is NOT a problem:**
 - Fallback headlines using first signal title — that's the LLM failure fallback
-- Summaries being generic ("Cluster of related civic signals") — means LLM call failed but pipeline continued
+- Summaries being generic ("Cluster of related signals") — means LLM call failed but pipeline continued
 
 ## 9. Story Synthesis
 

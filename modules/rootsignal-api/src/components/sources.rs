@@ -122,6 +122,44 @@ fn SourcesTab(
     let page_sources: Vec<&SourceView> = sources.iter().filter(|s| !s.is_query).collect();
 
     rsx! {
+        // Add Source form
+        details { class: "bg-white border border-gray-200 rounded-lg p-4 mb-6",
+            summary { class: "cursor-pointer text-sm font-semibold text-gray-700 select-none",
+                "+ Add Source"
+            }
+            form {
+                method: "POST",
+                action: "/admin/cities/{city_slug}/sources",
+                class: "mt-3 flex gap-3 items-end",
+                div { class: "flex-1",
+                    label { class: "block text-xs text-gray-500 mb-1", r#for: "url", "URL" }
+                    input {
+                        r#type: "url",
+                        name: "url",
+                        id: "url",
+                        required: true,
+                        placeholder: "https://...",
+                        class: "w-full border border-gray-300 rounded px-2 py-1 text-sm",
+                    }
+                }
+                div { class: "flex-1",
+                    label { class: "block text-xs text-gray-500 mb-1", r#for: "reason", "Reason (optional)" }
+                    input {
+                        r#type: "text",
+                        name: "reason",
+                        id: "reason",
+                        placeholder: "Why is this a good source?",
+                        class: "w-full border border-gray-300 rounded px-2 py-1 text-sm",
+                    }
+                }
+                button {
+                    r#type: "submit",
+                    class: "px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700",
+                    "Add"
+                }
+            }
+        }
+
         // Next Run Preview
         div { class: "bg-white border border-gray-200 rounded-lg p-4 mb-6",
             h3 { class: "text-base font-semibold mb-3", "Next Scout Run Preview" }

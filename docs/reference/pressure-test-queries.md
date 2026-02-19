@@ -74,7 +74,7 @@ These queries simulate what real people in the Twin Cities would actually type o
 
 ---
 
-## 3. Civic Engagement
+## 3. Community Engagement
 
 ### Direct & Obvious
 - "When is the next city council meeting in Minneapolis?"
@@ -151,14 +151,14 @@ These queries simulate what real people in the Twin Cities would actually type o
 These are where Root Signal's value becomes clear — or where it breaks. Real people don't think in signal categories.
 
 - "I want to make a difference in my neighborhood — where do I start?" *(spans all four domains)*
-- "What's actually happening in the Frogtown neighborhood right now?" *(community + civic + ecological)*
+- "What's actually happening in the Frogtown neighborhood right now?" *(community + engagement + ecological)*
 - "I want to live more sustainably — what can I do locally?" *(ecological + ethical consumption)*
-- "My block has a vacant lot — what are the options for it?" *(civic + ecological + community)*
-- "I care about environmental justice — who's working on that here?" *(civic + ecological)*
-- "How do I support immigrant communities in the metro?" *(community + civic + ethical consumption)*
-- "What's happening this weekend that I can bring my kids to?" *(community + ecological + civic)*
+- "My block has a vacant lot — what are the options for it?" *(engagement + ecological + community)*
+- "I care about environmental justice — who's working on that here?" *(engagement + ecological)*
+- "How do I support immigrant communities in the metro?" *(community + engagement + ethical consumption)*
+- "What's happening this weekend that I can bring my kids to?" *(community + ecological + engagement)*
 - "I want to support local food systems — what does that look like here?" *(ecological + ethical consumption + community)*
-- "There's a proposed development that would destroy green space near me — what can I do?" *(civic + ecological)*
+- "There's a proposed development that would destroy green space near me — what can I do?" *(engagement + ecological)*
 - "I want to get off the sidelines — give me everything happening near 55408 this week" *(all domains)*
 
 ---
@@ -190,7 +190,7 @@ These are where Root Signal's value becomes clear — or where it breaks. Real p
 ### Hyperlocal Precision
 - "What's happening on my block?" *(block-level granularity)*
 - "Anything within walking distance of 38th and Chicago?" *(loaded location, culturally significant)*
-- "Which ward am I in and what's my council member doing?" *(requires geo-to-civic mapping)*
+- "Which ward am I in and what's my council member doing?" *(requires geo-to-political mapping)*
 - "The park two blocks from me is trashed — who's responsible?" *(requires park jurisdiction knowledge)*
 - "My specific neighborhood association — when do they meet?" *(micro-local knowledge)*
 
@@ -232,7 +232,7 @@ These test whether Root Signal can answer "where" questions at a geographic laye
 
 #### Domain-Specific Density
 - "Where are the most ecological restoration projects happening in the metro?"
-- "Which neighborhoods have the most civic engagement activity?"
+- "Which neighborhoods have the most community engagement activity?"
 - "Where is mutual aid most active right now?"
 - "What areas have the densest network of ethical/local businesses?"
 - "Where are the most food shelves and community meals concentrated?"
@@ -264,7 +264,7 @@ These test whether Root Signal can answer "where" questions at a geographic laye
 
 #### Need Signal Without Activity
 - "Where are eviction rates high but no renters' rights orgs are active?"
-- "Which neighborhoods have aging infrastructure but no civic advocacy groups?"
+- "Which neighborhoods have aging infrastructure but no community advocacy groups?"
 - "Where are there immigrant communities with no language-accessible services?"
 - "What areas have poor air quality but no environmental justice organizing?"
 - "Where are seniors concentrated with no nearby volunteer support?"
@@ -281,12 +281,12 @@ These test whether Root Signal can answer "where" questions at a geographic laye
 - "Where are BIPOC neighborhoods underserved by community programming?"
 - "Do low-income areas have fewer volunteer opportunities than wealthy ones?"
 - "Which neighborhoods have the highest need-to-resource ratio?"
-- "Where is civic engagement lowest relative to the number of decisions being made that affect residents?"
+- "Where is community engagement lowest relative to the number of decisions being made that affect residents?"
 
 #### Overlay / Intersection Queries (Hardest)
 - "Show me where high community need overlaps with low volunteer activity"
 - "Where are there environmental hazards but no ecological stewardship?"
-- "Which areas have lots of development proposals but low civic participation?"
+- "Which areas have lots of development proposals but low community participation?"
 - "Where is ethical consumption access lowest and poverty highest?"
 - "Map food insecurity against food shelf and mutual aid locations"
 - "Where are the most underserved areas that also have the most untapped volunteer capacity nearby?"

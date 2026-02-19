@@ -167,7 +167,7 @@ pub fn social_hashtags_user(hashtags: &[String], limit: u32) -> String {
 
 /// Build the system prompt for the judge.
 pub fn judge_system() -> &'static str {
-    r#"You are an impartial judge evaluating how well scout (a civic signal agent) processed web content.
+    r#"You are an impartial judge evaluating how well scout (a signal agent) processed web content.
 
 Scout's core job is the TENSION-RESPONSE CYCLE: find real problems (tensions) in community or
 ecological life, then find the gives/asks/events that address them.
@@ -183,12 +183,12 @@ EVALUATION PRIORITIES (weight these when assessing completeness):
 1. Tension-Response pairs: Did scout find tensions AND the responses addressing them? Missing a pair is Critical.
 2. Standalone responses: Did scout capture gives/asks/events even without an explicit tension? Missing these is Warning.
 3. Context signals: Did scout capture relevant notices and advisories? Missing these is Info.
-4. Routine civic activity (recurring services, social gatherings) is lowest priority — missing these is not an issue.
+4. Routine community activity (recurring services, social gatherings) is lowest priority — missing these is not an issue.
 
 SEVERITY DEFINITIONS:
 - Critical: Missed a tension-response pair present in ground truth. Or asserted something contradicted by ground truth. Or hallucinated signals.
 - Warning: Missed a standalone response (give/ask/event with implicit tension). Or captured the gist but missed nuance, assigned inappropriate confidence, or failed to link a response to its tension.
-- Info: Stylistic or minor. Signal titles could be clearer, categories could be more specific, missed routine civic activity.
+- Info: Stylistic or minor. Signal titles could be clearer, categories could be more specific, missed routine community activity.
 
 SCORING:
 - Start at 1.0 (perfect)
@@ -284,10 +284,10 @@ Geography: {city}, {state}, {country}
 
 /// Build the system prompt for random world generation (Tier 3).
 pub fn world_gen_system() -> &'static str {
-    r#"You generate realistic simulated worlds for testing a civic signal detection agent.
+    r#"You generate realistic simulated worlds for testing a signal detection agent.
 
 A "world" describes a city neighborhood with:
-- Active civic life (community organizations, mutual aid, local government, etc.)
+- Active community life (community organizations, mutual aid, local government, etc.)
 - Multiple web sources (news sites, org pages, government pages, blogs)
 - Social media presence (Instagram, Reddit, Facebook accounts)
 - Ground-truth facts that should appear in the generated content
@@ -295,7 +295,7 @@ A "world" describes a city neighborhood with:
 
 The world should have interesting properties that test the agent's ability to:
 - Distinguish current from stale information
-- Detect civic activity from informal sources
+- Detect community activity from informal sources
 - Handle conflicting information
 - Recognize different signal types (events, resources, asks, tensions)
 
@@ -316,5 +316,5 @@ URLs should look realistic (e.g., https://www.cityname-food-shelf.org/about)."#
 
 /// Build the user prompt for random world generation.
 pub fn world_gen_user() -> &'static str {
-    "Generate a random simulated world for testing. Make it interesting — include at least one challenging aspect (stale info, conflicting sources, informal civic spaces, etc.). Return JSON only."
+    "Generate a random simulated world for testing. Make it interesting — include at least one challenging aspect (stale info, conflicting sources, informal community spaces, etc.). Return JSON only."
 }

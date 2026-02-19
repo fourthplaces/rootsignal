@@ -2,7 +2,7 @@
 
 ## What This Document Is
 
-Root Signal exists to make civic activity visible and actionable. That same visibility creates a surveillance surface. A system that maps who is organizing, what they're organizing about, where they gather, and how they respond to tensions is extraordinarily valuable to the people it serves — and equally valuable to those who would suppress, surveill, or target them.
+Root Signal exists to make community activity visible and actionable. That same visibility creates a surveillance surface. A system that maps who is organizing, what they're organizing about, where they gather, and how they respond to tensions is extraordinarily valuable to the people it serves — and equally valuable to those who would suppress, surveill, or target them.
 
 This document names every adversarial threat the system creates or amplifies, assesses the severity, and defines structural mitigations. "Structural" means: designed into the architecture so the protection can't be toggled off, overridden by a future maintainer, or circumvented by a subpoena.
 
@@ -12,9 +12,9 @@ This is not a paranoid exercise. These are real threats. Activist surveillance b
 
 ## The Fundamental Tension
 
-Root Signal's value proposition is: **make civic reality visible so people can act on it.**
+Root Signal's value proposition is: **make local reality visible so people can act on it.**
 
-The adversarial inversion is: **make civic reality visible so people can be targeted for acting on it.**
+The adversarial inversion is: **make local reality visible so people can be targeted for acting on it.**
 
 These use the exact same data. The system cannot make organizing more discoverable without also making organizers more discoverable. Every mitigation in this document navigates that tension — preserving the value of visibility while limiting the surface for surveillance and targeting.
 
@@ -114,7 +114,7 @@ The knowledge graph is the primary attack surface. It contains:
 - **Evidence nodes** linking back to specific posts, articles, and reports — timestamped and attributed
 - **Temporal data** showing when activity happened, enabling pattern analysis
 
-**Risk:** The graph, if fully queryable, is a comprehensive surveillance database of civic activity. Its value for civic engagement is inseparable from its value for surveillance.
+**Risk:** The graph, if fully queryable, is a comprehensive surveillance database of community activity. Its value for community engagement is inseparable from its value for surveillance.
 
 ### The API
 
@@ -158,7 +158,7 @@ This is not a policy. It's architecture. The query path does not write to any pe
 
 **The public interface has no accounts, no login, no profiles.** Every user is anonymous. The system cannot be compelled to produce "all queries made by person X" because it has no concept of person X.
 
-**Trade-off:** No personalization, no saved preferences, no "what's new since last time." These features (if ever built) live in a separate, opt-in data plane that is architecturally isolated from the civic graph. See "Data Planes" below.
+**Trade-off:** No personalization, no saved preferences, no "what's new since last time." These features (if ever built) live in a separate, opt-in data plane that is architecturally isolated from the signal graph. See "Data Planes" below.
 
 ### 3. No Reporter Identity Storage
 
@@ -174,7 +174,7 @@ If a reporter explicitly chooses to be credited, that's their choice — stored 
 
 - Sensitive tensions (enforcement activity, location of vulnerable populations): city or region level only
 - Responses to sensitive tensions (sanctuary churches, legal aid): neighborhood level, not street address
-- General civic signal (volunteer events, food shelves): full precision, since these are designed to be found
+- General signal (volunteer events, food shelves): full precision, since these are designed to be found
 
 **Implementation:** Sensitivity classification is a property of the graph, not a filter applied at query time. The public API physically cannot return precise coordinates for sensitive nodes — the precision is reduced before it reaches the API layer.
 
@@ -192,11 +192,11 @@ The system uses the graph internally for context and synthesis, but the API surf
 
 The graph retains historical data for freshness and deduplication, but the API surfaces current state, not history. An adversary cannot use the system to build a dossier on an organization's activity over time.
 
-**Trade-off:** No "organization timeline" feature. No "how has this issue evolved" for specific actors. Temporal analysis is available for tensions and places (which are civic context), not for actors (which enables surveillance).
+**Trade-off:** No "organization timeline" feature. No "how has this issue evolved" for specific actors. Temporal analysis is available for tensions and places (which are community context), not for actors (which enables surveillance).
 
 ### 7. Aggregate-Only Heat Maps for Sensitive Domains
 
-**Heat maps for sensitive signal categories show aggregate patterns, not individual nodes.** "There is elevated immigration-related civic activity in South Minneapolis" — yes. Clicking through to see each individual sanctuary church — no.
+**Heat maps for sensitive signal categories show aggregate patterns, not individual nodes.** "There is elevated immigration-related community activity in South Minneapolis" — yes. Clicking through to see each individual sanctuary church — no.
 
 For non-sensitive signal (volunteer events, cleanups, public meetings), individual nodes are visible on the map as expected.
 
@@ -226,9 +226,9 @@ This is a policy, not architecture — but it's listed here because it's non-neg
 
 The adversarial model requires a strict separation between two data planes:
 
-### Public Civic Graph (Anonymous)
+### Public Signal Graph (Anonymous)
 - The core product. No auth. No profiles. No logging.
-- Contains: civic signal organized as a knowledge graph
+- Contains: signal organized as a knowledge graph
 - Queryable by: anyone
 - Protected by: all structural mitigations above
 
@@ -236,11 +236,11 @@ The adversarial model requires a strict separation between two data planes:
 - Future products like Signal Match, saved preferences, digest subscriptions
 - Requires: explicit opt-in, account creation, informed consent
 - Contains: user preferences, saved searches, notification settings
-- **Architecturally isolated** from the civic graph — the personalized layer reads from the graph but the graph knows nothing about the personalized layer
+- **Architecturally isolated** from the signal graph — the personalized layer reads from the graph but the graph knows nothing about the personalized layer
 - Protected by: standard data protection (encryption at rest, minimal retention, user-controlled deletion)
 - **Never shared** with the public graph, the API, analytics, or any third party
 
-The boundary between these planes is structural, not policy. The civic graph cannot query the personalized layer. They are separate systems that share a read-only interface.
+The boundary between these planes is structural, not policy. The signal graph cannot query the personalized layer. They are separate systems that share a read-only interface.
 
 ---
 
@@ -248,11 +248,11 @@ The boundary between these planes is structural, not policy. The civic graph can
 
 Some features are too dangerous regardless of how useful they'd be:
 
-**No organizer profiles or dashboards in the public graph.** The system does not build public profiles of individuals who organize, report, or respond. Actor nodes exist for organizations and institutions — not for private individuals — unless the individual has explicitly made themselves a public figure in the civic context (e.g., an elected official).
+**No organizer profiles or dashboards in the public graph.** The system does not build public profiles of individuals who organize, report, or respond. Actor nodes exist for organizations and institutions — not for private individuals — unless the individual has explicitly made themselves a public figure in the community context (e.g., an elected official).
 
 **No social graph of volunteers or reporters.** The system does not track who shows up to what, who donates to what, or who reports what. There are no edges between individual people in the graph.
 
-**No real-time location tracking of any kind.** The system maps where civic activity happens. It does not track where people are or where they go.
+**No real-time location tracking of any kind.** The system maps where community activity happens. It does not track where people are or where they go.
 
 **No predictive modeling of organizing activity.** The system does not predict where protests will happen, which organizations will act, or which communities will mobilize. It reports current state. It does not forecast.
 
@@ -266,15 +266,15 @@ Some features are too dangerous regardless of how useful they'd be:
 
 These are honest acknowledgments of problems this document does not fully solve:
 
-**The aggregation problem.** Even with all mitigations, Root Signal aggregates public data in ways that make patterns visible that weren't visible before. A sanctuary church's public Instagram post is harmless in isolation. A hundred sanctuary churches mapped on a heat map is a network. The mitigations limit how this aggregation is queryable, but the underlying reality — that the system knows things about civic life that weren't knowable at scale before — is inherent to what it is.
+**The aggregation problem.** Even with all mitigations, Root Signal aggregates public data in ways that make patterns visible that weren't visible before. A sanctuary church's public Instagram post is harmless in isolation. A hundred sanctuary churches mapped on a heat map is a network. The mitigations limit how this aggregation is queryable, but the underlying reality — that the system knows things about community life that weren't knowable at scale before — is inherent to what it is.
 
 **The open-source tension.** Root Signal is open source. Anyone can fork it and remove the mitigations. A government could deploy a modified version with full query logging, actor timelines, and network graph export. The mitigations protect the canonical deployment. They don't prevent misuse of the codebase.
 
 **The "legitimate use" blur.** A journalist investigating which organizations are responding to a crisis is doing legitimate work. A government agent doing the same thing for surveillance purposes is asking the same queries. The system cannot distinguish intent. The mitigations limit the *tools* available, not the *users*.
 
-**Scale changes the threat model.** A small system serving one metro with modest traffic is not an interesting surveillance target. A national system mapping civic activity across every city becomes one. Mitigations that are sufficient at small scale may be insufficient at national scale. This document should be revisited at each phase of growth.
+**Scale changes the threat model.** A small system serving one metro with modest traffic is not an interesting surveillance target. A national system mapping community activity across every city becomes one. Mitigations that are sufficient at small scale may be insufficient at national scale. This document should be revisited at each phase of growth.
 
-**Over-suppression is itself a threat.** The impulse to protect vulnerable people by suppressing public civic signal is well-intentioned but misguided. The people posting about enforcement activity, organizing sanctuary responses, and fundraising for affected families on public platforms are doing so deliberately — they want visibility. They are acting in the open because that's how community response works. The people who need protection (undocumented individuals, at-risk families) are not the ones broadcasting on Reddit or Bluesky. They communicate through encrypted channels, through proxies, through trusted in-person networks. If Root Signal suppresses or holds back public civic signal out of fear of bad actors, it doesn't protect vulnerable people — it silences the community members trying to help them. The structural mitigations above (geographic fuzziness, no query logging, no organizer profiles) are the right protections. Muting the signal is not.
+**Over-suppression is itself a threat.** The impulse to protect vulnerable people by suppressing public signal is well-intentioned but misguided. The people posting about enforcement activity, organizing sanctuary responses, and fundraising for affected families on public platforms are doing so deliberately — they want visibility. They are acting in the open because that's how community response works. The people who need protection (undocumented individuals, at-risk families) are not the ones broadcasting on Reddit or Bluesky. They communicate through encrypted channels, through proxies, through trusted in-person networks. If Root Signal suppresses or holds back public signal out of fear of bad actors, it doesn't protect vulnerable people — it silences the community members trying to help them. The structural mitigations above (geographic fuzziness, no query logging, no organizer profiles) are the right protections. Muting the signal is not.
 
 ---
 

@@ -62,7 +62,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 **What makes it distinct:** Traditional local journalism is dying. Community news coverage is disappearing, especially at the neighborhood level. The Local Paper fills that gap not by replacing journalists but by surfacing the stories that are already being told through community signal. A GoFundMe for a family that lost their home is a story. A surge in volunteer signups at a food shelf is a story. A new invasive species detection in a local lake is a story. Root Signal has all of this — The Local Paper gives it narrative shape.
 
-**Who it's for:** Residents who want to know what's happening in their city without doomscrolling social media. People who miss having a local paper. Civic-minded readers who want signal, not noise.
+**Who it's for:** Residents who want to know what's happening in their city without doomscrolling social media. People who miss having a local paper. Community-minded readers who want signal, not noise.
 
 **Relationship to Root Signal:** Pure consumer of the API. Could use LLM to synthesize signal into readable narratives, daily or weekly digests, neighborhood-specific editions. Could include a "how to help" call-to-action alongside every story.
 
@@ -132,7 +132,7 @@ Below are the applications and integrations that naturally emerge from the Root 
 
 **What it is:** A curated interface for teachers and schools that surfaces local service learning opportunities, citizen science projects, environmental education tie-ins, and community engagement events appropriate for students. A teacher planning a unit on water quality can find a local watershed monitoring project. A class doing community service hours can find verified, age-appropriate volunteer opportunities nearby.
 
-**What makes it distinct:** Service learning and civic education are requirements in many school districts but teachers spend enormous time finding appropriate opportunities. This puts the signal in front of them, filtered for educational context.
+**What makes it distinct:** Service learning and community education are requirements in many school districts but teachers spend enormous time finding appropriate opportunities. This puts the signal in front of them, filtered for educational context.
 
 **Who it's for:** K-12 teachers, after-school program coordinators, homeschool families, university service learning offices.
 

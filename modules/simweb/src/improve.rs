@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::world::World;
 use crate::judge::JudgeCriteria;
 
-const SONNET_MODEL: &str = "claude-sonnet-4-6-20250514";
+const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
 
 /// A test failure capturing verdict and audit details.
 #[derive(Debug, Clone, Serialize)]
@@ -102,7 +102,7 @@ impl Improver {
         let world_json =
             serde_json::to_string_pretty(world).map_err(|e| anyhow!("serialize: {e}"))?;
 
-        let system = "You generate evaluation criteria for scout, a civic signal agent whose core job \
+        let system = "You generate evaluation criteria for scout, a signal agent whose core job \
                       is finding tensions (real problems) and the responses (gives/asks/events) that \
                       address them. Given a World scenario, return JSON with checks that scout should \
                       pass. Focus on tension-response completeness and what would expose the blind spot.";
@@ -134,7 +134,7 @@ impl Improver {
     }
 
     async fn identify_blind_spots(&self, failures_json: &str) -> Result<AnalysisResponse> {
-        let system = "You analyze test failures from scout, a civic signal agent whose core job is \
+        let system = "You analyze test failures from scout, a signal agent whose core job is \
                       the TENSION-RESPONSE CYCLE: find tensions (problems in community or ecological \
                       life) and the responses (gives/asks/events) that address them. \
                       Blind spots fall into: missed tensions, missed responses to known tensions, \
@@ -168,7 +168,7 @@ impl Improver {
         let spot_json =
             serde_json::to_string_pretty(blind_spot).map_err(|e| anyhow!("serialize: {e}"))?;
 
-        let system = "You generate World definitions for testing scout, a civic signal agent. \
+        let system = "You generate World definitions for testing scout, a signal agent. \
                       A World describes a simulated city with websites, social profiles, and \
                       ground-truth facts. The scenario must target a specific blind spot in scout's \
                       tension-response extraction so that a system with this weakness WILL fail.";

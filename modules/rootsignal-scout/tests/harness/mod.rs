@@ -9,7 +9,7 @@ pub mod sim_adapter;
 
 use std::sync::Arc;
 
-use rootsignal_common::CityNode;
+use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
@@ -20,6 +20,7 @@ use rootsignal_scout::fixtures::{
 };
 use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
 use rootsignal_scout::scout::{Scout, ScoutStats};
+use rootsignal_scout::sources;
 use simweb::{SimulatedWeb, World};
 
 use sim_adapter::{SimPageAdapter, SimSearchAdapter, SimSocialAdapter};
@@ -272,5 +273,98 @@ pub fn search_result(url: &str, title: &str) -> SearchResult {
         url: url.to_string(),
         title: title.to_string(),
         snippet: String::new(),
+    }
+}
+
+/// Seed Neo4j with SourceNodes derived from a World's sites and social profiles.
+/// This ensures the scout has sources to schedule and scrape.
+pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_slug: &str) {
+    let now = chrono::Utc::now();
+
+    for site in &world.sites {
+        let source_type = SourceType::Web;
+        let cv = site.url.clone();
+        let ck = sources::make_canonical_key(city_slug, source_type, &cv);
+
+        let role = match site.kind.as_str() {
+            "news" | "forum" | "reddit" => SourceRole::Tension,
+            "nonprofit" | "government" | "service_directory" | "event_calendar" => {
+                SourceRole::Response
+            }
+            _ => SourceRole::Mixed,
+        };
+
+        let source = SourceNode {
+            id: uuid::Uuid::new_v4(),
+            canonical_key: ck,
+            canonical_value: cv,
+            url: Some(site.url.clone()),
+            source_type,
+            discovery_method: DiscoveryMethod::Curated,
+            city: city_slug.to_string(),
+            created_at: now,
+            last_scraped: None,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: true,
+            gap_context: None,
+            weight: 0.5,
+            cadence_hours: None,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: role,
+            scrape_count: 0,
+        };
+
+        writer
+            .upsert_source(&source)
+            .await
+            .expect("Failed to upsert site source");
+    }
+
+    for profile in &world.social_profiles {
+        let source_type = match profile.platform.to_lowercase().as_str() {
+            "reddit" => SourceType::Reddit,
+            "instagram" => SourceType::Instagram,
+            "facebook" => SourceType::Facebook,
+            "twitter" | "x" => SourceType::Twitter,
+            "tiktok" => SourceType::TikTok,
+            "bluesky" => SourceType::Bluesky,
+            _ => SourceType::Web,
+        };
+
+        let cv = sources::canonical_value_from_url(source_type, &profile.identifier);
+        let ck = sources::make_canonical_key(city_slug, source_type, &cv);
+
+        let source = SourceNode {
+            id: uuid::Uuid::new_v4(),
+            canonical_key: ck,
+            canonical_value: cv,
+            url: None,
+            source_type,
+            discovery_method: DiscoveryMethod::Curated,
+            city: city_slug.to_string(),
+            created_at: now,
+            last_scraped: None,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: true,
+            gap_context: None,
+            weight: 0.5,
+            cadence_hours: None,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: SourceRole::Mixed,
+            scrape_count: 0,
+        };
+
+        writer
+            .upsert_source(&source)
+            .await
+            .expect("Failed to upsert social source");
     }
 }

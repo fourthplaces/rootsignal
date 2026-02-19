@@ -86,7 +86,7 @@ struct EvidenceItem {
 // --- Prompts ---
 
 const QUERY_GENERATION_SYSTEM: &str = "\
-You are an investigator for a civic intelligence system. \
+You are an investigator for an intelligence system. \
 Generate 1-3 targeted web search queries to verify/corroborate the signal. \
 Focus on: official sources, org verification (501c3, registration), independent reporting, primary documents. \
 Do NOT generate vague queries or queries returning the original source.";
@@ -459,6 +459,24 @@ mod tests {
         let evidence = vec![evidence("DIRECT", 0.3)];
         let adj = compute_confidence_adjustment(&evidence);
         assert!(adj.abs() < 0.001, "Expected 0, got {adj}");
+    }
+
+    #[test]
+    fn two_direct_evidence_barely_moves_median_signal() {
+        // Document: 2 DIRECT evidence pieces at high confidence = +0.10 total
+        // For a signal at median confidence (~0.75), this moves it to 0.85
+        // This is a 13% relative increase — barely perceptible
+        let evidence = vec![
+            evidence("DIRECT", 0.8),
+            evidence("DIRECT", 0.9),
+        ];
+        let adj = compute_confidence_adjustment(&evidence);
+        assert!((adj - 0.10).abs() < 0.001, "Expected +0.10, got {adj}");
+
+        // Apply to a median-confidence signal
+        let old = 0.75f32;
+        let new = (old + adj).clamp(0.1, 1.0);
+        assert!((new - 0.85).abs() < 0.01, "Median signal barely moves: {old} → {new}");
     }
 
     #[test]

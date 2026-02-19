@@ -65,7 +65,7 @@ If any check fails, investigate before proceeding. Do not just re-run and hope.
 
 ## 3. Spot-Check Signal Quality
 
-Pull 5 random signals of each type and read them. Are they real civic signals?
+Pull 5 random signals of each type and read them. Are they real signals?
 
 ```bash
 MG="docker exec -i rootsignal-memgraph-1 mgconsole --username memgraph --password rootsignal"
@@ -156,7 +156,7 @@ RETURN labels(n)[0] AS type, n.title ORDER BY type, n.title;" | $MG
 - Volunteer/donation asks from immigration orgs (Ask signals)
 
 **Must NOT find:**
-- News articles about ICE raids (that's narrative, not a civic signal)
+- News articles about ICE raids (that's narrative, not a signal)
 - The crisis itself as a signal (the system extracts responses, not the crisis)
 
 **If immigration signals are missing:**

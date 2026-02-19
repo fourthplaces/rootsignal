@@ -2,13 +2,13 @@
 
 ## What This Document Is
 
-These are not features to be built. They are behaviors predicted to emerge from a civic knowledge graph that faithfully ingests signal, detects tension, maps responses, and serves the result to anyone who asks.
+These are not features to be built. They are behaviors predicted to emerge from a knowledge graph that faithfully ingests signal, detects tension, maps responses, and serves the result to anyone who asks.
 
-Root Signal is a substrate. Build it correctly — ingest signal broadly using LLM-driven source discovery, represent civic reality as a living graph, detect when nodes cluster into tensions, track responses as they form — and the use cases in this document answer themselves. No one designs a "small business owner mode" or a "new parent pathway." The graph accumulates signal about businesses under stress when enforcement actions suppress foot traffic on Lake Street. It accumulates signal about parent groups and baby equipment swaps when someone posts about them. The architecture is the feature set. The emergence is the product.
+Root Signal is a substrate. Build it correctly — ingest signal broadly using LLM-driven source discovery, represent local reality as a living graph, detect when nodes cluster into tensions, track responses as they form — and the use cases in this document answer themselves. No one designs a "small business owner mode" or a "new parent pathway." The graph accumulates signal about businesses under stress when enforcement actions suppress foot traffic on Lake Street. It accumulates signal about parent groups and baby equipment swaps when someone posts about them. The architecture is the feature set. The emergence is the product.
 
-Every use case below is a prediction: if the graph is faithful to civic reality, this query will find its answer — not because someone built that query path, but because the signal exists and the system makes it findable.
+Every use case below is a prediction: if the graph is faithful to local reality, this query will find its answer — not because someone built that query path, but because the signal exists and the system makes it findable.
 
-Organized into nine categories: Everyday Community Life, Life Transitions & Milestones, Civic Moments & Rapid Response, Ecological Stewardship, Ethical Consumption & Conscious Living, Professional & Organizational, Power User & Repeat Engagement, Alignment State, and Platform Builders & API Consumers.
+Organized into nine categories: Everyday Community Life, Life Transitions & Milestones, Community Moments & Rapid Response, Ecological Stewardship, Ethical Consumption & Conscious Living, Professional & Organizational, Power User & Repeat Engagement, Alignment State, and Platform Builders & API Consumers.
 
 ---
 
@@ -100,11 +100,11 @@ These use cases emerge when someone's relationship to their community shifts. Th
 
 ---
 
-## 3. Civic Moments & Rapid Response
+## 3. Community Moments & Rapid Response
 
-When something happens in the civic or political landscape, the graph's tension detection naturally shifts what surfaces. The system's value in these moments is concentration and speed — converting awareness into action.
+When something happens in the political landscape, the graph's tension detection naturally shifts what surfaces. The system's value in these moments is concentration and speed — converting awareness into action.
 
-### Rapid Response to Civic Events
+### Rapid Response to Public Events
 
 **"ICE is conducting raids in Minnesota — where are the solidarity rallies and know-your-rights events?"** A federal enforcement action triggers community mobilization. Root Signal rapidly surfaces the organized community response: solidarity vigils, know-your-rights workshops, legal aid hotlines, rapid response networks, immigrant rights organizations hosting community meetings. Root Signal doesn't track enforcement activity — it amplifies the community's organized response to it.
 
@@ -114,25 +114,25 @@ When something happens in the civic or political landscape, the graph's tension 
 
 **"There's a police shooting in my neighborhood — where are the vigils and community spaces?"** Trauma response. Root Signal surfaces community-organized vigils, healing spaces, mental health resources, community meetings, and mutual aid activations. The signal is about what the community is building in response, not the incident itself.
 
-**"Roe was overturned / [major Supreme Court decision] — what can I do locally?"** National moments that generate local action. Root Signal surfaces local rallies, community organizing meetings, mutual aid activations, and civic engagement events — turning national outrage into local participation.
+**"Roe was overturned / [major Supreme Court decision] — what can I do locally?"** National moments that generate local action. Root Signal surfaces local rallies, community organizing meetings, mutual aid activations, and community engagement events — turning national outrage into local participation.
 
 **"Book bans are happening at my kid's school — who's organizing?"** Education policy trigger. Root Signal surfaces parent organizing groups, school board meeting schedules, community advocacy organizations, and upcoming public hearings.
 
-**"They're trying to close our neighborhood school — how do I fight this?"** Hyper-local civic crisis. Root Signal surfaces the school board hearing schedule, existing organizing efforts, parent groups, community petitions, and advocacy resources.
+**"They're trying to close our neighborhood school — how do I fight this?"** Hyper-local community crisis. Root Signal surfaces the school board hearing schedule, existing organizing efforts, parent groups, community petitions, and advocacy resources.
 
-### Ongoing Civic Engagement
+### Ongoing Community Engagement
 
-**"When is the next city council meeting and what's on the agenda?"** The baseline civic engagement query. Root Signal aggregates public meeting schedules across city, county, school board, watershed district, and special purpose government bodies — information currently scattered across dozens of government websites.
+**"When is the next city council meeting and what's on the agenda?"** The baseline community engagement query. Root Signal aggregates public meeting schedules across city, county, school board, watershed district, and special purpose government bodies — information currently scattered across dozens of government websites.
 
-> *The Twin Cities metro has hundreds of public bodies that hold open meetings: city councils, county boards, school boards, watershed districts, park boards, planning commissions, housing authorities, transit authorities. Each posts its own calendar on its own website in its own format. There is no single place to see civic process across jurisdictions. The graph is that place.*
+> *The Twin Cities metro has hundreds of public bodies that hold open meetings: city councils, county boards, school boards, watershed districts, park boards, planning commissions, housing authorities, transit authorities. Each posts its own calendar on its own website in its own format. There is no single place to see public process across jurisdictions. The graph is that place.*
 
 **"There's a zoning change proposed for my block — how do I participate?"** Land use decisions that directly affect residents. Root Signal surfaces the public comment period, hearing dates, relevant neighborhood association meetings, and existing community positions on the proposal.
 
-**"Public comment on the new transit plan closes Friday — what do I need to know?"** Time-sensitive civic participation. Root Signal surfaces the comment deadline, links to the plan, community meetings where it's being discussed, and organizations that have published positions.
+**"Public comment on the new transit plan closes Friday — what do I need to know?"** Time-sensitive public participation. Root Signal surfaces the comment deadline, links to the plan, community meetings where it's being discussed, and organizations that have published positions.
 
 **"Who's running for my school board and where can I meet them?"** Election engagement. Root Signal surfaces candidate forums, neighborhood meet-and-greets, voter guides from community organizations, and registration deadlines.
 
-**"I want to testify at the legislature about housing — how?"** Someone ready to take civic action but lacking the procedural knowledge. Root Signal surfaces hearing schedules, advocacy organizations offering testimony training, carpools to the capitol, and upcoming committee meetings on housing legislation.
+**"I want to testify at the legislature about housing — how?"** Someone ready to take action but lacking the procedural knowledge. Root Signal surfaces hearing schedules, advocacy organizations offering testimony training, carpools to the capitol, and upcoming committee meetings on housing legislation.
 
 **"Is anyone challenging the proposed highway expansion?"** Residents want to know if organized opposition exists before starting from scratch. Root Signal surfaces existing advocacy campaigns, community coalitions, public comment opportunities, and upcoming hearings.
 
@@ -152,7 +152,7 @@ When something happens in the civic or political landscape, the graph's tension 
 
 **"The emergency is over but those families still need help — what's ongoing?"** Crises fade from the news but recovery takes months. Root Signal tracks the transition from emergency response to long-term recovery: ongoing fundraisers, rebuilding efforts, case management services, and long-term support groups.
 
-**"What happened with that ballot measure from November?"** Civic follow-through. Root Signal tracks implementation of passed measures, upcoming related hearings, and organizations monitoring compliance.
+**"What happened with that ballot measure from November?"** Community follow-through. Root Signal tracks implementation of passed measures, upcoming related hearings, and organizations monitoring compliance.
 
 ---
 
@@ -268,7 +268,7 @@ People using Root Signal in the context of their work or organizational role. Th
 
 **"Can my class do a citizen science project this spring?"** Root Signal surfaces student-appropriate monitoring programs, school garden partnerships, and nature center education programs.
 
-**"Where can my students see local democracy in action?"** Civic education. Root Signal surfaces city council meetings, legislative sessions, community forums, and mock government programs open to youth.
+**"Where can my students see local democracy in action?"** Community education. Root Signal surfaces city council meetings, legislative sessions, community forums, and mock government programs open to youth.
 
 ### Journalists & Researchers
 
@@ -304,7 +304,7 @@ These use cases emerge from people who've used Root Signal before and are coming
 
 **"I said I care about housing — what's happened this week?"** Topic tracking. Root Signal monitors a specific domain and surfaces relevant new signal: housing-related volunteer opportunities, advocacy events, policy developments, and mutual aid needs.
 
-**"Track upcoming public hearings about transit for me."** Civic monitoring. Root Signal watches for transit-related public meetings, comment periods, and community forums.
+**"Track upcoming public hearings about transit for me."** Public process monitoring. Root Signal watches for transit-related public meetings, comment periods, and community forums.
 
 **"What are the most urgent needs in the metro right now?"** Urgency-sorted overview. Root Signal ranks current needs by time-sensitivity, impact, and volunteer gap — helping people direct their energy where it matters most.
 
@@ -312,13 +312,13 @@ These use cases emerge from people who've used Root Signal before and are coming
 
 **"I finished Master Naturalist training — what's next for me?"** Progression. Root Signal surfaces advanced ecological stewardship opportunities appropriate for someone with specific credentials.
 
-**"What's trending in community activity this month vs. last?"** Meta-analysis. Root Signal's time-series data reveals shifts in community priorities and energy — more food shelf needs this month, more civic engagement last month.
+**"What's trending in community activity this month vs. last?"** Meta-analysis. Root Signal's time-series data reveals shifts in community priorities and energy — more food shelf needs this month, more community engagement last month.
 
 ---
 
 ## 8. Alignment State
 
-These queries are native to the alignment machine — the emergent property of a graph that faithfully tracks Need nodes, Response nodes, and Tension clusters over time. They don't ask "what can I do?" — they ask "what is the state of civic life?" Understanding the state is the first step to knowing where to show up.
+These queries are native to the alignment machine — the emergent property of a graph that faithfully tracks Need nodes, Response nodes, and Tension clusters over time. They don't ask "what can I do?" — they ask "what is the state of community life?" Understanding the state is the first step to knowing where to show up.
 
 ### Community Stress
 
@@ -326,9 +326,9 @@ These queries are native to the alignment machine — the emergent property of a
 
 **"What problems are getting addressed vs. getting worse?"** Temporal alignment detection. When Response nodes cluster around a Need and that Need's signal frequency decreases over time, alignment is being restored. When Need nodes keep growing despite Responses, the gap is widening. The graph reflects this naturally.
 
-**"What are immigrant-run businesses struggling during this time?"** A tension cluster around immigration enforcement connects to Place nodes (Lake Street corridor, Little Mekong), to Evidence nodes (news coverage, business closure announcements), and to Response nodes (solidarity campaigns, mutual aid activations). The query finds its answer not because someone designed an "immigrant business" query path, but because the graph faithfully represents the civic reality that includes struggling businesses.
+**"What are immigrant-run businesses struggling during this time?"** A tension cluster around immigration enforcement connects to Place nodes (Lake Street corridor, Little Mekong), to Evidence nodes (news coverage, business closure announcements), and to Response nodes (solidarity campaigns, mutual aid activations). The query finds its answer not because someone designed an "immigrant business" query path, but because the graph faithfully represents the local reality that includes struggling businesses.
 
-> *No existing system can answer this query. Google returns news articles. Yelp has reviews. Neither connects enforcement actions → community stress → business impact → organized response. The graph does, because it represents the relationships between civic actors, tensions, and responses — not just individual listings.*
+> *No existing system can answer this query. Google returns news articles. Yelp has reviews. Neither connects enforcement actions → community stress → business impact → organized response. The graph does, because it represents the relationships between actors, tensions, and responses — not just individual listings.*
 
 **"Is the housing crisis in North Minneapolis getting better or worse?"** The graph tracks housing-related Need nodes (eviction prevention requests, rent assistance calls, shelter capacity signals) and Response nodes (legal aid clinics, tenant organizing meetings, housing advocacy events) in a specific geography over time. The trajectory of the ratio tells the story.
 
@@ -336,9 +336,9 @@ These queries are native to the alignment machine — the emergent property of a
 
 **"Where are responses forming but needs still growing?"** The gap query. Where are people organizing but the underlying stress is still intensifying? This identifies places where more energy, more resources, or a different approach might be needed. It emerges naturally from comparing the temporal trajectories of Need and Response node clusters in the same geography and domain.
 
-**"Which neighborhoods are seeing the most new civic activity?"** Energy detection. Where are new organizations forming, new events appearing, new volunteer calls emerging? Not necessarily tension — sometimes a neighborhood just wakes up. The graph reflects it because the signal appears.
+**"Which neighborhoods are seeing the most new community activity?"** Energy detection. Where are new organizations forming, new events appearing, new volunteer calls emerging? Not necessarily tension — sometimes a neighborhood just wakes up. The graph reflects it because the signal appears.
 
-**"What does civic life look like in my zip code right now?"** The broadest alignment query. Not "what can I do?" but "what is happening?" The full picture: active needs, ongoing responses, upcoming events, current tensions, recent resolutions. A snapshot of civic reality in a place.
+**"What does community life look like in my zip code right now?"** The broadest alignment query. Not "what can I do?" but "what is happening?" The full picture: active needs, ongoing responses, upcoming events, current tensions, recent resolutions. A snapshot of local reality in a place.
 
 ---
 
@@ -350,7 +350,7 @@ These use cases are for developers, organizations, and community builders who wa
 
 **"I want to build a neighborhood app — can I pull volunteer opportunities from Root Signal?"** The core API consumer use case. A developer building a hyperlocal community app uses Root Signal's API to populate their volunteer section without building their own scraping infrastructure.
 
-**"I'm building a civic engagement tool — can I get public meeting data?"** Specialized API consumption. A civic tech developer pulls only the civic engagement signal domain to power their hearing tracker.
+**"I'm building a community engagement tool — can I get public meeting data?"** Specialized API consumption. A developer pulls only the community engagement signal domain to power their hearing tracker.
 
 **"I want to build a crisis response dashboard for my community."** Emergency-focused API consumption. A developer builds a crisis lens on Root Signal data that activates during emergencies and surfaces only urgent, actionable signal.
 
@@ -368,17 +368,17 @@ These use cases are for developers, organizations, and community builders who wa
 
 **"Can we use Root Signal data for our community needs assessment?"** Planning and evaluation. Nonprofits, government agencies, and funders use Root Signal's data to supplement their own assessments.
 
-**"I want to build a visualization of civic engagement across the metro."** Data journalism and public information. Root Signal's geographic and temporal data enables compelling visualizations of community life.
+**"I want to build a visualization of community engagement across the metro."** Data journalism and public information. Root Signal's geographic and temporal data enables compelling visualizations of community life.
 
 ---
 
 ## The Rapid Response Pattern
 
-Several use cases above involve time-sensitive civic or crisis events. This is worth calling out as a distinct pattern because it has specific infrastructure implications.
+Several use cases above involve time-sensitive community or crisis events. This is worth calling out as a distinct pattern because it has specific infrastructure implications.
 
 ### How Rapid Response Works
 
-When a major civic event or crisis occurs, the signal landscape shifts. Normal community signal continues, but a new wave of response signal emerges: solidarity events, mutual aid activations, know-your-rights workshops, community meetings, volunteer mobilizations, donation drives.
+When a major public event or crisis occurs, the signal landscape shifts. Normal community signal continues, but a new wave of response signal emerges: solidarity events, mutual aid activations, know-your-rights workshops, community meetings, volunteer mobilizations, donation drives.
 
 Root Signal's value in these moments is concentration and speed. Within hours of a triggering event, the platform surfaces the organized community response — not the threat, not the crisis itself, but what people are building in response to it.
 
@@ -390,11 +390,11 @@ The triggering event is external (a policy decision, an enforcement action, a na
 
 **Federal immigration enforcement action →** Root Signal surfaces know-your-rights workshops, legal aid clinics, solidarity vigils, community safety planning meetings, immigrant support organization activations. Not ICE locations. Not fear. The response.
 
-**Major legislation signed →** Root Signal surfaces community meetings to discuss implications, advocacy organizations mobilizing, civic forums, town halls, and opportunities to provide public comment on implementation.
+**Major legislation signed →** Root Signal surfaces community meetings to discuss implications, advocacy organizations mobilizing, community forums, town halls, and opportunities to provide public comment on implementation.
 
 **Natural disaster →** Root Signal surfaces open shelters, volunteer staging areas, donation collection points, mutual aid deliveries, and recovery organizations. During the acute phase, ingestion cadence accelerates. During recovery, long-term rebuilding efforts stay visible.
 
-**Police violence →** Root Signal surfaces community vigils, healing spaces, community meetings, mental health resources, and civic advocacy events. The community's constructive response, not the incident.
+**Police violence →** Root Signal surfaces community vigils, healing spaces, community meetings, mental health resources, and advocacy events. The community's constructive response, not the incident.
 
 **School closures / institutional changes →** Root Signal surfaces parent organizing meetings, advocacy campaigns, community forums, and alternative resource options.
 
@@ -406,11 +406,11 @@ Rapid response use cases imply specific capabilities in the signal pipeline: the
 
 ## How These Use Cases Map to Signal Domains
 
-| Use Case Category | Human Needs | Ecological | Civic | Ethical Consumption |
+| Use Case Category | Human Needs | Ecological | Community | Ethical Consumption |
 |---|---|---|---|---|
 | Everyday Community Life | ●●● | ● | ● | ● |
 | Life Transitions | ●●● | | ● | ● |
-| Civic Moments & Rapid Response | ●● | | ●●● | ● |
+| Community Moments & Rapid Response | ●● | | ●●● | ● |
 | Ecological Stewardship | | ●●● | ● | ● |
 | Ethical Consumption | ● | ● | | ●●● |
 | Professional & Organizational | ●● | ●● | ●● | ● |
@@ -418,7 +418,7 @@ Rapid response use cases imply specific capabilities in the signal pipeline: the
 | Alignment State | ●●● | ●● | ●●● | ●● |
 | Platform Builders | ●● | ●● | ●● | ●● |
 
-Most real queries are cross-domain. Someone asking "what can I do about the water quality in my lake" touches ecological stewardship (monitoring programs), civic engagement (watershed district meetings), and community needs (volunteer cleanup events). Root Signal's value is that it doesn't force people to think in domains — it returns the full picture. The domains aren't categories the system enforces. They're patterns that emerge from the signal.
+Most real queries are cross-domain. Someone asking "what can I do about the water quality in my lake" touches ecological stewardship (monitoring programs), community engagement (watershed district meetings), and community needs (volunteer cleanup events). Root Signal's value is that it doesn't force people to think in domains — it returns the full picture. The domains aren't categories the system enforces. They're patterns that emerge from the signal.
 
 ---
 
@@ -428,10 +428,10 @@ Every use case in this document answers one of two questions:
 
 **"What can I do?"** — Here is what your community is building, here is where you can participate, here is how you show up.
 
-**"What is happening?"** — Here is the state of civic life where you are. Here is where the stress is. Here is where alignment is being restored. Here is where help is still needed.
+**"What is happening?"** — Here is the state of community life where you are. Here is where the stress is. Here is where alignment is being restored. Here is where help is still needed.
 
 The first question is about agency. The second is about awareness. Together they form a complete picture: understand your community's state, then act on it.
 
-These aren't features. They're what a faithful civic knowledge graph naturally produces. The system ingests signal, detects tension, maps responses, and serves the result. The use cases emerge. The architecture is the product.
+These aren't features. They're what a faithful knowledge graph naturally produces. The system ingests signal, detects tension, maps responses, and serves the result. The use cases emerge. The architecture is the product.
 
 That's the signal.

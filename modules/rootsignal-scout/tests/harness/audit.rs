@@ -199,8 +199,8 @@ pub async fn check_geo_accuracy(
 
 /// No signals without SOURCED_FROM→Evidence.
 pub async fn check_evidence_trails(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
-                  WHERE NOT (n)-[:SOURCED_FROM]->(:Evidence) \
+    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+                  AND NOT (n)-[:SOURCED_FROM]->(:Evidence) \
                   RETURN n.title AS title, labels(n)[0] AS type";
     let q = query(cypher);
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -328,8 +328,8 @@ pub async fn check_no_orphaned_evidence(client: &GraphClient) -> CheckResult {
 
 /// No signals with empty or null titles.
 pub async fn check_no_empty_signals(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
-                  WHERE n.title IS NULL OR trim(n.title) = '' \
+    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+                  AND (n.title IS NULL OR trim(n.title) = '') \
                   RETURN labels(n)[0] AS type, n.id AS id";
     let q = query(cypher);
     let mut stream = client.inner().execute(q).await.expect("query failed");

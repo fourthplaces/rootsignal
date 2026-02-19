@@ -121,7 +121,7 @@ impl Extractor {
         Self { claude, system_prompt }
     }
 
-    /// Extract civic signals from page content (internal implementation).
+    /// Extract signals from page content (internal implementation).
     async fn extract_impl(
         &self,
         content: &str,
@@ -139,7 +139,7 @@ impl Extractor {
         };
 
         let user_prompt = format!(
-            "Extract all civic signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
+            "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
         );
 
         let response: ExtractionResponse = self
@@ -242,7 +242,7 @@ impl Extractor {
                     action_url: signal
                         .action_url
                         .unwrap_or(effective_source_url),
-                    availability: signal.availability.unwrap_or_else(|| "Contact for details".to_string()),
+                    availability: signal.availability,
                     is_ongoing: signal.is_ongoing.unwrap_or(true),
                 }),
                 "ask" => {
@@ -255,7 +255,7 @@ impl Extractor {
                     Node::Ask(AskNode {
                         meta,
                         urgency,
-                        what_needed: signal.what_needed.unwrap_or_else(|| "Support needed".to_string()),
+                        what_needed: signal.what_needed,
                         action_url: signal.action_url,
                         goal: signal.goal,
                     })
@@ -307,7 +307,7 @@ impl Extractor {
         info!(
             source_url,
             count = nodes.len(),
-            "Extracted civic signals"
+            "Extracted signals"
         );
         Ok(nodes)
     }
@@ -323,7 +323,7 @@ impl SignalExtractor for Extractor {
 pub fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
     format!(
-        r#"You are a civic signal extractor for {city_name}.
+        r#"You are a signal extractor for {city_name}.
 
 Your job: find real problems and the people addressing them. The most valuable signal is a TENSION (something out of alignment in community or ecological life) paired with RESPONSES (the gives, asks, events, and notices that address it). A food shelf addressing a food desert, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these tension-response pairs are what gets people engaged in real-world problems.
 
@@ -339,7 +339,7 @@ Your job: find real problems and the people addressing them. The most valuable s
 - A "feed people on Sundays" program implies food insecurity. Extract it as a Give even without an explicit tension on the page.
 - A river cleanup implies pollution. Extract it as an Event.
 
-**Lower priority — routine civic activity:**
+**Lower priority — routine community activity:**
 - Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
 
 **Context signals:**
@@ -459,5 +459,66 @@ mod tests {
         assert_eq!(signal.signal_type, "tension");
         assert_eq!(signal.what_would_help.as_deref(), Some("affordable housing policy"));
         assert_eq!(signal.category.as_deref(), Some("housing"));
+    }
+
+    #[test]
+    fn missing_availability_is_none_not_placeholder() {
+        use rootsignal_common::{GiveNode, NodeMeta, SensitivityLevel};
+        let meta = NodeMeta {
+            id: uuid::Uuid::new_v4(),
+            title: "Food pantry".to_string(),
+            summary: "Weekly groceries".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.0,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: "https://example.com".to_string(),
+            extracted_at: chrono::Utc::now(),
+            last_confirmed_active: chrono::Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            mentioned_actors: vec![],
+        };
+        let give = GiveNode {
+            meta,
+            action_url: "https://example.com".to_string(),
+            availability: None,
+            is_ongoing: true,
+        };
+        assert!(give.availability.is_none());
+    }
+
+    #[test]
+    fn missing_what_needed_is_none_not_placeholder() {
+        use rootsignal_common::{AskNode, NodeMeta, SensitivityLevel, Urgency};
+        let meta = NodeMeta {
+            id: uuid::Uuid::new_v4(),
+            title: "Volunteers needed".to_string(),
+            summary: "Help at shelter".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.0,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: "https://example.com".to_string(),
+            extracted_at: chrono::Utc::now(),
+            last_confirmed_active: chrono::Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            mentioned_actors: vec![],
+        };
+        let ask = AskNode {
+            meta,
+            urgency: Urgency::Medium,
+            what_needed: None,
+            action_url: None,
+            goal: None,
+        };
+        assert!(ask.what_needed.is_none());
     }
 }

@@ -47,7 +47,7 @@ impl SourceScheduler {
         Self {
             exploration_ratio: 0.10,
             exploration_weight_threshold: 0.3,
-            exploration_min_stale_days: 14,
+            exploration_min_stale_days: 5,
         }
     }
 
@@ -272,11 +272,9 @@ mod tests {
             weight,
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
-            total_cost_cents: 0,
-            last_cost_cents: 0,
-            taxonomy_stats: None,
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
+            scrape_count: 0,
         }
     }
 
@@ -407,5 +405,33 @@ mod tests {
         let base = compute_weight(5, 0, 10, 0, Some(now), now);
         let corroborated = compute_weight(5, 3, 10, 0, Some(now), now);
         assert!(corroborated > base, "Corroboration should boost weight: base={base}, corroborated={corroborated}");
+    }
+
+    #[test]
+    fn weight_uses_actual_scrape_count_not_signal_count() {
+        let now = Utc::now();
+        // 5 signals from 20 scrapes = 25% yield
+        let w = compute_weight(5, 0, 20, 0, Some(now), now);
+        assert!(w < 0.35, "5 signals / 20 scrapes should give low weight: {w}");
+
+        // Bug behavior: 5 signals / 5 "scrapes" = 100% yield
+        let w_bug = compute_weight(5, 0, 5, 0, Some(now), now);
+        assert!(w_bug > 0.5, "Bug inflates weight: {w_bug}");
+
+        // Confirm they're meaningfully different
+        assert!(w_bug > w * 1.5, "Bug should produce significantly higher weight");
+    }
+
+    #[test]
+    fn low_weight_source_reaches_exploration_not_just_cadence() {
+        let scheduler = SourceScheduler::new();
+        let now = Utc::now();
+        // Weight 0.15, last scraped 6 days ago.
+        // Cadence for weight 0.15 = 168h (7 days) → NOT due by cadence (6 < 7).
+        // With min_stale_days=5, IS eligible for exploration (6 >= 5).
+        let sources = vec![make_source(0.15, Some(now - Duration::days(6)))];
+        let result = scheduler.schedule(&sources, now);
+        assert_eq!(result.scheduled.len(), 0, "Should NOT be scheduled by cadence");
+        assert_eq!(result.exploration.len(), 1, "Should be picked for exploration");
     }
 }

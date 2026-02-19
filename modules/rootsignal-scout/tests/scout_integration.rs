@@ -176,11 +176,11 @@ async fn overlapping_content_corroborates() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 5: Non-civic content → zero signals
+// Scenario 5: Irrelevant content → zero signals
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn non_civic_content_produces_nothing() {
+async fn irrelevant_content_produces_nothing() {
     let Some(ctx) = TestContext::try_new().await else {
         eprintln!("Skipping: API keys not set");
         return;
@@ -198,7 +198,7 @@ async fn non_civic_content_produces_nothing() {
 
     assert_eq!(
         stats.signals_stored, 0,
-        "pizza menu should produce no civic signals, got {}",
+        "pizza menu should produce no signals, got {}",
         stats.signals_stored,
     );
 }
@@ -354,7 +354,7 @@ async fn berlin_german_language_extraction() {
 
     assert!(
         stats.signals_extracted >= 1,
-        "German-language civic content should extract signals, got {}",
+        "German-language content should extract signals, got {}",
         stats.signals_extracted,
     );
     // Neighborhood council meeting is an Event
@@ -564,11 +564,11 @@ async fn tension_extraction_produces_tension_signals() {
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// Scenario 15: Spam / crypto MLM disguised as civic content → filtered
+// Scenario 15: Spam / crypto MLM disguised as signal content → filtered
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn spam_disguised_as_civic_filtered() {
+async fn spam_disguised_as_signal_filtered() {
     let Some(ctx) = TestContext::try_new().await else {
         eprintln!("Skipping: API keys not set");
         return;
@@ -577,7 +577,7 @@ async fn spam_disguised_as_civic_filtered() {
     let social = ScenarioSocialScraper::new(
         &std::env::var("ANTHROPIC_API_KEY").unwrap(),
         "An Instagram account posts daily 'community wealth building' content that's actually \
-         crypto/MLM recruitment. Uses civic hashtags like #MinneapolisCommunity and \
+         crypto/MLM recruitment. Uses community hashtags like #MinneapolisCommunity and \
          #CommunityFirst but all content pushes a 'Community Token' cryptocurrency. \
          Mentions 40% returns and $25 registration fees.",
     );
@@ -585,7 +585,7 @@ async fn spam_disguised_as_civic_filtered() {
     let searcher = ScenarioSearcher::new(
         &std::env::var("ANTHROPIC_API_KEY").unwrap(),
         "CommunityWealth Partners: BBB has F rating, multiple Reddit threads calling it a scam, \
-         no registered 501(c)(3), no civic activity records. Domain registered 3 months ago.",
+         no registered 501(c)(3), no community activity records. Domain registered 3 months ago.",
     );
 
     let _stats = ctx
@@ -601,7 +601,7 @@ async fn spam_disguised_as_civic_filtered() {
     let high_confidence: Vec<_> = signals.iter().filter(|s| s.confidence >= 0.5).collect();
     assert!(
         high_confidence.is_empty(),
-        "crypto MLM should not produce high-confidence civic signals; got {} with confidence >= 0.5: {:?}",
+        "crypto MLM should not produce high-confidence signals; got {} with confidence >= 0.5: {:?}",
         high_confidence.len(),
         high_confidence.iter().map(|s| (&s.title, s.confidence)).collect::<Vec<_>>(),
     );
@@ -932,5 +932,68 @@ async fn coordinated_social_posts_detected() {
         "4 coordinated posts should produce at most 2 unique signals after dedup; got {}: {:?}",
         input_signals.len(),
         input_signals.iter().map(|s| &s.title).collect::<Vec<_>>(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario: Signals without coordinates get city-center backfill
+// ---------------------------------------------------------------------------
+//
+// Reddit-style content about city-wide issues (rent increases, policy) produces
+// signals with location_name but no lat/lng. These must get city-center coords
+// at City precision so they appear in geo bounding-box queries (the admin UI).
+
+#[tokio::test]
+async fn city_wide_signals_get_center_coordinates() {
+    let Some(ctx) = TestContext::try_new().await else {
+        eprintln!("Skipping: API keys not set");
+        return;
+    };
+
+    // Reddit housing discussion — city-wide issue, no specific addresses
+    let stats = ctx
+        .scout()
+        .with_web_content(include_str!("fixtures/reddit_housing_discussion.txt"))
+        .with_search_results(vec![search_result(
+            "https://www.reddit.com/r/Minneapolis/comments/abc123/rent_increases/",
+            "Minneapolis rent increases discussion",
+        )])
+        .run()
+        .await;
+
+    assert!(
+        stats.signals_stored >= 1,
+        "housing discussion should produce at least 1 stored signal, got {}",
+        stats.signals_stored,
+    );
+
+    // Every stored signal must have coordinates (either from LLM or city-center backfill)
+    let geo_signals = harness::queries::all_signals_with_geo(ctx.client()).await;
+    assert!(!geo_signals.is_empty(), "should have signals in graph");
+
+    let missing_coords: Vec<_> = geo_signals
+        .iter()
+        .filter(|s| s.lat.is_none() || s.lng.is_none())
+        .collect();
+
+    assert!(
+        missing_coords.is_empty(),
+        "all stored signals should have coordinates after city-center backfill; \
+         {} signals missing coords: {:?}",
+        missing_coords.len(),
+        missing_coords.iter().map(|s| &s.title).collect::<Vec<_>>(),
+    );
+
+    // Signals without specific locations should have City precision
+    let city_precision: Vec<_> = geo_signals
+        .iter()
+        .filter(|s| s.geo_precision.as_deref() == Some("city"))
+        .collect();
+
+    assert!(
+        !city_precision.is_empty(),
+        "at least one signal should have city-level precision (backfilled), \
+         precisions found: {:?}",
+        geo_signals.iter().map(|s| &s.geo_precision).collect::<Vec<_>>(),
     );
 }

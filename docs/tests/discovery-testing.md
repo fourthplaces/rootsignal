@@ -209,6 +209,55 @@ Discovery is additive and non-fatal. Existing validation must still pass.
 
 **All existing checks must still pass.**
 
+## 12. Engagement-Aware Discovery
+
+Verify that engagement data (corroboration_count, source_diversity, cause_heat) is surfaced in the briefing and used to prioritize discovery queries without gating.
+
+### Unit tests (automated)
+
+```bash
+cargo test -p rootsignal-scout --lib discovery
+```
+
+Key tests:
+- `briefing_engagement_shown_for_tensions` — engagement line appears under each tension
+- `briefing_engagement_zero_still_shown` — zero-engagement tensions still appear (no gate)
+- `briefing_high_engagement_tensions_first` — all tensions present regardless of engagement
+- `mechanical_fallback_sorts_by_engagement` — high-engagement sorts first, low-engagement still present
+- `cold_start_ignores_engagement` — cold start works with zero-engagement tensions
+
+### Manual: engagement data flows from graph
+
+```bash
+# Check that tensions have engagement properties
+echo "MATCH (t:Tension) WHERE t.corroboration_count > 0 RETURN t.title, t.corroboration_count, t.source_diversity, t.cause_heat LIMIT 5;" | $MG
+```
+
+### Manual: new single-source tensions still get discovery queries
+
+```bash
+# Create a tension with zero engagement
+echo "CREATE (t:Tension {title: 'Test zero engagement', severity: 'high', what_would_help: 'test resources', last_confirmed_active: datetime(), corroboration_count: 0, source_diversity: 0, cause_heat: 0.0});" | $MG
+
+# Run scout and verify it creates a query for this tension
+cargo run --bin scout -- --city twincities 2>&1 | grep -i "test zero engagement\|gap analysis"
+
+# Cleanup
+echo "MATCH (t:Tension {title: 'Test zero engagement'}) DELETE t;" | $MG
+```
+
+### Manual: high-engagement tensions get priority slots
+
+```bash
+# Check that discovery queries reference high-engagement tensions
+echo "MATCH (s:Source {source_type: 'tavily_query', active: true})
+      WHERE s.gap_context CONTAINS 'Tension:'
+      RETURN s.canonical_value, s.gap_context
+      ORDER BY s.created_at DESC LIMIT 10;" | $MG
+```
+
+Verify that tensions with higher corroboration/source_diversity appear in earlier query slots.
+
 ## Failure Diagnosis
 
 | Symptom | Likely cause |
@@ -221,3 +270,6 @@ Discovery is additive and non-fatal. Existing validation must still pass.
 | Discovery sources never scraped | Scheduler not picking up TavilyQuery sources, or Tavily API key missing |
 | `gaps=0` with tensions present | `get_unmet_tensions` query returning empty, or `get_active_sources` dedup too aggressive |
 | Actor sources not discovered | `get_actors_with_domains` query broken, or actors don't have domain/social_url properties |
+| Engagement data all zeros | Tensions haven't been through investigation yet, or `corroboration_count`/`source_diversity` properties not being set |
+| `cause_heat` always 0.0 | Clustering hasn't run yet — cause_heat is only set during periodic clustering |
+| Low-engagement tensions never get queries | Bug in sort logic or mechanical fallback — engagement should rank, not gate |

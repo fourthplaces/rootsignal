@@ -9,6 +9,19 @@
 
 ---
 
+## Architecture
+
+How the system works and why it's built this way. Start with the chain doc to understand how the subsystems compose, then dive into individual components.
+
+| Document | Status | Description |
+|----------|--------|-------------|
+| [Signal → Tension → Response Chain](architecture/signal-to-response-chain.md) | canonical | How curiosity, response scout, and story weaver compose into a single discovery chain |
+| [Scout Pipeline](architecture/scout-pipeline.md) | canonical | Full scout pipeline: scraping, extraction, dedup, embedding, post-processing |
+| [Curiosity Loop](architecture/curiosity-loop.md) | canonical | Signal → tension investigation. The "why does this exist?" engine |
+| [Response Scout](architecture/response-scout.md) | canonical | Tension → response investigation. The "what diffuses this?" engine |
+| [Story Weaver](architecture/story-weaver.md) | canonical | Tension hubs → materialized stories. Emergent narrative generation |
+| [Feedback Loops](architecture/feedback-loops.md) | canonical | All 21 feedback loops mapped: amplifying, corrective, and dedup |
+
 ## Vision
 
 The soul of the project. These define *what* Root Signal is, *why* it exists, and the principles that guide every decision.
@@ -17,7 +30,7 @@ The soul of the project. These define *what* Root Signal is, *why* it exists, an
 |----------|--------|-------------|
 | [Principles & Values](vision/principles-and-values.md) | canonical | Core beliefs, principles, anti-principles, and decision framework |
 | [Editorial & Signal Inclusion](vision/editorial-and-signal-inclusion-principles.md) | canonical | What Root Signal includes, excludes, and why. Normal vs crisis mode |
-| [Alignment Machine](vision/alignment-machine.md) | canonical | The emergent property: how the graph reflects civic alignment |
+| [Alignment Machine](vision/alignment-machine.md) | canonical | The emergent property: how the graph reflects community alignment |
 | [Problem Space & Positioning](vision/problem-space-positioning.md) | canonical | Where Root Signal sits in the world |
 | [Milestones & Gates](vision/milestones-and-gates.md) | canonical | Sequential milestones with go/no-go gates |
 | [Kill Test](vision/kill-test.md) | canonical | Every failure mode, honestly assessed |
@@ -40,7 +53,7 @@ Implementation-agnostic reference material that carries forward regardless of ar
 |----------|--------|-------------|
 | [Signal Sources & Roles](reference/signal-sources-and-roles.md) | reference | 70+ signal sources, audience roles, quality dimensions, scraping cadence |
 | [Pressure Test Queries](reference/pressure-test-queries.md) | reference | 150+ real-world queries organized by domain, cross-domain, edge cases, and heat map |
-| [Civic Engagement Landscape](reference/civic-engagement-landscape.md) | reference | 12 engagement domains + engagement types. Scout guidance for what to look for |
+| [Community Engagement Landscape](reference/community-engagement-landscape.md) | reference | 12 engagement domains + engagement types. Scout guidance for what to look for |
 | [Audience × Causes Map](reference/audience-causes-map.md) | reference | 9 Twin Cities audience archetypes with causes and cross-domain surprise connections |
 | [Use Cases](reference/use-cases.md) | reference | Concrete use cases and user stories for Root Signal |
 
@@ -63,15 +76,15 @@ Architectural exploration. The canonical brainstorm supersedes earlier versions.
 
 | Document | Status | Description |
 |----------|--------|-------------|
-| [Civic Intelligence System Architecture](brainstorms/2026-02-16-civic-intelligence-system-architecture-brainstorm.md) | canonical | **The architecture document.** Agent swarm, Memgraph graph, phased rollout |
-| [Civic Tension Search Engine Architecture](brainstorms/2026-02-16-civic-tension-search-engine-architecture-brainstorm.md) | superseded | Earlier architecture focused on tension-only |
-| [Civic Tension Search Engine](brainstorms/2026-02-16-civic-tension-search-engine-brainstorm.md) | superseded | Initial concept brainstorm |
+| [Signal Intelligence System Architecture](brainstorms/2026-02-16-civic-intelligence-system-architecture-brainstorm.md) | canonical | **The architecture document.** Agent swarm, Memgraph graph, phased rollout |
+| [Tension Search Engine Architecture](brainstorms/2026-02-16-civic-tension-search-engine-architecture-brainstorm.md) | superseded | Earlier architecture focused on tension-only |
+| [Tension Search Engine](brainstorms/2026-02-16-civic-tension-search-engine-brainstorm.md) | superseded | Initial concept brainstorm |
 | [Anti-Fragile Signal](brainstorms/2026-02-17-anti-fragile-signal-brainstorm.md) | draft | Letting truth emerge under pressure |
 | [Cause Heat](brainstorms/2026-02-17-cause-heat-brainstorm.md) | draft | Cross-story signal boosting exploration |
 | [Community Signal Scoring](brainstorms/2026-02-17-community-signal-scoring-brainstorm.md) | draft | Source diversity and trust scoring |
 | [Email Ingest](brainstorms/2026-02-17-email-ingest-for-signal-brainstorm.md) | draft | Email as a signal capture channel |
 | [Individual Signal Discovery](brainstorms/2026-02-17-individual-signal-discovery-brainstorm.md) | draft | Instagram-based individual signal discovery |
-| [Radio as Signal Source](brainstorms/2026-02-17-radio-as-civic-signal-source-brainstorm.md) | draft | Radio as a civic signal source |
+| [Radio as Signal Source](brainstorms/2026-02-17-radio-as-civic-signal-source-brainstorm.md) | draft | Radio as a signal source |
 | [Scout Supervisor](brainstorms/2026-02-17-scout-supervisor-brainstorm.md) | draft | Autonomous scout health management |
 | [Signal vs. Affordances](brainstorms/2026-02-17-signal-vs-affordances-brainstorm.md) | draft | What Root Signal is and isn't |
 | [Triangulation Model](brainstorms/2026-02-17-triangulation-model-brainstorm.md) | draft | From echo to structural truth |
@@ -83,8 +96,17 @@ Testing playbooks for manual and integration testing.
 | Document | Description |
 |----------|-------------|
 | [Scout Testing](tests/scout-testing.md) | Scout pipeline end-to-end testing |
+| [Clustering Testing](tests/clustering-testing.md) | Leiden clustering and story formation testing |
+| [Discovery Testing](tests/discovery-testing.md) | Curiosity engine and source discovery testing |
 | [Investigation Testing](tests/investigation-testing.md) | Investigation framework testing (cooldown, dedup, evidence) |
 | [Source Registry Testing](tests/source-registry-testing.md) | Source node foundation testing |
+| [Supervisor Testing](tests/supervisor-testing.md) | Scout supervisor health checks and auto-fixes |
+
+## Analysis
+
+| Document | Description |
+|----------|-------------|
+| [Scout Heuristics](analysis/scout-heuristics.md) | Analysis of scout scoring heuristics and tuning |
 
 ## Audits
 

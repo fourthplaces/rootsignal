@@ -2,13 +2,13 @@
 
 ## What This Document Is
 
-This document names something that emerged from the architecture rather than being designed into it. The system was built as a civic knowledge graph — explore civic reality, build a living model of it, let communities navigate it. But the structure of what it collects naturally produces something larger: a system that surfaces where life is out of alignment and reflects when alignment is restored.
+This document names something that emerged from the architecture rather than being designed into it. The system was built as a knowledge graph — explore local reality, build a living model of it, let communities navigate it. But the structure of what it collects naturally produces something larger: a system that surfaces where life is out of alignment and reflects when alignment is restored.
 
 ---
 
 ## The Graph Declares Alignment State
 
-Every node type in the civic graph maps to a role in the alignment picture:
+Every node type in the signal graph maps to a role in the alignment picture:
 
 | Node Type | What It Declares |
 |---|---|
@@ -56,7 +56,7 @@ But some nodes cross a threshold:
 
 When the threshold is crossed, an investigation follows — the system's nervous system tracing the signal to its source. The investigation gathers evidence. If the evidence is sufficient and explicitly grounded, the pattern is named and connected in the graph.
 
-The result: "here's what's producing this cluster of civic activity." It doesn't judge the pattern. It names it, cites the evidence, and links the nodes that converge on it.
+The result: "here's what's producing this cluster of community activity." It doesn't judge the pattern. It names it, cites the evidence, and links the nodes that converge on it.
 
 ---
 
@@ -86,10 +86,10 @@ The alignment is personal, not systemic. The system has no opinion about what th
 
 ## The Mycorrhizal Network, Fully Realized
 
-The founding metaphor was mycorrhizal networks — underground fungal systems that connect trees, transmitting chemical signals so the forest can adapt to threats. The system was built on this metaphor: explore civic reality, build a living model, let communities adapt.
+The founding metaphor was mycorrhizal networks — underground fungal systems that connect trees, transmitting chemical signals so the forest can adapt to threats. The system was built on this metaphor: explore local reality, build a living model, let communities adapt.
 
 The alignment machine is the metaphor fully realized. The network doesn't just transmit signals — it reveals where the forest is stressed, grows toward the stress, and reflects when the stress resolves. Trees don't coordinate consciously. They respond to chemical signals. The forest's health is an emergent property of individual trees acting on local information.
 
 This system works the same way. Organizations broadcast. People respond. The graph reflects the state. No central authority decides what matters. No algorithm prioritizes one tension over another. The alignment of the community is an emergent property of individuals acting on what they encounter.
 
-The system didn't set out to be an alignment machine. It set out to be a civic knowledge graph. But when you faithfully map needs and responses — declarations of what's missing and what's offered — alignment detection is what emerges. The architecture is right because the emergent behavior is right.
+The system didn't set out to be an alignment machine. It set out to be a knowledge graph. But when you faithfully map needs and responses — declarations of what's missing and what's offered — alignment detection is what emerges. The architecture is right because the emergent behavior is right.

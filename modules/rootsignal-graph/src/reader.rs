@@ -205,24 +205,34 @@ impl PublicGraphReader {
         Ok(results)
     }
 
-    /// List recent signals scoped to a city.
+    /// List recent signals scoped to a city's geographic bounding box.
     pub async fn list_recent_for_city(
         &self,
-        city: &str,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
         limit: u32,
     ) -> Result<Vec<Node>, neo4rs::Error> {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
         let mut all: Vec<Node> = Vec::new();
         for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
             let label = node_type_label(*nt);
             let cypher = format!(
                 "MATCH (n:{label})
-                 WHERE n.city = $city
+                 WHERE n.lat <> 0.0
+                   AND n.lat >= $min_lat AND n.lat <= $max_lat
+                   AND n.lng >= $min_lng AND n.lng <= $max_lng
                  RETURN n
-                 ORDER BY n.last_confirmed_active DESC
+                 ORDER BY coalesce(n.cause_heat, 0) DESC, n.last_confirmed_active DESC
                  LIMIT $limit"
             );
             let q = query(&cypher)
-                .param("city", city)
+                .param("min_lat", lat - lat_delta)
+                .param("max_lat", lat + lat_delta)
+                .param("min_lng", lng - lng_delta)
+                .param("max_lng", lng + lng_delta)
                 .param("limit", limit as i64);
             let mut stream = self.client.graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
@@ -231,30 +241,45 @@ impl PublicGraphReader {
                 }
             }
         }
-        // Sort by recency, truncate
+        // Sort by cause_heat (tension-connected signals first), then recency
         all.sort_by(|a, b| {
-            let a_time = a.meta().map(|m| m.last_confirmed_active);
-            let b_time = b.meta().map(|m| m.last_confirmed_active);
-            b_time.cmp(&a_time)
+            let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            b_heat.partial_cmp(&a_heat).unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    let a_time = a.meta().map(|m| m.last_confirmed_active);
+                    let b_time = b.meta().map(|m| m.last_confirmed_active);
+                    b_time.cmp(&a_time)
+                })
         });
         all.truncate(limit as usize);
         Ok(all)
     }
 
-    /// Top stories by energy, scoped to a city.
+    /// Top stories by energy, scoped to a city's geographic bounding box (via story centroid).
     pub async fn top_stories_for_city(
         &self,
-        city: &str,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
         let q = query(
             "MATCH (s:Story)
-             WHERE s.city = $city
+             WHERE s.centroid_lat IS NOT NULL
+               AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
+               AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
              RETURN s
              ORDER BY s.energy DESC
              LIMIT $limit"
         )
-        .param("city", city)
+        .param("min_lat", lat - lat_delta)
+        .param("max_lat", lat + lat_delta)
+        .param("min_lng", lng - lng_delta)
+        .param("max_lng", lng + lng_delta)
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
@@ -1012,7 +1037,7 @@ impl PublicGraphReader {
 
 // --- Helpers ---
 
-fn node_type_label(nt: NodeType) -> &'static str {
+pub fn node_type_label(nt: NodeType) -> &'static str {
     match nt {
         NodeType::Event => "Event",
         NodeType::Give => "Give",
@@ -1127,7 +1152,7 @@ fn passes_display_filter(node: &Node) -> bool {
 }
 
 /// Parse a neo4rs Row into a typed Node.
-fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
+pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let n: neo4rs::Node = row.get("n").ok()?;
 
     let id_str: String = n.get("id").ok()?;
@@ -1209,7 +1234,7 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             Some(Node::Give(GiveNode {
                 meta,
                 action_url,
-                availability,
+                availability: if availability.is_empty() { None } else { Some(availability) },
                 is_ongoing,
             }))
         }
@@ -1228,7 +1253,7 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             Some(Node::Ask(AskNode {
                 meta,
                 urgency,
-                what_needed,
+                what_needed: if what_needed.is_empty() { None } else { Some(what_needed) },
                 action_url: if action_url.is_empty() { None } else { Some(action_url) },
                 goal: if goal.is_empty() { None } else { Some(goal) },
             }))
@@ -1287,7 +1312,7 @@ fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     }
 }
 
-fn parse_location(n: &neo4rs::Node) -> Option<GeoPoint> {
+pub fn parse_location(n: &neo4rs::Node) -> Option<GeoPoint> {
     let lat: f64 = n.get("lat").ok()?;
     let lng: f64 = n.get("lng").ok()?;
     if lat == 0.0 && lng == 0.0 {
@@ -1315,7 +1340,7 @@ fn parse_optional_datetime_prop(n: &neo4rs::Node, prop: &str) -> Option<DateTime
     None
 }
 
-fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
+pub fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     // Writer stores as "%Y-%m-%dT%H:%M:%S%.6f" (no timezone, implicitly UTC)
     if let Ok(s) = n.get::<String>(prop) {
         // Try RFC3339 first (has timezone), then naive datetime (writer format)
@@ -1363,7 +1388,7 @@ fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
     evidence
 }
 
-fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
+pub fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
     let n: neo4rs::Node = row.get("s").ok()?;
 
     let id_str: String = n.get("id").ok()?;
@@ -1422,7 +1447,7 @@ fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
     })
 }
 
-fn parse_story_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
+pub fn parse_story_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     if let Ok(s) = n.get::<String>(prop) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
             return dt.with_timezone(&Utc);

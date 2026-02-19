@@ -15,6 +15,40 @@ pub struct SignalRow {
     pub source_diversity: u32,
 }
 
+#[derive(Debug)]
+pub struct SignalGeoRow {
+    pub title: String,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub geo_precision: Option<String>,
+}
+
+/// All signals with their geo coordinates, for verifying city-center backfill.
+pub async fn all_signals_with_geo(client: &GraphClient) -> Vec<SignalGeoRow> {
+    let mut results = Vec::new();
+
+    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        let cypher = format!(
+            "MATCH (n:{label}) RETURN n.title AS title, n.lat AS lat, n.lng AS lng, \
+             n.geo_precision AS geo_precision"
+        );
+
+        let q = query(&cypher);
+        let mut stream = client.inner().execute(q).await.expect("query failed");
+
+        while let Some(row) = stream.next().await.expect("row failed") {
+            results.push(SignalGeoRow {
+                title: row.get("title").unwrap_or_default(),
+                lat: row.get::<f64>("lat").ok(),
+                lng: row.get::<f64>("lng").ok(),
+                geo_precision: row.get("geo_precision").ok(),
+            });
+        }
+    }
+
+    results
+}
+
 #[derive(Debug, Serialize)]
 pub struct EvidenceRow {
     pub id: Uuid,
@@ -137,12 +171,28 @@ pub async fn tension_signals(client: &GraphClient) -> Vec<TensionRow> {
 }
 
 /// Serialize the full graph state (signals, tensions, stories, evidence) to JSON
-/// for passing to the judge.
+/// for passing to the judge. When `city_slug` is provided, only returns signals
+/// connected to sources for that city.
 pub async fn serialize_graph_state(client: &GraphClient) -> String {
-    let signals = all_signals(client).await;
-    let tensions = tension_signals(client).await;
+    serialize_graph_state_for_city(client, None).await
+}
+
+/// Serialize graph state scoped to a specific city's sources.
+pub async fn serialize_graph_state_for_city(
+    client: &GraphClient,
+    city_slug: Option<&str>,
+) -> String {
+    let mut signals = all_signals(client).await;
+    let mut tensions = tension_signals(client).await;
     let stories = stories_by_energy(client).await;
     let responds_to = responds_to_edges(client).await;
+
+    // If city_slug is given, filter to only signals connected to that city's sources
+    if let Some(slug) = city_slug {
+        let city_signal_ids = city_signal_ids(client, slug).await;
+        signals.retain(|s| city_signal_ids.contains(&s.id));
+        tensions.retain(|t| city_signal_ids.contains(&t.id));
+    }
 
     // Collect evidence for each signal
     let mut evidence_map: std::collections::HashMap<String, Vec<EvidenceRow>> =
@@ -215,6 +265,27 @@ pub async fn responds_to_edges(client: &GraphClient) -> Vec<RespondsToEdge> {
     }
 
     results
+}
+
+/// Get IDs of all signals connected via Evidence to sources for a given city.
+/// Evidence nodes have a `source_url` property that matches Source node URLs.
+async fn city_signal_ids(client: &GraphClient, city_slug: &str) -> std::collections::HashSet<Uuid> {
+    let cypher = "MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL \
+                  WITH collect(s.url) AS urls \
+                  MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
+                  WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+                  AND ev.source_url IN urls \
+                  RETURN DISTINCT n.id AS id";
+    let q = query(cypher).param("slug", city_slug);
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut ids = std::collections::HashSet::new();
+    while let Some(row) = stream.next().await.expect("row failed") {
+        let id_str: String = row.get("id").unwrap_or_default();
+        if let Ok(id) = Uuid::parse_str(&id_str) {
+            ids.insert(id);
+        }
+    }
+    ids
 }
 
 /// Stories ordered by energy DESC.

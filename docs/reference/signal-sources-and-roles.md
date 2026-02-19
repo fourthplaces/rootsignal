@@ -51,7 +51,7 @@ All public content is first-class signal regardless of platform. The boundary is
 |--------|------------|-----------------|----------------|-------|
 | **Local news sites** | Coverage of community needs, disaster response | Web scraping + search | Yes (local outlets) | Good for emerging needs / breaking situations |
 | **Community-specific outlets** | Coverage of underserved communities | Web scraping | Regional | e.g., Sahan Journal for Somali/East African community in Twin Cities |
-| **Independent local journalism** | Nonprofit and civic coverage | Web scraping | Regional | e.g., MinnPost in MN — varies by geography |
+| **Independent local journalism** | Nonprofit and community coverage | Web scraping | Regional | e.g., MinnPost in MN — varies by geography |
 | **Substack / newsletters** | Community-specific digests | Email ingestion (subscribe + parse) | Varies | Many neighborhood newsletters exist on Substack |
 
 ### Government & Institutional

@@ -1,0 +1,917 @@
+use std::sync::Arc;
+
+use ai_client::claude::Claude;
+use ai_client::traits::{Agent, PromptBuilder};
+use anyhow::Result;
+use chrono::Utc;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use rootsignal_common::{
+    AskNode, CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
+    NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
+    TensionNode, Urgency,
+};
+use rootsignal_graph::{GraphWriter, ResponseHeuristic, ResponseScoutTarget};
+
+use crate::curiosity::{
+    ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool,
+};
+use crate::embedder::TextEmbedder;
+use crate::scraper::{PageScraper, WebSearcher};
+use crate::sources;
+
+const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
+const MAX_TOOL_TURNS: usize = 10;
+const MAX_RESPONSES_PER_TENSION: usize = 8;
+const MAX_FUTURE_QUERIES_PER_TENSION: usize = 3;
+
+// =============================================================================
+// Structured output types
+// =============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResponseFinding {
+    #[serde(default)]
+    pub responses: Vec<DiscoveredResponse>,
+    #[serde(default)]
+    pub emergent_tensions: Vec<EmergentTension>,
+    #[serde(default)]
+    pub future_queries: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoveredResponse {
+    pub title: String,
+    pub summary: String,
+    /// "give", "event", or "ask"
+    pub signal_type: String,
+    /// Must be a URL the agent actually read via read_page
+    pub url: String,
+    /// Freeform — the LLM can invent new categories
+    pub diffusion_mechanism: String,
+    /// How this diffuses rather than escalates
+    pub explanation: String,
+    /// 0.0-1.0 how directly this addresses the tension
+    pub match_strength: f64,
+    /// Titles of OTHER tensions this also diffuses
+    #[serde(default)]
+    pub also_addresses: Vec<String>,
+    /// ISO date for events (null if not an event or date unknown)
+    pub event_date: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EmergentTension {
+    pub title: String,
+    pub summary: String,
+    /// "low", "medium", "high", or "critical"
+    pub severity: String,
+    pub category: String,
+    pub what_would_help: String,
+    pub source_url: String,
+    /// How this relates to the tension being investigated
+    pub relationship: String,
+}
+
+// =============================================================================
+// Stats
+// =============================================================================
+
+#[derive(Debug, Default)]
+pub struct ResponseScoutStats {
+    pub targets_found: u32,
+    pub targets_investigated: u32,
+    pub responses_discovered: u32,
+    pub responses_deduped: u32,
+    pub signals_created: u32,
+    pub edges_created: u32,
+    pub emergent_tensions: u32,
+    pub future_sources_created: u32,
+}
+
+impl std::fmt::Display for ResponseScoutStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Response Scout: {} targets found, {} investigated, \
+             {} responses discovered ({} deduped), {} signals created, \
+             {} edges, {} emergent tensions, {} future sources",
+            self.targets_found,
+            self.targets_investigated,
+            self.responses_discovered,
+            self.responses_deduped,
+            self.signals_created,
+            self.edges_created,
+            self.emergent_tensions,
+            self.future_sources_created,
+        )
+    }
+}
+
+// =============================================================================
+// Prompts
+// =============================================================================
+
+fn investigation_system_prompt(city_name: &str) -> String {
+    format!(
+        "You are investigating what DIFFUSES a community tension in {city_name}.
+Find real-world responses — organizations, programs, campaigns, events,
+mutual aid efforts, creative actions — that address this problem.
+
+You have two tools: web_search and read_page.
+
+HOW TO INVESTIGATE:
+1. Start broad: \"what is being done about [tension] in [city]?\"
+2. Read the most promising results — understand the landscape
+3. Think about MECHANISMS: what feeds this tension? What starves it?
+4. Follow threads creatively — an article about ICE funding might lead \
+you to boycott campaigns. A food drive might lead you to mutual aid networks.
+5. Search across platforms: GoFundMe, Reddit, Eventbrite, org websites, \
+government programs, church networks, legal clinics
+6. Go deep on the most promising threads (2-3 hops)
+
+WHAT DIFFUSES TENSION (examples, not exhaustive):
+- Non-compliance: removes the system's power
+- Economic pressure: removes funding/oxygen
+- Sanctuary: creates zones the tension can't reach
+- Mutual aid: makes communities resilient enough to weather the tension
+- Legal leverage: uses the system's own rules against it
+- Information: dissolves fear through knowledge
+- Creative action: art, protest, culture that transforms the narrative
+- YOU MAY DISCOVER MECHANISMS NOT ON THIS LIST — report them
+
+DO NOT AMPLIFY responses that ESCALATE:
+- Retaliation (force against force creates new tension)
+- Counter-violence (adds heat instead of removing it)
+- Divisive framing (fractures the community it claims to help)
+
+EMERGENT DISCOVERIES: If your investigation reveals:
+- A NEW tension nobody anticipated — report it
+- A response that addresses MULTIPLE tensions — note all of them
+- Unexpected connections between issues — describe them
+These are valuable. Don't constrain yourself to the original question.
+
+IMPORTANT CONSTRAINTS:
+- The URL for each response MUST be a page you actually read via read_page. \
+Do NOT guess or reconstruct URLs — only report URLs you visited.
+- For EVENTS: verify the date. Only extract events happening NOW or in the FUTURE. \
+Include the event date when known. Past events are not useful."
+    )
+}
+
+fn investigation_user_prompt(
+    target: &ResponseScoutTarget,
+    existing: &[ResponseHeuristic],
+) -> String {
+    let mut prompt = format!(
+        "TENSION: {}\nSeverity: {}\nSummary: {}",
+        target.title, target.severity, target.summary,
+    );
+
+    if let Some(ref wwh) = target.what_would_help {
+        prompt.push_str(&format!("\nWhat would help: {wwh}"));
+    }
+    if let Some(ref cat) = target.category {
+        prompt.push_str(&format!("\nCategory: {cat}"));
+    }
+
+    if !existing.is_empty() {
+        prompt.push_str(
+            "\n\nEXISTING RESPONSES (hints about what categories exist):",
+        );
+        for r in existing {
+            prompt.push_str(&format!(
+                "\n- [{}] {}: {}",
+                r.signal_type, r.title, r.summary,
+            ));
+        }
+        prompt.push_str(
+            "\n\nThese hint at response categories. Search broadly for MORE — especially \
+             types of responses not yet represented.",
+        );
+    }
+
+    prompt
+}
+
+const STRUCTURING_SYSTEM: &str = "\
+Based on your investigation, extract your findings as JSON.
+
+For each response you discovered:
+- title: short name of the response (org, program, campaign, event)
+- summary: 1-2 sentences about what it does
+- signal_type: \"give\" (resources offered), \"event\" (gatherings/actions), or \"ask\" (needs/requests)
+- url: the EXACT URL you read via read_page (do not reconstruct or guess)
+- diffusion_mechanism: how this response takes the air out of the tension (freeform — invent a category if needed)
+- explanation: why this diffuses rather than escalates
+- match_strength: 0.0-1.0 how directly this addresses the tension
+- also_addresses: titles of OTHER community tensions this also diffuses (empty if none)
+- event_date: ISO date if this is an event (null if not an event or date unknown)
+
+Also report:
+- emergent_tensions: NEW tensions you discovered during investigation (not the original one)
+- future_queries: search queries that could find MORE responses (threads you couldn't fully explore)
+
+Return valid JSON matching the ResponseFinding schema.";
+
+// =============================================================================
+// ResponseScout
+// =============================================================================
+
+pub struct ResponseScout<'a> {
+    writer: &'a GraphWriter,
+    claude: Claude,
+    embedder: &'a dyn TextEmbedder,
+    city: CityNode,
+    city_slug: String,
+}
+
+impl<'a> ResponseScout<'a> {
+    /// Create a new response scout.
+    ///
+    /// SAFETY: Same as CuriosityLoop — the `searcher` and `scraper` references are held via
+    /// raw pointers. The caller MUST ensure they outlive this ResponseScout.
+    pub fn new(
+        writer: &'a GraphWriter,
+        searcher: &dyn WebSearcher,
+        scraper: &dyn PageScraper,
+        embedder: &'a dyn TextEmbedder,
+        anthropic_api_key: &str,
+        city: CityNode,
+    ) -> Self {
+        let searcher_handle = Arc::new(SearcherHandle(unsafe {
+            std::mem::transmute::<*const dyn WebSearcher, *const dyn WebSearcher>(searcher)
+        }));
+        let scraper_handle = Arc::new(ScraperHandle(unsafe {
+            std::mem::transmute::<*const dyn PageScraper, *const dyn PageScraper>(scraper)
+        }));
+
+        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
+            .tool(WebSearchTool {
+                searcher: searcher_handle,
+            })
+            .tool(ReadPageTool {
+                scraper: scraper_handle,
+            });
+
+        let city_slug = city.slug.clone();
+        Self {
+            writer,
+            claude,
+            embedder,
+            city,
+            city_slug,
+        }
+    }
+
+    pub async fn run(&self) -> ResponseScoutStats {
+        let mut stats = ResponseScoutStats::default();
+
+        let targets = match self
+            .writer
+            .find_response_scout_targets(MAX_RESPONSE_TARGETS_PER_RUN as u32)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(error = %e, "Failed to find response scout targets");
+                return stats;
+            }
+        };
+
+        stats.targets_found = targets.len() as u32;
+        if targets.is_empty() {
+            info!("No response scout targets found");
+            return stats;
+        }
+
+        info!(count = targets.len(), "Response scout targets selected");
+
+        for target in &targets {
+            match self.investigate_tension(target, &mut stats).await {
+                Ok(()) => {
+                    stats.targets_investigated += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        tension_id = %target.tension_id,
+                        title = target.title.as_str(),
+                        error = %e,
+                        "Response scout investigation failed"
+                    );
+                }
+            }
+
+            // Mark scouted regardless of success/failure (timestamp prevents re-investigation)
+            if let Err(e) = self.writer.mark_response_scouted(target.tension_id).await {
+                warn!(
+                    tension_id = %target.tension_id,
+                    error = %e,
+                    "Failed to mark tension as response-scouted"
+                );
+            }
+        }
+
+        stats
+    }
+
+    async fn investigate_tension(
+        &self,
+        target: &ResponseScoutTarget,
+        stats: &mut ResponseScoutStats,
+    ) -> Result<()> {
+        // Fetch existing response heuristics
+        let existing = self
+            .writer
+            .get_existing_responses(target.tension_id)
+            .await
+            .unwrap_or_default();
+
+        let system = investigation_system_prompt(&self.city.name);
+        let user = investigation_user_prompt(target, &existing);
+
+        // Phase 1: Agentic investigation with web_search + read_page tools
+        let reasoning = self
+            .claude
+            .prompt(&user)
+            .preamble(&system)
+            .multi_turn(MAX_TOOL_TURNS)
+            .send()
+            .await?;
+
+        // Phase 2: Structure the findings
+        let structuring_user = format!(
+            "Tension investigated: {} — {}\n\nInvestigation findings:\n{}",
+            target.title, target.summary, reasoning,
+        );
+
+        let finding: ResponseFinding = self
+            .claude
+            .extract(HAIKU_MODEL, STRUCTURING_SYSTEM, &structuring_user)
+            .await?;
+
+        stats.responses_discovered += finding.responses.len() as u32;
+
+        // Process discovered responses
+        for response in finding
+            .responses
+            .into_iter()
+            .take(MAX_RESPONSES_PER_TENSION)
+        {
+            if let Err(e) = self
+                .process_response(target, &response, stats)
+                .await
+            {
+                warn!(
+                    tension_id = %target.tension_id,
+                    response_title = response.title.as_str(),
+                    error = %e,
+                    "Failed to process discovered response"
+                );
+            }
+        }
+
+        // Process emergent tensions
+        for tension in &finding.emergent_tensions {
+            if let Err(e) = self.process_emergent_tension(tension, stats).await {
+                warn!(
+                    tension_title = tension.title.as_str(),
+                    error = %e,
+                    "Failed to process emergent tension"
+                );
+            }
+        }
+
+        // Create future query sources
+        for query in finding
+            .future_queries
+            .iter()
+            .take(MAX_FUTURE_QUERIES_PER_TENSION)
+        {
+            if let Err(e) = self
+                .create_future_query(query, target, stats)
+                .await
+            {
+                warn!(
+                    query = query.as_str(),
+                    error = %e,
+                    "Failed to create future query source"
+                );
+            }
+        }
+
+        info!(
+            tension_id = %target.tension_id,
+            title = target.title.as_str(),
+            responses = stats.responses_discovered,
+            "Tension response investigation complete"
+        );
+
+        Ok(())
+    }
+
+    async fn process_response(
+        &self,
+        target: &ResponseScoutTarget,
+        response: &DiscoveredResponse,
+        stats: &mut ResponseScoutStats,
+    ) -> Result<()> {
+        let embed_text = format!("{} {}", response.title, response.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        let node_type = match response.signal_type.to_lowercase().as_str() {
+            "give" => NodeType::Give,
+            "event" => NodeType::Event,
+            "ask" => NodeType::Ask,
+            _ => NodeType::Give, // Default to Give for unknown types
+        };
+
+        // Check for duplicate
+        let existing = self
+            .writer
+            .find_duplicate(&embedding, node_type, 0.85)
+            .await;
+
+        let was_new;
+        let signal_id = match existing {
+            Ok(Some(dup)) => {
+                info!(
+                    existing_id = %dup.id,
+                    similarity = dup.similarity,
+                    title = response.title.as_str(),
+                    "Matched existing signal for response"
+                );
+                stats.responses_deduped += 1;
+                was_new = false;
+                dup.id
+            }
+            _ => {
+                if let Err(ref e) = existing {
+                    warn!(error = %e, "Response dedup check failed, creating new");
+                }
+                was_new = true;
+                self.create_response_node(response).await?
+            }
+        };
+
+        // Wire RESPONDS_TO edge to the target tension
+        self.writer
+            .create_response_edge(
+                signal_id,
+                target.tension_id,
+                response.match_strength.clamp(0.0, 1.0),
+                &response.explanation,
+            )
+            .await?;
+        stats.edges_created += 1;
+
+        // Wire additional edges for also_addresses
+        if !response.also_addresses.is_empty() {
+            if let Err(e) = self
+                .wire_also_addresses(signal_id, &response.also_addresses, &response.explanation)
+                .await
+            {
+                warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
+            }
+        }
+
+        if was_new {
+            stats.signals_created += 1;
+        }
+
+        Ok(())
+    }
+
+    async fn create_response_node(
+        &self,
+        response: &DiscoveredResponse,
+    ) -> Result<Uuid> {
+        let now = Utc::now();
+        let meta = NodeMeta {
+            id: Uuid::new_v4(),
+            title: response.title.clone(),
+            summary: response.summary.clone(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.7,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: Some(GeoPoint {
+                lat: self.city.center_lat,
+                lng: self.city.center_lng,
+                precision: GeoPrecision::City,
+            }),
+            location_name: Some(self.city.name.clone()),
+            source_url: response.url.clone(),
+            extracted_at: now,
+            last_confirmed_active: now,
+            source_diversity: 1,
+            external_ratio: 1.0,
+            cause_heat: 0.0,
+            mentioned_actors: vec![],
+        };
+
+        let node = match response.signal_type.to_lowercase().as_str() {
+            "event" => {
+                let starts_at = response
+                    .event_date
+                    .as_deref()
+                    .and_then(|d| {
+                        chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                            .ok()
+                            .map(|nd| {
+                                nd.and_hms_opt(0, 0, 0)
+                                    .unwrap()
+                                    .and_utc()
+                            })
+                    });
+                Node::Event(EventNode {
+                    meta,
+                    starts_at,
+                    ends_at: None,
+                    action_url: response.url.clone(),
+                    organizer: None,
+                    is_recurring: false,
+                })
+            }
+            "ask" => Node::Ask(AskNode {
+                meta,
+                urgency: Urgency::Medium,
+                what_needed: Some(response.summary.clone()),
+                action_url: Some(response.url.clone()),
+                goal: None,
+            }),
+            _ => Node::Give(GiveNode {
+                meta,
+                action_url: response.url.clone(),
+                availability: None,
+                is_ongoing: true,
+            }),
+        };
+
+        let embed_text = format!("{} {}", response.title, response.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        let node_id = self.writer.create_node(&node, &embedding).await?;
+
+        info!(
+            node_id = %node_id,
+            title = response.title.as_str(),
+            signal_type = response.signal_type.as_str(),
+            mechanism = response.diffusion_mechanism.as_str(),
+            "New response signal created"
+        );
+
+        Ok(node_id)
+    }
+
+    /// Wire RESPONDS_TO edges to additional tensions that this response also addresses.
+    /// Uses embedding similarity against all active tensions (>0.85 threshold).
+    async fn wire_also_addresses(
+        &self,
+        signal_id: Uuid,
+        also_addresses: &[String],
+        explanation: &str,
+    ) -> Result<()> {
+        let active_tensions = self.writer.get_active_tensions().await?;
+        if active_tensions.is_empty() {
+            return Ok(());
+        }
+
+        for tension_title in also_addresses {
+            let title_embedding = self.embedder.embed(tension_title).await?;
+            let title_emb_f64: Vec<f64> = title_embedding.iter().map(|&v| v as f64).collect();
+
+            let mut best_match: Option<(Uuid, f64)> = None;
+            for (tid, temb) in &active_tensions {
+                let sim = cosine_sim_f64(&title_emb_f64, temb);
+                if sim >= 0.85 {
+                    if best_match.as_ref().map_or(true, |b| sim > b.1) {
+                        best_match = Some((*tid, sim));
+                    }
+                }
+            }
+
+            if let Some((tension_id, sim)) = best_match {
+                info!(
+                    signal_id = %signal_id,
+                    tension_id = %tension_id,
+                    similarity = sim,
+                    also_addresses = tension_title.as_str(),
+                    "Wiring also_addresses edge"
+                );
+                self.writer
+                    .create_response_edge(signal_id, tension_id, sim.clamp(0.0, 1.0), explanation)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn process_emergent_tension(
+        &self,
+        tension: &EmergentTension,
+        stats: &mut ResponseScoutStats,
+    ) -> Result<()> {
+        let embed_text = format!("{} {}", tension.title, tension.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        // Dedup check
+        let existing = self
+            .writer
+            .find_duplicate(&embedding, NodeType::Tension, 0.85)
+            .await;
+
+        match existing {
+            Ok(Some(dup)) => {
+                info!(
+                    existing_id = %dup.id,
+                    similarity = dup.similarity,
+                    title = tension.title.as_str(),
+                    "Emergent tension matched existing"
+                );
+                // Don't create duplicate, but still count it
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "Emergent tension dedup check failed, creating new");
+            }
+        }
+
+        let severity = match tension.severity.to_lowercase().as_str() {
+            "low" => Severity::Low,
+            "medium" => Severity::Medium,
+            "high" => Severity::High,
+            "critical" => Severity::Critical,
+            _ => Severity::Medium,
+        };
+
+        let now = Utc::now();
+        let tension_node = TensionNode {
+            meta: NodeMeta {
+                id: Uuid::new_v4(),
+                title: tension.title.clone(),
+                summary: tension.summary.clone(),
+                sensitivity: SensitivityLevel::General,
+                confidence: 0.4, // Capped at 0.4 — below 0.5 target selection threshold
+                freshness_score: 1.0,
+                corroboration_count: 0,
+                location: Some(GeoPoint {
+                    lat: self.city.center_lat,
+                    lng: self.city.center_lng,
+                    precision: GeoPrecision::City,
+                }),
+                location_name: Some(self.city.name.clone()),
+                source_url: tension.source_url.clone(),
+                extracted_at: now,
+                last_confirmed_active: now,
+                source_diversity: 1,
+                external_ratio: 1.0,
+                cause_heat: 0.0,
+                mentioned_actors: vec![],
+            },
+            severity,
+            category: Some(tension.category.clone()),
+            what_would_help: Some(tension.what_would_help.clone()),
+        };
+
+        let tension_id = self
+            .writer
+            .create_node(&Node::Tension(tension_node), &embedding)
+            .await?;
+
+        info!(
+            tension_id = %tension_id,
+            title = tension.title.as_str(),
+            relationship = tension.relationship.as_str(),
+            "Emergent tension discovered by response scout"
+        );
+
+        stats.emergent_tensions += 1;
+        Ok(())
+    }
+
+    async fn create_future_query(
+        &self,
+        query: &str,
+        target: &ResponseScoutTarget,
+        stats: &mut ResponseScoutStats,
+    ) -> Result<()> {
+        let cv = query.to_string();
+        let ck = sources::make_canonical_key(&self.city_slug, SourceType::TavilyQuery, &cv);
+        let gap_context = format!(
+            "Response Scout: response discovery for \"{}\"",
+            target.title,
+        );
+
+        let source = SourceNode {
+            id: Uuid::new_v4(),
+            canonical_key: ck,
+            canonical_value: cv,
+            url: None,
+            source_type: SourceType::TavilyQuery,
+            discovery_method: DiscoveryMethod::GapAnalysis,
+            city: self.city_slug.clone(),
+            created_at: Utc::now(),
+            last_scraped: None,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: true,
+            gap_context: Some(gap_context),
+            weight: 0.3,
+            cadence_hours: None,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: SourceRole::Response,
+            scrape_count: 0,
+        };
+
+        self.writer.upsert_source(&source).await?;
+        stats.future_sources_created += 1;
+
+        info!(
+            query = query,
+            tension = target.title.as_str(),
+            "Future query source created by response scout"
+        );
+
+        Ok(())
+    }
+}
+
+fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
+    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_finding_parses_empty() {
+        let json = r#"{"responses": [], "emergent_tensions": [], "future_queries": []}"#;
+        let finding: ResponseFinding = serde_json::from_str(json).unwrap();
+        assert!(finding.responses.is_empty());
+        assert!(finding.emergent_tensions.is_empty());
+        assert!(finding.future_queries.is_empty());
+    }
+
+    #[test]
+    fn response_finding_parses_with_responses() {
+        let json = r#"{
+            "responses": [{
+                "title": "Know Your Rights Workshop",
+                "summary": "Free legal workshops for immigrants",
+                "signal_type": "give",
+                "url": "https://example.com/kyr",
+                "diffusion_mechanism": "legal education",
+                "explanation": "Dissolves fear through knowledge of rights",
+                "match_strength": 0.9,
+                "also_addresses": ["Housing instability"],
+                "event_date": null
+            }],
+            "emergent_tensions": [{
+                "title": "Retaliation against organizers",
+                "summary": "Workshop organizers facing threats",
+                "severity": "high",
+                "category": "safety",
+                "what_would_help": "Security resources and legal protection",
+                "source_url": "https://example.com/threats",
+                "relationship": "Discovered while investigating ICE response landscape"
+            }],
+            "future_queries": ["mutual aid networks Minneapolis immigrants"]
+        }"#;
+        let finding: ResponseFinding = serde_json::from_str(json).unwrap();
+        assert_eq!(finding.responses.len(), 1);
+        assert_eq!(finding.responses[0].title, "Know Your Rights Workshop");
+        assert_eq!(finding.responses[0].signal_type, "give");
+        assert!((finding.responses[0].match_strength - 0.9).abs() < 0.001);
+        assert_eq!(finding.responses[0].also_addresses, vec!["Housing instability"]);
+        assert_eq!(finding.emergent_tensions.len(), 1);
+        assert_eq!(
+            finding.emergent_tensions[0].title,
+            "Retaliation against organizers"
+        );
+        assert_eq!(finding.future_queries.len(), 1);
+    }
+
+    #[test]
+    fn response_finding_defaults_missing_fields() {
+        let json = r#"{}"#;
+        let finding: ResponseFinding = serde_json::from_str(json).unwrap();
+        assert!(finding.responses.is_empty());
+        assert!(finding.emergent_tensions.is_empty());
+        assert!(finding.future_queries.is_empty());
+    }
+
+    #[test]
+    fn response_scout_stats_display() {
+        let stats = ResponseScoutStats {
+            targets_found: 5,
+            targets_investigated: 4,
+            responses_discovered: 12,
+            responses_deduped: 3,
+            signals_created: 9,
+            edges_created: 15,
+            emergent_tensions: 2,
+            future_sources_created: 6,
+        };
+        let display = format!("{stats}");
+        assert!(display.contains("5 targets found"));
+        assert!(display.contains("4 investigated"));
+        assert!(display.contains("12 responses discovered"));
+        assert!(display.contains("9 signals created"));
+        assert!(display.contains("2 emergent tensions"));
+    }
+
+    #[test]
+    fn cosine_similarity_works() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert!((cosine_sim_f64(&a, &b) - 1.0).abs() < 0.001);
+
+        let c = vec![0.0, 1.0, 0.0];
+        assert!(cosine_sim_f64(&a, &c).abs() < 0.001);
+
+        let d = vec![0.0, 0.0, 0.0];
+        assert!(cosine_sim_f64(&a, &d).abs() < 0.001);
+    }
+
+    #[test]
+    fn event_date_parsing() {
+        // Valid date
+        let date_str = "2026-03-15";
+        let parsed = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
+        assert!(parsed.is_ok());
+
+        // Invalid date
+        let bad_str = "not-a-date";
+        let parsed = chrono::NaiveDate::parse_from_str(bad_str, "%Y-%m-%d");
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn response_node_gets_city_center_coordinates() {
+        let city = CityNode {
+            id: Uuid::new_v4(),
+            name: "Minneapolis".to_string(),
+            slug: "minneapolis".to_string(),
+            center_lat: 44.9778,
+            center_lng: -93.2650,
+            radius_km: 30.0,
+            geo_terms: vec!["Minneapolis".to_string()],
+            active: true,
+            created_at: Utc::now(),
+            last_scout_completed_at: None,
+        };
+
+        let now = Utc::now();
+        let meta = NodeMeta {
+            id: Uuid::new_v4(),
+            title: "Know Your Rights Workshop".to_string(),
+            summary: "Free legal workshops".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.7,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            location: Some(GeoPoint {
+                lat: city.center_lat,
+                lng: city.center_lng,
+                precision: GeoPrecision::City,
+            }),
+            location_name: Some(city.name.clone()),
+            source_url: "https://example.com/kyr".to_string(),
+            extracted_at: now,
+            last_confirmed_active: now,
+            source_diversity: 1,
+            external_ratio: 1.0,
+            cause_heat: 0.0,
+            mentioned_actors: vec![],
+        };
+
+        let node = Node::Give(GiveNode {
+            meta,
+            action_url: "https://example.com/kyr".to_string(),
+            availability: None,
+            is_ongoing: true,
+        });
+
+        let loc = node.meta().unwrap().location.as_ref().unwrap();
+        assert!((loc.lat - 44.9778).abs() < 0.001);
+        assert!((loc.lng - (-93.2650)).abs() < 0.001);
+        assert_eq!(loc.precision, GeoPrecision::City);
+    }
+}

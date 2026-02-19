@@ -33,7 +33,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Signal it carries:** Skills-based volunteering opportunities. Well-structured, project-scoped.
 
-**Where it falls short:** Very narrow focus — skilled professionals only. No general volunteering, no ecological, no civic action. Requires account creation and profile building. Closed ecosystem.
+**Where it falls short:** Very narrow focus — skilled professionals only. No general volunteering, no ecological, no community action. Requires account creation and profile building. Closed ecosystem.
 
 **Root Signal's relationship:** Public source for the `skilled_professional` audience role specifically. Root Signal makes these opportunities discoverable alongside everything else.
 
@@ -97,7 +97,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 **Where it falls short:** Interest-based, not values-based. Meetup groups are organized around hobbies, careers, and social activities — not around community need. The signal is about "come hang out" not "come help." Limited API access.
 
-**Root Signal's relationship:** Selectively scraped public source. Some Meetup groups (volunteer groups, environmental groups, civic groups) carry relevant signal. Most don't. Root Signal needs to filter carefully.
+**Root Signal's relationship:** Selectively scraped public source. Some Meetup groups (volunteer groups, environmental groups, community engagement groups) carry relevant signal. Most don't. Root Signal needs to filter carefully.
 
 ### Facebook Events
 **What it does:** Event creation and discovery within the Facebook ecosystem.
@@ -133,7 +133,7 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 ### Patch.com
 **What it does:** Hyperlocal news and events coverage for suburban and small-town communities across the US.
 
-**Signal it carries:** Local events, community news, some volunteer and civic signal. Good geographic specificity.
+**Signal it carries:** Local events, community news, some volunteer and community signal. Good geographic specificity.
 
 **Where it falls short:** Quality varies dramatically by region. Some Patch outlets are active and well-maintained; others are ghost towns. Limited to areas where Patch has coverage. Ad-heavy experience.
 
@@ -212,16 +212,16 @@ For each system, we assess: what it does, who it serves, what signal it carries,
 
 ---
 
-## Civic Tech and Government
+## Community Tech and Government
 
-### Code for America / Civic Tech Projects
-**What they do:** Build technology for government and civic infrastructure. Brigade network of local civic tech groups.
+### Code for America / Community Tech Projects
+**What they do:** Build technology for government and community infrastructure. Brigade network of local community tech groups.
 
-**Signal they carry:** Open-source civic tech projects, volunteer opportunities for developers, government service improvement.
+**Signal they carry:** Open-source community tech projects, volunteer opportunities for developers, government service improvement.
 
 **Where they fall short:** Tech-focused. The brigade model has weakened in recent years. Projects are often developer-oriented rather than community-oriented.
 
-**Root Signal's relationship:** Philosophical alignment. Root Signal could be a Code for America brigade project or partner. Civic tech volunteers are a natural audience for Signal Match.
+**Root Signal's relationship:** Philosophical alignment. Root Signal could be a Code for America brigade project or partner. Community tech volunteers are a natural audience for Signal Match.
 
 ### 311 Systems / Municipal Platforms
 **What they do:** Allow residents to report issues (potholes, graffiti, broken streetlights) and request city services.
@@ -303,6 +303,6 @@ Root Signal occupies territory that no existing system covers:
 
 **No system is designed as open infrastructure.** Every existing platform is a closed product. Root Signal is an API — a utility that any application can build on.
 
-**No system connects personal behavior to community action.** Ethical consumption apps are disconnected from volunteer platforms which are disconnected from civic engagement tools. Root Signal is the substrate that connects them all.
+**No system connects personal behavior to community action.** Ethical consumption apps are disconnected from volunteer platforms which are disconnected from community engagement tools. Root Signal is the substrate that connects them all.
 
 This is the gap. This is where Root Signal lives.

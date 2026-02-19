@@ -248,6 +248,9 @@ pub struct RedditPost {
     pub number_of_comments: Option<i64>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
+    /// Apify returns "community", "post", or "comment". Used to filter out non-posts.
+    #[serde(rename = "dataType")]
+    pub data_type: Option<String>,
 }
 
 /// Apify actor run metadata.
