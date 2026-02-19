@@ -23,17 +23,17 @@ impl OperationCost {
     pub const CLAUDE_HAIKU_INVESTIGATION: u64 = 1; // ~0.1 per query gen + ~1 per search
     pub const SEARCH_INVESTIGATION: u64 = 1;
     pub const CLAUDE_HAIKU_DISCOVERY: u64 = 1; // ~0.2 per discovery briefing
-    pub const CLAUDE_HAIKU_CURIOSITY: u64 = 2; // per signal: agentic investigation + structuring
-    pub const SEARCH_CURIOSITY: u64 = 3;       // per signal: up to 3 searches
-    pub const CHROME_CURIOSITY: u64 = 2;        // per signal: up to 2 page reads
+    pub const CLAUDE_HAIKU_TENSION_LINKER: u64 = 2; // per signal: agentic investigation + structuring
+    pub const SEARCH_TENSION_LINKER: u64 = 3;       // per signal: up to 3 searches
+    pub const CHROME_TENSION_LINKER: u64 = 2;        // per signal: up to 2 page reads
     pub const CLAUDE_HAIKU_STORY_WEAVE: u64 = 1; // per story: synthesis enrichment
-    pub const CLAUDE_HAIKU_RESPONSE_SCOUT: u64 = 3; // per tension: investigation + structuring
-    pub const SEARCH_RESPONSE_SCOUT: u64 = 5;       // per tension: up to 5 searches
-    pub const CHROME_RESPONSE_SCOUT: u64 = 3;        // per tension: page reads
-    pub const CLAUDE_HAIKU_ACTOR_SWEEP: u64 = 1;    // per batch: actor extraction from signal text
-    pub const CLAUDE_HAIKU_GRAVITY_SCOUT: u64 = 3;  // per tension: investigation + extraction (may terminate early)
-    pub const SEARCH_GRAVITY_SCOUT: u64 = 5;        // per tension: early termination uses ~2-3
-    pub const CHROME_GRAVITY_SCOUT: u64 = 3;        // per tension: page reads
+    pub const CLAUDE_HAIKU_RESPONSE_FINDER: u64 = 3; // per tension: investigation + structuring
+    pub const SEARCH_RESPONSE_FINDER: u64 = 5;       // per tension: up to 5 searches
+    pub const CHROME_RESPONSE_FINDER: u64 = 3;        // per tension: page reads
+    pub const CLAUDE_HAIKU_ACTOR_EXTRACTOR: u64 = 1;    // per batch: actor extraction from signal text
+    pub const CLAUDE_HAIKU_GATHERING_FINDER: u64 = 3;  // per tension: investigation + extraction (may terminate early)
+    pub const SEARCH_GATHERING_FINDER: u64 = 5;        // per tension: early termination uses ~2-3
+    pub const CHROME_GATHERING_FINDER: u64 = 3;        // per tension: page reads
 }
 
 impl BudgetTracker {

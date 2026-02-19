@@ -299,13 +299,30 @@ impl Scout {
             "Source scheduling complete"
         );
 
-        // Filter all_sources to only those scheduled for this run
+        // Web query tiered scheduling — limits which WebQuery sources run this cycle.
+        // Non-query sources pass through unfiltered.
+        let wq_schedule = crate::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
+        let wq_scheduled_keys: std::collections::HashSet<String> = wq_schedule.scheduled.into_iter().collect();
+
+        // Filter all_sources to only those scheduled for this run.
+        // WebQuery sources must pass BOTH the regular scheduler AND the web query scheduler.
         let scheduled_sources: Vec<&SourceNode> = all_sources.iter()
-            .filter(|s| scheduled_keys.contains(&s.canonical_key))
+            .filter(|s| {
+                if !scheduled_keys.contains(&s.canonical_key) {
+                    return false;
+                }
+                // Non-query sources always pass
+                if s.source_type != SourceType::WebQuery {
+                    return true;
+                }
+                // WebQuery sources must also be in the tiered schedule
+                wq_scheduled_keys.contains(&s.canonical_key)
+            })
             .collect();
 
-        // Build URL→canonical_key lookup for mapping scrape results back to sources
-        let url_to_canonical_key: std::collections::HashMap<String, String> = all_sources.iter()
+        // Build URL→canonical_key lookup for mapping scrape results back to sources.
+        // Mutable: scrape_phase inserts resolved WebQuery→URL mappings.
+        let mut url_to_canonical_key: std::collections::HashMap<String, String> = all_sources.iter()
             .filter_map(|s| s.url.as_ref().map(|u| (sanitize_url(u), s.canonical_key.clone())))
             .collect();
 
@@ -322,9 +339,9 @@ impl Scout {
             .copied()
             .collect();
 
-        self.scrape_phase(
+        let mut query_api_errors = self.scrape_phase(
             &phase_a_sources,
-            &url_to_canonical_key,
+            &mut url_to_canonical_key,
             &mut stats,
             &mut embed_cache,
             &mut source_signal_counts,
@@ -350,13 +367,13 @@ impl Scout {
         // Mid-Run Discovery — use fresh tensions to create response-seeking queries
         // ================================================================
         info!("=== Mid-Run Discovery ===");
-        let discoverer = crate::discovery::SourceDiscoverer::new(
+        let discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
             &self.city_node.slug,
             &self.city_node.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
-        );
+        ).with_embedder(&*self.embedder);
         let (mid_discovery_stats, social_topics) = discoverer.run().await;
         if mid_discovery_stats.actor_sources + mid_discovery_stats.gap_sources > 0 {
             info!("{mid_discovery_stats}");
@@ -387,23 +404,23 @@ impl Scout {
             .collect();
 
         // Extend URL→canonical_key with fresh sources
-        let mut extended_url_map = url_to_canonical_key;
         for s in &fresh_sources {
             if let Some(ref url) = s.url {
-                extended_url_map.entry(sanitize_url(url)).or_insert_with(|| s.canonical_key.clone());
+                url_to_canonical_key.entry(sanitize_url(url)).or_insert_with(|| s.canonical_key.clone());
             }
         }
 
         if !phase_b_sources.is_empty() {
             info!(count = phase_b_sources.len(), "Phase B sources (response + fresh discovery)");
-            self.scrape_phase(
+            let phase_b_errors = self.scrape_phase(
                 &phase_b_sources,
-                &extended_url_map,
+                &mut url_to_canonical_key,
                 &mut stats,
                 &mut embed_cache,
                 &mut source_signal_counts,
                 &mut expansion_queries,
             ).await;
+            query_api_errors.extend(phase_b_errors);
         }
 
         // Phase B social: response social sources
@@ -414,7 +431,7 @@ impl Scout {
             })
             .copied()
             .collect();
-        let known_city_urls: std::collections::HashSet<String> = extended_url_map.keys().cloned().collect();
+        let known_city_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
         if !phase_b_social.is_empty() {
             self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_b_social, &known_city_urls, &mut expansion_queries).await;
         }
@@ -431,8 +448,13 @@ impl Scout {
         // ================================================================
         let now = Utc::now();
 
-        // Update per-source metrics in the graph (keyed by canonical_key)
+        // Update per-source metrics in the graph (keyed by canonical_key).
+        // Skip queries where the search API itself errored — don't penalize them
+        // with an empty-scrape increment since the query was never actually executed.
         for (canonical_key, signals_produced) in &source_signal_counts {
+            if query_api_errors.contains(canonical_key) {
+                continue;
+            }
             if let Err(e) = self.writer.record_source_scrape(canonical_key, *signals_produced, now).await {
                 warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
             }
@@ -458,7 +480,17 @@ impl Scout {
                 now,
             );
             let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
-            let cadence = crate::scheduler::cadence_hours_for_weight(new_weight);
+            // Web query sources use exponential backoff based on consecutive empty runs
+            let empty_runs = if source_signal_counts.contains_key(&source.canonical_key) && fresh_signals == 0 {
+                source.consecutive_empty_runs + 1
+            } else {
+                source.consecutive_empty_runs
+            };
+            let cadence = if source.source_type == SourceType::WebQuery {
+                crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
+            } else {
+                crate::scheduler::cadence_hours_for_weight(new_weight)
+            };
             if let Err(e) = self.writer.update_source_weight(&source.canonical_key, new_weight, cadence).await {
                 warn!(canonical_key = source.canonical_key.as_str(), error = %e, "Failed to update source weight");
             }
@@ -469,6 +501,13 @@ impl Scout {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
+        }
+
+        // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
+        match self.writer.deactivate_dead_web_queries(&self.city_node.slug).await {
+            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),
         }
 
         // Source stats
@@ -532,10 +571,10 @@ impl Scout {
 
         self.check_cancelled()?;
 
-        // Curiosity loop — ask "why?" about signals without tension context
-        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_CURIOSITY + OperationCost::SEARCH_CURIOSITY) {
-            info!("Starting curiosity loop...");
-            let curiosity = crate::curiosity::CuriosityLoop::new(
+        // Tension linker — ask "why?" about signals without tension context
+        if self.budget.has_budget(OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER) {
+            info!("Starting tension linker...");
+            let tension_linker = crate::tension_linker::TensionLinker::new(
                 &self.writer,
                 &*self.searcher,
                 &*self.scraper,
@@ -543,20 +582,20 @@ impl Scout {
                 &self.anthropic_api_key,
                 self.city_node.clone(),
             );
-            let curiosity_stats = curiosity.run().await;
-            info!("{curiosity_stats}");
+            let tl_stats = tension_linker.run().await;
+            info!("{tl_stats}");
         } else if self.budget.is_active() {
-            info!("Skipping curiosity loop (budget exhausted)");
+            info!("Skipping tension linker (budget exhausted)");
         }
 
         self.check_cancelled()?;
 
-        // Response Scout — find what diffuses known tensions
+        // Response finder — find what diffuses known tensions
         if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_RESPONSE_SCOUT + OperationCost::SEARCH_RESPONSE_SCOUT,
+            OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
         ) {
-            info!("Starting response scout...");
-            let response_scout = crate::response_scout::ResponseScout::new(
+            info!("Starting response finder...");
+            let response_finder = crate::response_finder::ResponseFinder::new(
                 &self.writer,
                 &*self.searcher,
                 &*self.scraper,
@@ -564,20 +603,20 @@ impl Scout {
                 &self.anthropic_api_key,
                 self.city_node.clone(),
             );
-            let rs_stats = response_scout.run().await;
-            info!("{rs_stats}");
+            let rf_stats = response_finder.run().await;
+            info!("{rf_stats}");
         } else if self.budget.is_active() {
-            info!("Skipping response scout (budget exhausted)");
+            info!("Skipping response finder (budget exhausted)");
         }
 
         self.check_cancelled()?;
 
-        // Gravity Scout — find where people gather around tensions
+        // Gathering finder — find where people gather around tensions
         if self.budget.has_budget(
-            OperationCost::CLAUDE_HAIKU_GRAVITY_SCOUT + OperationCost::SEARCH_GRAVITY_SCOUT,
+            OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
         ) {
-            info!("Starting gravity scout...");
-            let gravity_scout = crate::gravity_scout::GravityScout::new(
+            info!("Starting gathering finder...");
+            let gathering_finder = crate::gathering_finder::GatheringFinder::new(
                 &self.writer,
                 &*self.searcher,
                 &*self.scraper,
@@ -585,10 +624,10 @@ impl Scout {
                 &self.anthropic_api_key,
                 self.city_node.clone(),
             );
-            let gs_stats = gravity_scout.run().await;
-            info!("{gs_stats}");
+            let gf_stats = gathering_finder.run().await;
+            info!("{gf_stats}");
         } else if self.budget.is_active() {
-            info!("Skipping gravity scout (budget exhausted)");
+            info!("Skipping gathering finder (budget exhausted)");
         }
 
         self.check_cancelled()?;
@@ -651,14 +690,33 @@ impl Scout {
 
             let now_expansion = Utc::now();
             let mut created = 0u32;
+            let mut expansion_dupes_skipped = 0u32;
             for query_text in &deduped {
+                // Embedding-based dedup for expansion queries
+                if let Ok(embedding) = self.embedder.embed(query_text).await {
+                    match self.writer.find_similar_query(&embedding, &self.city_node.slug, 0.90).await {
+                        Ok(Some((existing_ck, sim))) => {
+                            info!(
+                                query = query_text.as_str(),
+                                existing_key = existing_ck.as_str(),
+                                similarity = format!("{sim:.3}").as_str(),
+                                "Skipping semantically duplicate expansion query"
+                            );
+                            expansion_dupes_skipped += 1;
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(e) => warn!(error = %e, "Expansion query dedup check failed, proceeding"),
+                    }
+                }
+
                 let cv = query_text.clone();
                 let ck = crate::sources::make_canonical_key(
                     &self.city_node.slug, SourceType::WebQuery, &cv,
                 );
                 let source = SourceNode {
                     id: Uuid::new_v4(),
-                    canonical_key: ck,
+                    canonical_key: ck.clone(),
                     canonical_value: cv,
                     url: None,
                     source_type: SourceType::WebQuery,
@@ -672,7 +730,7 @@ impl Scout {
                     consecutive_empty_runs: 0,
                     active: true,
                     gap_context: Some("Signal expansion: implied query from extracted signal".to_string()),
-                    weight: 0.3,
+                    weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::SignalExpansion, None),
                     cadence_hours: None,
                     avg_signals_per_scrape: 0.0,
                     quality_penalty: 1.0,
@@ -680,7 +738,15 @@ impl Scout {
                     scrape_count: 0,
                 };
                 match self.writer.upsert_source(&source).await {
-                    Ok(_) => created += 1,
+                    Ok(_) => {
+                        created += 1;
+                        // Store embedding for future dedup
+                        if let Ok(embedding) = self.embedder.embed(query_text).await {
+                            if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                                warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
+                            }
+                        }
+                    }
                     Err(e) => warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source"),
                 }
             }
@@ -689,6 +755,7 @@ impl Scout {
                 collected = expansion_queries.len(),
                 created,
                 deferred = stats.expansion_deferred_expanded,
+                embedding_dupes = expansion_dupes_skipped,
                 "Signal expansion complete"
             );
         }
@@ -696,13 +763,13 @@ impl Scout {
         self.check_cancelled()?;
 
         // End-of-run discovery — find new sources for next run
-        let end_discoverer = crate::discovery::SourceDiscoverer::new(
+        let end_discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
             &self.city_node.slug,
             &self.city_node.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
-        );
+        ).with_embedder(&*self.embedder);
         let (end_discovery_stats, _end_social_topics) = end_discoverer.run().await;
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
@@ -717,15 +784,22 @@ impl Scout {
 
     /// Scrape a set of sources: resolve queries → URLs, scrape pages, extract signals, store results.
     /// Used by both Phase A (tension/mixed sources) and Phase B (response/discovery sources).
+    ///
+    /// `url_to_canonical_key` is mutable: resolved WebQuery URLs are inserted so
+    /// scrape results can be attributed back to the originating query source.
+    ///
+    /// Returns the set of canonical_keys for queries where the Serper API itself
+    /// errored (HTTP failure, not "0 results"). These should NOT be counted as
+    /// empty scrapes — the query was never actually executed.
     async fn scrape_phase(
         &self,
         sources: &[&SourceNode],
-        url_to_canonical_key: &std::collections::HashMap<String, String>,
+        url_to_canonical_key: &mut std::collections::HashMap<String, String>,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
         expansion_queries: &mut Vec<String>,
-    ) {
+    ) -> std::collections::HashSet<String> {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources.iter()
             .filter(|s| s.source_type.is_query())
@@ -737,6 +811,10 @@ impl Scout {
         let mut phase_urls: Vec<String> = Vec::new();
 
         // Resolve query sources → URLs
+        // Track API errors separately: queries where Serper itself failed should
+        // NOT be counted as empty scrapes (the query was never executed).
+        let mut query_api_errors: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         let api_queries: Vec<&&&SourceNode> = query_sources.iter()
             .filter(|s| s.source_type == SourceType::WebQuery)
             .collect();
@@ -744,23 +822,34 @@ impl Scout {
             info!(queries = api_queries.len(), "Resolving web search queries...");
             let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
                 let query_str = source.canonical_value.clone();
+                let canonical_key = source.canonical_key.clone();
                 async move {
-                    (query_str.clone(), self.searcher.search(&query_str, 5).await)
+                    (canonical_key, query_str.clone(), self.searcher.search(&query_str, 5).await)
                 }
             }))
             .buffer_unordered(5)
             .collect()
             .await;
 
-            for (query_str, result) in search_results {
+            for (canonical_key, query_str, result) in search_results {
                 match result {
                     Ok(results) => {
+                        // Map each resolved URL back to the query's canonical_key
+                        // so scrape results get attributed to the originating query.
+                        for r in &results {
+                            let clean = sanitize_url(&r.url);
+                            url_to_canonical_key.entry(clean).or_insert_with(|| canonical_key.clone());
+                        }
+                        // Ensure the query source gets a source_signal_counts entry
+                        // even if all its URLs end up deduped/empty (records a scrape).
+                        source_signal_counts.entry(canonical_key.clone()).or_default();
                         for r in results {
                             phase_urls.push(r.url);
                         }
                     }
                     Err(e) => {
                         warn!(query_str, error = %e, "Web search failed");
+                        query_api_errors.insert(canonical_key);
                     }
                 }
             }
@@ -807,7 +896,7 @@ impl Scout {
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         if phase_urls.is_empty() {
-            return;
+            return query_api_errors;
         }
 
         // Scrape + extract in parallel
@@ -898,6 +987,8 @@ impl Scout {
                 }
             }
         }
+
+        query_api_errors
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.

@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
 
             // Run cold start bootstrapper to generate seed sources
             let searcher = SerperSearcher::new(&config.serper_api_key);
-            let bootstrapper = bootstrap::ColdStartBootstrapper::new(
+            let bootstrapper = bootstrap::Bootstrapper::new(
                 &writer, &searcher, &config.anthropic_api_key, node.clone(),
             );
             let sources_created = bootstrapper.run().await?;
@@ -174,9 +174,9 @@ async fn main() -> Result<()> {
         info!(merged, "Merged duplicate tensions");
     }
 
-    // Actor sweep — extract actors from signals that have none
-    info!("Starting actor sweep...");
-    let sweep_stats = rootsignal_scout::actor_sweep::run_actor_sweep(
+    // Actor extraction — extract actors from signals that have none
+    info!("Starting actor extraction...");
+    let sweep_stats = rootsignal_scout::actor_extractor::run_actor_extraction(
         &writer_ref, &client, &config.anthropic_api_key, &city_name,
     ).await;
     info!("{sweep_stats}");

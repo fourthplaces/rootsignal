@@ -28,17 +28,17 @@ struct ExtractedActor {
 }
 
 #[derive(Debug, Default)]
-pub struct ActorSweepStats {
+pub struct ActorExtractorStats {
     pub signals_processed: usize,
     pub actors_created: usize,
     pub edges_created: usize,
 }
 
-impl fmt::Display for ActorSweepStats {
+impl fmt::Display for ActorExtractorStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Actor sweep: {} signals processed, {} actors created, {} edges created",
+            "Actor extractor: {} signals processed, {} actors created, {} edges created",
             self.signals_processed, self.actors_created, self.edges_created,
         )
     }
@@ -65,28 +65,28 @@ For each actor, provide:
 If a signal mentions no extractable actors, simply omit it. Return an empty actors array if none of the signals mention named actors."#;
 
 /// Find signals with no ACTED_IN edges and extract actors from their text via LLM.
-pub async fn run_actor_sweep(
+pub async fn run_actor_extraction(
     writer: &GraphWriter,
     client: &GraphClient,
     anthropic_api_key: &str,
     city: &str,
-) -> ActorSweepStats {
-    match run_actor_sweep_inner(writer, client, anthropic_api_key, city).await {
+) -> ActorExtractorStats {
+    match run_actor_extraction_inner(writer, client, anthropic_api_key, city).await {
         Ok(stats) => stats,
         Err(e) => {
-            warn!(error = %e, "Actor sweep failed (non-fatal)");
-            ActorSweepStats::default()
+            warn!(error = %e, "Actor extractor failed (non-fatal)");
+            ActorExtractorStats::default()
         }
     }
 }
 
-async fn run_actor_sweep_inner(
+async fn run_actor_extraction_inner(
     writer: &GraphWriter,
     client: &GraphClient,
     anthropic_api_key: &str,
     city: &str,
-) -> Result<ActorSweepStats> {
-    let mut stats = ActorSweepStats::default();
+) -> Result<ActorExtractorStats> {
+    let mut stats = ActorExtractorStats::default();
 
     // Find signals with no ACTED_IN edges pointing at them
     let q = query(
@@ -115,11 +115,11 @@ async fn run_actor_sweep_inner(
     }
 
     if signals.is_empty() {
-        info!("Actor sweep: no signals without actors found");
+        info!("Actor extractor: no signals without actors found");
         return Ok(stats);
     }
 
-    info!(count = signals.len(), "Actor sweep: found signals without actors");
+    info!(count = signals.len(), "Actor extractor: found signals without actors");
 
     let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
 
