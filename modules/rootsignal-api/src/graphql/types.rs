@@ -296,7 +296,30 @@ impl GqlEventSignal {
 
 #[Object]
 impl GqlEventSignal {
-    signal_meta_resolvers!();
+    async fn id(&self) -> Uuid { self.meta().id }
+    async fn title(&self) -> &str { &self.meta().title }
+    async fn summary(&self) -> &str { &self.meta().summary }
+    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
+    async fn confidence(&self) -> f32 { self.meta().confidence }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn source_url(&self) -> &str { &self.meta().source_url }
+    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
+    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
+    async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
+        let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlEvidence).collect())
+    }
+    async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
+        let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+    }
 
     async fn starts_at(&self) -> Option<DateTime<Utc>> {
         self.0.starts_at
@@ -327,7 +350,30 @@ impl GqlGiveSignal {
 
 #[Object]
 impl GqlGiveSignal {
-    signal_meta_resolvers!();
+    async fn id(&self) -> Uuid { self.meta().id }
+    async fn title(&self) -> &str { &self.meta().title }
+    async fn summary(&self) -> &str { &self.meta().summary }
+    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
+    async fn confidence(&self) -> f32 { self.meta().confidence }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn source_url(&self) -> &str { &self.meta().source_url }
+    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
+    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
+    async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
+        let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlEvidence).collect())
+    }
+    async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
+        let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+    }
 
     async fn action_url(&self) -> &str {
         &self.0.action_url
@@ -352,7 +398,30 @@ impl GqlAskSignal {
 
 #[Object]
 impl GqlAskSignal {
-    signal_meta_resolvers!();
+    async fn id(&self) -> Uuid { self.meta().id }
+    async fn title(&self) -> &str { &self.meta().title }
+    async fn summary(&self) -> &str { &self.meta().summary }
+    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
+    async fn confidence(&self) -> f32 { self.meta().confidence }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn source_url(&self) -> &str { &self.meta().source_url }
+    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
+    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
+    async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
+        let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlEvidence).collect())
+    }
+    async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
+        let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+    }
 
     async fn urgency(&self) -> GqlUrgency {
         self.0.urgency.into()
@@ -380,7 +449,30 @@ impl GqlNoticeSignal {
 
 #[Object]
 impl GqlNoticeSignal {
-    signal_meta_resolvers!();
+    async fn id(&self) -> Uuid { self.meta().id }
+    async fn title(&self) -> &str { &self.meta().title }
+    async fn summary(&self) -> &str { &self.meta().summary }
+    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
+    async fn confidence(&self) -> f32 { self.meta().confidence }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn source_url(&self) -> &str { &self.meta().source_url }
+    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
+    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
+    async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
+        let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlEvidence).collect())
+    }
+    async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
+        let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+    }
 
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()
@@ -408,7 +500,30 @@ impl GqlTensionSignal {
 
 #[Object]
 impl GqlTensionSignal {
-    signal_meta_resolvers!();
+    async fn id(&self) -> Uuid { self.meta().id }
+    async fn title(&self) -> &str { &self.meta().title }
+    async fn summary(&self) -> &str { &self.meta().summary }
+    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
+    async fn confidence(&self) -> f32 { self.meta().confidence }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn source_url(&self) -> &str { &self.meta().source_url }
+    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
+    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
+    async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
+        let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlEvidence).collect())
+    }
+    async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
+        let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+    }
 
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()

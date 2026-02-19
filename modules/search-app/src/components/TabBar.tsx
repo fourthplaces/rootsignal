@@ -12,17 +12,6 @@ export function TabBar({ activeTab, onTabChange, signalCount, storyCount }: TabB
   return (
     <div className="flex border-b border-border">
       <button
-        onClick={() => onTabChange("signals")}
-        className={cn(
-          "flex-1 px-4 py-2 text-sm font-medium transition-colors",
-          activeTab === "signals"
-            ? "border-b-2 border-primary text-foreground"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        Signals{signalCount != null ? ` (${signalCount})` : ""}
-      </button>
-      <button
         onClick={() => onTabChange("stories")}
         className={cn(
           "flex-1 px-4 py-2 text-sm font-medium transition-colors",
@@ -32,6 +21,17 @@ export function TabBar({ activeTab, onTabChange, signalCount, storyCount }: TabB
         )}
       >
         Stories{storyCount != null ? ` (${storyCount})` : ""}
+      </button>
+      <button
+        onClick={() => onTabChange("signals")}
+        className={cn(
+          "flex-1 px-4 py-2 text-sm font-medium transition-colors",
+          activeTab === "signals"
+            ? "border-b-2 border-primary text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        Signals{signalCount != null ? ` (${signalCount})` : ""}
       </button>
     </div>
   );

@@ -18,7 +18,7 @@ function parseUrlState(params: URLSearchParams): UrlState {
     lng: params.has("lng") ? Number(params.get("lng")) : null,
     z: params.has("z") ? Number(params.get("z")) : null,
     q: params.get("q") ?? "",
-    tab: (params.get("tab") as Tab) === "stories" ? "stories" : "signals",
+    tab: (params.get("tab") as Tab) === "signals" ? "signals" : "stories",
     id: params.get("id"),
   };
 }
