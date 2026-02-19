@@ -757,6 +757,7 @@ pub fn build_schema(
         Arc::new(rootsignal_scout::embedder::Embedder::new(voyage_key))
     };
 
+
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
         .data(writer)
