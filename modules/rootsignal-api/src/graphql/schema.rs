@@ -97,6 +97,119 @@ impl QueryRoot {
         Ok(node.map(GqlSignal::from))
     }
 
+    // ========== Search app queries (public, no auth) ==========
+
+    /// Find signals within a bounding box, sorted by heat. For viewport-driven browsing.
+    async fn signals_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let limit = limit.unwrap_or(50).min(200);
+        let nodes = reader
+            .signals_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
+        Ok(nodes.into_iter().map(GqlSignal::from).collect())
+    }
+
+    /// Find stories within a bounding box (by centroid), sorted by energy.
+    async fn stories_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlStory>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let limit = limit.unwrap_or(20).min(100);
+        let stories = reader
+            .stories_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
+        Ok(stories.into_iter().map(GqlStory).collect())
+    }
+
+    /// Semantic search for signals within a bounding box. Embeds the query via Voyage AI,
+    /// then finds nearest signals via vector KNN, post-filtered by bbox.
+    async fn search_signals_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSearchResult>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
+        let limit = limit.unwrap_or(50).min(200);
+
+        let embedding = embedder.embed(&query).await.map_err(|e| {
+            async_graphql::Error::new(format!("Embedding failed: {e}"))
+        })?;
+
+        let results = reader
+            .semantic_search_signals_in_bounds(
+                &embedding, min_lat, max_lat, min_lng, max_lng, limit,
+            )
+            .await?;
+
+        Ok(results
+            .into_iter()
+            .map(|(node, score)| GqlSearchResult {
+                signal: GqlSignal::from(node),
+                score,
+            })
+            .collect())
+    }
+
+    /// Semantic search for stories within a bounding box. Searches signals via KNN,
+    /// then aggregates to parent stories.
+    async fn search_stories_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlStorySearchResult>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
+        let limit = limit.unwrap_or(20).min(100);
+
+        let embedding = embedder.embed(&query).await.map_err(|e| {
+            async_graphql::Error::new(format!("Embedding failed: {e}"))
+        })?;
+
+        let results = reader
+            .semantic_search_stories_in_bounds(
+                &embedding, min_lat, max_lat, min_lng, max_lng, limit,
+            )
+            .await?;
+
+        Ok(results
+            .into_iter()
+            .map(|(story, score, top_title)| GqlStorySearchResult {
+                story: GqlStory(story),
+                score,
+                top_matching_signal_title: if top_title.is_empty() {
+                    None
+                } else {
+                    Some(top_title)
+                },
+            })
+            .collect())
+    }
+
     /// List stories ordered by energy.
     async fn stories(
         &self,
@@ -635,6 +748,16 @@ pub fn build_schema(
         tokio::spawn,
     );
 
+    // Create Voyage AI embedder for semantic search (if API key is available)
+    let embedder = {
+        let voyage_key = &config.voyage_api_key;
+        if voyage_key.is_empty() {
+            tracing::warn!("VOYAGE_API_KEY not set — semantic search queries will fail");
+        }
+        Arc::new(rootsignal_scout::embedder::Embedder::new(voyage_key))
+    };
+
+
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
         .data(writer)
@@ -647,6 +770,7 @@ pub fn build_schema(
         .data(evidence_loader)
         .data(actors_loader)
         .data(story_loader)
+        .data(embedder)
         .finish()
 }
 
