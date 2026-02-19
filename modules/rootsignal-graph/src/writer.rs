@@ -2335,7 +2335,7 @@ impl GraphWriter {
             "MATCH (n)
              WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
                AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
-               AND NOT (n)-[:RESPONDS_TO]->(:Tension)
+               AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)
                AND n.confidence >= 0.5
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
                     n.source_url AS source_url,
@@ -2430,13 +2430,15 @@ impl GraphWriter {
     /// signals that aren't already contained in any Story.
     pub async fn find_tension_hubs(&self, limit: u32) -> Result<Vec<TensionHub>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)<-[r:RESPONDS_TO]-(sig)
+            "MATCH (t:Tension)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (t)<-[:CONTAINS]-(:Story)
              WITH t, collect({
                  sig_id: sig.id,
                  source_url: sig.source_url,
                  strength: r.match_strength,
-                 explanation: r.explanation
+                 explanation: r.explanation,
+                 edge_type: type(r),
+                 gathering_type: r.gathering_type
              }) AS respondents
              WHERE size(respondents) >= 2
              RETURN t.id AS tension_id, t.title AS title, t.summary AS summary,
@@ -2475,6 +2477,8 @@ impl GraphWriter {
                     source_url: map.get::<String>("source_url").unwrap_or_default(),
                     match_strength: map.get::<f64>("strength").unwrap_or(0.0),
                     explanation: map.get::<String>("explanation").unwrap_or_default(),
+                    edge_type: map.get::<String>("edge_type").unwrap_or_default(),
+                    gathering_type: map.get::<String>("gathering_type").ok(),
                 });
             }
 
@@ -2494,13 +2498,15 @@ impl GraphWriter {
     pub async fn find_story_growth(&self, limit: u32) -> Result<Vec<StoryGrowth>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)<-[:CONTAINS]-(story:Story)
-             MATCH (t)<-[r:RESPONDS_TO]-(sig)
+             MATCH (t)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (story)-[:CONTAINS]->(sig)
              WITH story, t, collect({
                  sig_id: sig.id,
                  source_url: sig.source_url,
                  strength: r.match_strength,
-                 explanation: r.explanation
+                 explanation: r.explanation,
+                 edge_type: type(r),
+                 gathering_type: r.gathering_type
              }) AS new_respondents
              WHERE size(new_respondents) >= 1
              RETURN story.id AS story_id, t.id AS tension_id, new_respondents
@@ -2535,6 +2541,8 @@ impl GraphWriter {
                     source_url: map.get::<String>("source_url").unwrap_or_default(),
                     match_strength: map.get::<f64>("strength").unwrap_or(0.0),
                     explanation: map.get::<String>("explanation").unwrap_or_default(),
+                    edge_type: map.get::<String>("edge_type").unwrap_or_default(),
+                    gathering_type: map.get::<String>("gathering_type").ok(),
                 });
             }
 
@@ -2628,6 +2636,20 @@ impl GraphWriter {
                  WITH sig, r, survivor, dup
                  WHERE NOT (sig)-[:RESPONDS_TO]->(survivor)
                  CREATE (sig)-[:RESPONDS_TO {match_strength: r.match_strength, explanation: r.explanation}]->(survivor)
+                 WITH r, dup
+                 DELETE r"
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("survivor_id", survivor_id.as_str());
+            self.client.graph.run(q).await?;
+
+            // Re-point DRAWN_TO edges from duplicate to survivor
+            let q = query(
+                "MATCH (sig)-[r:DRAWN_TO]->(dup:Tension {id: $dup_id})
+                 MATCH (survivor:Tension {id: $survivor_id})
+                 WITH sig, r, survivor, dup
+                 WHERE NOT (sig)-[:DRAWN_TO]->(survivor)
+                 CREATE (sig)-[:DRAWN_TO {match_strength: r.match_strength, explanation: r.explanation, gathering_type: r.gathering_type}]->(survivor)
                  WITH r, dup
                  DELETE r"
             )
@@ -3077,16 +3099,14 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Fetch existing gravity signals for a tension (gatherings already wired via RESPONDS_TO
-    /// with a gathering_type property).
+    /// Fetch existing gravity signals for a tension (gatherings wired via DRAWN_TO).
     pub async fn get_existing_gravity_signals(
         &self,
         tension_id: Uuid,
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let q = query(
-            "MATCH (r)-[rel:RESPONDS_TO]->(t:Tension {id: $id})
+            "MATCH (r)-[rel:DRAWN_TO]->(t:Tension {id: $id})
              WHERE (r:Give OR r:Event OR r:Ask)
-               AND rel.gathering_type IS NOT NULL
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
@@ -3127,10 +3147,9 @@ impl GraphWriter {
         self.client.graph.run(q).await
     }
 
-    /// Create a RESPONDS_TO edge with gathering_type property.
-    /// Uses MERGE on structure only, then ON CREATE/ON MATCH to set properties,
-    /// avoiding duplicate edges when a response scout edge already exists.
-    pub async fn create_gravity_edge(
+    /// Create a DRAWN_TO edge between a gathering signal and a Tension.
+    /// Uses MERGE with ON CREATE/ON MATCH for defensive idempotency.
+    pub async fn create_drawn_to_edge(
         &self,
         signal_id: Uuid,
         tension_id: Uuid,
@@ -3141,19 +3160,82 @@ impl GraphWriter {
         let q = query(
             "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event OR resp:Ask)
              MATCH (t:Tension {id: $tension_id})
-             MERGE (resp)-[r:RESPONDS_TO]->(t)
+             MERGE (resp)-[r:DRAWN_TO]->(t)
              ON CREATE SET
                  r.match_strength = $strength,
                  r.explanation = $explanation,
                  r.gathering_type = $gathering_type
              ON MATCH SET
-                 r.gathering_type = coalesce(r.gathering_type, $gathering_type)",
+                 r.match_strength = $strength,
+                 r.explanation = $explanation,
+                 r.gathering_type = $gathering_type",
         )
         .param("resp_id", signal_id.to_string())
         .param("tension_id", tension_id.to_string())
         .param("strength", match_strength)
         .param("explanation", explanation)
         .param("gathering_type", gathering_type);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Find or create a Place node, deduplicating on (slug, city).
+    /// Returns the Place's UUID (existing or newly created).
+    pub async fn find_or_create_place(
+        &self,
+        name: &str,
+        city: &str,
+        lat: f64,
+        lng: f64,
+    ) -> Result<Uuid, neo4rs::Error> {
+        let slug = rootsignal_common::slugify(name);
+        let new_id = Uuid::new_v4();
+        let now = format_datetime(&Utc::now());
+
+        let q = query(
+            "MERGE (p:Place {slug: $slug, city: $city})
+             ON CREATE SET
+                 p.id = $id,
+                 p.name = $name,
+                 p.lat = $lat,
+                 p.lng = $lng,
+                 p.geocoded = false,
+                 p.created_at = datetime($now)
+             RETURN p.id AS place_id",
+        )
+        .param("slug", slug.as_str())
+        .param("city", city)
+        .param("id", new_id.to_string())
+        .param("name", name)
+        .param("lat", lat)
+        .param("lng", lng)
+        .param("now", now);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("place_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(id);
+            }
+        }
+        // Fallback: if MERGE returned nothing (shouldn't happen), return the new_id
+        Ok(new_id)
+    }
+
+    /// Create a GATHERS_AT edge from a gathering signal to a Place.
+    pub async fn create_gathers_at_edge(
+        &self,
+        signal_id: Uuid,
+        place_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s) WHERE s.id = $sid AND (s:Give OR s:Event OR s:Ask)
+             MATCH (p:Place {id: $pid})
+             MERGE (s)-[:GATHERS_AT]->(p)",
+        )
+        .param("sid", signal_id.to_string())
+        .param("pid", place_id.to_string());
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -3339,6 +3421,10 @@ pub struct TensionRespondent {
     pub source_url: String,
     pub match_strength: f64,
     pub explanation: String,
+    /// "RESPONDS_TO" or "DRAWN_TO" — raw Neo4j type(r) value
+    pub edge_type: String,
+    /// Only present for DRAWN_TO edges
+    pub gathering_type: Option<String>,
 }
 
 /// New respondent signals for an existing story (not yet linked via CONTAINS).
@@ -3559,12 +3645,16 @@ mod tests {
                     source_url: "https://example.com/a".to_string(),
                     match_strength: 0.9,
                     explanation: "Direct evidence of rent increases".to_string(),
+                    edge_type: "RESPONDS_TO".to_string(),
+                    gathering_type: None,
                 },
                 TensionRespondent {
                     signal_id: Uuid::new_v4(),
                     source_url: "https://different.org/b".to_string(),
                     match_strength: 0.7,
                     explanation: "Community response to housing costs".to_string(),
+                    edge_type: "DRAWN_TO".to_string(),
+                    gathering_type: Some("vigil".to_string()),
                 },
             ],
         };
@@ -3584,6 +3674,8 @@ mod tests {
                 source_url: "https://new-source.org".to_string(),
                 match_strength: 0.85,
                 explanation: "New evidence from a different source".to_string(),
+                edge_type: "RESPONDS_TO".to_string(),
+                gathering_type: None,
             }],
         };
 

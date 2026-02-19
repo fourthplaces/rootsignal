@@ -1602,7 +1602,7 @@ async fn gravity_scout_backoff_resets_on_success() {
 }
 
 #[tokio::test]
-async fn create_gravity_edge_includes_gathering_type() {
+async fn create_drawn_to_edge_includes_gathering_type() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1613,13 +1613,13 @@ async fn create_gravity_edge_includes_gathering_type() {
     create_signal(&client, "Event", event_id, "Singing Rebellion", "https://example.com/singing").await;
 
     writer
-        .create_gravity_edge(event_id, tension_id, 0.9, "solidarity through singing", "singing")
+        .create_drawn_to_edge(event_id, tension_id, 0.9, "solidarity through singing", "singing")
         .await
-        .expect("create_gravity_edge failed");
+        .expect("create_drawn_to_edge failed");
 
-    // Verify edge exists with gathering_type
+    // Verify DRAWN_TO edge exists with gathering_type
     let q = query(
-        "MATCH (e:Event {id: $eid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+        "MATCH (e:Event {id: $eid})-[rel:DRAWN_TO]->(t:Tension {id: $tid})
          RETURN rel.match_strength AS strength, rel.gathering_type AS gt",
     )
     .param("eid", event_id.to_string())
@@ -1635,7 +1635,7 @@ async fn create_gravity_edge_includes_gathering_type() {
 }
 
 #[tokio::test]
-async fn gravity_edge_coexists_with_response_edge() {
+async fn drawn_to_edge_coexists_with_response_edge() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1645,36 +1645,46 @@ async fn gravity_edge_coexists_with_response_edge() {
     let give_id = Uuid::new_v4();
     create_signal(&client, "Give", give_id, "Tenant Solidarity Fund", "https://example.com/fund").await;
 
-    // First: create a regular response edge (no gathering_type)
+    // First: create a regular response edge
     writer
         .create_response_edge(give_id, tension_id, 0.8, "provides rent assistance")
         .await
         .expect("create_response_edge failed");
 
-    // Then: create a gravity edge for the same signal→tension
-    // This should use ON MATCH and set gathering_type via coalesce (won't overwrite)
+    // Then: create a DRAWN_TO edge for the same signal→tension
+    // These are now separate edge types, so both should exist
     writer
-        .create_gravity_edge(give_id, tension_id, 0.9, "solidarity fund", "solidarity fund")
+        .create_drawn_to_edge(give_id, tension_id, 0.9, "solidarity fund", "solidarity fund")
         .await
-        .expect("create_gravity_edge failed");
+        .expect("create_drawn_to_edge failed");
 
-    // Verify only ONE edge exists (MERGE should not create duplicate)
-    let q = query(
+    // Verify RESPONDS_TO edge exists
+    let q1 = query(
         "MATCH (g:Give {id: $gid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
-         RETURN count(rel) AS edge_count, rel.gathering_type AS gt, rel.match_strength AS strength",
+         RETURN count(rel) AS edge_count",
     )
     .param("gid", give_id.to_string())
     .param("tid", tension_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.inner().execute(q1).await.unwrap();
     let row = stream.next().await.unwrap().expect("Should have results");
-    let edge_count: i64 = row.get("edge_count").unwrap();
-    let gt: String = row.get("gt").unwrap_or_default();
+    let resp_count: i64 = row.get("edge_count").unwrap();
+    assert_eq!(resp_count, 1, "Should have exactly one RESPONDS_TO edge");
 
-    assert_eq!(edge_count, 1, "Should have exactly one RESPONDS_TO edge, not two");
-    // gathering_type should NOT be overwritten since the original edge didn't have one,
-    // so coalesce picks the gravity value
-    assert!(!gt.is_empty(), "gathering_type should be set via coalesce");
+    // Verify DRAWN_TO edge exists separately
+    let q2 = query(
+        "MATCH (g:Give {id: $gid})-[rel:DRAWN_TO]->(t:Tension {id: $tid})
+         RETURN count(rel) AS edge_count, rel.gathering_type AS gt",
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+
+    let mut stream = client.inner().execute(q2).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Should have results");
+    let drawn_count: i64 = row.get("edge_count").unwrap();
+    let gt: String = row.get("gt").unwrap();
+    assert_eq!(drawn_count, 1, "Should have exactly one DRAWN_TO edge");
+    assert_eq!(gt, "solidarity fund");
 }
 
 #[tokio::test]

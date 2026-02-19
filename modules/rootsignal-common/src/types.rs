@@ -405,6 +405,20 @@ pub struct CityNode {
     pub last_scout_completed_at: Option<DateTime<Utc>>,
 }
 
+// --- Place Node (fourth places — venues that attract gatherings) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceNode {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub city: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub geocoded: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 // --- Source Types (for emergent source discovery) ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -714,6 +728,10 @@ pub enum EdgeType {
     SimilarTo,
     /// Submission -> Source (human submission)
     SubmittedFor,
+    /// Give/Event/Ask -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
+    DrawnTo,
+    /// Signal -> Place (gathering venue)
+    GathersAt,
 }
 
 #[cfg(test)]
