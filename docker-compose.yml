@@ -86,6 +86,7 @@ services:
     environment:
       NODE_ENV: development
       API_URL: http://api:3000
+      VITE_MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
     command: ["sh", "-c", "npm install && npm run dev"]
 
   scout:
