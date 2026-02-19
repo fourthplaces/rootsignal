@@ -1240,7 +1240,7 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
 // =============================================================================
 
 /// Helper: create a tension with specific confidence and optional response_scouted_at.
-async fn create_tension_for_response_scout(
+async fn create_tension_for_response_finder(
     client: &GraphClient,
     id: Uuid,
     title: &str,
@@ -1291,7 +1291,7 @@ async fn create_tension_for_response_scout(
 }
 
 #[tokio::test]
-async fn response_scout_targets_finds_unscouted_tensions() {
+async fn response_finder_targets_finds_unscouted_tensions() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1300,16 +1300,16 @@ async fn response_scout_targets_finds_unscouted_tensions() {
     let t3 = Uuid::new_v4();
 
     // t1: never scouted, high confidence — should be found
-    create_tension_for_response_scout(&client, t1, "ICE Enforcement Fear", 0.7, None).await;
+    create_tension_for_response_finder(&client, t1, "ICE Enforcement Fear", 0.7, None).await;
     // t2: scouted recently — should NOT be found
-    create_tension_for_response_scout(
+    create_tension_for_response_finder(
         &client, t2, "Housing Crisis", 0.8,
         Some("2026-02-17T00:00:00"),
     ).await;
     // t3: low confidence (below 0.5) — should NOT be found
-    create_tension_for_response_scout(&client, t3, "Emergent Tension", 0.3, None).await;
+    create_tension_for_response_finder(&client, t3, "Emergent Tension", 0.3, None).await;
 
-    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
 
     assert_eq!(targets.len(), 1, "Only 1 target should qualify");
     assert_eq!(targets[0].tension_id, t1);
@@ -1318,33 +1318,33 @@ async fn response_scout_targets_finds_unscouted_tensions() {
 }
 
 #[tokio::test]
-async fn response_scout_targets_includes_stale_scouted_tensions() {
+async fn response_finder_targets_includes_stale_scouted_tensions() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
     // Scouted 30 days ago — should be found (>14 day threshold)
-    create_tension_for_response_scout(
+    create_tension_for_response_finder(
         &client, t1, "Old Tension", 0.7,
         Some("2026-01-15T00:00:00"),
     ).await;
 
-    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 1, "Stale-scouted tension should be re-eligible");
     assert_eq!(targets[0].tension_id, t1);
 }
 
 #[tokio::test]
-async fn response_scout_targets_sorted_by_response_count_then_heat() {
+async fn response_finder_targets_sorted_by_response_count_then_heat() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let t1 = Uuid::new_v4();
     let t2 = Uuid::new_v4();
 
-    create_tension_for_response_scout(&client, t1, "Well-served", 0.7, None).await;
-    create_tension_for_response_scout(&client, t2, "Neglected", 0.7, None).await;
+    create_tension_for_response_finder(&client, t1, "Well-served", 0.7, None).await;
+    create_tension_for_response_finder(&client, t2, "Neglected", 0.7, None).await;
 
     // Give t1 a response edge, t2 has none
     let give_id = Uuid::new_v4();
@@ -1357,7 +1357,7 @@ async fn response_scout_targets_sorted_by_response_count_then_heat() {
     .param("tid", t1.to_string());
     client.inner().run(edge_q).await.expect("edge creation failed");
 
-    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 2);
     // t2 (0 responses) should come first
     assert_eq!(targets[0].tension_id, t2, "Neglected tension should sort first");
@@ -1372,7 +1372,7 @@ async fn get_existing_responses_returns_heuristics() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_response_scout(&client, tension_id, "Housing Crisis", 0.7, None).await;
+    create_tension_for_response_finder(&client, tension_id, "Housing Crisis", 0.7, None).await;
 
     let give_id = Uuid::new_v4();
     create_signal(&client, "Give", give_id, "Rent Assistance Program", "https://example.com/rent").await;
@@ -1392,22 +1392,22 @@ async fn get_existing_responses_returns_heuristics() {
 }
 
 #[tokio::test]
-async fn mark_response_scouted_sets_timestamp() {
+async fn mark_response_found_sets_timestamp() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_response_scout(&client, tension_id, "Test Tension", 0.7, None).await;
+    create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
 
     // Before marking — should be a target
-    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 1);
 
     // Mark as scouted
-    writer.mark_response_scouted(tension_id).await.expect("mark failed");
+    writer.mark_response_found(tension_id).await.expect("mark failed");
 
     // After marking — should NOT be a target (scouted < 14 days ago)
-    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_response_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
 }
 
@@ -1417,7 +1417,7 @@ async fn create_response_edge_wires_give_to_tension() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_response_scout(&client, tension_id, "Test Tension", 0.7, None).await;
+    create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
 
     let give_id = Uuid::new_v4();
     create_signal(&client, "Give", give_id, "Mutual Aid Network", "https://example.com/aid").await;
@@ -1447,7 +1447,7 @@ async fn create_response_edge_wires_give_to_tension() {
 // =============================================================================
 
 /// Helper: create a tension with specific confidence, cause_heat, and optional gravity scouting state.
-async fn create_tension_for_gravity_scout(
+async fn create_tension_for_gathering_finder(
     client: &GraphClient,
     id: Uuid,
     title: &str,
@@ -1503,7 +1503,7 @@ async fn create_tension_for_gravity_scout(
 }
 
 #[tokio::test]
-async fn gravity_scout_targets_requires_minimum_heat() {
+async fn gathering_finder_targets_requires_minimum_heat() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1511,17 +1511,17 @@ async fn gravity_scout_targets_requires_minimum_heat() {
     let t2 = Uuid::new_v4();
 
     // t1: has heat — should be found
-    create_tension_for_gravity_scout(&client, t1, "ICE Enforcement Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, t1, "ICE Enforcement Fear", 0.7, 0.5, None, None).await;
     // t2: no heat (0.0) — should NOT be found
-    create_tension_for_gravity_scout(&client, t2, "Cold Tension", 0.7, 0.0, None, None).await;
+    create_tension_for_gathering_finder(&client, t2, "Cold Tension", 0.7, 0.0, None, None).await;
 
-    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 1, "Only hot tension should qualify");
     assert_eq!(targets[0].tension_id, t1);
 }
 
 #[tokio::test]
-async fn gravity_scout_targets_sorted_by_heat_desc() {
+async fn gathering_finder_targets_sorted_by_heat_desc() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1529,11 +1529,11 @@ async fn gravity_scout_targets_sorted_by_heat_desc() {
     let t2 = Uuid::new_v4();
 
     // t1: moderate heat
-    create_tension_for_gravity_scout(&client, t1, "Moderate", 0.7, 0.3, None, None).await;
+    create_tension_for_gathering_finder(&client, t1, "Moderate", 0.7, 0.3, None, None).await;
     // t2: high heat
-    create_tension_for_gravity_scout(&client, t2, "Hot", 0.7, 0.9, None, None).await;
+    create_tension_for_gathering_finder(&client, t2, "Hot", 0.7, 0.9, None, None).await;
 
-    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 2);
     // Hottest first
     assert_eq!(targets[0].tension_id, t2, "Hottest tension should sort first");
@@ -1541,65 +1541,65 @@ async fn gravity_scout_targets_sorted_by_heat_desc() {
 }
 
 #[tokio::test]
-async fn gravity_scout_respects_scouted_timestamp() {
+async fn gathering_finder_respects_scouted_timestamp() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
     // Scouted 3 days ago — should NOT be found (7-day base window)
-    create_tension_for_gravity_scout(
+    create_tension_for_gathering_finder(
         &client, t1, "Recent", 0.7, 0.5,
         Some("2026-02-15T00:00:00"), Some(0),
     ).await;
 
-    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
 }
 
 #[tokio::test]
-async fn gravity_scout_backoff_on_consecutive_misses() {
+async fn gathering_finder_backoff_on_consecutive_misses() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
     // Scouted 15 days ago with miss_count=2 — needs 21 days, so should NOT be found
-    create_tension_for_gravity_scout(
+    create_tension_for_gathering_finder(
         &client, t1, "Two misses", 0.7, 0.5,
         Some("2026-02-03T00:00:00"), Some(2),
     ).await;
 
-    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 0, "miss_count=2 requires 21-day window, only 15 days elapsed");
 
     // Now try with miss_count=1 — needs 14 days, 15 days elapsed, should be found
     let t2 = Uuid::new_v4();
-    create_tension_for_gravity_scout(
+    create_tension_for_gathering_finder(
         &client, t2, "One miss", 0.7, 0.5,
         Some("2026-02-03T00:00:00"), Some(1),
     ).await;
 
-    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    let targets = writer.find_gathering_finder_targets(10).await.expect("query failed");
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].tension_id, t2);
 }
 
 #[tokio::test]
-async fn gravity_scout_backoff_resets_on_success() {
+async fn gathering_finder_backoff_resets_on_success() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
     // Start with miss_count=3
-    create_tension_for_gravity_scout(
+    create_tension_for_gathering_finder(
         &client, t1, "Was cold", 0.7, 0.5,
         Some("2026-01-01T00:00:00"), Some(3),
     ).await;
 
     // Mark as scouted with success — should reset miss_count to 0
-    writer.mark_gravity_scouted(t1, true).await.expect("mark failed");
+    writer.mark_gathering_found(t1, true).await.expect("mark failed");
 
     // Verify miss_count is 0
     let q = query(
@@ -1619,7 +1619,7 @@ async fn create_drawn_to_edge_includes_gathering_type() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
 
     let event_id = Uuid::new_v4();
     create_signal(&client, "Event", event_id, "Singing Rebellion", "https://example.com/singing").await;
@@ -1652,7 +1652,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
 
     let give_id = Uuid::new_v4();
     create_signal(&client, "Give", give_id, "Tenant Solidarity Fund", "https://example.com/fund").await;
@@ -1735,12 +1735,12 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
 }
 
 #[tokio::test]
-async fn get_existing_gravity_signals_filters_by_city() {
+async fn get_existing_gathering_signals_filters_by_city() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "Immigration Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "Immigration Fear", 0.7, 0.5, None, None).await;
 
     // Minneapolis gathering (lat 44.9778, lng -93.2650)
     let mpls_event = Uuid::new_v4();
@@ -1757,14 +1757,14 @@ async fn get_existing_gravity_signals_filters_by_city() {
         .await.expect("edge failed");
 
     // When querying from NYC, should only see the NYC gathering
-    let nyc_results = writer.get_existing_gravity_signals(
+    let nyc_results = writer.get_existing_gathering_signals(
         tension_id, 40.7128, -74.0060, 50.0,
     ).await.expect("query failed");
     assert_eq!(nyc_results.len(), 1, "Should only see NYC gathering, not Minneapolis");
     assert_eq!(nyc_results[0].title, "Union Square Immigration Vigil");
 
     // When querying from Minneapolis, should only see the Minneapolis gathering
-    let mpls_results = writer.get_existing_gravity_signals(
+    let mpls_results = writer.get_existing_gathering_signals(
         tension_id, 44.9778, -93.2650, 50.0,
     ).await.expect("query failed");
     assert_eq!(mpls_results.len(), 1, "Should only see Minneapolis gathering, not NYC");
@@ -1872,8 +1872,8 @@ async fn tension_response_shape_correct_breakdown() {
 
     // Create a high-heat tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_response_scout(&client, tension_id, "Immigration Enforcement Fear", 0.7, None).await;
-    // Bump cause_heat above 0.1 (create_tension_for_response_scout sets 0.5)
+    create_tension_for_response_finder(&client, tension_id, "Immigration Enforcement Fear", 0.7, None).await;
+    // Bump cause_heat above 0.1 (create_tension_for_response_finder sets 0.5)
 
     // Create 2 Gives and 1 Ask linked via RESPONDS_TO
     let give1_id = Uuid::new_v4();
@@ -1920,7 +1920,7 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
 
     // Hot tension with responses — should appear
     let hot_id = Uuid::new_v4();
-    create_tension_for_response_scout(&client, hot_id, "Hot Tension", 0.7, None).await;
+    create_tension_for_response_finder(&client, hot_id, "Hot Tension", 0.7, None).await;
     let give_id = Uuid::new_v4();
     create_signal(&client, "Give", give_id, "Some Service", "https://example.com/svc").await;
     let q = query(
@@ -1933,7 +1933,7 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
 
     // Cold tension (cause_heat = 0.0) with responses — should NOT appear
     let cold_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, cold_id, "Cold Tension", 0.7, 0.0, None, None).await;
+    create_tension_for_gathering_finder(&client, cold_id, "Cold Tension", 0.7, 0.0, None, None).await;
     let give2_id = Uuid::new_v4();
     create_signal(&client, "Give", give2_id, "Cold Service", "https://example.com/cold").await;
     let q = query(
@@ -1990,7 +1990,7 @@ async fn tension_response_shape_excludes_zero_responses() {
 
     // Hot tension with NO responses — should NOT appear
     let t1 = Uuid::new_v4();
-    create_tension_for_response_scout(&client, t1, "No Responses", 0.7, None).await;
+    create_tension_for_response_finder(&client, t1, "No Responses", 0.7, None).await;
 
     let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
     assert_eq!(shapes.len(), 0, "Tension with no responses should not appear in response shape");
@@ -2007,7 +2007,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
 
     // Create a Give with implied_queries
     let give_id = Uuid::new_v4();
@@ -2062,7 +2062,7 @@ async fn recently_linked_signals_ignores_cold_tensions() {
 
     // Create a COLD tension (heat = 0.0)
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None).await;
 
     // Create a Give with implied_queries linked to the cold tension
     let give_id = Uuid::new_v4();
@@ -2097,7 +2097,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
-    create_tension_for_gravity_scout(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
 
     // Create an Event with implied_queries
     let now = neo4j_dt(&Utc::now());
