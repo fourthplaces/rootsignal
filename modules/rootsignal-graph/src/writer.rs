@@ -161,7 +161,7 @@ impl GraphWriter {
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
         .param("action_url", n.action_url.as_str())
-        .param("availability", n.availability.as_str())
+        .param("availability", n.availability.as_deref().unwrap_or(""))
         .param("is_ongoing", n.is_ongoing)
         .param("embedding", embedding_to_f64(embedding));
 
@@ -223,7 +223,7 @@ impl GraphWriter {
             "urgency",
             urgency_str(n.urgency),
         )
-        .param("what_needed", n.what_needed.as_str())
+        .param("what_needed", n.what_needed.as_deref().unwrap_or(""))
         .param(
             "action_url",
             n.action_url.clone().unwrap_or_default(),
@@ -1339,30 +1339,46 @@ impl GraphWriter {
         Ok(cities)
     }
 
-    /// Batch count of sources and signals per city slug.
+    /// Batch count of sources and signals per city.
+    /// Accepts city tuples of (slug, center_lat, center_lng, radius_km).
+    /// Signal counts use geographic bounding box on signal lat/lng.
     /// Returns Vec<(slug, source_count, signal_count)>.
-    pub async fn get_city_counts(&self, slugs: &[String]) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
-        if slugs.is_empty() {
-            return Ok(Vec::new());
-        }
-        let q = query(
-            "UNWIND $slugs AS slug
-             OPTIONAL MATCH (src:Source {city: slug, active: true})
-             WITH slug, count(src) AS source_count
-             OPTIONAL MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
-               AND n.city = slug
-             RETURN slug, source_count, count(n) AS signal_count"
-        )
-        .param("slugs", slugs.to_vec());
-
+    pub async fn get_city_counts(&self, cities: &[(String, f64, f64, f64)]) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let slug: String = row.get("slug").unwrap_or_default();
-            let source_count: i64 = row.get("source_count").unwrap_or(0);
-            let signal_count: i64 = row.get("signal_count").unwrap_or(0);
-            results.push((slug, source_count as u32, signal_count as u32));
+        for (slug, lat, lng, radius_km) in cities {
+            // Source count by slug
+            let sq = query(
+                "MATCH (src:Source {city: $city, active: true})
+                 RETURN count(src) AS cnt"
+            ).param("city", slug.as_str());
+            let mut stream = self.client.graph.execute(sq).await?;
+            let source_count: i64 = match stream.next().await? {
+                Some(row) => row.get("cnt").unwrap_or(0),
+                None => 0,
+            };
+
+            // Signal count by bounding box
+            let lat_delta = radius_km / 111.0;
+            let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+            let nq = query(
+                "MATCH (n)
+                 WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+                   AND n.lat <> 0.0
+                   AND n.lat >= $min_lat AND n.lat <= $max_lat
+                   AND n.lng >= $min_lng AND n.lng <= $max_lng
+                 RETURN count(n) AS cnt"
+            )
+            .param("min_lat", lat - lat_delta)
+            .param("max_lat", lat + lat_delta)
+            .param("min_lng", lng - lng_delta)
+            .param("max_lng", lng + lng_delta);
+            let mut stream = self.client.graph.execute(nq).await?;
+            let signal_count: i64 = match stream.next().await? {
+                Some(row) => row.get("cnt").unwrap_or(0),
+                None => 0,
+            };
+
+            results.push((slug.clone(), source_count as u32, signal_count as u32));
         }
         Ok(results)
     }
@@ -1389,10 +1405,9 @@ impl GraphWriter {
                 s.gap_context = $gap_context,
                 s.weight = $weight,
                 s.avg_signals_per_scrape = $avg_signals_per_scrape,
-                s.total_cost_cents = $total_cost_cents,
-                s.last_cost_cents = $last_cost_cents,
                 s.quality_penalty = $quality_penalty,
-                s.source_role = $source_role
+                s.source_role = $source_role,
+                s.scrape_count = $scrape_count
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                 s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1412,10 +1427,9 @@ impl GraphWriter {
         .param("gap_context", source.gap_context.clone().unwrap_or_default())
         .param("weight", source.weight)
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
-        .param("total_cost_cents", source.total_cost_cents as i64)
-        .param("last_cost_cents", source.last_cost_cents as i64)
         .param("quality_penalty", source.quality_penalty)
-        .param("source_role", source.source_role.to_string());
+        .param("source_role", source.source_role.to_string())
+        .param("scrape_count", source.scrape_count as i64);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1466,11 +1480,9 @@ impl GraphWriter {
                     s.active AS active, s.gap_context AS gap_context,
                     s.weight AS weight, s.cadence_hours AS cadence_hours,
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
-                    s.total_cost_cents AS total_cost_cents,
-                    s.last_cost_cents AS last_cost_cents,
-                    s.taxonomy_stats AS taxonomy_stats,
                     s.quality_penalty AS quality_penalty,
-                    s.source_role AS source_role"
+                    s.source_role AS source_role,
+                    s.scrape_count AS scrape_count"
         )
         .param("city", city);
 
@@ -1497,17 +1509,14 @@ impl GraphWriter {
                 _ => DiscoveryMethod::Curated,
             };
 
-            let created_at = parse_datetime_opt(&row.get::<String>("created_at").unwrap_or_default())
+            let created_at = row_datetime_opt(&row, "created_at")
                 .unwrap_or_else(Utc::now);
 
-            let last_scraped = row.get::<String>("last_scraped").ok()
-                .and_then(|s| parse_datetime_opt(&s));
-            let last_produced_signal = row.get::<String>("last_produced_signal").ok()
-                .and_then(|s| parse_datetime_opt(&s));
+            let last_scraped = row_datetime_opt(&row, "last_scraped");
+            let last_produced_signal = row_datetime_opt(&row, "last_produced_signal");
 
             let gap_context: String = row.get("gap_context").unwrap_or_default();
             let url: String = row.get("url").unwrap_or_default();
-            let taxonomy_stats: String = row.get("taxonomy_stats").unwrap_or_default();
             let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
 
             sources.push(SourceNode {
@@ -1529,13 +1538,11 @@ impl GraphWriter {
                 weight: row.get("weight").unwrap_or(0.5),
                 cadence_hours: if cadence > 0 { Some(cadence as u32) } else { None },
                 avg_signals_per_scrape: row.get("avg_signals_per_scrape").unwrap_or(0.0),
-                total_cost_cents: row.get::<i64>("total_cost_cents").unwrap_or(0) as u64,
-                last_cost_cents: row.get::<i64>("last_cost_cents").unwrap_or(0) as u64,
-                taxonomy_stats: if taxonomy_stats.is_empty() { None } else { Some(taxonomy_stats) },
                 quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
                 source_role: SourceRole::from_str_loose(
                     &row.get::<String>("source_role").unwrap_or_default(),
                 ),
+                scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
             });
         }
 
@@ -1556,7 +1563,8 @@ impl GraphWriter {
                  SET s.last_scraped = datetime($now),
                      s.last_produced_signal = datetime($now),
                      s.signals_produced = s.signals_produced + $count,
-                     s.consecutive_empty_runs = 0"
+                     s.consecutive_empty_runs = 0,
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1"
             )
             .param("key", canonical_key)
             .param("now", format_datetime(&now))
@@ -1566,7 +1574,8 @@ impl GraphWriter {
             let q = query(
                 "MATCH (s:Source {canonical_key: $key})
                  SET s.last_scraped = datetime($now),
-                     s.consecutive_empty_runs = s.consecutive_empty_runs + 1"
+                     s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1"
             )
             .param("key", canonical_key)
             .param("now", format_datetime(&now));
@@ -1617,14 +1626,17 @@ impl GraphWriter {
     }
 
     /// Deactivate sources that have had too many consecutive empty runs.
-    pub async fn deactivate_dead_sources(&self, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
+    /// Protects curated and human-submitted sources. Scoped to a single city.
+    pub async fn deactivate_dead_sources(&self, city: &str, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true})
+            "MATCH (s:Source {active: true, city: $city})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
+               AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated"
         )
+        .param("city", city)
         .param("max", max_empty_runs as i64);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -1900,15 +1912,24 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Get actors with their domains and social URLs for source discovery.
+    /// Get actors with their domains, social URLs, and dominant signal role for source discovery.
     pub async fn get_actors_with_domains(
         &self,
         city: &str,
-    ) -> Result<Vec<(String, Vec<String>, Vec<String>)>, neo4rs::Error> {
+    ) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {city: $city})
              WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
-             RETURN a.name AS name, a.domains AS domains, a.social_urls AS social_urls"
+             OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
+             WITH a,
+                  count(CASE WHEN n:Give OR n:Event THEN 1 END) AS response_signals,
+                  count(CASE WHEN n:Tension THEN 1 END) AS tension_signals
+             RETURN a.name AS name, a.domains AS domains, a.social_urls AS social_urls,
+                    CASE
+                      WHEN response_signals > tension_signals THEN 'response'
+                      WHEN tension_signals > response_signals THEN 'tension'
+                      ELSE 'mixed'
+                    END AS dominant_role"
         )
         .param("city", city);
 
@@ -1918,8 +1939,9 @@ impl GraphWriter {
             let name: String = row.get("name").unwrap_or_default();
             let domains: Vec<String> = row.get("domains").unwrap_or_default();
             let social_urls: Vec<String> = row.get("social_urls").unwrap_or_default();
+            let dominant_role: String = row.get("dominant_role").unwrap_or_default();
             if !name.is_empty() && (!domains.is_empty() || !social_urls.is_empty()) {
-                results.push((name, domains, social_urls));
+                results.push((name, domains, social_urls, dominant_role));
             }
         }
         Ok(results)
@@ -1936,8 +1958,14 @@ impl GraphWriter {
              WITH t, count(resp) AS response_count
              RETURN t.title AS title, t.severity AS severity,
                     t.what_would_help AS what_would_help, t.category AS category,
-                    response_count = 0 AS unmet
-             ORDER BY response_count ASC, t.severity DESC
+                    response_count = 0 AS unmet,
+                    COALESCE(t.corroboration_count, 0) AS corroboration_count,
+                    COALESCE(t.source_diversity, 0) AS source_diversity,
+                    COALESCE(t.cause_heat, 0.0) AS cause_heat
+             ORDER BY response_count ASC,
+                      (COALESCE(t.corroboration_count, 0) + COALESCE(t.source_diversity, 0)) DESC,
+                      t.cause_heat DESC,
+                      t.severity DESC
              LIMIT $limit"
         )
         .param("limit", limit as i64);
@@ -1961,6 +1989,9 @@ impl GraphWriter {
                     if c.is_empty() { None } else { Some(c) }
                 },
                 unmet: row.get("unmet").unwrap_or(true),
+                corroboration_count: row.get::<i64>("corroboration_count").unwrap_or(0) as u32,
+                source_diversity: row.get::<i64>("source_diversity").unwrap_or(0) as u32,
+                cause_heat: row.get("cause_heat").unwrap_or(0.0),
             });
         }
         Ok(results)
@@ -2283,6 +2314,365 @@ impl GraphWriter {
         Ok(())
     }
 
+    // --- Curiosity loop methods ---
+
+    /// Find signals that have no RESPONDS_TO edge to any Tension and haven't been
+    /// curiosity-investigated yet (or were `failed` with retry budget remaining).
+    ///
+    /// Pre-pass: signals with `failed` + retry_count >= 3 are auto-promoted to `abandoned`.
+    pub async fn find_curiosity_targets(&self, limit: u32) -> Result<Vec<CuriosityTarget>, neo4rs::Error> {
+        // Pre-pass: promote exhausted retries to abandoned
+        let promote = query(
+            "MATCH (n)
+             WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
+               AND n.curiosity_investigated = 'failed'
+               AND n.curiosity_retry_count >= 3
+             SET n.curiosity_investigated = 'abandoned'"
+        );
+        self.client.graph.run(promote).await?;
+
+        let q = query(
+            "MATCH (n)
+             WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
+               AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
+               AND NOT (n)-[:RESPONDS_TO]->(:Tension)
+               AND n.confidence >= 0.5
+             RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                    n.source_url AS source_url,
+                    CASE WHEN n:Event THEN 'Event'
+                         WHEN n:Give THEN 'Give'
+                         WHEN n:Ask THEN 'Ask'
+                         WHEN n:Notice THEN 'Notice'
+                    END AS label
+             ORDER BY n.extracted_at DESC
+             LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut targets = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            targets.push(CuriosityTarget {
+                signal_id: id,
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                label: row.get("label").unwrap_or_default(),
+                source_url: row.get("source_url").unwrap_or_default(),
+            });
+        }
+        Ok(targets)
+    }
+
+    /// Mark a signal with its curiosity investigation outcome.
+    ///
+    /// - `Done`/`Skipped`/`Abandoned`: permanent — signal won't be retried.
+    /// - `Failed`: increments retry_count — signal reappears in `find_curiosity_targets`
+    ///   until retry_count reaches 3 (then auto-promoted to `Abandoned`).
+    pub async fn mark_curiosity_investigated(
+        &self,
+        signal_id: Uuid,
+        label: &str,
+        outcome: CuriosityOutcome,
+    ) -> Result<(), neo4rs::Error> {
+        let label = match label {
+            "Event" | "Give" | "Ask" | "Notice" => label,
+            _ => return Ok(()),
+        };
+
+        let cypher = if outcome == CuriosityOutcome::Failed {
+            format!(
+                "MATCH (n:{label} {{id: $id}})
+                 SET n.curiosity_investigated = $outcome,
+                     n.curiosity_retry_count = coalesce(n.curiosity_retry_count, 0) + 1"
+            )
+        } else {
+            format!(
+                "MATCH (n:{label} {{id: $id}})
+                 SET n.curiosity_investigated = $outcome"
+            )
+        };
+
+        let q = query(&cypher)
+            .param("id", signal_id.to_string())
+            .param("outcome", outcome.as_str());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Get existing tension titles+summaries for the curiosity loop's context window.
+    pub async fn get_tension_landscape(&self) -> Result<Vec<(String, String)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             RETURN t.title AS title, t.summary AS summary
+             ORDER BY t.extracted_at DESC
+             LIMIT 50"
+        );
+
+        let mut tensions = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let title: String = row.get("title").unwrap_or_default();
+            let summary: String = row.get("summary").unwrap_or_default();
+            tensions.push((title, summary));
+        }
+        Ok(tensions)
+    }
+
+    // --- StoryWeaver graph queries ---
+
+    /// Find tension hubs ready to materialize as stories: tensions with 2+ responding
+    /// signals that aren't already contained in any Story.
+    pub async fn find_tension_hubs(&self, limit: u32) -> Result<Vec<TensionHub>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)<-[r:RESPONDS_TO]-(sig)
+             WHERE NOT (t)<-[:CONTAINS]-(:Story)
+             WITH t, collect({
+                 sig_id: sig.id,
+                 source_url: sig.source_url,
+                 strength: r.match_strength,
+                 explanation: r.explanation
+             }) AS respondents
+             WHERE size(respondents) >= 2
+             RETURN t.id AS tension_id, t.title AS title, t.summary AS summary,
+                    t.category AS category, t.what_would_help AS what_would_help,
+                    respondents
+             ORDER BY size(respondents) DESC
+             LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut hubs = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("tension_id").unwrap_or_default();
+            let tension_id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let title: String = row.get("title").unwrap_or_default();
+            let summary: String = row.get("summary").unwrap_or_default();
+            let category: Option<String> = row.get("category").ok();
+            let what_would_help: Option<String> = row.get("what_would_help").ok();
+
+            // Parse respondents from neo4j map list
+            let respondent_maps: Vec<neo4rs::BoltMap> = row.get("respondents").unwrap_or_default();
+            let mut respondents = Vec::new();
+            for map in respondent_maps {
+                let sig_id_str = map.get::<String>("sig_id").unwrap_or_default();
+                let sig_id = match Uuid::parse_str(&sig_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                respondents.push(TensionRespondent {
+                    signal_id: sig_id,
+                    source_url: map.get::<String>("source_url").unwrap_or_default(),
+                    match_strength: map.get::<f64>("strength").unwrap_or(0.0),
+                    explanation: map.get::<String>("explanation").unwrap_or_default(),
+                });
+            }
+
+            hubs.push(TensionHub {
+                tension_id,
+                title,
+                summary,
+                category,
+                what_would_help,
+                respondents,
+            });
+        }
+        Ok(hubs)
+    }
+
+    /// Find existing stories that have new responding signals not yet linked via CONTAINS.
+    pub async fn find_story_growth(&self, limit: u32) -> Result<Vec<StoryGrowth>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)<-[:CONTAINS]-(story:Story)
+             MATCH (t)<-[r:RESPONDS_TO]-(sig)
+             WHERE NOT (story)-[:CONTAINS]->(sig)
+             WITH story, t, collect({
+                 sig_id: sig.id,
+                 source_url: sig.source_url,
+                 strength: r.match_strength,
+                 explanation: r.explanation
+             }) AS new_respondents
+             WHERE size(new_respondents) >= 1
+             RETURN story.id AS story_id, t.id AS tension_id, new_respondents
+             LIMIT $limit"
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let story_id_str: String = row.get("story_id").unwrap_or_default();
+            let story_id = match Uuid::parse_str(&story_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let tension_id_str: String = row.get("tension_id").unwrap_or_default();
+            let tension_id = match Uuid::parse_str(&tension_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let respondent_maps: Vec<neo4rs::BoltMap> = row.get("new_respondents").unwrap_or_default();
+            let mut new_respondents = Vec::new();
+            for map in respondent_maps {
+                let sig_id_str = map.get::<String>("sig_id").unwrap_or_default();
+                let sig_id = match Uuid::parse_str(&sig_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                new_respondents.push(TensionRespondent {
+                    signal_id: sig_id,
+                    source_url: map.get::<String>("source_url").unwrap_or_default(),
+                    match_strength: map.get::<f64>("strength").unwrap_or(0.0),
+                    explanation: map.get::<String>("explanation").unwrap_or_default(),
+                });
+            }
+
+            results.push(StoryGrowth {
+                story_id,
+                tension_id,
+                new_respondents,
+            });
+        }
+        Ok(results)
+    }
+
+    /// Count abandoned signals (curiosity_investigated = 'abandoned').
+    /// Used by StoryWeaver for coverage gap reporting.
+    pub async fn count_abandoned_signals(&self) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (n)
+             WHERE (n:Give OR n:Event OR n:Ask OR n:Notice)
+               AND n.curiosity_investigated = 'abandoned'
+             RETURN count(n) AS cnt"
+        );
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            return Ok(cnt as u32);
+        }
+        Ok(0)
+    }
+
+    /// Merge near-duplicate Tension nodes.
+    ///
+    /// Loads all tension embeddings, finds pairs above `threshold` cosine similarity,
+    /// and merges the newer tension into the older one — re-pointing all incoming
+    /// RESPONDS_TO edges to the survivor and deleting the duplicate.
+    ///
+    /// Returns the number of tensions merged (deleted).
+    pub async fn merge_duplicate_tensions(&self, threshold: f64) -> Result<u32, neo4rs::Error> {
+        // Load all tensions with embeddings
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.embedding IS NOT NULL
+             RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
+             ORDER BY t.extracted_at ASC"
+        );
+
+        struct TensionEmbed {
+            id: String,
+            embedding: Vec<f64>,
+        }
+
+        let mut tensions: Vec<TensionEmbed> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
+            if !embedding.is_empty() {
+                tensions.push(TensionEmbed { id, embedding });
+            }
+        }
+
+        if tensions.len() < 2 {
+            return Ok(0);
+        }
+
+        // Find pairs to merge (older survives, newer is absorbed)
+        let mut to_delete: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut merges: Vec<(String, String)> = Vec::new(); // (survivor, duplicate)
+
+        for i in 0..tensions.len() {
+            if to_delete.contains(&tensions[i].id) {
+                continue;
+            }
+            for j in (i + 1)..tensions.len() {
+                if to_delete.contains(&tensions[j].id) {
+                    continue;
+                }
+                let sim = cosine_sim_f64(&tensions[i].embedding, &tensions[j].embedding);
+                if sim >= threshold {
+                    to_delete.insert(tensions[j].id.clone());
+                    merges.push((tensions[i].id.clone(), tensions[j].id.clone()));
+                }
+            }
+        }
+
+        // Execute merges
+        for (survivor_id, dup_id) in &merges {
+            // Re-point RESPONDS_TO edges from duplicate to survivor
+            let q = query(
+                "MATCH (sig)-[r:RESPONDS_TO]->(dup:Tension {id: $dup_id})
+                 MATCH (survivor:Tension {id: $survivor_id})
+                 WITH sig, r, survivor, dup
+                 WHERE NOT (sig)-[:RESPONDS_TO]->(survivor)
+                 CREATE (sig)-[:RESPONDS_TO {match_strength: r.match_strength, explanation: r.explanation}]->(survivor)
+                 WITH r, dup
+                 DELETE r"
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("survivor_id", survivor_id.as_str());
+            self.client.graph.run(q).await?;
+
+            // Re-point CONTAINS edges from stories
+            let q = query(
+                "MATCH (s:Story)-[r:CONTAINS]->(dup:Tension {id: $dup_id})
+                 MATCH (survivor:Tension {id: $survivor_id})
+                 WHERE NOT (s)-[:CONTAINS]->(survivor)
+                 CREATE (s)-[:CONTAINS]->(survivor)
+                 WITH r
+                 DELETE r"
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("survivor_id", survivor_id.as_str());
+            self.client.graph.run(q).await?;
+
+            // Bump survivor's corroboration count
+            let q = query(
+                "MATCH (t:Tension {id: $survivor_id})
+                 SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1"
+            )
+            .param("survivor_id", survivor_id.as_str());
+            self.client.graph.run(q).await?;
+
+            // Delete the duplicate and any remaining edges
+            let q = query(
+                "MATCH (t:Tension {id: $dup_id}) DETACH DELETE t"
+            )
+            .param("dup_id", dup_id.as_str());
+            self.client.graph.run(q).await?;
+
+            info!(
+                survivor_id = survivor_id.as_str(),
+                duplicate_id = dup_id.as_str(),
+                "Merged duplicate tension"
+            );
+        }
+
+        Ok(merges.len() as u32)
+    }
+
     // --- Feedback loop methods ---
 
     /// Update a signal's confidence value. Same label-dispatch as mark_investigated.
@@ -2564,6 +2954,9 @@ pub struct UnmetTension {
     pub what_would_help: Option<String>,
     pub category: Option<String>,
     pub unmet: bool,
+    pub corroboration_count: u32,
+    pub source_diversity: u32,
+    pub cause_heat: f64,
 }
 
 /// A brief summary of a story for the discovery briefing.
@@ -2636,6 +3029,68 @@ pub struct InvestigationTarget {
     pub is_sensitive: bool,
 }
 
+/// A signal without tension context that the curiosity loop should investigate.
+#[derive(Debug)]
+pub struct CuriosityTarget {
+    pub signal_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub label: String,
+    pub source_url: String,
+}
+
+/// Outcome of a curiosity investigation for a signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CuriosityOutcome {
+    /// All tensions processed successfully.
+    Done,
+    /// LLM said "not curious" — permanent, won't retry.
+    Skipped,
+    /// Investigation or tension processing failed — eligible for retry.
+    Failed,
+    /// Retry cap hit (3 attempts) — permanent, signals a coverage gap.
+    Abandoned,
+}
+
+impl CuriosityOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+            Self::Abandoned => "abandoned",
+        }
+    }
+}
+
+/// A tension hub: a Tension node with 2+ responding signals, ready to materialize as a Story.
+#[derive(Debug)]
+pub struct TensionHub {
+    pub tension_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub category: Option<String>,
+    pub what_would_help: Option<String>,
+    pub respondents: Vec<TensionRespondent>,
+}
+
+/// A signal that responds to a tension, with edge metadata.
+#[derive(Debug)]
+pub struct TensionRespondent {
+    pub signal_id: Uuid,
+    pub source_url: String,
+    pub match_strength: f64,
+    pub explanation: String,
+}
+
+/// New respondent signals for an existing story (not yet linked via CONTAINS).
+#[derive(Debug)]
+pub struct StoryGrowth {
+    pub story_id: Uuid,
+    pub tension_id: Uuid,
+    pub new_respondents: Vec<TensionRespondent>,
+}
+
 /// Add lat/lng params to a query from node metadata.
 /// Uses null for nodes without a location.
 fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
@@ -2643,6 +3098,16 @@ fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
         Some(loc) => q.param("lat", loc.lat).param("lng", loc.lng),
         None => q.param::<Option<f64>>("lat", None).param::<Option<f64>>("lng", None),
     }
+}
+
+fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
+    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
 }
 
 fn urgency_str(u: rootsignal_common::Urgency) -> &'static str {
@@ -2700,4 +3165,134 @@ fn parse_datetime_opt(s: &str) -> Option<DateTime<Utc>> {
     chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
         .map(|ndt| ndt.and_utc())
         .ok()
+}
+
+/// Read an optional datetime from a neo4rs Row, handling both Neo4j DateTime types
+/// (stored via Cypher `datetime()`) and plain string values.
+fn row_datetime_opt(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc>> {
+    // Try Neo4j DateTime type (stored with `datetime()` in Cypher → BoltType::DateTime)
+    if let Ok(dt) = row.get::<chrono::DateTime<chrono::FixedOffset>>(key) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    // Try NaiveDateTime (BoltType::LocalDateTime)
+    if let Ok(ndt) = row.get::<chrono::NaiveDateTime>(key) {
+        return Some(ndt.and_utc());
+    }
+    // Fall back to string parsing (legacy or manually stored values)
+    row.get::<String>(key).ok().and_then(|s| parse_datetime_opt(&s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cosine_sim_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let sim = cosine_sim_f64(&v, &v);
+        assert!((sim - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn cosine_sim_orthogonal_vectors() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        assert!(cosine_sim_f64(&a, &b).abs() < 1e-10);
+    }
+
+    #[test]
+    fn cosine_sim_zero_vector() {
+        let a = vec![1.0, 2.0];
+        let b = vec![0.0, 0.0];
+        assert_eq!(cosine_sim_f64(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn cosine_sim_similar_vectors_above_threshold() {
+        // Two nearly identical vectors should be > 0.85
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.98, 0.15, 0.0];
+        let sim = cosine_sim_f64(&a, &b);
+        assert!(sim > 0.85, "Expected > 0.85, got {sim}");
+    }
+
+    #[test]
+    fn cosine_sim_dissimilar_vectors_below_threshold() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let sim = cosine_sim_f64(&a, &b);
+        assert!(sim < 0.85, "Expected < 0.85, got {sim}");
+    }
+
+    // --- CuriosityOutcome tests ---
+
+    #[test]
+    fn curiosity_outcome_as_str_roundtrip() {
+        assert_eq!(CuriosityOutcome::Done.as_str(), "done");
+        assert_eq!(CuriosityOutcome::Skipped.as_str(), "skipped");
+        assert_eq!(CuriosityOutcome::Failed.as_str(), "failed");
+        assert_eq!(CuriosityOutcome::Abandoned.as_str(), "abandoned");
+    }
+
+    #[test]
+    fn curiosity_outcome_equality() {
+        assert_eq!(CuriosityOutcome::Done, CuriosityOutcome::Done);
+        assert_ne!(CuriosityOutcome::Done, CuriosityOutcome::Failed);
+        assert_ne!(CuriosityOutcome::Failed, CuriosityOutcome::Abandoned);
+    }
+
+    #[test]
+    fn curiosity_outcome_is_copy() {
+        let outcome = CuriosityOutcome::Failed;
+        let copied = outcome; // Copy
+        assert_eq!(outcome, copied); // Both still usable
+    }
+
+    // --- TensionHub / TensionRespondent tests ---
+
+    #[test]
+    fn tension_hub_respondent_count() {
+        let hub = TensionHub {
+            tension_id: Uuid::new_v4(),
+            title: "Housing affordability crisis".to_string(),
+            summary: "Rents rising faster than wages".to_string(),
+            category: Some("housing".to_string()),
+            what_would_help: Some("Rent stabilization policies".to_string()),
+            respondents: vec![
+                TensionRespondent {
+                    signal_id: Uuid::new_v4(),
+                    source_url: "https://example.com/a".to_string(),
+                    match_strength: 0.9,
+                    explanation: "Direct evidence of rent increases".to_string(),
+                },
+                TensionRespondent {
+                    signal_id: Uuid::new_v4(),
+                    source_url: "https://different.org/b".to_string(),
+                    match_strength: 0.7,
+                    explanation: "Community response to housing costs".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(hub.respondents.len(), 2);
+        assert!(hub.respondents[0].match_strength > hub.respondents[1].match_strength);
+        assert_eq!(hub.category.as_deref(), Some("housing"));
+    }
+
+    #[test]
+    fn story_growth_tracks_new_respondents() {
+        let growth = StoryGrowth {
+            story_id: Uuid::new_v4(),
+            tension_id: Uuid::new_v4(),
+            new_respondents: vec![TensionRespondent {
+                signal_id: Uuid::new_v4(),
+                source_url: "https://new-source.org".to_string(),
+                match_strength: 0.85,
+                explanation: "New evidence from a different source".to_string(),
+            }],
+        };
+
+        assert_eq!(growth.new_respondents.len(), 1);
+        assert!(growth.new_respondents[0].match_strength >= 0.85);
+    }
 }

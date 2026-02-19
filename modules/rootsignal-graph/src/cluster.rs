@@ -394,7 +394,7 @@ Respond in this exact JSON format:
                     .first()
                     .map(|s| s.title.clone())
                     .unwrap_or_else(|| "Emerging pattern".to_string());
-                (fallback_headline, "Cluster of related civic signals.".to_string())
+                (fallback_headline, "Cluster of related signals.".to_string())
             }
         }
     }
@@ -405,14 +405,14 @@ Respond in this exact JSON format:
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
         let response = claude.chat_completion(
-            "You are a concise headline writer for a civic signal system. Respond only with valid JSON.",
+            "You are a concise headline writer for a signal system. Respond only with valid JSON.",
             prompt,
         ).await?;
 
         // Parse JSON response
         let parsed: serde_json::Value = serde_json::from_str(&response)?;
         let headline = parsed["headline"].as_str().unwrap_or("Emerging pattern").to_string();
-        let summary = parsed["summary"].as_str().unwrap_or("Cluster of related civic signals.").to_string();
+        let summary = parsed["summary"].as_str().unwrap_or("Cluster of related signals.").to_string();
 
         Ok((headline, summary))
     }
@@ -755,7 +755,7 @@ impl std::fmt::Display for ClusterStats {
 /// - "echo" = high volume, single type (possible astroturfing or media echo)
 /// - "confirmed" = multiple entities AND multiple signal types (triangulated)
 /// - "emerging" = everything else
-fn story_status(type_diversity: u32, entity_count: u32, signal_count: usize) -> &'static str {
+pub fn story_status(type_diversity: u32, entity_count: u32, signal_count: usize) -> &'static str {
     if type_diversity == 1 && signal_count >= 5 {
         "echo"
     } else if entity_count >= 2 && type_diversity >= 2 {
@@ -769,7 +769,7 @@ fn story_status(type_diversity: u32, entity_count: u32, signal_count: usize) -> 
 ///
 /// Weights: velocity 40%, recency 20%, source diversity 15%, triangulation 25%.
 /// Well-triangulated stories structurally outrank echo clusters.
-fn story_energy(velocity: f64, recency: f64, source_diversity: f64, triangulation: f64) -> f64 {
+pub fn story_energy(velocity: f64, recency: f64, source_diversity: f64, triangulation: f64) -> f64 {
     velocity * 0.4 + recency * 0.2 + source_diversity * 0.15 + triangulation * 0.25
 }
 

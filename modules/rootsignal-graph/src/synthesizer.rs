@@ -30,9 +30,15 @@ pub struct ActionGuidanceResponse {
     pub action_urls: Vec<String>,
 }
 
-/// Compute story arc from velocity and age. Pure function, no LLM.
-pub fn compute_arc(velocity: f64, age_days: f64) -> StoryArc {
-    if age_days < 7.0 {
+/// Compute story arc from velocity, age, and previous arc. Pure function, no LLM.
+///
+/// When `was_fading` is true and new activity arrives (velocity > 0), the story
+/// gets the `Resurgent` arc — editorially interesting because something that
+/// died came back.
+pub fn compute_arc(velocity: f64, age_days: f64, was_fading: bool) -> StoryArc {
+    if was_fading && velocity > 0.0 {
+        StoryArc::Resurgent
+    } else if age_days < 7.0 {
         StoryArc::Emerging
     } else if velocity > 0.5 {
         StoryArc::Growing
@@ -82,7 +88,20 @@ impl Synthesizer {
         velocity: f64,
         age_days: f64,
     ) -> Result<StorySynthesis, Box<dyn std::error::Error + Send + Sync>> {
-        let arc = compute_arc(velocity, age_days);
+        self.synthesize_with_context(headline, signals, velocity, age_days, false, None).await
+    }
+
+    /// Synthesize with additional context about story state.
+    pub async fn synthesize_with_context(
+        &self,
+        headline: &str,
+        signals: &[SynthesisInput],
+        velocity: f64,
+        age_days: f64,
+        was_fading: bool,
+        extra_context: Option<&str>,
+    ) -> Result<StorySynthesis, Box<dyn std::error::Error + Send + Sync>> {
+        let arc = compute_arc(velocity, age_days, was_fading);
 
         let signal_descriptions: Vec<String> = signals
             .iter()
@@ -93,9 +112,13 @@ impl Synthesizer {
             })
             .collect();
 
+        let context_section = extra_context
+            .map(|c| format!("\nEditorial context:\n{c}\n"))
+            .unwrap_or_default();
+
         let prompt = format!(
             r#"You are writing for a community newspaper. This story cluster was originally headlined: "{headline}"
-
+{context_section}
 Constituent signals:
 {signals}
 
@@ -158,27 +181,38 @@ mod tests {
 
     #[test]
     fn test_compute_arc_emerging() {
-        assert_eq!(compute_arc(0.0, 3.0), StoryArc::Emerging);
-        assert_eq!(compute_arc(1.0, 6.0), StoryArc::Emerging);
+        assert_eq!(compute_arc(0.0, 3.0, false), StoryArc::Emerging);
+        assert_eq!(compute_arc(1.0, 6.0, false), StoryArc::Emerging);
     }
 
     #[test]
     fn test_compute_arc_growing() {
-        assert_eq!(compute_arc(0.6, 10.0), StoryArc::Growing);
-        assert_eq!(compute_arc(1.0, 30.0), StoryArc::Growing);
+        assert_eq!(compute_arc(0.6, 10.0, false), StoryArc::Growing);
+        assert_eq!(compute_arc(1.0, 30.0, false), StoryArc::Growing);
     }
 
     #[test]
     fn test_compute_arc_fading() {
-        assert_eq!(compute_arc(-0.3, 10.0), StoryArc::Fading);
-        assert_eq!(compute_arc(-1.0, 20.0), StoryArc::Fading);
+        assert_eq!(compute_arc(-0.3, 10.0, false), StoryArc::Fading);
+        assert_eq!(compute_arc(-1.0, 20.0, false), StoryArc::Fading);
     }
 
     #[test]
     fn test_compute_arc_stable() {
-        assert_eq!(compute_arc(0.0, 10.0), StoryArc::Stable);
-        assert_eq!(compute_arc(0.3, 14.0), StoryArc::Stable);
-        assert_eq!(compute_arc(-0.2, 14.0), StoryArc::Stable);
+        assert_eq!(compute_arc(0.0, 10.0, false), StoryArc::Stable);
+        assert_eq!(compute_arc(0.3, 14.0, false), StoryArc::Stable);
+        assert_eq!(compute_arc(-0.2, 14.0, false), StoryArc::Stable);
+    }
+
+    #[test]
+    fn test_compute_arc_resurgent() {
+        // Was fading + positive velocity = resurgent
+        assert_eq!(compute_arc(0.1, 20.0, true), StoryArc::Resurgent);
+        assert_eq!(compute_arc(1.0, 30.0, true), StoryArc::Resurgent);
+        // Was fading but no new activity = still fading
+        assert_eq!(compute_arc(-0.5, 20.0, true), StoryArc::Fading);
+        // Was fading, zero velocity = stable (not resurgent)
+        assert_eq!(compute_arc(0.0, 20.0, true), StoryArc::Stable);
     }
 
     #[test]
