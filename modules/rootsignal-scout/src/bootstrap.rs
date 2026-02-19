@@ -67,11 +67,9 @@ impl<'a> ColdStartBootstrapper<'a> {
                 weight: 0.5,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
-                total_cost_cents: 0,
-                last_cost_cents: 0,
-                taxonomy_stats: None,
                 quality_penalty: 1.0,
                 source_role: SourceRole::default(),
+                scrape_count: 0,
             };
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
@@ -79,8 +77,8 @@ impl<'a> ColdStartBootstrapper<'a> {
             }
         }
 
-        // Step 3: Also create standard platform sources
-        let platform_sources = self.generate_platform_sources();
+        // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
+        let platform_sources = self.generate_platform_sources().await;
         for source in &platform_sources {
             match self.writer.upsert_source(source).await {
                 Ok(_) => sources_created += 1,
@@ -100,7 +98,7 @@ impl<'a> ColdStartBootstrapper<'a> {
         let city = &self.city_node.name;
 
         let prompt = format!(
-            r#"Generate 25 search queries to discover civic life in {city}. Focus on:
+            r#"Generate 25 search queries to discover community life in {city}. Focus on:
 - Community volunteer opportunities
 - Food banks, food shelves, mutual aid
 - Local government meetings, public hearings
@@ -109,7 +107,7 @@ impl<'a> ColdStartBootstrapper<'a> {
 - Youth and senior services
 - Environmental cleanup, community gardens
 - Community events, festivals
-- Local news about civic tensions or community issues
+- Local news about tensions or community issues
 - GoFundMe and community fundraisers
 - Repair cafes, tool libraries
 - School board and education policy
@@ -135,13 +133,14 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 
     /// Generate standard platform sources for the city (Reddit, GoFundMe, Eventbrite, VolunteerMatch, etc.)
     /// Eventbrite/VolunteerMatch/GoFundMe are query sources — they produce URLs, not content.
-    fn generate_platform_sources(&self) -> Vec<SourceNode> {
+    /// Reddit subreddits are discovered via LLM rather than guessed from the city slug.
+    async fn generate_platform_sources(&self) -> Vec<SourceNode> {
         let slug = &self.city_node.slug;
         let city_name = &self.city_node.name;
         let city_name_encoded = city_name.replace(' ', "+");
         let now = Utc::now();
 
-        let make = |source_type: SourceType, url: &str| {
+        let make = |source_type: SourceType, url: &str, role: SourceRole| {
             let cv = sources::canonical_value_from_url(source_type, url);
             let ck = sources::make_canonical_key(slug, source_type, &cv);
             SourceNode {
@@ -163,11 +162,9 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 weight: 0.5,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
-                total_cost_cents: 0,
-                last_cost_cents: 0,
-                taxonomy_stats: None,
                 quality_penalty: 1.0,
-                source_role: SourceRole::default(),
+                source_role: role,
+                scrape_count: 0,
             }
         };
 
@@ -175,29 +172,73 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
             make(SourceType::EventbriteQuery, &format!(
                 "https://www.eventbrite.com/d/united-states--{}/community/",
                 city_name_encoded
-            )),
+            ), SourceRole::Response),
             make(SourceType::EventbriteQuery, &format!(
                 "https://www.eventbrite.com/d/united-states--{}/volunteer/",
                 city_name_encoded
-            )),
+            ), SourceRole::Response),
             make(SourceType::VolunteerMatchQuery, &format!(
                 "https://www.volunteermatch.org/search?l={}&k=&v=true",
                 city_name_encoded
-            )),
+            ), SourceRole::Response),
             make(SourceType::GoFundMeQuery, &format!(
                 "https://www.gofundme.com/discover/search?q={}&location={}",
                 slug, city_name_encoded
-            )),
+            ), SourceRole::Response),
         ];
 
-        // Reddit — try to add city subreddit
-        let slug_lower = slug.to_lowercase();
-        sources.push(make(
-            SourceType::Reddit,
-            &format!("https://www.reddit.com/r/{}", slug_lower),
-        ));
+        // Reddit — discover relevant subreddits via LLM
+        match self.discover_subreddits().await {
+            Ok(subreddits) => {
+                info!(count = subreddits.len(), "Discovered subreddits for {}", city_name);
+                for sub in subreddits {
+                    sources.push(make(
+                        SourceType::Reddit,
+                        &format!("https://www.reddit.com/r/{}/", sub),
+                        SourceRole::Mixed,
+                    ));
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to discover subreddits, skipping Reddit sources");
+            }
+        }
 
         sources
+    }
+
+    /// Ask Claude for relevant subreddits for this city.
+    async fn discover_subreddits(&self) -> Result<Vec<String>> {
+        let city = &self.city_node.name;
+
+        let prompt = format!(
+            r#"What are the active Reddit subreddits relevant to community life in {city}?
+
+Include:
+- The main city subreddit
+- Neighborhood or metro area subreddits
+- Local housing, community, or environment-focused subreddits
+
+Only include subreddits that actually exist and are active.
+Return ONLY the subreddit names (without r/ prefix), one per line. No numbering, no explanations.
+Maximum 8 subreddits."#
+        );
+
+        let claude = ai_client::claude::Claude::new(
+            &self.anthropic_api_key,
+            "claude-haiku-4-5-20251001",
+        );
+
+        let response = claude.complete(&prompt).await?;
+
+        let subreddits: Vec<String> = response
+            .lines()
+            .map(|l| l.trim().trim_start_matches("r/").trim_start_matches("/r/").to_string())
+            .filter(|l| !l.is_empty() && !l.contains(' ') && l.len() >= 2)
+            .take(8)
+            .collect();
+
+        Ok(subreddits)
     }
 }
 
@@ -246,11 +287,9 @@ pub async fn tension_seed_queries(
             weight: 0.5,
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
-            total_cost_cents: 0,
-            last_cost_cents: 0,
-            taxonomy_stats: None,
             quality_penalty: 1.0,
-            source_role: SourceRole::default(),
+            source_role: SourceRole::Response,
+            scrape_count: 0,
         });
     }
 

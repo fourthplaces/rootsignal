@@ -297,6 +297,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Backfill source_role on existing Source nodes ---
     backfill_source_roles(client).await?;
 
+    // --- Backfill scrape_count on existing Source nodes ---
+    backfill_scrape_count(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -553,9 +556,7 @@ pub async fn backfill_source_canonical_keys(client: &GraphClient) -> Result<(), 
          SET s.canonical_key = s.city + ':' + s.source_type + ':' + s.url,
              s.canonical_value = s.url,
              s.weight = CASE WHEN s.weight IS NULL THEN 0.5 ELSE s.weight END,
-             s.avg_signals_per_scrape = CASE WHEN s.avg_signals_per_scrape IS NULL THEN 0.0 ELSE s.avg_signals_per_scrape END,
-             s.total_cost_cents = CASE WHEN s.total_cost_cents IS NULL THEN 0 ELSE s.total_cost_cents END,
-             s.last_cost_cents = CASE WHEN s.last_cost_cents IS NULL THEN 0 ELSE s.last_cost_cents END
+             s.avg_signals_per_scrape = CASE WHEN s.avg_signals_per_scrape IS NULL THEN 0.0 ELSE s.avg_signals_per_scrape END
          RETURN count(s) AS updated"
     );
     match g.execute(q).await {
@@ -695,5 +696,34 @@ pub async fn backfill_source_roles(client: &GraphClient) -> Result<(), neo4rs::E
     }
 
     info!("Source role backfill complete");
+    Ok(())
+}
+
+/// Backfill `scrape_count` on existing Source nodes.
+/// Sets scrape_count = 0 where it is null. Idempotent.
+pub async fn backfill_scrape_count(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling scrape_count...");
+
+    let q = query(
+        "MATCH (s:Source) WHERE s.scrape_count IS NULL \
+         SET s.scrape_count = 0 \
+         RETURN count(s) AS updated"
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Backfilled scrape_count on existing sources");
+                }
+            }
+        }
+        Err(e) => warn!("scrape_count backfill failed (non-fatal): {e}"),
+    }
+
+    info!("scrape_count backfill complete");
     Ok(())
 }

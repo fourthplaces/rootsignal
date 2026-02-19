@@ -37,7 +37,7 @@ Each cycle, the system sees more and understands more deeply. What it sees tells
 
 ### Why This Is Emergent
 
-Nobody tells the system what the civic themes of a city are. Nobody curates the full source list. Nobody decides which audience roles matter. The system discovers all of this from the signal itself.
+Nobody tells the system what the themes of a city are. Nobody curates the full source list. Nobody decides which audience roles matter. The system discovers all of this from the signal itself.
 
 - **Stories emerge** from semantic clustering of individual signals
 - **Source gaps emerge** from analyzing what stories exist and what they're missing
@@ -56,9 +56,9 @@ Traditional systems get weaker when attacked. This system gets stronger.
 - The Investigator examines new sources and finds *nothing* — no 501(c)(3), no media mentions, no institutional history
 - The *absence* of evidence is the detection signal — you can't fake institutional depth
 
-**Source failure resilience:** A source goes offline, changes its URL structure, or stops producing civic content. The system doesn't break — it just stops seeing signals from that source. After 10 empty runs, the source is deactivated. Meanwhile, the gap analysis notices the coverage hole and discovers replacement sources.
+**Source failure resilience:** A source goes offline, changes its URL structure, or stops producing content. The system doesn't break — it just stops seeing signals from that source. After 10 empty runs, the source is deactivated. Meanwhile, the gap analysis notices the coverage hole and discovers replacement sources.
 
-**Bias correction:** The initial seed sources embed the curator's worldview. But the system immediately starts correcting for this. Signals from seed sources mention orgs that aren't in the seed list. The gap analyzer notices. New sources are discovered. Over time, the source list reflects the actual civic landscape, not one person's mental model of it.
+**Bias correction:** The initial seed sources embed the curator's worldview. But the system immediately starts correcting for this. Signals from seed sources mention orgs that aren't in the seed list. The gap analyzer notices. New sources are discovered. Over time, the source list reflects the actual community landscape, not one person's mental model of it.
 
 ## The Newspaper Metaphor
 
@@ -74,7 +74,7 @@ The key difference: a traditional newspaper's editorial board decides which stor
 
 A source produces good signal when its output passes three tests:
 
-1. **Is it civic?** Relates to community life, ecological stewardship, civic engagement, ethical consumption, or the tensions that animate them.
+1. **Is it community signal?** Relates to community life, ecological stewardship, community engagement, ethical consumption, or the tensions that animate them.
 2. **Is it grounded?** Traceable to an identifiable organization, government entity, public record, or established community group. Has an evidence trail.
 3. **Does it connect to action or context?** Enables someone to act (volunteer, donate, attend, advocate) or helps them understand what's happening in their community.
 
@@ -111,7 +111,7 @@ Trust never reaches zero. Per the principle: "Root Signal will not gatekeep what
 
 The most powerful anti-manipulation mechanism is structural: the system detects bad actors not by what they produce, but by what's *missing*.
 
-Real civic activity has a signature:
+Real community activity has a signature:
 - Multiple independent organizations talk about it
 - It shows up across platforms (website, social media, news)
 - It has a history (connected to prior signals in the graph)
@@ -135,7 +135,7 @@ Once the system discovers its own sources, several things become possible that w
 
 **City bootstrapping:** Point the system at a new city with a minimal seed (5-10 URLs, a few Tavily queries). The system discovers the rest. What took days of manual research becomes a few scout runs.
 
-**Temporal adaptation:** When a crisis hits, the gap analyzer notices the surge in related signals and discovers new sources covering the crisis (mutual aid networks, legal aid hotlines, community response organizations). The system's attention naturally shifts to where civic energy is concentrating.
+**Temporal adaptation:** When a crisis hits, the gap analyzer notices the surge in related signals and discovers new sources covering the crisis (mutual aid networks, legal aid hotlines, community response organizations). The system's attention naturally shifts to where community energy is concentrating.
 
 **Bias visibility:** By tracking which sources are discovered vs. curated, the system can report on its own blind spots: "These 12 sources were discovered by the system, not in the original seed list. They produced 23% of all immigrant-audience signals." This makes source selection bias visible rather than hidden.
 
@@ -149,5 +149,5 @@ Once the system discovers its own sources, several things become possible that w
 4. **Absence is signal.** Investigation reveals what's missing — no registration, no media trail, no institutional depth.
 5. **The system corrects its own biases.** Gap analysis looks for what's missing. Investigation verifies what's found.
 6. **Emergence over engineering.** Don't hard-code what the system can discover.
-7. **Humans set scope, not content.** Geographic boundaries and civic domain — the system fills in the details.
+7. **Humans set scope, not content.** Geographic boundaries and signal domain — the system fills in the details.
 8. **The system asks WHY.** Sensing is not enough. Investigation follows evidence chains and records what it finds.

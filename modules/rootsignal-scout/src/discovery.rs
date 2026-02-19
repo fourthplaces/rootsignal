@@ -79,6 +79,10 @@ impl DiscoveryBriefing {
                     t.title,
                     help,
                 ));
+                out.push_str(&format!(
+                    "   community attention: {} sources, {} corroborations, heat={:.1}\n",
+                    t.source_diversity, t.corroboration_count, t.cause_heat,
+                ));
             }
             out.push('\n');
         }
@@ -93,6 +97,10 @@ impl DiscoveryBriefing {
                     t.severity.to_uppercase(),
                     t.title,
                     help,
+                ));
+                out.push_str(&format!(
+                    "   community attention: {} sources, {} corroborations, heat={:.1}\n",
+                    t.source_diversity, t.corroboration_count, t.cause_heat,
                 ));
             }
             out.push('\n');
@@ -276,7 +284,7 @@ where
 
 pub fn discovery_system_prompt(city_name: &str) -> String {
     format!(
-        "You are the curiosity engine for a civic intelligence scout monitoring {city_name}.\n\
+        "You are the curiosity engine for an intelligence scout monitoring {city_name}.\n\
          \n\
          Your job: decide WHERE TO LOOK NEXT to fill gaps in what the scout knows.\n\
          \n\
@@ -295,13 +303,18 @@ pub fn discovery_system_prompt(city_name: &str) -> String {
          - Avoid queries similar to ones that previously failed\n\
          - Be specific: \"affordable housing waitlist programs {city_name}\" not \"housing crisis\"\n\
          \n\
+         ENGAGEMENT SIGNAL: Tensions with higher corroboration, source diversity, and\n\
+         cause_heat are ones the community is actively discussing — prioritize these\n\
+         for response-seeking queries. But ALWAYS reserve at least 2 queries for\n\
+         low-engagement or novel tensions — early signals matter.\n\
+         \n\
          For each query, explain your reasoning — why this search, what gap it fills."
     )
 }
 
 fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
     format!(
-        "Here is the current state of the {city_name} civic signal graph. Analyze the gaps \
+        "Here is the current state of the {city_name} signal graph. Analyze the gaps \
          and generate discovery queries.\n\n{briefing}"
     )
 }
@@ -379,7 +392,9 @@ impl<'a> SourceDiscoverer<'a> {
             .collect();
 
         let now = Utc::now();
-        for (actor_name, domains, social_urls) in &actors {
+        for (actor_name, domains, social_urls, dominant_role) in &actors {
+            let source_role = SourceRole::from_str_loose(dominant_role);
+
             // Check each domain as a potential web source
             for domain in domains {
                 let url = if domain.starts_with("http") {
@@ -419,11 +434,9 @@ impl<'a> SourceDiscoverer<'a> {
                     weight: 0.3,
                     cadence_hours: None,
                     avg_signals_per_scrape: 0.0,
-                    total_cost_cents: 0,
-                    last_cost_cents: 0,
-                    taxonomy_stats: None,
                     quality_penalty: 1.0,
-                    source_role: SourceRole::default(),
+                    source_role,
+                    scrape_count: 0,
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -469,11 +482,9 @@ impl<'a> SourceDiscoverer<'a> {
                     weight: 0.3,
                     cadence_hours: None,
                     avg_signals_per_scrape: 0.0,
-                    total_cost_cents: 0,
-                    last_cost_cents: 0,
-                    taxonomy_stats: None,
                     quality_penalty: 1.0,
-                    source_role: SourceRole::default(),
+                    source_role,
+                    scrape_count: 0,
                 };
 
                 match self.writer.upsert_source(&source).await {
@@ -595,11 +606,9 @@ impl<'a> SourceDiscoverer<'a> {
                 weight: 0.3,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
-                total_cost_cents: 0,
-                last_cost_cents: 0,
-                taxonomy_stats: None,
                 quality_penalty: 1.0,
                 source_role,
+                scrape_count: 0,
             };
 
             match self.writer.upsert_source(&source).await {
@@ -660,9 +669,12 @@ impl<'a> SourceDiscoverer<'a> {
 
     /// Mechanical template-based gap analysis — the original discovery method.
     /// Used as fallback when LLM is unavailable, budget is exhausted, or on cold start.
+    ///
+    /// Sorts tensions by engagement score (corroboration + source_diversity + cause_heat)
+    /// so high-engagement tensions fill early query slots — but all tensions are eligible.
     async fn discover_from_gaps_mechanical(&self, stats: &mut DiscoveryStats) {
-        // Get tensions and existing source types to find gaps
-        let tensions = match self.writer.get_recent_tensions(20).await {
+        // Get tensions with engagement data, sorted by engagement within unmet-first grouping
+        let mut tensions = match self.writer.get_unmet_tensions(20).await {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to get tensions for gap analysis");
@@ -673,6 +685,13 @@ impl<'a> SourceDiscoverer<'a> {
         if tensions.is_empty() {
             return;
         }
+
+        // Stable-sort by engagement score descending (preserves unmet-first from query)
+        tensions.sort_by(|a, b| {
+            let score_a = a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
+            let score_b = b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let existing = match self.writer.get_active_sources(&self.city_slug).await {
             Ok(s) => s,
@@ -691,12 +710,12 @@ impl<'a> SourceDiscoverer<'a> {
         let mut gap_count = 0u32;
         const MAX_GAP_QUERIES: u32 = 5;
 
-        for (title, what_would_help) in &tensions {
+        for t in &tensions {
             if gap_count >= MAX_GAP_QUERIES {
                 break;
             }
 
-            let help_text = what_would_help.as_deref().unwrap_or(title);
+            let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
             let query = format!("{} resources services {}", help_text, self.city_slug);
             let query_lower = query.to_lowercase();
 
@@ -726,23 +745,21 @@ impl<'a> SourceDiscoverer<'a> {
                 signals_corroborated: 0,
                 consecutive_empty_runs: 0,
                 active: true,
-                gap_context: Some(format!("Tension: {title}")),
+                gap_context: Some(format!("Tension: {}", t.title)),
                 weight: 0.3,
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
-                total_cost_cents: 0,
-                last_cost_cents: 0,
-                taxonomy_stats: None,
                 quality_penalty: 1.0,
                 // Mechanical gap queries seek responses to tensions
                 source_role: SourceRole::Response,
+                scrape_count: 0,
             };
 
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     gap_count += 1;
                     stats.gap_sources += 1;
-                    info!(tension = title.as_str(), query = source.canonical_value.as_str(), "Created gap analysis query");
+                    info!(tension = t.title.as_str(), query = source.canonical_value.as_str(), "Created gap analysis query");
                 }
                 Err(e) => warn!(error = %e, "Failed to create gap analysis source"),
             }
@@ -763,6 +780,25 @@ mod tests {
             what_would_help: what_would_help.map(|s| s.to_string()),
             category: None,
             unmet,
+            corroboration_count: 0,
+            source_diversity: 0,
+            cause_heat: 0.0,
+        }
+    }
+
+    fn make_tension_with_engagement(
+        title: &str, severity: &str, what_would_help: Option<&str>, unmet: bool,
+        corroboration_count: u32, source_diversity: u32, cause_heat: f64,
+    ) -> UnmetTension {
+        UnmetTension {
+            title: title.to_string(),
+            severity: severity.to_string(),
+            what_would_help: what_would_help.map(|s| s.to_string()),
+            category: None,
+            unmet,
+            corroboration_count,
+            source_diversity,
+            cause_heat,
         }
     }
 
@@ -1206,6 +1242,89 @@ mod tests {
             q.contains(new_query) || new_query.contains(q.as_str())
         });
         assert!(!is_dup, "Novel query should pass dedup");
+    }
+
+    // --- D2. Engagement-Aware Discovery ---
+
+    #[test]
+    fn briefing_engagement_shown_for_tensions() {
+        let mut briefing = make_briefing();
+        briefing.tensions = vec![
+            make_tension_with_engagement("Food desert", "high", Some("grocery co-op"), true, 3, 2, 0.7),
+            make_tension_with_engagement("Housing crisis", "medium", Some("housing programs"), false, 1, 1, 0.3),
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("community attention: 2 sources, 3 corroborations, heat=0.7"),
+            "Missing engagement line for unmet tension. Prompt:\n{prompt}");
+        assert!(prompt.contains("community attention: 1 sources, 1 corroborations, heat=0.3"),
+            "Missing engagement line for met tension. Prompt:\n{prompt}");
+    }
+
+    #[test]
+    fn briefing_engagement_zero_still_shown() {
+        let mut briefing = make_briefing();
+        briefing.tensions = vec![
+            make_tension("Novel early signal", "low", Some("unknown"), true),
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("Novel early signal"), "Zero-engagement tension should still appear");
+        assert!(prompt.contains("community attention: 0 sources, 0 corroborations, heat=0.0"),
+            "Zero engagement should still show engagement line. Prompt:\n{prompt}");
+    }
+
+    #[test]
+    fn briefing_high_engagement_tensions_first() {
+        let mut briefing = make_briefing();
+        briefing.tensions = vec![
+            make_tension_with_engagement("Low engagement", "high", Some("help"), true, 0, 0, 0.0),
+            make_tension_with_engagement("High engagement", "high", Some("help"), true, 5, 3, 0.8),
+            make_tension_with_engagement("Medium engagement", "high", Some("help"), true, 2, 1, 0.4),
+        ];
+        let prompt = briefing.format_prompt();
+        // All three should appear (no gating)
+        assert!(prompt.contains("Low engagement"), "Low engagement tension missing");
+        assert!(prompt.contains("High engagement"), "High engagement tension missing");
+        assert!(prompt.contains("Medium engagement"), "Medium engagement tension missing");
+    }
+
+    #[test]
+    fn mechanical_fallback_sorts_by_engagement() {
+        // Simulate the sort logic used in discover_from_gaps_mechanical
+        let mut tensions = vec![
+            make_tension_with_engagement("Low", "high", Some("help"), true, 0, 0, 0.0),
+            make_tension_with_engagement("High", "high", Some("help"), true, 5, 3, 0.8),
+            make_tension_with_engagement("Medium", "high", Some("help"), true, 2, 1, 0.4),
+        ];
+        tensions.sort_by(|a, b| {
+            let score_a = a.corroboration_count as f64 + a.source_diversity as f64 + a.cause_heat * 10.0;
+            let score_b = b.corroboration_count as f64 + b.source_diversity as f64 + b.cause_heat * 10.0;
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        assert_eq!(tensions[0].title, "High", "Highest engagement should sort first");
+        assert_eq!(tensions[1].title, "Medium", "Medium engagement should sort second");
+        assert_eq!(tensions[2].title, "Low", "Low engagement should sort last but still present");
+    }
+
+    #[test]
+    fn cold_start_ignores_engagement() {
+        // Cold start: < 3 tensions, no stories — mechanical fallback runs regardless of engagement
+        let briefing = DiscoveryBriefing {
+            tensions: vec![
+                make_tension_with_engagement("Only tension", "high", Some("help"), true, 0, 0, 0.0),
+            ],
+            stories: vec![],
+            signal_counts: SignalTypeCounts::default(),
+            successes: vec![],
+            failures: vec![],
+            existing_queries: vec![],
+            city_name: "Minneapolis".to_string(),
+            gap_type_stats: vec![],
+            extraction_yield: vec![],
+        };
+        assert!(briefing.is_cold_start(), "Should be cold start with 1 tension");
+        // Zero-engagement tension is still present — no gating
+        assert_eq!(briefing.tensions.len(), 1);
+        assert_eq!(briefing.tensions[0].corroboration_count, 0);
     }
 
     // --- E. Degradation Path ---

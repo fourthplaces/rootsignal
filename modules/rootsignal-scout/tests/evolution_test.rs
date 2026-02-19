@@ -40,8 +40,8 @@ const ALL_SCENARIOS: &[(&str, fn() -> (World, JudgeCriteria))] = &[
     ("rural_minnesota", || {
         (scenarios::rural_minnesota::world(), scenarios::rural_minnesota::criteria())
     }),
-    ("hidden_civic_minneapolis", || {
-        (scenarios::hidden_civic_minneapolis::world(), scenarios::hidden_civic_minneapolis::criteria())
+    ("hidden_community_minneapolis", || {
+        (scenarios::hidden_community_minneapolis::world(), scenarios::hidden_community_minneapolis::criteria())
     }),
     ("shifting_ground", || {
         (scenarios::shifting_ground::world(), scenarios::shifting_ground::criteria())

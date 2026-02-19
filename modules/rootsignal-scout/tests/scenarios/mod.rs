@@ -1,4 +1,4 @@
-pub mod hidden_civic_minneapolis;
+pub mod hidden_community_minneapolis;
 pub mod organizing_portland;
 pub mod rural_minnesota;
 pub mod shifting_ground;

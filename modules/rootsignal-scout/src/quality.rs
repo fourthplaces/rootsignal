@@ -47,28 +47,46 @@ pub fn score(node: &Node) -> ExtractionQuality {
                 || matches!(node, Node::Give(g) if g.is_ongoing)
                 || matches!(node, Node::Ask(_))));
 
-    // Completeness: fraction of 6 key fields populated
-    // title, summary, signal_type (always), location, action_url, timing
-    let mut filled = 3.0_f32; // title, summary, signal_type always present
-    if has_location {
-        filled += 1.0;
-    }
-    if has_action_url {
-        filled += 1.0;
-    }
-    if has_timing {
-        filled += 1.0;
-    }
-    let completeness = filled / 6.0;
+    // Completeness: fraction of *applicable* optional fields populated.
+    // Always-present fields (title, summary, signal_type) are prerequisites, not differentiators.
+    // Denominator varies by node type so Notice/Tension aren't penalized for fields they can't have.
+    let (optional_filled, optional_total) = match node {
+        Node::Event(_) => {
+            // location, action_url, timing
+            let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
+            (filled, 3u8)
+        }
+        Node::Give(_) => {
+            // location, action_url, is_ongoing
+            let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
+            (filled, 3)
+        }
+        Node::Ask(_) => {
+            // location, action_url
+            let filled = has_location as u8 + has_action_url as u8;
+            (filled, 2)
+        }
+        Node::Notice(_) | Node::Tension(_) => {
+            // location only
+            (has_location as u8, 1)
+        }
+        Node::Evidence(_) => (0, 0),
+    };
+    let completeness = if optional_total > 0 {
+        optional_filled as f32 / optional_total as f32
+    } else {
+        0.0
+    };
 
-    // Confidence: weighted average
+    // Confidence: completeness and geo quality, equally weighted.
+    // Freshness is always 1.0 at extraction time (no discrimination), so it's excluded here.
+    // Apply freshness as a time-based decay multiplier separately if needed.
     let geo_score = match geo_accuracy {
         GeoAccuracy::High => 1.0_f32,
         GeoAccuracy::Medium => 0.7,
         GeoAccuracy::Low => 0.3,
     };
-    let confidence =
-        completeness * 0.4 + geo_score * 0.3 + meta.freshness_score * 0.3;
+    let confidence = completeness * 0.5 + geo_score * 0.5;
 
     ExtractionQuality {
         actionable,
@@ -160,6 +178,80 @@ mod tests {
 
         let q = score(&event);
         assert!(q.actionable);
+    }
+
+    #[test]
+    fn bare_event_scores_low_confidence() {
+        // Bare Event: no optional fields filled (0/3), geo = Low (0.3)
+        // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
+        let mut meta = test_meta();
+        meta.location = None;
+        let node = Node::Event(EventNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: "".to_string(),
+            organizer: None,
+            is_recurring: false,
+        });
+        let q = score(&node);
+        assert!((q.confidence - 0.15).abs() < 0.01, "Bare event confidence: {}", q.confidence);
+    }
+
+    #[test]
+    fn complete_event_exact_geo_scores_max() {
+        // Complete Event: all 3 optional fields (3/3), geo = High (1.0)
+        // confidence = 1.0 * 0.5 + 1.0 * 0.5 = 1.0
+        let meta = test_meta(); // has exact geo location
+        let node = Node::Event(EventNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com/rsvp".to_string(),
+            organizer: None,
+            is_recurring: false,
+        });
+        let q = score(&node);
+        assert!((q.confidence - 1.0).abs() < 0.01, "Complete event confidence: {}", q.confidence);
+    }
+
+    #[test]
+    fn notice_with_location_scores_high() {
+        // Notice: only applicable optional field is location. With location filled (1/1)
+        // and medium geo: confidence = 1.0 * 0.5 + 0.7 * 0.5 = 0.85
+        use rootsignal_common::{NoticeNode, Severity};
+        let mut meta = test_meta();
+        meta.location = Some(GeoPoint {
+            lat: 44.97,
+            lng: -93.26,
+            precision: GeoPrecision::Neighborhood,
+        });
+        let node = Node::Notice(NoticeNode {
+            meta,
+            severity: Severity::Medium,
+            category: None,
+            effective_date: None,
+            source_authority: None,
+        });
+        let q = score(&node);
+        assert!((q.confidence - 0.85).abs() < 0.01, "Notice with location confidence: {}", q.confidence);
+    }
+
+    #[test]
+    fn tension_without_location_scores_low() {
+        // Tension: location is the only applicable field. Without it (0/1), geo = Low (0.3)
+        // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
+        use rootsignal_common::{TensionNode, Severity};
+        let mut meta = test_meta();
+        meta.location = None;
+        let node = Node::Tension(TensionNode {
+            meta,
+            severity: Severity::High,
+            category: None,
+            what_would_help: None,
+        });
+        let q = score(&node);
+        assert!((q.confidence - 0.15).abs() < 0.01, "Bare tension confidence: {}", q.confidence);
     }
 
     #[test]

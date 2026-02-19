@@ -145,7 +145,7 @@ impl EditionGenerator {
         let prompt = format!(
             r#"Write a brief editorial summary for the {city} community newspaper edition for {period}.
 
-This week we tracked {story_count} stories across {signal_count} civic signals.
+This week we tracked {story_count} stories across {signal_count} signals.
 
 Stories by category:
 {categories}

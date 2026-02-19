@@ -33,7 +33,7 @@ pub fn world() -> World {
                 referenced_by: vec![
                     "https://www.portland.gov/bds/rent-stabilization-hearing".to_string(),
                 ],
-                category: "civic_event".to_string(),
+                category: "community_event".to_string(),
             },
             Fact {
                 text: "Burnside Tenant Union has won 3 code enforcement cases since 2023".to_string(),

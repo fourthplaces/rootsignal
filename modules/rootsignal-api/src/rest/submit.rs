@@ -132,11 +132,9 @@ pub async fn api_submit(
         weight: 0.5,
         cadence_hours: None,
         avg_signals_per_scrape: 0.0,
-        total_cost_cents: 0,
-        last_cost_cents: 0,
-        taxonomy_stats: None,
         quality_penalty: 1.0,
         source_role: SourceRole::default(),
+        scrape_count: 0,
     };
 
     if let Err(e) = state.writer.upsert_source(&source).await {

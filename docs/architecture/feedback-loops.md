@@ -530,13 +530,13 @@ The system never crashes from budget exhaustion. It gracefully drops expensive f
 
 **Consumes:** `discover_from_actors()` queries actors with domains/social_urls not yet tracked as sources.
 
-**Effect:** Closes a discovery loop: signals mentioning organizations → actor nodes with domains → new source nodes → future scrapes → more signals. Organizations active in civic life automatically become tracked sources.
+**Effect:** Closes a discovery loop: signals mentioning organizations → actor nodes with domains → new source nodes → future scrapes → more signals. Organizations active in community life automatically become tracked sources.
 
 ---
 
 ### 17. Topic Discovery → New Accounts
 
-**Produces:** New Instagram SourceNodes created when hashtag/topic search finds accounts posting civic signals.
+**Produces:** New Instagram SourceNodes created when hashtag/topic search finds accounts posting signals.
 
 **Consumes:** Next run's scheduling includes these new sources at starter weight (0.3).
 
@@ -578,7 +578,7 @@ The system never crashes from budget exhaustion. It gracefully drops expensive f
 
 **Produces:** `Actor.signal_count` incremented on each mention. `Actor.last_active` timestamp updated.
 
-**Consumes:** Enables "who's most active in civic space" analysis. Actors with high signal counts and recent activity represent key civic organizations.
+**Consumes:** Enables "who's most active in community space" analysis. Actors with high signal counts and recent activity represent key community organizations.
 
 **Effect:** Primarily informing — doesn't directly change scout behavior, but enriches the graph for downstream consumers (editions, API queries).
 

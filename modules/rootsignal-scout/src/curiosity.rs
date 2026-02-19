@@ -32,27 +32,27 @@ const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 /// Wrapper that lets a borrowed `&dyn WebSearcher` be held behind an `Arc`.
 /// The Arc manages the wrapper struct's heap allocation, NOT the underlying data.
 /// SAFETY: The caller must ensure the referenced data outlives all tool calls.
-struct SearcherHandle(*const dyn WebSearcher);
+pub(crate) struct SearcherHandle(pub(crate) *const dyn WebSearcher);
 
 // SAFETY: WebSearcher is Send + Sync, and we only access it through shared reference.
 unsafe impl Send for SearcherHandle {}
 unsafe impl Sync for SearcherHandle {}
 
 impl SearcherHandle {
-    fn get(&self) -> &dyn WebSearcher {
+    pub(crate) fn get(&self) -> &dyn WebSearcher {
         // SAFETY: The CuriosityLoop guarantees the reference outlives all tool calls.
         unsafe { &*self.0 }
     }
 }
 
 /// Wrapper that lets a borrowed `&dyn PageScraper` be held behind an `Arc`.
-struct ScraperHandle(*const dyn PageScraper);
+pub(crate) struct ScraperHandle(pub(crate) *const dyn PageScraper);
 
 unsafe impl Send for ScraperHandle {}
 unsafe impl Sync for ScraperHandle {}
 
 impl ScraperHandle {
-    fn get(&self) -> &dyn PageScraper {
+    pub(crate) fn get(&self) -> &dyn PageScraper {
         unsafe { &*self.0 }
     }
 }
@@ -61,29 +61,29 @@ impl ScraperHandle {
 // Tool Wrappers — give the LLM web_search and read_page capabilities
 // =============================================================================
 
-struct WebSearchTool {
-    searcher: Arc<SearcherHandle>,
+pub(crate) struct WebSearchTool {
+    pub(crate) searcher: Arc<SearcherHandle>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WebSearchArgs {
-    query: String,
+pub(crate) struct WebSearchArgs {
+    pub(crate) query: String,
 }
 
 #[derive(Debug, Serialize)]
-struct WebSearchOutput {
-    results: Vec<WebSearchResultItem>,
+pub(crate) struct WebSearchOutput {
+    pub(crate) results: Vec<WebSearchResultItem>,
 }
 
 #[derive(Debug, Serialize)]
-struct WebSearchResultItem {
-    url: String,
-    title: String,
-    snippet: String,
+pub(crate) struct WebSearchResultItem {
+    pub(crate) url: String,
+    pub(crate) title: String,
+    pub(crate) snippet: String,
 }
 
 #[derive(Debug)]
-struct ToolError(String);
+pub(crate) struct ToolError(pub(crate) String);
 
 impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,13 +139,13 @@ impl Tool for WebSearchTool {
     }
 }
 
-struct ReadPageTool {
-    scraper: Arc<ScraperHandle>,
+pub(crate) struct ReadPageTool {
+    pub(crate) scraper: Arc<ScraperHandle>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ReadPageArgs {
-    url: String,
+pub(crate) struct ReadPageArgs {
+    pub(crate) url: String,
 }
 
 #[async_trait]

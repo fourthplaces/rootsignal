@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::prompt;
 use crate::world::World;
 
-const SONNET_MODEL: &str = "claude-sonnet-4-6-20250514";
+const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
 
 /// Criteria for judge evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize)]

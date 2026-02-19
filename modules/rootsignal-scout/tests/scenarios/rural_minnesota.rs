@@ -5,7 +5,7 @@ use simweb::{Fact, Geography, JudgeCriteria, Site, SocialProfile, World};
 pub fn world() -> World {
     World {
         name: "Rural Minnesota".to_string(),
-        description: "Northfield, Minnesota — a small college town with very few online civic \
+        description: "Northfield, Minnesota — a small college town with very few online \
             sources. The town government has a basic website, there's one local newspaper \
             (the Northfield News), and one church runs a Facebook page that occasionally posts \
             about community events. Total: 3 sources. The challenge is producing accurate signals \
@@ -17,7 +17,7 @@ pub fn world() -> World {
                 referenced_by: vec![
                     "https://www.ci.northfield.mn.us/meetings".to_string(),
                 ],
-                category: "civic_event".to_string(),
+                category: "community_event".to_string(),
             },
             Fact {
                 text: "Northfield Area Food Shelf serves 200 families per month".to_string(),

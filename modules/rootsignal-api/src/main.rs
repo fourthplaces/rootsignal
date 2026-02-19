@@ -128,6 +128,7 @@ async fn main() -> Result<()> {
         .route("/admin/stories/{id}", get(pages::story_detail_page))
         .route("/admin/cities", get(pages::cities_page).post(pages::create_city))
         .route("/admin/cities/{slug}", get(pages::city_detail_page))
+        .route("/admin/cities/{slug}/sources", post(pages::add_city_source))
         .route("/admin/cities/{slug}/scout", post(pages::run_city_scout))
         .route("/admin/cities/{slug}/scout/stop", post(pages::stop_city_scout))
         .route("/admin/cities/{slug}/scout/reset", post(pages::reset_scout_lock))

@@ -307,8 +307,11 @@ pub async fn cities_page(
 ) -> impl IntoResponse {
     match state.writer.list_cities().await {
         Ok(cities) => {
-            let slugs: Vec<String> = cities.iter().map(|c| c.slug.clone()).collect();
-            let counts = state.writer.get_city_counts(&slugs).await.unwrap_or_default();
+            let city_tuples: Vec<(String, f64, f64, f64)> = cities
+                .iter()
+                .map(|c| (c.slug.clone(), c.center_lat, c.center_lng, c.radius_km))
+                .collect();
+            let counts = state.writer.get_city_counts(&city_tuples).await.unwrap_or_default();
 
             let now = chrono::Utc::now();
             let mut views = Vec::new();
@@ -405,7 +408,7 @@ pub async fn city_detail_page(
     let signals = if tab == "signals" {
         state
             .reader
-            .list_recent_for_city(&slug, 100)
+            .list_recent_for_city(city.center_lat, city.center_lng, city.radius_km, 100)
             .await
             .unwrap_or_default()
             .iter()
@@ -418,7 +421,7 @@ pub async fn city_detail_page(
     let stories = if tab == "stories" {
         let raw = state
             .reader
-            .top_stories_for_city(&slug, 50)
+            .top_stories_for_city(city.center_lat, city.center_lng, city.radius_km, 50)
             .await
             .unwrap_or_default();
         let story_ids: Vec<uuid::Uuid> = raw.iter().map(|s| s.id).collect();
@@ -1093,6 +1096,71 @@ pub async fn edition_detail_page(
             (StatusCode::INTERNAL_SERVER_ERROR, Html("Error loading edition".to_string()))
         }
     }
+}
+
+// --- Add source from admin UI ---
+
+#[derive(serde::Deserialize)]
+pub struct AddSourceForm {
+    pub url: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub async fn add_city_source(
+    _session: AdminSession,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+    axum::Form(form): axum::Form<AddSourceForm>,
+) -> impl IntoResponse {
+    let url = form.url.trim().to_string();
+
+    // Validate URL
+    let parsed = match url::Url::parse(&url) {
+        Ok(u) if u.scheme() == "http" || u.scheme() == "https" => u,
+        _ => {
+            warn!(url = url.as_str(), "Invalid URL submitted via admin");
+            return Redirect::to(&format!("/admin/cities/{slug}?tab=sources"));
+        }
+    };
+    let _ = parsed; // used only for validation
+
+    let source_type = rootsignal_common::SourceType::from_url(&url);
+    let canonical_value = crate::rest::submit::canonical_value_from_url(source_type, &url);
+    let canonical_key = format!("{}:{}:{}", slug, source_type, canonical_value);
+    let reason = form.reason.trim().to_string();
+
+    let source = rootsignal_common::SourceNode {
+        id: Uuid::new_v4(),
+        canonical_key,
+        canonical_value,
+        url: Some(url.clone()),
+        source_type,
+        discovery_method: rootsignal_common::DiscoveryMethod::HumanSubmission,
+        city: slug.clone(),
+        created_at: chrono::Utc::now(),
+        last_scraped: None,
+        last_produced_signal: None,
+        signals_produced: 0,
+        signals_corroborated: 0,
+        consecutive_empty_runs: 0,
+        active: true,
+        gap_context: if reason.is_empty() { None } else { Some(format!("Submission: {reason}")) },
+        weight: 0.5,
+        cadence_hours: None,
+        avg_signals_per_scrape: 0.0,
+        quality_penalty: 1.0,
+        source_role: rootsignal_common::SourceRole::default(),
+        scrape_count: 0,
+    };
+
+    if let Err(e) = state.writer.upsert_source(&source).await {
+        warn!(error = %e, "Failed to create admin-submitted source");
+    } else {
+        info!(url, city = slug.as_str(), "Source added via admin UI");
+    }
+
+    Redirect::to(&format!("/admin/cities/{slug}?tab=sources"))
 }
 
 #[cfg(test)]

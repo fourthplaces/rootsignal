@@ -17,7 +17,7 @@ use crate::improve::Improver;
 use crate::judge::Verdict;
 use crate::scenario_gym::ScenarioGym;
 
-const SONNET_MODEL: &str = "claude-sonnet-4-6-20250514";
+const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
 
 /// Configuration for an evolution run.
 pub struct EvolutionConfig {
@@ -240,7 +240,7 @@ impl Evolver {
         count: u32,
     ) -> Vec<Mutation> {
         let system = "\
-You improve the system prompt for a civic signal extraction agent.
+You improve the system prompt for a signal extraction agent.
 
 The agent's core mission is the TENSION-RESPONSE CYCLE:
 1. Find TENSIONS — things out of alignment in community or ecological life

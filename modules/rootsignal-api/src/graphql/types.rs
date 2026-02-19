@@ -332,8 +332,8 @@ impl GqlGiveSignal {
     async fn action_url(&self) -> &str {
         &self.0.action_url
     }
-    async fn availability(&self) -> &str {
-        &self.0.availability
+    async fn availability(&self) -> Option<&str> {
+        self.0.availability.as_deref()
     }
     async fn is_ongoing(&self) -> bool {
         self.0.is_ongoing
@@ -357,8 +357,8 @@ impl GqlAskSignal {
     async fn urgency(&self) -> GqlUrgency {
         self.0.urgency.into()
     }
-    async fn what_needed(&self) -> &str {
-        &self.0.what_needed
+    async fn what_needed(&self) -> Option<&str> {
+        self.0.what_needed.as_deref()
     }
     async fn action_url(&self) -> Option<&str> {
         self.0.action_url.as_deref()

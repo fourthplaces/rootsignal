@@ -21,7 +21,7 @@ fn SignalsList(nodes: Vec<NodeView>) -> Element {
     rsx! {
         Layout { title: "Signals".to_string(), active_page: "signals".to_string(),
             div { class: "max-w-4xl mx-auto p-6",
-                h2 { class: "text-xl font-semibold mb-4", "Recent Civic Signals" }
+                h2 { class: "text-xl font-semibold mb-4", "Recent Signals" }
                 if nodes.is_empty() {
                     p { class: "text-gray-400 text-center py-10",
                         "No signals found yet. Run the scout to populate the graph."

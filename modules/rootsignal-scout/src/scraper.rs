@@ -406,6 +406,10 @@ impl SocialScraper for ApifyClient {
                 Ok(posts
                     .into_iter()
                     .filter_map(|p| {
+                        // Skip comments and community info — only keep actual posts
+                        if p.data_type.as_deref() != Some("post") {
+                            return None;
+                        }
                         let title = p.title.unwrap_or_default();
                         let body = p.body.unwrap_or_default();
                         let content = format!("{}\n\n{}", title, body).trim().to_string();

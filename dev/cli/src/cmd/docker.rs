@@ -151,7 +151,7 @@ pub enum DockerCommand {
     /// Run cypher-shell in the neo4j container
     Cypher,
 
-    /// Run scout to discover civic signals
+    /// Run scout to discover signals
     Scout,
 }
 

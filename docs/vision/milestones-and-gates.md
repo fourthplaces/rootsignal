@@ -13,8 +13,8 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 
 ### What to Build
 - Automated discovery across 4-5 high-value source types
-- AI extraction that turns raw content into structured civic knowledge
-- Persistent storage of the civic graph
+- AI extraction that turns raw content into structured knowledge
+- Persistent storage of the signal graph
 - A simple output — anything that lets you look at the results and assess quality quickly
 - An automated quality check that scores each result for actionability, freshness, geo-accuracy, and completeness
 
@@ -124,22 +124,22 @@ Milestones are sequential. Each one earns the right to the next by passing its g
 
 ### What to Build
 - Add ecological signal sources (5-10 environmental orgs, iNaturalist, state DNR)
-- Add civic/economic signal sources (boycott signal, advocacy actions, policy engagement)
+- Add economic signal sources (boycott signal, advocacy actions, policy engagement)
 - Add direct intake via one channel (simplest option: web form, or email intake)
 - Expand to a second hotspot (another city, or a broader Minnesota geography) to test the scaling model
 - Stress test the system at higher volume — does quality hold as scope expands?
 
 ### What to Assess
 - **Ecological signal quality:** Does habitat restoration signal sit naturally alongside food shelf volunteer calls? Or does it feel forced — like two different products jammed together?
-- **Civic signal sensitivity:** Surface some boycott or advocacy signal. Show it to 5 people from Milestone 3. Does it feel appropriate? Does anyone object to Root Signal carrying this? Does it undermine trust?
+- **Advocacy signal sensitivity:** Surface some boycott or advocacy signal. Show it to 5 people from Milestone 3. Does it feel appropriate? Does anyone object to Root Signal carrying this? Does it undermine trust?
 - **Direct intake quality:** How does human-reported signal compare to scraped signal? Is it higher quality as hypothesized? Or is it noisy and unmoderated?
 - **Second hotspot viability:** How long does bootstrapping take? Is the signal quality comparable to the Twin Cities, or does it depend on local knowledge to configure well?
 - **System stability:** As source count and signal volume increase, does the pipeline stay reliable? Or are you drowning in broken scrapers?
 
 ### Gate
-**Go:** Ecological and civic signal feel natural. Direct intake adds value. Second hotspot bootstraps within 48 hours with comparable quality. System is stable.
+**Go:** Ecological and economic signal feel natural. Direct intake adds value. Second hotspot bootstraps within 48 hours with comparable quality. System is stable.
 
-**Adjust:** Some signal domains feel forced or problematic. Scope back to what's working. Maybe ecological fits but civic doesn't (or vice versa). Let reality tell you what belongs.
+**Adjust:** Some signal domains feel forced or problematic. Scope back to what's working. Maybe ecological fits but economic doesn't (or vice versa). Let reality tell you what belongs.
 
 **Kill this path:** Expanding scope degrades the core experience. More signal types create more noise, not more value. Root Signal may be strongest as a focused tool (e.g., volunteer + events only) rather than an everything-signal utility. That's fine — reshape accordingly.
 

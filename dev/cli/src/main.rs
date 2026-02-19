@@ -48,7 +48,7 @@ enum Commands {
     /// Check system prerequisites
     Doctor,
 
-    /// Run scout to discover civic signals
+    /// Run scout to discover signals
     Scout,
 
     /// Run scout integration tests (fixture-driven, ~$1-2)
@@ -445,7 +445,7 @@ fn test_sim_interactive(ctx: &AppContext) -> Result<()> {
         "organizing_portland",
         "simmering_cedar_riverside",
         "rural_minnesota",
-        "hidden_civic_minneapolis",
+        "hidden_community_minneapolis",
         "shifting_ground",
         "tension_response_cycle",
         "tension_discovery_bridge",
@@ -464,7 +464,7 @@ fn test_sim_interactive(ctx: &AppContext) -> Result<()> {
         2 => Some("sim_organizing_portland"),
         3 => Some("sim_simmering_cedar_riverside"),
         4 => Some("sim_rural_minnesota"),
-        5 => Some("sim_hidden_civic_minneapolis"),
+        5 => Some("sim_hidden_community_minneapolis"),
         6 => Some("sim_shifting_ground"),
         7 => Some("sim_tension_response_cycle"),
         8 => Some("sim_tension_discovery_bridge"),

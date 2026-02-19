@@ -50,9 +50,9 @@ People want to align their daily habits with their values but can't see the thre
 
 **What's missing:** Signal about corporate behavior, boycotts, and ethical alternatives concentrated alongside community action signal — so "how do I show up?" includes "what do I stop buying?"
 
-### 6. No Local Utility for Civic Participation
+### 6. No Local Utility for Community Participation
 
-Cities have 311 systems for complaints. They have websites for permits and services. But there is no utility — reliable, always-on, community-owned infrastructure — for civic participation in the positive sense. Not "I need to report a pothole" but "I want to contribute to where I live." This gap is felt acutely during crises (where do I donate after the tornado?) but it exists every single day in quieter ways (where can I volunteer this weekend?).
+Cities have 311 systems for complaints. They have websites for permits and services. But there is no utility — reliable, always-on, community-owned infrastructure — for community participation in the positive sense. Not "I need to report a pothole" but "I want to contribute to where I live." This gap is felt acutely during crises (where do I donate after the tornado?) but it exists every single day in quieter ways (where can I volunteer this weekend?).
 
 **What exists today:** 311 systems (complaint-oriented), municipal websites (service-oriented), United Way 211 (often outdated).
 
@@ -114,7 +114,7 @@ In the near term: a signal pipeline proving that concentrated local signal is va
 
 In the medium term: an open API that any community app, city dashboard, or organization can plug into to serve their people better.
 
-In the long term: a community-owned, open-source utility — deployable by any city, any neighborhood, any community — that answers the most fundamental civic question: **how do we show up for each other and for the world we live in?**
+In the long term: a community-owned, open-source utility — deployable by any city, any neighborhood, any community — that answers the most fundamental question: **how do we show up for each other and for the world we live in?**
 
 ---
 
@@ -128,7 +128,7 @@ Root Signal serves people through roles, not demographics. The same person might
 
 **Attendee** — "I want to show up. What's happening near me?"
 
-**Advocate** — "I want to align my economic and civic behavior with my values. What should I know?"
+**Advocate** — "I want to align my economic and community behavior with my values. What should I know?"
 
 **Skilled professional** — "I have expertise. Who needs it?"
 

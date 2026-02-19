@@ -44,9 +44,9 @@ This means: no algorithmic feeds designed to maximize engagement. No dark patter
 
 The system handles sensitive information — where people need help, who's in crisis, what communities are organizing around. Privacy isn't a feature toggle. It's a structural property of the system.
 
-The boundary is **public vs. private**, not which platform something came from. Public posts on Instagram, public GoFundMe campaigns, public Facebook events — these are civic signal and are treated the same as org websites or government data. Private messages, friends-only posts, closed groups — these are never touched. Personal information from direct intake is handled with care. Location data is served at the minimum precision necessary. The system does not build profiles of people seeking help.
+The boundary is **public vs. private**, not which platform something came from. Public posts on Instagram, public GoFundMe campaigns, public Facebook events — these are signal and are treated the same as org websites or government data. Private messages, friends-only posts, closed groups — these are never touched. Personal information from direct intake is handled with care. Location data is served at the minimum precision necessary. The system does not build profiles of people seeking help.
 
-Privacy protection is not signal suppression. When community members post publicly about civic tensions — including enforcement activity, sanctuary responses, or organizing — they are exercising voice, not exposing vulnerability. Muting that signal out of paternalistic caution silences the people trying to help. The privacy boundary protects *private* content. Public civic voice flows freely.
+Privacy protection is not signal suppression. When community members post publicly about community tensions — including enforcement activity, sanctuary responses, or organizing — they are exercising voice, not exposing vulnerability. Muting that signal out of paternalistic caution silences the people trying to help. The privacy boundary protects *private* content. Public community voice flows freely.
 
 This means: privacy isn't a policy — it's architecture. The system is designed so that certain violations are structurally impossible, not merely discouraged.
 
@@ -60,7 +60,7 @@ This means: every signal record includes an action URL pointing to the original 
 
 The system reads from many platforms — org websites, social media, government databases, event platforms, fundraising sites. The ethical boundary is not which platform something came from. It's whether the content was made public by its creator.
 
-A church posting "we need food pantry volunteers" on Instagram has the same standing as the same church posting it on their website. A GoFundMe campaign is public by design. A public Facebook event is public. The system treats all public civic signal equally — it extracts facts, builds graph nodes, and links back to the original.
+A church posting "we need food pantry volunteers" on Instagram has the same standing as the same church posting it on their website. A GoFundMe campaign is public by design. A public Facebook event is public. The system treats all public signal equally — it extracts facts, builds graph nodes, and links back to the original.
 
 What the system never touches: private messages, friends-only posts, closed groups, DMs, login-walled content that was not intended to be public. If there's ever ambiguity about whether content was meant to be public, it's left alone.
 
@@ -96,7 +96,7 @@ This means: ecological signal is first-class. Environmental stewardship opportun
 
 Root Signal recognizes that people contribute in different ways and all of them matter. Volunteering time, donating money, attending an event, boycotting a company, changing a purchasing habit, collecting scientific data, planting a tree, teaching a class, organizing a neighborhood — these are all ways of showing up. Root Signal doesn't privilege one form over another.
 
-This means: the audience role model is expansive. Signal is tagged for all the ways someone might act on it. The system doesn't assume that "helping" means physical volunteering — it includes economic action, civic participation, knowledge work, stewardship, and personal behavior change.
+This means: the audience role model is expansive. Signal is tagged for all the ways someone might act on it. The system doesn't assume that "helping" means physical volunteering — it includes economic action, community participation, knowledge work, stewardship, and personal behavior change.
 
 ### 13. Emergent Over Engineered
 
@@ -114,7 +114,7 @@ This means: prefer graph structure over application logic. Don't hard-code "insi
 
 **Root Signal will not take political positions.** Root Signal surfaces signal that exists — boycotts being organized, policies being debated, actions being planned. It does not editorialize. It does not endorse. It concentrates signal and lets people decide how to act.
 
-**Root Signal will not gatekeep what enters the graph.** If a community is organizing, their signal belongs in the system. The threshold for inclusion is "is this civic, grounded, and connected to action or context?" — not "do we agree with it?" The system practices open ingestion and confidence-tiered surfacing: everything civic enters the graph, but what surfaces first is determined by evidence density, freshness, and source corroboration — and every ranking factor is visible to the user.
+**Root Signal will not gatekeep what enters the graph.** If a community is organizing, their signal belongs in the system. The threshold for inclusion is "is this grounded and connected to action or context?" — not "do we agree with it?" The system practices open ingestion and confidence-tiered surfacing: everything enters the graph, but what surfaces first is determined by evidence density, freshness, and source corroboration — and every ranking factor is visible to the user.
 
 **Root Signal will not optimize for growth at the expense of trust.** Trust is the only thing that makes a community utility viable. If growth and trust ever conflict, trust wins. Every time.
 
@@ -130,7 +130,7 @@ When facing an architectural or product decision, ask:
 
 1. **Does this serve the signal or serve the platform?** If it optimizes for Root Signal's growth or engagement at the expense of signal quality or community trust, don't do it.
 
-2. **Does this respect the public/private boundary?** If it blurs the line between public civic signal and private content, tighten the boundary.
+2. **Does this respect the public/private boundary?** If it blurs the line between public signal and private content, tighten the boundary.
 
 3. **Could a community run this themselves?** If the decision creates corporate dependence or makes self-hosting harder, reconsider.
 

@@ -1,8 +1,8 @@
-# Civic Engagement Signal Landscape for Root Signal
+# Community Engagement Signal Landscape for Root Signal
 
 ## The Core Tension
 
-Civic engagement isn't a flat list — it's a **multi-dimensional space** where any single issue (say, a new housing development) can simultaneously touch land use, environmental justice, racial equity, economic development, and democratic process. So we need to think about this in two ways: **domains** (what the issue is about) and **engagement types** (how people participate).
+Community engagement isn't a flat list — it's a **multi-dimensional space** where any single issue (say, a new housing development) can simultaneously touch land use, environmental justice, racial equity, economic development, and democratic process. So we need to think about this in two ways: **domains** (what the issue is about) and **engagement types** (how people participate).
 
 ---
 
@@ -114,7 +114,7 @@ Civic engagement isn't a flat list — it's a **multi-dimensional space** where 
 
 ## Engagement Types (The "How" Layer)
 
-This is the other dimension. For any domain above, civic engagement takes different forms:
+This is the other dimension. For any domain above, community engagement takes different forms:
 
 - **Public hearings & comment periods** — formal government processes
 - **Voting & elections** — choosing representatives and deciding ballot questions
@@ -122,7 +122,7 @@ This is the other dimension. For any domain above, civic engagement takes differ
 - **Volunteering & service** — direct action (cleanups, tutoring, building)
 - **Mutual aid** — community self-provision outside government
 - **Participatory planning** — co-design processes
-- **Litigation & legal advocacy** — using courts to advance civic goals
+- **Litigation & legal advocacy** — using courts to advance community goals
 - **Media & narrative** — community journalism, storytelling, public discourse
 - **Direct democracy** — petitions, ballot initiatives, referendums
 
@@ -134,7 +134,7 @@ Consider a single real example:
 
 > **The Blue Line Extension (light rail to Brooklyn Park)**
 
-This simultaneously touches: transportation, land use, housing (displacement fears), racial equity (route serves communities of color), environmental (transit vs. cars), economic development, and democratic process (public comment periods). A resident engaging with this issue is doing civic engagement across at least 7 domains at once.
+This simultaneously touches: transportation, land use, housing (displacement fears), racial equity (route serves communities of color), environmental (transit vs. cars), economic development, and democratic process (public comment periods). A resident engaging with this issue is doing community engagement across at least 7 domains at once.
 
 **This is Root Signal's superpower.** Most platforms organize by domain silo. A transportation advocacy org tracks transit. A housing org tracks displacement. Nobody connects them. Root Signal can surface that **one public hearing** is relevant to people who care about any of those domains.
 
@@ -153,12 +153,12 @@ This simultaneously touches: transportation, land use, housing (displacement fea
 
 Applying the editorial principles (see `editorial-and-signal-inclusion-principles.md`):
 
-**All civic signal is first-class.** Root Signal surfaces civic reality — what's happening, who's responding, and how to plug in. This includes:
+**All signal is first-class.** Root Signal surfaces local reality — what's happening, who's responding, and how to plug in. This includes:
 
 - **Constructive action:** Volunteer opportunities, participation pathways, community-building initiatives, resource sharing
-- **Civic process:** Public hearings, comment periods, elections, board vacancies, budget processes
-- **Tension and response:** When civic reality is under stress, the system maps both the tension and every response to it — protests, legal aid, solidarity events, mutual aid, policy advocacy
-- **Accountability and transparency:** Government data, voting records, contract data, environmental reports — surfaced as civic facts connected to the graph
-- **Organizing and advocacy:** Community-driven campaigns are civic signal. The system surfaces them without editorializing about whether the cause is right or wrong
+- **Public process:** Public hearings, comment periods, elections, board vacancies, budget processes
+- **Tension and response:** When local reality is under stress, the system maps both the tension and every response to it — protests, legal aid, solidarity events, mutual aid, policy advocacy
+- **Accountability and transparency:** Government data, voting records, contract data, environmental reports — surfaced as facts connected to the graph
+- **Organizing and advocacy:** Community-driven campaigns are signal. The system surfaces them without editorializing about whether the cause is right or wrong
 
-**What stays out of scope:** Raw threat data without civic context, partisan endorsements, rumors without provenance, personal disputes, commercial advertising. See the editorial principles for the full inclusion/exclusion framework.
+**What stays out of scope:** Raw threat data without community context, partisan endorsements, rumors without provenance, personal disputes, commercial advertising. See the editorial principles for the full inclusion/exclusion framework.

@@ -222,7 +222,7 @@ AI costs grow as signal volume increases. Scraping costs grow with more social m
 
 **Test:** Track actual costs during first sprint. Extrapolate: what would 5 hotspots cost? 20? At what point is this unsustainable on personal funds?
 
-**Mitigation:** Optimize extraction — batch processing, smart re-scraping (only re-process changed content), use smaller models where full Claude isn't needed. Explore grant funding (civic tech grants, community foundation grants). Consider a sustainability model where cities or institutions pay for managed hotspot instances while the core remains open and free.
+**Mitigation:** Optimize extraction — batch processing, smart re-scraping (only re-process changed content), use smaller models where full Claude isn't needed. Explore grant funding (community tech grants, community foundation grants). Consider a sustainability model where cities or institutions pay for managed hotspot instances while the core remains open and free.
 
 ---
 

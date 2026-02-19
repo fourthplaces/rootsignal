@@ -1,13 +1,45 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use clap::Parser;
+use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use rootsignal_common::{CityNode, Config};
-use rootsignal_graph::{cause_heat::compute_cause_heat, migrate::{migrate, backfill_source_diversity, backfill_source_canonical_keys}, GraphClient, GraphWriter};
+use rootsignal_common::{CityNode, Config, Node, NodeType, StoryNode};
+use rootsignal_graph::{
+    cause_heat::compute_cause_heat,
+    migrate::{migrate, backfill_source_diversity, backfill_source_canonical_keys},
+    query, GraphClient, GraphWriter,
+    reader::{node_type_label, row_to_node, row_to_story},
+};
 use rootsignal_scout::{bootstrap, scout::Scout, scraper::TavilySearcher};
+
+#[derive(Parser)]
+#[command(about = "Run the Root Signal scout for a city")]
+struct Cli {
+    /// City slug (e.g. "minneapolis"). Overrides CITY env var.
+    city: Option<String>,
+
+    /// Dump raw graph data (stories + signals) as JSON to stdout instead of running the scout.
+    #[arg(long)]
+    dump: bool,
+}
+
+#[derive(Serialize)]
+struct DumpOutput {
+    city: String,
+    stories: Vec<StoryDump>,
+    ungrouped_signals: Vec<Node>,
+}
+
+#[derive(Serialize)]
+struct StoryDump {
+    #[serde(flatten)]
+    story: StoryNode,
+    signals: Vec<Node>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -18,14 +50,26 @@ async fn main() -> Result<()> {
 
     info!("Root Signal Scout starting...");
 
-    // Load config
-    let config = Config::scout_from_env();
-    config.log_redacted();
+    // Load .env from workspace root (doesn't override existing env vars)
+    dotenv_load();
+
+    // Load config, with optional CLI city override
+    let cli = Cli::parse();
+    let mut config = Config::scout_from_env();
+    if let Some(city) = cli.city {
+        config.city = city;
+    }
 
     // Connect to Neo4j
     let client =
         GraphClient::connect(&config.neo4j_uri, &config.neo4j_user, &config.neo4j_password)
             .await?;
+
+    if cli.dump {
+        return dump_city(&client, &config.city).await;
+    }
+
+    config.log_redacted();
 
     // Run migrations
     migrate(&client).await?;
@@ -88,6 +132,23 @@ async fn main() -> Result<()> {
     // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
     backfill_source_diversity(&client, &[]).await?;
 
+    // Backfill lat/lng on tensions missing coordinates (from before the geo fix)
+    let backfill_q = query(
+        "MATCH (t:Tension)
+         WHERE t.lat IS NULL
+         SET t.lat = $lat, t.lng = $lng
+         RETURN count(t) AS cnt"
+    )
+    .param("lat", city_node.center_lat)
+    .param("lng", city_node.center_lng);
+    let mut stream = client.inner().execute(backfill_q).await?;
+    if let Some(row) = stream.next().await? {
+        let cnt: i64 = row.get("cnt").unwrap_or(0);
+        if cnt > 0 {
+            info!(count = cnt, "Backfilled tension coordinates to city center");
+        }
+    }
+
     // Create and run scout
     let scout = Scout::new(
         client.clone(),
@@ -103,8 +164,127 @@ async fn main() -> Result<()> {
     let stats = scout.run().await?;
     info!("Scout run complete. {stats}");
 
+    // Merge near-duplicate tensions before computing heat
+    let writer_ref = GraphWriter::new(client.clone());
+    let merged = writer_ref.merge_duplicate_tensions(0.85).await?;
+    if merged > 0 {
+        info!(merged, "Merged duplicate tensions");
+    }
+
     // Compute cause heat (cross-story signal boosting via embedding similarity)
     compute_cause_heat(&client, 0.7).await?;
 
     Ok(())
+}
+
+/// Dump all stories and signals for a city as raw JSON to stdout.
+async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
+    // Load city node to get geo bounds
+    let writer = GraphWriter::new(client.clone());
+    let city = writer.get_city(city_slug).await?
+        .with_context(|| format!("City '{}' not found in graph", city_slug))?;
+
+    let lat_delta = city.radius_km / 111.0;
+    let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+    let min_lat = city.center_lat - lat_delta;
+    let max_lat = city.center_lat + lat_delta;
+    let min_lng = city.center_lng - lng_delta;
+    let max_lng = city.center_lng + lng_delta;
+
+    // Fetch all stories in the city's bounding box
+    let story_q = query(
+        "MATCH (s:Story)
+         WHERE s.centroid_lat IS NOT NULL
+           AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
+           AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
+         RETURN s
+         ORDER BY s.energy DESC"
+    )
+    .param("min_lat", min_lat)
+    .param("max_lat", max_lat)
+    .param("min_lng", min_lng)
+    .param("max_lng", max_lng);
+
+    let mut stories: Vec<StoryDump> = Vec::new();
+    let mut grouped_signal_ids = std::collections::HashSet::new();
+
+    let mut stream = client.inner().execute(story_q).await?;
+    let mut story_nodes = Vec::new();
+    while let Some(row) = stream.next().await? {
+        if let Some(story) = row_to_story(&row) {
+            story_nodes.push(story);
+        }
+    }
+
+    // For each story, fetch its raw signals (no filtering, no fuzzing)
+    for story in story_nodes {
+        let mut signals = Vec::new();
+        for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+            let label = node_type_label(*nt);
+            let cypher = format!(
+                "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label}) RETURN n ORDER BY n.confidence DESC"
+            );
+            let q = query(&cypher).param("id", story.id.to_string());
+            let mut sig_stream = client.inner().execute(q).await?;
+            while let Some(row) = sig_stream.next().await? {
+                if let Some(node) = row_to_node(&row, *nt) {
+                    grouped_signal_ids.insert(node.id());
+                    signals.push(node);
+                }
+            }
+        }
+        stories.push(StoryDump { story, signals });
+    }
+
+    // Fetch ungrouped signals (not in any story) within the bounding box
+    let mut ungrouped = Vec::new();
+    for nt in &[NodeType::Event, NodeType::Give, NodeType::Ask, NodeType::Notice, NodeType::Tension] {
+        let label = node_type_label(*nt);
+        let cypher = format!(
+            "MATCH (n:{label})
+             WHERE n.lat >= $min_lat AND n.lat <= $max_lat
+               AND n.lng >= $min_lng AND n.lng <= $max_lng
+               AND NOT (n)<-[:CONTAINS]-(:Story)
+             RETURN n
+             ORDER BY n.confidence DESC"
+        );
+        let q = query(&cypher)
+            .param("min_lat", min_lat)
+            .param("max_lat", max_lat)
+            .param("min_lng", min_lng)
+            .param("max_lng", max_lng);
+        let mut stream = client.inner().execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node(&row, *nt) {
+                ungrouped.push(node);
+            }
+        }
+    }
+
+    let output = DumpOutput {
+        city: city_slug.to_string(),
+        stories,
+        ungrouped_signals: ungrouped,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn dotenv_load() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .join(".env");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            if let Some((key, value)) = line.split_once('=') {
+                if std::env::var(key.trim()).is_err() {
+                    std::env::set_var(key.trim(), value.trim());
+                }
+            }
+        }
+    }
 }
