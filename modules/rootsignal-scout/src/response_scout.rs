@@ -20,6 +20,7 @@ use crate::curiosity::{
     ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool,
 };
 use crate::embedder::TextEmbedder;
+use crate::extractor::ResourceTag;
 use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
 
@@ -62,6 +63,9 @@ pub struct DiscoveredResponse {
     pub also_addresses: Vec<String>,
     /// ISO date for events (null if not an event or date unknown)
     pub event_date: Option<String>,
+    /// Resource capabilities this response requires, prefers, or offers.
+    #[serde(default)]
+    pub resources: Vec<ResourceTag>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -212,6 +216,16 @@ For each response you discovered:
 - match_strength: 0.0-1.0 how directly this addresses the tension
 - also_addresses: titles of OTHER community tensions this also diffuses (empty if none)
 - event_date: ISO date if this is an event (null if not an event or date unknown)
+
+For each response, also extract resource capabilities:
+- resources: array of {slug, role, confidence, context}
+  - role: \"requires\" (Ask/Event need this), \"prefers\" (nice to have), or \"offers\" (Give provides this)
+  - Use these slugs when they fit: vehicle, bilingual-spanish, bilingual-somali, bilingual-hmong, \
+legal-expertise, food, shelter-space, clothing, childcare, medical-professional, mental-health, \
+physical-labor, kitchen-space, event-space, storage-space, technology, reliable-internet, \
+financial-donation, skilled-trade, administrative
+  - Otherwise propose a concise noun-phrase slug
+  - Only include when the capability is clear from the content
 
 Also report:
 - emergent_tensions: NEW tensions you discovered during investigation (not the original one)
@@ -480,10 +494,67 @@ impl<'a> ResponseScout<'a> {
             }
         }
 
+        // Wire resource edges
+        if !response.resources.is_empty() {
+            if let Err(e) = self.wire_resources(signal_id, &response.signal_type, &response.resources).await {
+                warn!(error = %e, "Failed to wire resource edges (non-fatal)");
+            }
+        }
+
         if was_new {
             stats.signals_created += 1;
         }
 
+        Ok(())
+    }
+
+    /// Create Resource nodes and edges for a signal's resource tags.
+    async fn wire_resources(
+        &self,
+        signal_id: Uuid,
+        _signal_type: &str,
+        resources: &[ResourceTag],
+    ) -> Result<()> {
+        for tag in resources.iter().filter(|t| t.confidence >= 0.3) {
+            let slug = rootsignal_common::slugify(&tag.slug);
+            let embed_text = format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
+            let embedding = self.embedder.embed(&embed_text).await?;
+
+            let resource_id = self
+                .writer
+                .find_or_create_resource(&tag.slug, &slug, tag.context.as_deref().unwrap_or(""), &embedding)
+                .await?;
+
+            let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
+            match tag.role.as_str() {
+                "requires" => {
+                    self.writer
+                        .create_requires_edge(signal_id, resource_id, confidence, tag.context.as_deref(), None)
+                        .await?;
+                }
+                "prefers" => {
+                    self.writer
+                        .create_prefers_edge(signal_id, resource_id, confidence)
+                        .await?;
+                }
+                "offers" => {
+                    self.writer
+                        .create_offers_edge(signal_id, resource_id, confidence, tag.context.as_deref())
+                        .await?;
+                }
+                other => {
+                    warn!(role = other, slug = tag.slug.as_str(), "Unknown resource role, skipping");
+                }
+            }
+
+            info!(
+                signal_id = %signal_id,
+                resource_id = %resource_id,
+                slug = slug.as_str(),
+                role = tag.role.as_str(),
+                "Wired resource edge"
+            );
+        }
         Ok(())
     }
 

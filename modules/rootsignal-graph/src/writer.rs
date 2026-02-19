@@ -3506,6 +3506,164 @@ impl GraphWriter {
         }
         Ok(best)
     }
+
+    /// Merge near-duplicate Resource nodes based on embedding similarity.
+    /// Picks the highest signal_count as canonical, re-points edges, deletes duplicates.
+    pub async fn consolidate_resources(&self, threshold: f64) -> Result<ConsolidationStats, neo4rs::Error> {
+        let mut stats = ConsolidationStats::default();
+
+        // Load all resources with embeddings
+        let q = query(
+            "MATCH (r:Resource)
+             WHERE r.embedding IS NOT NULL
+             RETURN r.id AS id, r.slug AS slug, r.embedding AS emb, r.signal_count AS sc
+             ORDER BY r.signal_count DESC",
+        );
+
+        struct ResourceEmbed {
+            id: String,
+            slug: String,
+            embedding: Vec<f64>,
+        }
+
+        let mut resources: Vec<ResourceEmbed> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let slug: String = row.get("slug").unwrap_or_default();
+            let embedding: Vec<f64> = row.get("emb").unwrap_or_default();
+            let _signal_count: i64 = row.get("sc").unwrap_or(0);
+            if !embedding.is_empty() {
+                resources.push(ResourceEmbed { id, slug, embedding });
+            }
+        }
+
+        if resources.len() < 2 {
+            return Ok(stats);
+        }
+
+        // Find clusters: canonical (highest signal_count) absorbs duplicates
+        let mut absorbed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut merges: Vec<(String, String)> = Vec::new(); // (canonical_id, dup_id)
+
+        for i in 0..resources.len() {
+            if absorbed.contains(&resources[i].id) {
+                continue;
+            }
+            for j in (i + 1)..resources.len() {
+                if absorbed.contains(&resources[j].id) {
+                    continue;
+                }
+                let sim = cosine_sim_f64(&resources[i].embedding, &resources[j].embedding);
+                if sim >= threshold {
+                    // resources[i] has higher signal_count (sorted DESC)
+                    absorbed.insert(resources[j].id.clone());
+                    merges.push((resources[i].id.clone(), resources[j].id.clone()));
+                    info!(
+                        canonical = resources[i].slug.as_str(),
+                        duplicate = resources[j].slug.as_str(),
+                        similarity = sim,
+                        "Resource merge candidate"
+                    );
+                }
+            }
+        }
+
+        if merges.is_empty() {
+            return Ok(stats);
+        }
+
+        stats.clusters_found = merges.len() as u32;
+
+        for (canonical_id, dup_id) in &merges {
+            // Re-point REQUIRES edges
+            let q = query(
+                "MATCH (dup:Resource {id: $dup_id})<-[old:REQUIRES]-(s)
+                 MATCH (canonical:Resource {id: $canonical_id})
+                 MERGE (s)-[new:REQUIRES]->(canonical)
+                 ON CREATE SET new.confidence = old.confidence, new.quantity = old.quantity, new.notes = old.notes
+                 WITH old
+                 DELETE old
+                 RETURN count(*) AS moved",
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("canonical_id", canonical_id.as_str());
+            if let Ok(mut s) = self.client.graph.execute(q).await {
+                if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
+                    stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
+                }
+            }
+
+            // Re-point PREFERS edges
+            let q = query(
+                "MATCH (dup:Resource {id: $dup_id})<-[old:PREFERS]-(s)
+                 MATCH (canonical:Resource {id: $canonical_id})
+                 MERGE (s)-[new:PREFERS]->(canonical)
+                 ON CREATE SET new.confidence = old.confidence
+                 WITH old
+                 DELETE old
+                 RETURN count(*) AS moved",
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("canonical_id", canonical_id.as_str());
+            if let Ok(mut s) = self.client.graph.execute(q).await {
+                if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
+                    stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
+                }
+            }
+
+            // Re-point OFFERS edges
+            let q = query(
+                "MATCH (dup:Resource {id: $dup_id})<-[old:OFFERS]-(s)
+                 MATCH (canonical:Resource {id: $canonical_id})
+                 MERGE (s)-[new:OFFERS]->(canonical)
+                 ON CREATE SET new.confidence = old.confidence, new.capacity = old.capacity
+                 WITH old
+                 DELETE old
+                 RETURN count(*) AS moved",
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("canonical_id", canonical_id.as_str());
+            if let Ok(mut s) = self.client.graph.execute(q).await {
+                if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
+                    stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
+                }
+            }
+
+            // Sum signal_count into canonical
+            let q = query(
+                "MATCH (dup:Resource {id: $dup_id}), (canonical:Resource {id: $canonical_id})
+                 SET canonical.signal_count = canonical.signal_count + dup.signal_count",
+            )
+            .param("dup_id", dup_id.as_str())
+            .param("canonical_id", canonical_id.as_str());
+            self.client.graph.run(q).await?;
+
+            // Delete the duplicate
+            let q = query("MATCH (r:Resource {id: $id}) DETACH DELETE r")
+                .param("id", dup_id.as_str());
+            self.client.graph.run(q).await?;
+
+            stats.nodes_merged += 1;
+            info!(canonical_id, dup_id, "Merged duplicate resource");
+        }
+
+        info!(
+            clusters = stats.clusters_found,
+            merged = stats.nodes_merged,
+            edges = stats.edges_redirected,
+            "Resource consolidation complete"
+        );
+        Ok(stats)
+    }
+}
+
+/// Stats from resource consolidation batch job.
+#[derive(Debug, Default)]
+pub struct ConsolidationStats {
+    pub clusters_found: u32,
+    pub nodes_merged: u32,
+    pub edges_redirected: u32,
 }
 
 #[derive(Debug, Default)]

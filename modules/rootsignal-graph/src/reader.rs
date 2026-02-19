@@ -944,9 +944,280 @@ impl PublicGraphReader {
 
         Ok(map)
     }
+
+    // ─── Resource Capability Matching ────────────────────────────────
+
+    /// Find Ask/Event nodes that REQUIRE a specific resource.
+    /// Returns matches scored by resource completeness, sorted by score descending.
+    pub async fn find_asks_by_resource(
+        &self,
+        slug: &str,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
+        limit: u32,
+    ) -> Result<Vec<ResourceMatch>, neo4rs::Error> {
+        self.find_asks_by_resources(&[slug.to_string()], lat, lng, radius_km, limit).await
+    }
+
+    /// Find Ask/Event nodes matching ANY of the provided resource slugs.
+    /// Scores by match completeness: each matched Requires = 1/total_requires, +0.2 per matched Prefers.
+    pub async fn find_asks_by_resources(
+        &self,
+        slugs: &[String],
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
+        limit: u32,
+    ) -> Result<Vec<ResourceMatch>, neo4rs::Error> {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
+        // Find all Ask/Event nodes linked to ANY of the requested resources
+        let cypher = "MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(s)
+             WHERE r.slug IN $slugs
+               AND (s:Ask OR s:Event)
+               AND s.confidence >= $min_confidence
+               AND (
+                   (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
+                    AND s.lng >= $min_lng AND s.lng <= $max_lng)
+                   OR s.lat IS NULL
+               )
+             WITH s, collect({slug: r.slug, type: type(e)}) AS matched_resources
+             OPTIONAL MATCH (s)-[:REQUIRES]->(all_req:Resource)
+             OPTIONAL MATCH (s)-[:PREFERS]->(all_pref:Resource)
+             RETURN s,
+                    matched_resources,
+                    collect(DISTINCT all_req.slug) AS all_requires,
+                    collect(DISTINCT all_pref.slug) AS all_prefers";
+
+        let slug_strings: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
+        let q = query(cypher)
+            .param("slugs", slug_strings)
+            .param("min_lat", lat - lat_delta)
+            .param("max_lat", lat + lat_delta)
+            .param("min_lng", lng - lng_delta)
+            .param("max_lng", lng + lng_delta)
+            .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
+
+        let slug_set: std::collections::HashSet<&str> = slugs.iter().map(|s| s.as_str()).collect();
+        let mut matches = Vec::new();
+
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            // Try to parse as Ask or Event
+            let node = row_to_node(&row, NodeType::Ask)
+                .or_else(|| row_to_node(&row, NodeType::Event));
+
+            let Some(node) = node else { continue };
+            if !passes_display_filter(&node) {
+                continue;
+            }
+
+            let all_requires: Vec<String> = row.get("all_requires").unwrap_or_default();
+            let all_prefers: Vec<String> = row.get("all_prefers").unwrap_or_default();
+
+            let matched_requires: Vec<String> = all_requires.iter()
+                .filter(|r| slug_set.contains(r.as_str()))
+                .cloned()
+                .collect();
+            let matched_prefers: Vec<String> = all_prefers.iter()
+                .filter(|p| slug_set.contains(p.as_str()))
+                .cloned()
+                .collect();
+            let unmatched_requires: Vec<String> = all_requires.iter()
+                .filter(|r| !slug_set.contains(r.as_str()))
+                .cloned()
+                .collect();
+
+            let total_requires = all_requires.len().max(1) as f64;
+            let score = (matched_requires.len() as f64 / total_requires)
+                + (matched_prefers.len() as f64 * 0.2);
+
+            if score <= 0.0 {
+                continue;
+            }
+
+            matches.push(ResourceMatch {
+                node: fuzz_node(node),
+                score,
+                normalized_score: score.min(1.0),
+                matched_requires,
+                matched_prefers,
+                unmatched_requires,
+            });
+        }
+
+        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        matches.truncate(limit as usize);
+        Ok(matches)
+    }
+
+    /// Find Give nodes that OFFER a specific resource.
+    pub async fn find_gives_by_resource(
+        &self,
+        slug: &str,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
+        limit: u32,
+    ) -> Result<Vec<ResourceMatch>, neo4rs::Error> {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
+        let cypher = "MATCH (r:Resource {slug: $slug})<-[:OFFERS]-(s:Give)
+             WHERE s.confidence >= $min_confidence
+               AND (
+                   (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
+                    AND s.lng >= $min_lng AND s.lng <= $max_lng)
+                   OR s.lat IS NULL
+               )
+             RETURN s
+             ORDER BY s.cause_heat DESC, s.confidence DESC
+             LIMIT $limit";
+
+        let q = query(cypher)
+            .param("slug", slug)
+            .param("min_lat", lat - lat_delta)
+            .param("max_lat", lat + lat_delta)
+            .param("min_lng", lng - lng_delta)
+            .param("max_lng", lng + lng_delta)
+            .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
+            .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node(&row, NodeType::Give) {
+                if passes_display_filter(&node) {
+                    results.push(ResourceMatch {
+                        node: fuzz_node(node),
+                        score: 1.0,
+                        normalized_score: 1.0,
+                        matched_requires: vec![],
+                        matched_prefers: vec![],
+                        unmatched_requires: vec![],
+                    });
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    /// List all resources sorted by signal_count descending.
+    pub async fn list_resources(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<rootsignal_common::ResourceNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource)
+             RETURN r.id AS id, r.name AS name, r.slug AS slug,
+                    r.description AS description, r.signal_count AS signal_count,
+                    r.created_at AS created_at, r.last_seen AS last_seen
+             ORDER BY r.signal_count DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut resources = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            resources.push(rootsignal_common::ResourceNode {
+                id,
+                name: row.get("name").unwrap_or_default(),
+                slug: row.get("slug").unwrap_or_default(),
+                description: row.get("description").unwrap_or_default(),
+                signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                created_at: parse_row_datetime(&row, "created_at"),
+                last_seen: parse_row_datetime(&row, "last_seen"),
+            });
+        }
+        Ok(resources)
+    }
+
+    /// Aggregate resource gap analysis: which resources are most needed but least offered.
+    pub async fn resource_gap_analysis(
+        &self,
+    ) -> Result<Vec<ResourceGap>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource)
+             OPTIONAL MATCH (r)<-[:REQUIRES]-()
+             WITH r, count(*) AS req_count
+             OPTIONAL MATCH (r)<-[:OFFERS]-()
+             RETURN r.slug AS slug, r.name AS name,
+                    req_count AS requires_count, count(*) AS offers_count
+             ORDER BY (toInteger(req_count) - count(*)) DESC",
+        );
+
+        let mut gaps = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let requires_count = row.get::<i64>("requires_count").unwrap_or(0) as u32;
+            let offers_count = row.get::<i64>("offers_count").unwrap_or(0) as u32;
+            gaps.push(ResourceGap {
+                resource_slug: row.get("slug").unwrap_or_default(),
+                resource_name: row.get("name").unwrap_or_default(),
+                requires_count,
+                offers_count,
+                gap: requires_count as i32 - offers_count as i32,
+            });
+        }
+
+        // Sort by gap descending (worst unmet needs first)
+        gaps.sort_by(|a, b| b.gap.cmp(&a.gap));
+        Ok(gaps)
+    }
+}
+
+/// A signal matched to a resource query with scoring.
+#[derive(Debug, Clone)]
+pub struct ResourceMatch {
+    pub node: Node,
+    /// Raw match score (can exceed 1.0 when Prefers bonuses add up)
+    pub score: f64,
+    /// Normalized to 0.0–1.0 for display
+    pub normalized_score: f64,
+    /// Resource slugs matched from REQUIRES edges
+    pub matched_requires: Vec<String>,
+    /// Resource slugs matched from PREFERS edges
+    pub matched_prefers: Vec<String>,
+    /// Resource slugs NOT matched from REQUIRES edges
+    pub unmatched_requires: Vec<String>,
+}
+
+/// Gap between required and offered resources.
+#[derive(Debug, Clone)]
+pub struct ResourceGap {
+    pub resource_slug: String,
+    pub resource_name: String,
+    pub requires_count: u32,
+    pub offers_count: u32,
+    /// Positive = more requires than offers (unmet need)
+    pub gap: i32,
 }
 
 // --- Helpers ---
+
+/// Parse a datetime from a neo4rs Row, falling back to Utc::now() if missing or unparseable.
+fn parse_row_datetime(row: &neo4rs::Row, key: &str) -> DateTime<Utc> {
+    if let Ok(dt) = row.get::<chrono::DateTime<chrono::FixedOffset>>(key) {
+        return dt.with_timezone(&Utc);
+    }
+    if let Ok(ndt) = row.get::<NaiveDateTime>(key) {
+        return ndt.and_utc();
+    }
+    if let Ok(s) = row.get::<String>(key) {
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f") {
+            return ndt.and_utc();
+        }
+    }
+    Utc::now()
+}
 
 pub fn node_type_label(nt: NodeType) -> &'static str {
     match nt {
