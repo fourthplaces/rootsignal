@@ -701,6 +701,277 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    // --- Bounding-box & semantic search queries (for search app) ---
+
+    /// Find signals within a bounding box, sorted by cause_heat.
+    /// Used by the search app when no text query is active.
+    pub async fn signals_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let mut all: Vec<Node> = Vec::new();
+        for nt in &[
+            NodeType::Event,
+            NodeType::Give,
+            NodeType::Ask,
+            NodeType::Notice,
+            NodeType::Tension,
+        ] {
+            let label = node_type_label(*nt);
+            let cypher = format!(
+                "MATCH (n:{label})
+                 WHERE n.lat <> 0.0
+                   AND n.lat >= $min_lat AND n.lat <= $max_lat
+                   AND n.lng >= $min_lng AND n.lng <= $max_lng
+                   AND n.confidence >= $min_confidence
+                   {expiry}
+                 RETURN n
+                 ORDER BY coalesce(n.cause_heat, 0) DESC, n.confidence DESC
+                 LIMIT $limit",
+                expiry = expiry_clause(*nt),
+            );
+            let q = query(&cypher)
+                .param("min_lat", min_lat)
+                .param("max_lat", max_lat)
+                .param("min_lng", min_lng)
+                .param("max_lng", max_lng)
+                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
+                .param("limit", limit as i64);
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                if let Some(node) = row_to_node(&row, *nt) {
+                    if passes_display_filter(&node) {
+                        all.push(fuzz_node(node));
+                    }
+                }
+            }
+        }
+        all.sort_by(|a, b| {
+            let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            b_heat
+                .partial_cmp(&a_heat)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all.truncate(limit as usize);
+        Ok(all)
+    }
+
+    /// Find stories within a bounding box (by centroid), sorted by energy.
+    /// Used by the search app when no text query is active.
+    pub async fn stories_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.centroid_lat IS NOT NULL
+               AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
+               AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
+             RETURN s
+             ORDER BY s.energy DESC
+             LIMIT $limit",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng)
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(story) = row_to_story(&row) {
+                results.push(story);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Semantic search for signals within a bounding box using vector KNN.
+    /// Over-fetches from the vector index (K per type), then post-filters by bbox.
+    /// Returns (node, blended_score) pairs sorted by blended score.
+    pub async fn semantic_search_signals_in_bounds(
+        &self,
+        embedding: &[f32],
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<(Node, f64)>, neo4rs::Error> {
+        let embedding_vec: Vec<f64> = embedding.iter().map(|&v| v as f64).collect();
+        let k_per_type = 100_i64;
+        let min_score = 0.3_f64;
+
+        let mut scored: Vec<(Node, f64)> = Vec::new();
+
+        let index_names = [
+            ("Event", "event_embedding"),
+            ("Give", "give_embedding"),
+            ("Ask", "ask_embedding"),
+            ("Notice", "notice_embedding"),
+            ("Tension", "tension_embedding"),
+        ];
+        let type_map = [
+            ("Event", NodeType::Event),
+            ("Give", NodeType::Give),
+            ("Ask", NodeType::Ask),
+            ("Notice", NodeType::Notice),
+            ("Tension", NodeType::Tension),
+        ];
+        let type_lookup: std::collections::HashMap<&str, NodeType> =
+            type_map.iter().cloned().collect();
+
+        for (label, index_name) in &index_names {
+            let nt = type_lookup[label];
+            let cypher = format!(
+                "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                 YIELD node, score
+                 WHERE score >= $min_score
+                   AND node.lat <> 0.0
+                   AND node.lat >= $min_lat AND node.lat <= $max_lat
+                   AND node.lng >= $min_lng AND node.lng <= $max_lng
+                   AND node.confidence >= $min_confidence
+                 RETURN node AS n, score"
+            );
+
+            let q = query(&cypher)
+                .param("index_name", *index_name)
+                .param("k", k_per_type)
+                .param("embedding", embedding_vec.clone())
+                .param("min_score", min_score)
+                .param("min_lat", min_lat)
+                .param("max_lat", max_lat)
+                .param("min_lng", min_lng)
+                .param("max_lng", max_lng)
+                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
+
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let similarity: f64 = row.get("score").unwrap_or(0.0);
+                if let Some(node) = row_to_node(&row, nt) {
+                    if passes_display_filter(&node) {
+                        let heat = node.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+                        let blended = similarity * 0.6 + heat * 0.4;
+                        scored.push((fuzz_node(node), blended));
+                    }
+                }
+            }
+        }
+
+        scored.sort_by(|(_, a), (_, b)| {
+            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(limit as usize);
+        Ok(scored)
+    }
+
+    /// Semantic search for stories within a bounding box.
+    /// Stories lack embeddings, so we search signals via KNN and aggregate to parent stories.
+    /// Returns (story, best_signal_score, best_signal_title) tuples sorted by blended score.
+    pub async fn semantic_search_stories_in_bounds(
+        &self,
+        embedding: &[f32],
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<(StoryNode, f64, String)>, neo4rs::Error> {
+        let embedding_vec: Vec<f64> = embedding.iter().map(|&v| v as f64).collect();
+        let k_per_type = 100_i64;
+        let min_score = 0.3_f64;
+
+        // Collect (story_id -> (best_similarity, best_signal_title)) from signal search
+        let mut story_scores: std::collections::HashMap<Uuid, (f64, String)> =
+            std::collections::HashMap::new();
+
+        let index_names = [
+            ("Event", "event_embedding"),
+            ("Give", "give_embedding"),
+            ("Ask", "ask_embedding"),
+            ("Notice", "notice_embedding"),
+            ("Tension", "tension_embedding"),
+        ];
+
+        for (_label, index_name) in &index_names {
+            let cypher =
+                "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                 YIELD node, score
+                 WHERE score >= $min_score
+                   AND node.lat <> 0.0
+                   AND node.lat >= $min_lat AND node.lat <= $max_lat
+                   AND node.lng >= $min_lng AND node.lng <= $max_lng
+                 WITH node, score
+                 MATCH (s:Story)-[:CONTAINS]->(node)
+                 RETURN s.id AS story_id, score, node.title AS signal_title";
+
+            let q = query(cypher)
+                .param("index_name", *index_name)
+                .param("k", k_per_type)
+                .param("embedding", embedding_vec.clone())
+                .param("min_score", min_score)
+                .param("min_lat", min_lat)
+                .param("max_lat", max_lat)
+                .param("min_lng", min_lng)
+                .param("max_lng", max_lng);
+
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let sid_str: String = row.get("story_id").unwrap_or_default();
+                let Ok(sid) = Uuid::parse_str(&sid_str) else {
+                    continue;
+                };
+                let score: f64 = row.get("score").unwrap_or(0.0);
+                let title: String = row.get("signal_title").unwrap_or_default();
+
+                let entry = story_scores.entry(sid).or_insert((0.0, String::new()));
+                if score > entry.0 {
+                    *entry = (score, title);
+                }
+            }
+        }
+
+        if story_scores.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Fetch full story nodes for the matched IDs
+        let story_ids: Vec<String> = story_scores.keys().map(|id| id.to_string()).collect();
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.id IN $ids
+             RETURN s",
+        )
+        .param("ids", story_ids);
+
+        let mut results: Vec<(StoryNode, f64, String)> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(story) = row_to_story(&row) {
+                if let Some((best_sim, best_title)) = story_scores.get(&story.id) {
+                    let blended = best_sim * 0.6 + story.energy * 0.4;
+                    results.push((story, blended, best_title.clone()));
+                }
+            }
+        }
+
+        results.sort_by(|(_, a, _), (_, b, _)| {
+            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(limit as usize);
+        Ok(results)
+    }
+
     // --- Admin/Quality queries (not public-facing, but through reader for safety) ---
 
     /// Get total signal count by type (for quality dashboard).
