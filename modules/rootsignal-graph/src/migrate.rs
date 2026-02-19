@@ -338,6 +338,19 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Deactivate orphaned web query sources ---
     deactivate_orphaned_web_queries(client).await?;
 
+    // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
+    cleanup_leiden_stories(client).await?;
+
+    // --- New story metric indexes ---
+    let metric_indexes = [
+        "CREATE INDEX story_cause_heat IF NOT EXISTS FOR (n:Story) ON (n.cause_heat)",
+        "CREATE INDEX story_gap_score IF NOT EXISTS FOR (n:Story) ON (n.gap_score)",
+    ];
+    for idx in &metric_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Story metric indexes created");
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -869,5 +882,36 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
     }
 
     info!("Orphaned web query deactivation complete");
+    Ok(())
+}
+
+/// Delete stories created by Leiden clustering that don't contain a Tension node.
+/// StoryWeaver always anchors stories on a Tension, so stories without one are Leiden artifacts.
+/// Idempotent — matches nothing after cleanup.
+pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Cleaning up Leiden-created stories (no Tension in CONTAINS set)...");
+
+    let q = query(
+        "MATCH (s:Story)
+         WHERE NOT (s)-[:CONTAINS]->(:Tension)
+         DETACH DELETE s
+         RETURN count(s) AS deleted",
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted Leiden-created stories without Tension");
+                }
+            }
+        }
+        Err(e) => warn!("Leiden story cleanup failed (non-fatal): {e}"),
+    }
+
+    info!("Leiden story cleanup complete");
     Ok(())
 }

@@ -364,6 +364,14 @@ pub struct StoryNode {
     pub lede: Option<String>,
     pub narrative: Option<String>,
     pub action_guidance: Option<String>, // JSON string of Vec<ActionGuidance>
+    // Story pipeline consolidation fields
+    pub cause_heat: f64,
+    pub ask_count: u32,
+    pub give_count: u32,
+    pub event_count: u32,
+    pub drawn_to_count: u32,
+    pub gap_score: i32,
+    pub gap_velocity: f64,
 }
 
 /// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
@@ -374,6 +382,8 @@ pub struct ClusterSnapshot {
     pub story_id: Uuid,
     pub signal_count: u32,
     pub entity_count: u32,
+    pub ask_count: u32,
+    pub give_count: u32,
     pub run_at: DateTime<Utc>,
 }
 

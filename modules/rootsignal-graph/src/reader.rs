@@ -339,13 +339,19 @@ impl PublicGraphReader {
         };
 
         // Then get constituent signals
-        let signals = self.get_story_signals(story_id).await?;
+        let signals = self.get_story_signals(story_id, false).await?;
 
         Ok(Some((story, signals)))
     }
 
     /// Get the constituent signals for a story.
-    pub async fn get_story_signals(&self, story_id: Uuid) -> Result<Vec<Node>, neo4rs::Error> {
+    /// When `upcoming_only` is true, filters Events to those with starts_at >= now
+    /// and Asks to those with last_confirmed_active within 7 days.
+    pub async fn get_story_signals(
+        &self,
+        story_id: Uuid,
+        upcoming_only: bool,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
         let mut signals = Vec::new();
 
         for nt in &[
@@ -356,8 +362,18 @@ impl PublicGraphReader {
             NodeType::Tension,
         ] {
             let label = node_type_label(*nt);
+            let where_clause = if upcoming_only {
+                match nt {
+                    NodeType::Event => " AND (n.starts_at IS NULL OR n.starts_at >= datetime())",
+                    NodeType::Ask => " AND (n.last_confirmed_active IS NULL OR datetime(n.last_confirmed_active) >= datetime() - duration('P7D'))",
+                    _ => "",
+                }
+            } else {
+                ""
+            };
             let cypher = format!(
                 "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label})
+                 WHERE true{where_clause}
                  RETURN n
                  ORDER BY n.confidence DESC"
             );
@@ -762,7 +778,7 @@ impl PublicGraphReader {
     }
 
     /// Find stories within a bounding box (by centroid), sorted by energy.
-    /// Used by the search app when no text query is active.
+    /// Excludes archived stories. Used by the search app when no text query is active.
     pub async fn stories_in_bounds(
         &self,
         min_lat: f64,
@@ -776,6 +792,7 @@ impl PublicGraphReader {
              WHERE s.centroid_lat IS NOT NULL
                AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
                AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
+               AND (s.arc IS NULL OR s.arc <> 'archived')
              RETURN s
              ORDER BY s.energy DESC
              LIMIT $limit",
@@ -791,6 +808,45 @@ impl PublicGraphReader {
         while let Some(row) = stream.next().await? {
             if let Some(story) = row_to_story(&row) {
                 results.push(story);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Find tensions with < 2 respondents that aren't in any story, within a bounding box.
+    /// Sorted by cause_heat DESC. Used to surface unresponded community needs.
+    pub async fn unresponded_tensions_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.lat IS NOT NULL
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND NOT (t)<-[:CONTAINS]-(:Story)
+             OPTIONAL MATCH (t)<-[:RESPONDS_TO|DRAWN_TO]-(r)
+             WITH t, count(r) AS resp_count
+             WHERE resp_count < 2
+             RETURN t AS n
+             ORDER BY coalesce(t.cause_heat, 0.0) DESC
+             LIMIT $limit",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng)
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node(&row, NodeType::Tension) {
+                results.push(fuzz_node(node));
             }
         }
         Ok(results)
@@ -1997,6 +2053,29 @@ pub fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
             .ok()
             .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
 
+    let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
+    let ask_count: i64 = n.get("ask_count").unwrap_or(0);
+    let give_count: i64 = n.get("give_count").unwrap_or(0);
+    let event_count: i64 = n.get("event_count").unwrap_or(0);
+    let drawn_to_count: i64 = n.get("drawn_to_count").unwrap_or(0);
+    let gap_score: i64 = n.get("gap_score").unwrap_or(0);
+    let gap_velocity: f64 = n.get("gap_velocity").unwrap_or(0.0);
+
+    // Centroid fuzzing for sensitive stories
+    let (centroid_lat, centroid_lng) = match (centroid_lat, centroid_lng) {
+        (Some(lat), Some(lng)) if sensitivity == "sensitive" || sensitivity == "elevated" => {
+            let radius = if sensitivity == "sensitive" {
+                0.05 // ~5km
+            } else {
+                0.005 // ~500m
+            };
+            let fuzzed_lat = (lat / radius).round() * radius;
+            let fuzzed_lng = (lng / radius).round() * radius;
+            (Some(fuzzed_lat), Some(fuzzed_lng))
+        }
+        other => other,
+    };
+
     Some(StoryNode {
         id,
         headline,
@@ -2021,6 +2100,13 @@ pub fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
         lede,
         narrative,
         action_guidance,
+        cause_heat,
+        ask_count: ask_count as u32,
+        give_count: give_count as u32,
+        event_count: event_count as u32,
+        drawn_to_count: drawn_to_count as u32,
+        gap_score: gap_score as i32,
+        gap_velocity,
     })
 }
 

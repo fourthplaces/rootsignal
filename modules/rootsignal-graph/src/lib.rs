@@ -1,10 +1,10 @@
 pub mod cause_heat;
 pub mod client;
-pub mod cluster;
 pub mod migrate;
 pub mod reader;
 pub mod response;
 pub mod similarity;
+pub mod story_metrics;
 pub mod story_weaver;
 pub mod synthesizer;
 #[cfg(feature = "test-utils")]
@@ -12,9 +12,9 @@ pub mod testutil;
 pub mod writer;
 
 pub use client::GraphClient;
-pub use cluster::Clusterer;
 pub use reader::{PublicGraphReader, ResourceGap, ResourceMatch};
 pub use similarity::SimilarityBuilder;
+pub use story_metrics::{parse_recency, story_energy, story_status};
 pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use writer::{

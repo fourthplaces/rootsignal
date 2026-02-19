@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{extract_domain, StoryNode};
 
-use crate::cluster::story_status;
+use crate::story_metrics::{parse_recency, story_energy, story_status};
 use crate::synthesizer::{SynthesisInput, Synthesizer};
 use crate::writer::GraphWriter;
 use crate::GraphClient;
@@ -113,12 +113,15 @@ impl StoryWeaver {
             info!("Phase C (enrichment) skipped — no budget");
         }
 
+        // Phase D: Compute velocity, energy, gap_velocity; snapshot; archive zombies
+        self.phase_velocity_energy().await?;
+
         Ok(stats)
     }
 
     /// Phase A: Materialize — create Story nodes from tension hubs with 2+ respondents.
     async fn phase_materialize(&self, stats: &mut StoryWeaverStats) -> Result<(), neo4rs::Error> {
-        let hubs = self.writer.find_tension_hubs(10).await?;
+        let hubs = self.writer.find_tension_hubs(50).await?;
         if hubs.is_empty() {
             return Ok(());
         }
@@ -215,6 +218,50 @@ impl StoryWeaver {
                 );
             }
 
+            // Compute centroid from respondent signals
+            let signal_meta = self.fetch_signal_metadata(&signal_ids).await?;
+            let lats: Vec<f64> = signal_meta.iter().filter_map(|s| s.lat).collect();
+            let lngs: Vec<f64> = signal_meta.iter().filter_map(|s| s.lng).collect();
+            let (centroid_lat, centroid_lng) = if !lats.is_empty() {
+                (
+                    Some(lats.iter().sum::<f64>() / lats.len() as f64),
+                    Some(lngs.iter().sum::<f64>() / lngs.len() as f64),
+                )
+            } else {
+                (None, None)
+            };
+
+            // Propagate max sensitivity from constituent signals
+            let sensitivity = signal_meta
+                .iter()
+                .map(|s| s.sensitivity.as_str())
+                .max_by_key(|s| match *s {
+                    "sensitive" => 2,
+                    "elevated" => 1,
+                    _ => 0,
+                })
+                .unwrap_or("general")
+                .to_string();
+
+            // Propagate cause_heat from the central tension
+            let cause_heat = signal_meta
+                .iter()
+                .filter(|s| s.node_type == "tension")
+                .map(|s| s.cause_heat)
+                .next()
+                .unwrap_or(0.0);
+
+            // Count signals by type and edge type
+            let ask_count = signal_meta.iter().filter(|s| s.node_type == "ask").count() as u32;
+            let give_count = signal_meta.iter().filter(|s| s.node_type == "give").count() as u32;
+            let event_count = signal_meta.iter().filter(|s| s.node_type == "event").count() as u32;
+            let drawn_to_count = hub
+                .respondents
+                .iter()
+                .filter(|r| r.edge_type == "DRAWN_TO")
+                .count() as u32;
+            let gap_score = ask_count as i32 - give_count as i32;
+
             let story = StoryNode {
                 id: story_id,
                 headline: hub.title.clone(),
@@ -224,10 +271,10 @@ impl StoryWeaver {
                 last_updated: now,
                 velocity: 0.0,
                 energy: 0.0,
-                centroid_lat: None,
-                centroid_lng: None,
+                centroid_lat,
+                centroid_lng,
                 dominant_type: "tension".to_string(),
-                sensitivity: "general".to_string(),
+                sensitivity,
                 source_count: source_domains.len() as u32,
                 entity_count,
                 type_diversity,
@@ -239,6 +286,13 @@ impl StoryWeaver {
                 lede: None,
                 narrative: None,
                 action_guidance: None,
+                cause_heat,
+                ask_count,
+                give_count,
+                event_count,
+                drawn_to_count,
+                gap_score,
+                gap_velocity: 0.0,
             };
 
             self.writer.create_story(&story).await?;
@@ -472,6 +526,133 @@ impl StoryWeaver {
         }
     }
 
+    /// Phase D: Compute velocity, energy, gap_velocity for all stories; snapshot; archive zombies.
+    async fn phase_velocity_energy(&self) -> Result<(), neo4rs::Error> {
+        let now = Utc::now();
+
+        // Get all stories with current metrics
+        let q = query(
+            "MATCH (s:Story)
+             WHERE s.arc IS NULL OR s.arc <> 'archived'
+             OPTIONAL MATCH (s)-[:CONTAINS]->(n)
+             RETURN s.id AS id, s.source_count AS source_count,
+                    s.entity_count AS entity_count, s.type_diversity AS type_diversity,
+                    s.ask_count AS ask_count, s.give_count AS give_count,
+                    s.last_updated AS last_updated,
+                    count(n) AS signal_count",
+        );
+
+        let mut stories: Vec<(Uuid, u32, u32, u32, u32, u32, u32, String)> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let source_count: i64 = row.get("source_count").unwrap_or(0);
+            let entity_count: i64 = row.get("entity_count").unwrap_or(0);
+            let type_diversity: i64 = row.get("type_diversity").unwrap_or(1);
+            let signal_count: i64 = row.get("signal_count").unwrap_or(0);
+            let ask_count: i64 = row.get("ask_count").unwrap_or(0);
+            let give_count: i64 = row.get("give_count").unwrap_or(0);
+            let last_updated: String = row.get("last_updated").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                stories.push((
+                    id,
+                    signal_count as u32,
+                    source_count as u32,
+                    entity_count as u32,
+                    type_diversity as u32,
+                    ask_count as u32,
+                    give_count as u32,
+                    last_updated,
+                ));
+            }
+        }
+
+        info!(stories = stories.len(), "Phase D: computing velocity and energy");
+
+        for (story_id, current_count, source_count, entity_count, type_diversity, ask_count, give_count, last_updated_str) in stories {
+            // Create snapshot
+            let snapshot = rootsignal_common::ClusterSnapshot {
+                id: Uuid::new_v4(),
+                story_id,
+                signal_count: current_count,
+                entity_count,
+                ask_count,
+                give_count,
+                run_at: now,
+            };
+            self.writer.create_cluster_snapshot(&snapshot).await?;
+
+            // Velocity driven by entity diversity growth
+            let entity_count_7d_ago = self
+                .writer
+                .get_snapshot_entity_count_7d_ago(story_id)
+                .await?;
+            let velocity = match entity_count_7d_ago {
+                Some(old_entities) => (entity_count as f64 - old_entities as f64) / 7.0,
+                None => entity_count as f64 / 7.0,
+            };
+
+            // Gap velocity
+            let gap_7d_ago = self.writer.get_snapshot_gap_7d_ago(story_id).await?;
+            let current_gap = ask_count as i32 - give_count as i32;
+            let gap_velocity = match gap_7d_ago {
+                Some(old_gap) => (current_gap as f64 - old_gap as f64) / 7.0,
+                None => 0.0,
+            };
+
+            // Recency score
+            let recency_score = parse_recency(&last_updated_str, &now);
+
+            // Source diversity: min(unique_source_urls / 5.0, 1.0)
+            let source_diversity = (source_count as f64 / 5.0).min(1.0);
+
+            // Triangulation
+            let triangulation = (type_diversity as f64 / 5.0).min(1.0);
+
+            let energy = story_energy(velocity, recency_score, source_diversity, triangulation);
+
+            // Archive zombie stories: last_updated > 30 days ago and velocity <= 0
+            let age_days = {
+                use chrono::NaiveDateTime;
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&last_updated_str) {
+                    (now - dt.with_timezone(&Utc)).num_hours() as f64 / 24.0
+                } else if let Ok(naive) =
+                    NaiveDateTime::parse_from_str(&last_updated_str, "%Y-%m-%dT%H:%M:%S%.f")
+                {
+                    (now - naive.and_utc()).num_hours() as f64 / 24.0
+                } else {
+                    0.0
+                }
+            };
+            let is_zombie = age_days > 30.0 && velocity <= 0.0;
+
+            // Update story
+            let set_clause = if is_zombie {
+                "SET s.velocity = $velocity, s.energy = $energy, s.signal_count = $signal_count,
+                     s.gap_velocity = $gap_velocity, s.arc = 'archived'"
+            } else {
+                "SET s.velocity = $velocity, s.energy = $energy, s.signal_count = $signal_count,
+                     s.gap_velocity = $gap_velocity"
+            };
+            let q = query(&format!(
+                "MATCH (s:Story {{id: $id}}) {set_clause}"
+            ))
+            .param("id", story_id.to_string())
+            .param("velocity", velocity)
+            .param("energy", energy)
+            .param("signal_count", current_count as i64)
+            .param("gap_velocity", gap_velocity);
+
+            self.client.graph.run(q).await?;
+
+            if is_zombie {
+                info!(story_id = %story_id, age_days, "Archived zombie story");
+            }
+        }
+
+        Ok(())
+    }
+
     // --- Helper methods ---
 
     /// Count distinct signal types in a set of signal IDs.
@@ -498,11 +679,13 @@ impl StoryWeaver {
         Ok(1)
     }
 
-    /// Refresh story metadata (signal_count, source_domains, type_diversity) from graph edges.
+    /// Refresh story metadata from graph edges: signal_count, type_diversity, centroid,
+    /// sensitivity, cause_heat, and signal type counts.
     async fn refresh_story_metadata(&self, story_id: Uuid) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)
-             WITH s, count(n) AS sig_count,
+             WITH s,
+                  count(n) AS sig_count,
                   collect(DISTINCT n.source_url) AS urls,
                   count(DISTINCT CASE
                       WHEN n:Event THEN 'event'
@@ -510,15 +693,44 @@ impl StoryWeaver {
                       WHEN n:Ask THEN 'ask'
                       WHEN n:Notice THEN 'notice'
                       WHEN n:Tension THEN 'tension'
-                  END) AS type_div
+                  END) AS type_div,
+                  avg(CASE WHEN n.lat IS NOT NULL AND n.lat <> 0.0 THEN n.lat END) AS avg_lat,
+                  avg(CASE WHEN n.lng IS NOT NULL AND n.lng <> 0.0 THEN n.lng END) AS avg_lng,
+                  CASE
+                      WHEN any(x IN collect(n.sensitivity) WHERE x = 'sensitive') THEN 'sensitive'
+                      WHEN any(x IN collect(n.sensitivity) WHERE x = 'elevated') THEN 'elevated'
+                      ELSE 'general'
+                  END AS max_sensitivity,
+                  max(CASE WHEN n:Tension THEN coalesce(n.cause_heat, 0.0) ELSE 0.0 END) AS cause_heat,
+                  size([x IN collect(CASE WHEN n:Ask THEN 1 END) WHERE x IS NOT NULL]) AS ask_count,
+                  size([x IN collect(CASE WHEN n:Give THEN 1 END) WHERE x IS NOT NULL]) AS give_count,
+                  size([x IN collect(CASE WHEN n:Event THEN 1 END) WHERE x IS NOT NULL]) AS event_count
              SET s.signal_count = sig_count,
                  s.type_diversity = type_div,
+                 s.centroid_lat = avg_lat,
+                 s.centroid_lng = avg_lng,
+                 s.sensitivity = max_sensitivity,
+                 s.cause_heat = cause_heat,
+                 s.ask_count = ask_count,
+                 s.give_count = give_count,
+                 s.event_count = event_count,
+                 s.gap_score = ask_count - give_count,
                  s.last_updated = datetime($now)",
         )
         .param("id", story_id.to_string())
         .param("now", crate::writer::format_datetime_pub(&Utc::now()));
 
         self.client.graph.run(q).await?;
+
+        // Update drawn_to_count separately (requires traversing through tension)
+        let q2 = query(
+            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[d:DRAWN_TO]-()
+             WITH s, count(d) AS drawn_count
+             SET s.drawn_to_count = drawn_count",
+        )
+        .param("id", story_id.to_string());
+        self.client.graph.run(q2).await?;
+
         Ok(())
     }
 
@@ -587,17 +799,34 @@ impl StoryWeaver {
                 "MATCH (n:{label})
                  WHERE n.id IN $ids
                  RETURN n.id AS id, n.title AS title, n.summary AS summary,
-                        n.source_url AS source_url"
+                        n.source_url AS source_url,
+                        n.sensitivity AS sensitivity,
+                        n.lat AS lat, n.lng AS lng,
+                        n.cause_heat AS cause_heat"
             ))
             .param("ids", signal_ids.to_vec());
 
             let mut stream = self.client.graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
+                let lat: Option<f64> = row
+                    .get("lat")
+                    .ok()
+                    .and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
+                let lng: Option<f64> = row
+                    .get("lng")
+                    .ok()
+                    .and_then(|v: f64| if v == 0.0 { None } else { Some(v) });
                 results.push(SignalMeta {
                     title: row.get("title").unwrap_or_default(),
                     summary: row.get("summary").unwrap_or_default(),
                     source_url: row.get("source_url").unwrap_or_default(),
                     node_type: label.to_lowercase(),
+                    lat,
+                    lng,
+                    sensitivity: row
+                        .get("sensitivity")
+                        .unwrap_or_else(|_| "general".to_string()),
+                    cause_heat: row.get("cause_heat").unwrap_or(0.0),
                 });
             }
         }
@@ -606,12 +835,16 @@ impl StoryWeaver {
     }
 }
 
-/// Lightweight signal metadata for synthesis.
+/// Signal metadata for story weaving and synthesis.
 struct SignalMeta {
     title: String,
     summary: String,
     source_url: String,
     node_type: String,
+    lat: Option<f64>,
+    lng: Option<f64>,
+    sensitivity: String,
+    cause_heat: f64,
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
-# Clustering & Stories Testing Playbook
+# Stories & Similarity Testing Playbook
 
-Tests for the clustering pipeline (`cluster.rs`, `similarity.rs`, `synthesizer.rs`). Verifies similarity edge construction, Leiden community detection, story reconciliation, headline generation, velocity/energy computation, and the mega-cluster guard.
+Tests for the story pipeline (`story_weaver.rs`, `similarity.rs`, `story_metrics.rs`, `synthesizer.rs`). Verifies similarity edge construction, StoryWeaver materialization, story reconciliation, headline generation, velocity/energy computation, centroid/sensitivity propagation, signal type counts, gap scoring, and zombie archival.
+
+**Architecture:** StoryWeaver is the sole story creator. Similarity edges exist for search only (no Leiden).
 
 ## Prerequisites
 
@@ -39,75 +41,29 @@ RETURN count(r) AS edges, round(avg(r.weight) * 100) / 100 AS avg_weight,
 - `avg_weight` between 0.3 and 0.9 (reasonable range)
 
 **Fail:**
-- `edges = 0` with 50+ embedded signals — threshold too high or embeddings are garbage
-- `min_weight` very close to 0 — confidence weighting is broken
+- `edges = 0` with 50+ embedded signals -- threshold too high or embeddings are garbage
+- `min_weight` very close to 0 -- confidence weighting is broken
 
-## 2. Similarity Threshold Regression (0.65)
+## 2. StoryWeaver Materialization
 
-The threshold was raised from 0.55 to 0.65 in commit `669a6c0` to fix mega-clusters. Verify the threshold is effective.
-
-```bash
-# Check the weight distribution — no edges should have raw cosine below 0.65
-# (weight = cosine * conf_weight, so weight can be lower than 0.65, but the
-# underlying cosine must be >= 0.65)
-echo "MATCH (a)-[r:SIMILAR_TO]->(b)
-WITH r.weight AS w, a.confidence AS ca, b.confidence AS cb
-WITH w, CASE WHEN ca * cb > 0 THEN w / sqrt(ca * cb) ELSE 0 END AS approx_cosine
-WHERE approx_cosine < 0.64
-RETURN count(*) AS below_threshold;" | $MG
-```
-
-**Pass:** `below_threshold = 0`.
-
-**Fail:** Edges exist below the cosine threshold — the similarity builder is using the wrong constant.
-
-## 3. Minimum Connected Signals Gate
-
-Clustering requires at least 10 connected signals (signals with at least one SIMILAR_TO edge). On a sparse graph, clustering should be skipped.
+Stories are created from tension hubs with 2+ respondents. Verify stories anchor on tensions.
 
 ```bash
-echo "MATCH (n)-[:SIMILAR_TO]-()
-WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
-RETURN count(DISTINCT n) AS connected;" | $MG
+echo "MATCH (s:Story)-[:CONTAINS]->(t:Tension)
+RETURN s.headline, t.title, s.signal_count
+ORDER BY s.signal_count DESC LIMIT 10;" | $MG
 ```
 
-**Pass:** If `connected < 10`, the scout log should show `Insufficient connected signals for clustering` and no stories are created.
-
-**Fail:** Stories created from fewer than 10 connected signals — the `MIN_CONNECTED_SIGNALS` gate is broken.
-
-## 4. Leiden Community Detection
-
-Verify communities are detected and have reasonable sizes.
+**Pass:** Every story contains at least one Tension node.
 
 ```bash
-echo "MATCH (s:Story)-[:CONTAINS]->(sig)
-RETURN s.id AS story_id, s.headline AS headline, count(sig) AS signals
-ORDER BY signals DESC LIMIT 15;" | $MG
+echo "MATCH (s:Story) WHERE NOT (s)-[:CONTAINS]->(:Tension)
+RETURN count(s) AS orphan_stories;" | $MG
 ```
 
-**Pass:**
-- Multiple stories exist (not just one mega-story)
-- Signal counts per story range from 2 to ~30
-- No story has more than 30 signals (MAX_COMMUNITY_SIZE guard)
+**Must return 0.** Any orphan stories are Leiden artifacts that should have been cleaned up by migration.
 
-**Fail:**
-- Only 1 story containing most signals — mega-cluster, Leiden gamma too low
-- Many single-signal stories — gamma too high or threshold too low
-
-## 5. Mega-Cluster Guard
-
-No community should exceed 30 signals. This is the safety net for when Leiden produces oversized clusters.
-
-```bash
-echo "MATCH (s:Story)-[:CONTAINS]->(sig)
-WITH s, count(sig) AS cnt
-WHERE cnt > 30
-RETURN s.headline, cnt;" | $MG
-```
-
-**Must return empty.** If any story exceeds 30 signals, the `MAX_COMMUNITY_SIZE` filter in `run_leiden()` is not working.
-
-## 6. Story Reconciliation (Asymmetric Containment)
+## 3. Story Reconciliation (Containment Check)
 
 Run the same city twice and verify existing stories evolve rather than duplicate.
 
@@ -116,29 +72,17 @@ Run the same city twice and verify existing stories evolve rather than duplicate
 echo "MATCH (s:Story) RETURN count(s) AS stories;" | $MG
 
 # Run again
-cargo run --bin scout -- --city twincities 2>&1 | grep -iE "stories created|stories updated|clustering"
+cargo run --bin scout -- --city twincities 2>&1 | grep -iE "materialized|grown|absorbed|story weaving"
 
 # Count stories after
 echo "MATCH (s:Story) RETURN count(s) AS stories;" | $MG
 ```
 
-**Pass:** Second run shows `stories_updated` > 0. Story count increases only by genuinely new clusters, not by duplicating existing ones.
+**Pass:** Second run shows `grown` > 0 or `absorbed` > 0. Story count increases only by genuinely new tension hubs.
 
-**Fail:** Story count roughly doubles — reconciliation via asymmetric containment (threshold 0.5) is broken.
+**Fail:** Story count roughly doubles -- containment threshold (0.5) is broken.
 
-Verify story identity is preserved:
-
-```bash
-echo "MATCH (s:Story)
-WHERE s.first_seen < datetime() - duration('PT1H')
-  AND s.last_updated > datetime() - duration('PT1H')
-RETURN s.headline, s.first_seen, s.last_updated, s.signal_count
-LIMIT 10;" | $MG
-```
-
-**Pass:** Stories have `first_seen` from the original run but `last_updated` from the latest run — identity preserved, metadata updated.
-
-## 7. Story Status Classification
+## 4. Story Status Classification
 
 Stories should be classified as echo, confirmed, or emerging based on type diversity and entity count.
 
@@ -149,28 +93,7 @@ RETURN s.status AS status, count(*) AS count ORDER BY count DESC;" | $MG
 
 **Pass:** All three statuses appear in a sufficiently diverse graph.
 
-Verify the classification rules:
-
-```bash
-# Echo: single type, 5+ signals
-echo "MATCH (s:Story {status: 'echo'})-[:CONTAINS]->(sig)
-WITH s, count(sig) AS cnt, count(DISTINCT labels(sig)[0]) AS types
-RETURN s.headline, cnt, types;" | $MG
-# All rows should have types = 1 and cnt >= 5
-
-# Confirmed: 2+ entities AND 2+ types
-echo "MATCH (s:Story {status: 'confirmed'})
-RETURN s.headline, s.entity_count, s.type_diversity;" | $MG
-# All rows should have entity_count >= 2 AND type_diversity >= 2
-
-# Emerging: everything else
-echo "MATCH (s:Story {status: 'emerging'})
-RETURN s.headline, s.entity_count, s.type_diversity, s.signal_count;" | $MG
-```
-
-**Fail:** A story classified as `confirmed` has `type_diversity = 1` or `entity_count = 1` — `story_status()` logic is wrong.
-
-## 8. Story Headline Quality
+## 5. Story Headline Quality
 
 Pull 5 random stories and evaluate their headlines.
 
@@ -183,14 +106,9 @@ ORDER BY rand() LIMIT 5;" | $MG
 **What to look for:**
 - Headlines are specific and distinguish one story from another
 - Headlines are under 80 characters
-- No generic category labels ("Community events", "Housing issues")
 - Summaries add context beyond the headline
 
-**What is NOT a problem:**
-- Fallback headlines using first signal title — that's the LLM failure fallback
-- Summaries being generic ("Cluster of related signals") — means LLM call failed but pipeline continued
-
-## 9. Story Synthesis
+## 6. Story Synthesis
 
 Stories should have lede, narrative, arc, category, and action_guidance after synthesis runs.
 
@@ -203,19 +121,9 @@ RETURN s.headline, s.arc, s.category,
 LIMIT 5;" | $MG
 ```
 
-**Pass:** Returns rows with meaningful lede and narrative text. Arc is one of: Emerging, Growing, Stable, Fading.
+**Pass:** Returns rows with meaningful lede and narrative text.
 
-Check unsynthesized stories:
-
-```bash
-echo "MATCH (s:Story)
-WHERE s.lede IS NULL OR s.lede = ''
-RETURN count(s) AS unsynthesized;" | $MG
-```
-
-After a full run, this should be 0 (all stories get synthesized). If > 0, check logs for `Story synthesis LLM call failed`.
-
-## 10. Velocity and Energy
+## 7. Velocity and Energy
 
 Velocity tracks entity diversity growth over 7 days. Energy combines velocity, recency, source diversity, and triangulation.
 
@@ -231,40 +139,7 @@ ORDER BY s.energy DESC LIMIT 10;" | $MG
 - Velocity is positive for growing stories, near-zero for stable ones
 - Energy values are between 0 and ~2 (can exceed 1.0 with high velocity)
 
-**Fail:**
-- All velocities are 0 — `compute_velocity_and_energy` or snapshot creation is broken
-- All energies are identical — formula components are constant
-
-Verify snapshots exist:
-
-```bash
-echo "MATCH (cs:ClusterSnapshot)
-RETURN count(cs) AS snapshots,
-       min(cs.run_at) AS earliest,
-       max(cs.run_at) AS latest;" | $MG
-```
-
-**Pass:** Snapshots exist with timestamps matching scout runs.
-
-## 11. Energy Formula Weights
-
-Confirmed, well-triangulated stories should structurally outrank single-type echo clusters at equal velocity.
-
-```bash
-echo "MATCH (s:Story)
-WHERE s.energy IS NOT NULL
-WITH s,
-     CASE WHEN s.type_diversity >= 3 THEN 'triangulated'
-          WHEN s.type_diversity = 1 AND s.signal_count >= 5 THEN 'echo'
-          ELSE 'other' END AS category
-RETURN category, round(avg(s.energy) * 100) / 100 AS avg_energy,
-       count(s) AS count
-ORDER BY avg_energy DESC;" | $MG
-```
-
-**Pass:** `triangulated` stories have higher average energy than `echo` stories (triangulation contributes 25% of energy vs echo's 5%).
-
-## 12. Centroid Computation
+## 8. Centroid Computation
 
 Stories with geolocated signals should have centroid coordinates.
 
@@ -277,20 +152,19 @@ LIMIT 5;" | $MG
 
 **Pass:** Centroids are within the expected metro area, not at city center or at (0, 0).
 
+## 9. Centroid Fuzzing for Sensitive Stories
+
+Sensitive stories should have their centroids snapped to a grid (~5km for sensitive, ~500m for elevated).
+
 ```bash
-# Stories without centroids should have no geolocated signals
 echo "MATCH (s:Story)
-WHERE s.centroid_lat IS NULL
-OPTIONAL MATCH (s)-[:CONTAINS]->(sig)
-WHERE sig.lat IS NOT NULL
-WITH s, count(sig) AS geolocated
-WHERE geolocated > 0
-RETURN s.headline, geolocated;" | $MG
+WHERE s.sensitivity IN ['sensitive', 'elevated'] AND s.centroid_lat IS NOT NULL
+RETURN s.headline, s.sensitivity, s.centroid_lat, s.centroid_lng;" | $MG
 ```
 
-**Must return empty.** Any rows mean centroid computation is skipping valid coordinates.
+**Pass:** Coordinates look snapped (round numbers at expected precision).
 
-## 13. Sensitivity Propagation
+## 10. Sensitivity Propagation
 
 Story sensitivity should be the maximum of its constituent signals.
 
@@ -303,9 +177,57 @@ RETURN s.headline, sensitive_count;" | $MG
 
 **Pass:** Every sensitive story has at least one sensitive signal.
 
-## 14. Pipeline Unchanged
+## 11. Signal Type Counts
 
-After clustering, all existing scout validation checks must still pass.
+Stories should have accurate ask_count, give_count, event_count.
+
+```bash
+echo "MATCH (s:Story)
+WHERE s.ask_count > 0 OR s.give_count > 0 OR s.event_count > 0
+RETURN s.headline, s.ask_count, s.give_count, s.event_count, s.drawn_to_count, s.gap_score
+ORDER BY s.gap_score DESC LIMIT 10;" | $MG
+```
+
+**Pass:** Counts match what's in the CONTAINS set. `gap_score = ask_count - give_count`.
+
+## 12. Gap Score Verification
+
+```bash
+echo "MATCH (s:Story)
+WHERE s.gap_score > 0
+RETURN s.headline, s.ask_count, s.give_count, s.gap_score, s.gap_velocity
+ORDER BY s.gap_score DESC LIMIT 5;" | $MG
+```
+
+**Pass:** Stories with positive gap_score have more asks than gives -- unmet community needs.
+
+## 13. Unresponded Tensions
+
+```bash
+echo "MATCH (t:Tension)
+WHERE NOT (t)<-[:CONTAINS]-(:Story)
+OPTIONAL MATCH (t)<-[:RESPONDS_TO|DRAWN_TO]-(r)
+WITH t, count(r) AS resp_count
+WHERE resp_count < 2
+RETURN t.title, resp_count, t.cause_heat
+ORDER BY t.cause_heat DESC LIMIT 10;" | $MG
+```
+
+**Pass:** Returns tensions that haven't yet accumulated enough respondents for a story.
+
+## 14. Zombie Story Archival
+
+```bash
+echo "MATCH (s:Story {arc: 'archived'})
+RETURN s.headline, s.last_updated, s.velocity
+LIMIT 5;" | $MG
+```
+
+**Pass:** Archived stories have `last_updated` > 30 days ago and velocity <= 0.
+
+## 15. Pipeline Unchanged
+
+After story weaving, all existing scout validation checks must still pass.
 
 ```bash
 ./scripts/validate-city-run.sh twincities 44.9778 -93.2650
@@ -316,11 +238,11 @@ After clustering, all existing scout validation checks must still pass.
 | Symptom | Likely cause |
 |---------|-------------|
 | 0 similarity edges | All embeddings null, or cosine threshold too high |
-| One mega-story with all signals | Similarity threshold too low (should be 0.65), or Leiden gamma too low |
-| Stories duplicate on re-run | Asymmetric containment threshold wrong, or `get_existing_stories` query broken |
+| Stories without Tension | Leiden artifacts not cleaned up by migration |
+| Stories duplicate on re-run | Containment threshold wrong, or `get_existing_stories` query broken |
 | All stories "emerging" | Entity count or type_diversity not being computed from signal metadata |
 | All velocities 0 | `ClusterSnapshot` not being written, or `get_snapshot_entity_count_7d_ago` returning None |
-| Headlines generic | Haiku structured output regression, or signal metadata not being passed to `label_cluster` |
-| Synthesis missing | Anthropic API error, or `synthesize_stories` query not finding unsynthesized stories |
-| GDS error on Leiden | Neo4j GDS plugin not installed, or graph projection syntax changed |
-| `Skipping mega-cluster` warnings | Leiden gamma needs tuning (increase beyond 1.5 for finer clusters) |
+| Synthesis missing | Anthropic API error, or Phase C query not finding unsynthesized stories |
+| Centroids at (0,0) | lat/lng zero-filtering broken in fetch_signal_metadata |
+| gap_score always 0 | ask_count/give_count not being computed in phase_materialize or refresh_story_metadata |
+| No archived stories after 30+ days | Phase D zombie detection not running, or last_updated not being set |

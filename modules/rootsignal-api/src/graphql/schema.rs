@@ -71,7 +71,7 @@ impl QueryRoot {
     /// Get story signals as a GeoJSON FeatureCollection string.
     async fn story_signals_geo_json(&self, ctx: &Context<'_>, story_id: Uuid) -> Result<String> {
         let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
-        let signals = reader.get_story_signals(story_id).await?;
+        let signals = reader.get_story_signals(story_id, false).await?;
         Ok(serde_json::to_string(&nodes_to_geojson(&signals))?)
     }
 
@@ -256,6 +256,24 @@ impl QueryRoot {
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader.stories_by_arc(&arc, limit).await?;
         Ok(stories.into_iter().map(GqlStory).collect())
+    }
+
+    /// Find tensions with < 2 respondents, not yet in any story, within bounds.
+    async fn unresponded_tensions_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let limit = limit.unwrap_or(20).min(100);
+        let nodes = reader
+            .unresponded_tensions_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
+        Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
     /// List actors in a city.
