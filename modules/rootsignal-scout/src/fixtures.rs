@@ -387,6 +387,7 @@ impl FixtureExtractor {
                 external_ratio: 0.0,
                 cause_heat: 0.0,
                 mentioned_actors: vec!["Minneapolis Parks".to_string()],
+                implied_queries: vec![],
             },
             starts_at: Some(now + chrono::Duration::days(7)),
             ends_at: None,
@@ -400,8 +401,11 @@ impl FixtureExtractor {
 
 #[async_trait]
 impl SignalExtractor for FixtureExtractor {
-    async fn extract(&self, _content: &str, _source_url: &str) -> Result<Vec<Node>> {
-        Ok(self.nodes.clone())
+    async fn extract(&self, _content: &str, _source_url: &str) -> Result<crate::extractor::ExtractionResult> {
+        Ok(crate::extractor::ExtractionResult {
+            nodes: self.nodes.clone(),
+            implied_queries: Vec::new(),
+        })
     }
 }
 

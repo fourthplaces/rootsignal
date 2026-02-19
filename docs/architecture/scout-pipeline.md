@@ -49,7 +49,7 @@ Scout is the automated community signal collection engine for Root Signal. It di
 │  │  │  Claude Haiku (claude-haiku-4-5-20251001)                 │   │  │
 │  │  │                                                           │   │  │
 │  │  │  Input: page content (≤30K chars) + source URL            │   │  │
-│  │  │  Output: JSON → Vec<ExtractedSignal>                      │   │  │
+│  │  │  Output: JSON → ExtractionResult (nodes + implied_queries)│   │  │
 │  │  │                                                           │   │  │
 │  │  │  Signal Types:                                            │   │  │
 │  │  │    Event   - Time-bound gathering/activity                │   │  │
@@ -119,6 +119,15 @@ Scout is the automated community signal collection engine for Root Signal. It di
 │  │  │  where neighbor similarity > 0.7                            │  │  │
 │  │  │  Normalized 0.0–1.0                                         │  │  │
 │  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                   │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Signal Expansion                                           │  │  │
+│  │  │  Collect implied_queries from Tension/Ask (immediate)       │  │  │
+│  │  │  + Give/Event linked to heated tensions (deferred)          │  │  │
+│  │  │  Jaccard dedup → create DiscoveryMethod::SignalExpansion    │  │  │
+│  │  │  sources (≤10 per run)                                      │  │  │
+│  │  │  See: docs/architecture/signal-expansion.md                 │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 
@@ -169,7 +178,9 @@ Source (URL/Post)
   │
   ├─ Scrape ──▶ Raw HTML/Text
   │
-  ├─ Extract (Haiku) ──▶ ExtractedSignal { title, summary, type, location, timing, ... }
+  ├─ Extract (Haiku) ──▶ ExtractionResult { nodes, implied_queries }
+  │
+  ├─ Collect implied queries (Tension/Ask → immediate, Give/Event → stored on node)
   │
   ├─ Quality Score ──▶ confidence (0.0–1.0)
   │
@@ -187,7 +198,9 @@ Source (URL/Post)
   │
   ├─ Investigate (Tavily + Haiku) ──▶ additional Evidence nodes
   │
-  └─ Cause Heat ──▶ cross-story attention boosting (0.0–1.0)
+  ├─ Cause Heat ──▶ cross-story attention boosting (0.0–1.0)
+  │
+  └─ Signal Expansion ──▶ deferred queries from linked Give/Event + dedup → new sources
 ```
 
 ## Key Scoring Dimensions
@@ -235,7 +248,7 @@ Active cities: **Twin Cities**, NYC, Portland, Berlin
 ## Key Traits (Extension Points)
 
 ```rust
-trait SignalExtractor   // LLM signal extraction from content
+trait SignalExtractor   // LLM signal extraction → ExtractionResult (nodes + implied_queries)
 trait TextEmbedder      // Vector embeddings for similarity
 trait PageScraper       // Web page content fetching
 trait WebSearcher       // Web search API

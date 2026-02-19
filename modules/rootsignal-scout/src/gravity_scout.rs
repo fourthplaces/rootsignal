@@ -21,7 +21,7 @@ use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
-const MAX_GRAVITY_TARGETS_PER_RUN: usize = 3;
+const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
 const MAX_TOOL_TURNS: usize = 10;
 const MAX_GATHERINGS_PER_TENSION: usize = 8;
 const MAX_FUTURE_QUERIES_PER_TENSION: usize = 3;
@@ -154,7 +154,8 @@ CIVIC & DEMOCRATIC:
 DIGITAL:
 - Instagram accounts documenting community response, organizing events
 - Facebook groups, Reddit threads forming around the tension
-- GoFundMe/crowdfunding campaigns that become community rallying points
+- Crowdfunding and donation campaigns (GoFundMe, GiveSendGo, org donation pages, \
+Venmo/CashApp mutual aid funds) that become community rallying points
 - Nextdoor threads where neighbors are organizing
 
 THE KEY DISTINCTION: An instrumental response SOLVES a problem. Gravity \
@@ -374,7 +375,12 @@ impl<'a> GravityScout<'a> {
         // Fetch existing gravity signals for context
         let existing = self
             .writer
-            .get_existing_gravity_signals(target.tension_id)
+            .get_existing_gravity_signals(
+                target.tension_id,
+                self.city.center_lat,
+                self.city.center_lng,
+                self.city.radius_km,
+            )
             .await
             .unwrap_or_default();
 
@@ -617,6 +623,7 @@ impl<'a> GravityScout<'a> {
             external_ratio: 1.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
@@ -949,6 +956,7 @@ mod tests {
             external_ratio: 1.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
 
         let node = Node::Event(EventNode {

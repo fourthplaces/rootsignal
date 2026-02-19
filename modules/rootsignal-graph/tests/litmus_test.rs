@@ -42,6 +42,18 @@ async fn create_signal(
     title: &str,
     source_url: &str,
 ) {
+    create_signal_at(client, label, id, title, source_url, 44.9778, -93.2650).await;
+}
+
+async fn create_signal_at(
+    client: &GraphClient,
+    label: &str,
+    id: Uuid,
+    title: &str,
+    source_url: &str,
+    lat: f64,
+    lng: f64,
+) {
     let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
@@ -60,8 +72,8 @@ async fn create_signal(
             extracted_at: datetime($now),
             last_confirmed_active: datetime($now),
             location_name: '',
-            lat: 44.9778,
-            lng: -93.2650,
+            lat: {lat},
+            lng: {lng},
             embedding: {emb}
         }})"
     );
@@ -1720,4 +1732,556 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
     let updated_lca: String = format!("{:?}", row2.get::<chrono::NaiveDateTime>("lca"));
 
     assert_ne!(initial_lca, updated_lca, "last_confirmed_active should have been updated");
+}
+
+#[tokio::test]
+async fn get_existing_gravity_signals_filters_by_city() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "Immigration Fear", 0.7, 0.5, None, None).await;
+
+    // Minneapolis gathering (lat 44.9778, lng -93.2650)
+    let mpls_event = Uuid::new_v4();
+    create_signal_at(&client, "Event", mpls_event, "Singing Rebellion at Lake Street Church",
+        "https://example.com/singing", 44.9778, -93.2650).await;
+    writer.create_drawn_to_edge(mpls_event, tension_id, 0.9, "solidarity through singing", "singing")
+        .await.expect("edge failed");
+
+    // NYC gathering (lat 40.7128, lng -74.0060)
+    let nyc_event = Uuid::new_v4();
+    create_signal_at(&client, "Event", nyc_event, "Union Square Immigration Vigil",
+        "https://example.com/vigil", 40.7128, -74.0060).await;
+    writer.create_drawn_to_edge(nyc_event, tension_id, 0.85, "solidarity vigil", "vigil")
+        .await.expect("edge failed");
+
+    // When querying from NYC, should only see the NYC gathering
+    let nyc_results = writer.get_existing_gravity_signals(
+        tension_id, 40.7128, -74.0060, 50.0,
+    ).await.expect("query failed");
+    assert_eq!(nyc_results.len(), 1, "Should only see NYC gathering, not Minneapolis");
+    assert_eq!(nyc_results[0].title, "Union Square Immigration Vigil");
+
+    // When querying from Minneapolis, should only see the Minneapolis gathering
+    let mpls_results = writer.get_existing_gravity_signals(
+        tension_id, 44.9778, -93.2650, 50.0,
+    ).await.expect("query failed");
+    assert_eq!(mpls_results.len(), 1, "Should only see Minneapolis gathering, not NYC");
+    assert_eq!(mpls_results[0].title, "Singing Rebellion at Lake Street Church");
+}
+
+// =============================================================================
+// Signal Expansion integration tests
+// =============================================================================
+
+/// Helper: create a Give node with implied_queries stored as a native Neo4j list.
+async fn create_give_with_implied_queries(
+    client: &GraphClient,
+    id: Uuid,
+    title: &str,
+    implied_queries: &[&str],
+) {
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let cypher = format!(
+        "CREATE (g:Give {{
+            id: $id,
+            title: $title,
+            summary: $summary,
+            sensitivity: 'general',
+            confidence: 0.8,
+            freshness_score: 0.8,
+            corroboration_count: 0,
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            source_url: 'https://example.com/give',
+            extracted_at: datetime($now),
+            last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis',
+            action_url: '',
+            availability: '',
+            is_ongoing: true,
+            implied_queries: $queries,
+            lat: 44.9778,
+            lng: -93.2650,
+            embedding: {emb}
+        }})"
+    );
+
+    let queries: Vec<String> = implied_queries.iter().map(|s| s.to_string()).collect();
+    let q = query(&cypher)
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", format!("Test give: {title}"))
+        .param("now", now)
+        .param("queries", queries);
+
+    client.inner().run(q).await.expect("Failed to create give with implied_queries");
+}
+
+/// Helper: create a TavilyQuery source node.
+async fn create_tavily_source(
+    client: &GraphClient,
+    city: &str,
+    query_text: &str,
+    active: bool,
+) {
+    let now = neo4j_dt(&Utc::now());
+    let id = Uuid::new_v4();
+    let q = query(
+        "CREATE (s:Source {
+            id: $id,
+            canonical_key: $key,
+            canonical_value: $query,
+            url: $query,
+            source_type: 'tavily_query',
+            discovery_method: 'curated',
+            city: $city,
+            created_at: datetime($now),
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: $active,
+            weight: 0.5,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: 'mixed',
+            scrape_count: 0
+        })"
+    )
+    .param("id", id.to_string())
+    .param("key", format!("{city}:tavily_query:{query_text}"))
+    .param("query", query_text)
+    .param("city", city)
+    .param("now", now)
+    .param("active", active);
+
+    client.inner().run(q).await.expect("Failed to create tavily source");
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_tension_response_shape returns correct breakdown
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tension_response_shape_correct_breakdown() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create a high-heat tension
+    let tension_id = Uuid::new_v4();
+    create_tension_for_response_scout(&client, tension_id, "Immigration Enforcement Fear", 0.7, None).await;
+    // Bump cause_heat above 0.1 (create_tension_for_response_scout sets 0.5)
+
+    // Create 2 Gives and 1 Ask linked via RESPONDS_TO
+    let give1_id = Uuid::new_v4();
+    let give2_id = Uuid::new_v4();
+    let ask_id = Uuid::new_v4();
+    create_signal(&client, "Give", give1_id, "ILCM Legal Clinic", "https://example.com/ilcm").await;
+    create_signal(&client, "Give", give2_id, "Emergency Bail Fund", "https://example.com/bail").await;
+    create_signal(&client, "Ask", ask_id, "Volunteer interpreters needed", "https://example.com/interpreters").await;
+
+    for (sig_id, label) in [(give1_id, "Give"), (give2_id, "Give"), (ask_id, "Ask")] {
+        let cypher = format!(
+            "MATCH (s:{label} {{id: $sid}}), (t:Tension {{id: $tid}})
+             CREATE (s)-[:RESPONDS_TO {{match_strength: 0.8, explanation: 'test'}}]->(t)"
+        );
+        let q = query(&cypher)
+            .param("sid", sig_id.to_string())
+            .param("tid", tension_id.to_string());
+        client.inner().run(q).await.expect("edge creation failed");
+    }
+
+    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
+    assert_eq!(shapes.len(), 1, "Should have 1 tension with responses");
+
+    let shape = &shapes[0];
+    assert_eq!(shape.title, "Immigration Enforcement Fear");
+    assert_eq!(shape.give_count, 2, "Should have 2 Give responses");
+    assert_eq!(shape.event_count, 0, "Should have 0 Event responses");
+    assert_eq!(shape.ask_count, 1, "Should have 1 Ask response");
+    assert!(shape.cause_heat >= 0.1, "Tension should have heat above threshold");
+    assert_eq!(shape.sample_titles.len(), 3, "Should have 3 sample titles");
+    assert!(shape.sample_titles.contains(&"ILCM Legal Clinic".to_string()));
+    assert!(shape.sample_titles.contains(&"Emergency Bail Fund".to_string()));
+    assert!(shape.sample_titles.contains(&"Volunteer interpreters needed".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_tension_response_shape filters by heat and confidence
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tension_response_shape_filters_low_heat_and_confidence() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Hot tension with responses — should appear
+    let hot_id = Uuid::new_v4();
+    create_tension_for_response_scout(&client, hot_id, "Hot Tension", 0.7, None).await;
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Some Service", "https://example.com/svc").await;
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", hot_id.to_string());
+    client.inner().run(q).await.expect("edge failed");
+
+    // Cold tension (cause_heat = 0.0) with responses — should NOT appear
+    let cold_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, cold_id, "Cold Tension", 0.7, 0.0, None, None).await;
+    let give2_id = Uuid::new_v4();
+    create_signal(&client, "Give", give2_id, "Cold Service", "https://example.com/cold").await;
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+    )
+    .param("gid", give2_id.to_string())
+    .param("tid", cold_id.to_string());
+    client.inner().run(q).await.expect("edge failed");
+
+    // Low confidence tension (0.3, below 0.5 threshold) — should NOT appear
+    let low_conf_id = Uuid::new_v4();
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let cypher = format!(
+        "CREATE (t:Tension {{
+            id: $id, title: 'Low Confidence', summary: 'test',
+            sensitivity: 'general', confidence: 0.3, freshness_score: 1.0,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 1.0,
+            cause_heat: 0.5, source_url: 'https://example.com',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis', severity: 'high', category: 'safety',
+            what_would_help: 'resources', lat: 44.9778, lng: -93.2650,
+            embedding: {emb}
+        }})"
+    );
+    let q = query(&cypher)
+        .param("id", low_conf_id.to_string())
+        .param("now", now);
+    client.inner().run(q).await.expect("create tension");
+    let give3_id = Uuid::new_v4();
+    create_signal(&client, "Give", give3_id, "Low Conf Service", "https://example.com/lowconf").await;
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+    )
+    .param("gid", give3_id.to_string())
+    .param("tid", low_conf_id.to_string());
+    client.inner().run(q).await.expect("edge failed");
+
+    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
+    assert_eq!(shapes.len(), 1, "Only the hot, high-confidence tension should appear");
+    assert_eq!(shapes[0].title, "Hot Tension");
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_tension_response_shape excludes tensions with zero responses
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tension_response_shape_excludes_zero_responses() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Hot tension with NO responses — should NOT appear
+    let t1 = Uuid::new_v4();
+    create_tension_for_response_scout(&client, t1, "No Responses", 0.7, None).await;
+
+    let shapes = writer.get_tension_response_shape(10).await.expect("query failed");
+    assert_eq!(shapes.len(), 0, "Tension with no responses should not appear in response shape");
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_recently_linked_signals_with_queries collects and clears queries
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn recently_linked_signals_collects_and_clears_queries() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create a heated tension
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+
+    // Create a Give with implied_queries
+    let give_id = Uuid::new_v4();
+    create_give_with_implied_queries(
+        &client,
+        give_id,
+        "Rent Assistance Program",
+        &["emergency housing Minneapolis", "tenant legal aid Minneapolis"],
+    ).await;
+
+    // Link Give → Tension via RESPONDS_TO
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'provides rent help'}]->(t)"
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+    client.inner().run(q).await.expect("edge creation failed");
+
+    // First call: should collect the queries
+    let queries = writer.get_recently_linked_signals_with_queries("twincities").await
+        .expect("query failed");
+    assert_eq!(queries.len(), 2, "Should collect 2 implied queries");
+    assert!(queries.contains(&"emergency housing Minneapolis".to_string()));
+    assert!(queries.contains(&"tenant legal aid Minneapolis".to_string()));
+
+    // Second call: should return empty — queries were cleared after first collection
+    let queries_again = writer.get_recently_linked_signals_with_queries("twincities").await
+        .expect("query failed");
+    assert_eq!(queries_again.len(), 0, "Queries should be cleared after collection");
+
+    // Verify the property is null on the node
+    let q = query(
+        "MATCH (g:Give {id: $id})
+         RETURN g.implied_queries IS NULL AS is_null"
+    )
+    .param("id", give_id.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let is_null: bool = row.get("is_null").expect("no is_null");
+    assert!(is_null, "implied_queries should be null after collection");
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_recently_linked_signals ignores cold tensions (heat < 0.1)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn recently_linked_signals_ignores_cold_tensions() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create a COLD tension (heat = 0.0)
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None).await;
+
+    // Create a Give with implied_queries linked to the cold tension
+    let give_id = Uuid::new_v4();
+    create_give_with_implied_queries(
+        &client,
+        give_id,
+        "Some Service",
+        &["should not be collected"],
+    ).await;
+
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)"
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+    client.inner().run(q).await.expect("edge failed");
+
+    let queries = writer.get_recently_linked_signals_with_queries("twincities").await
+        .expect("query failed");
+    assert_eq!(queries.len(), 0, "Should not collect queries from signals linked to cold tensions");
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_recently_linked_signals works with DRAWN_TO edges (gravity)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn recently_linked_signals_works_with_drawn_to() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create a heated tension
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+
+    // Create an Event with implied_queries
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let event_id = Uuid::new_v4();
+    let cypher = format!(
+        "CREATE (e:Event {{
+            id: $id, title: 'Solidarity Vigil', summary: 'test',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://example.com/vigil',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis', starts_at: null, ends_at: null,
+            action_url: '', organizer: '', is_recurring: false,
+            implied_queries: $queries,
+            lat: 44.9778, lng: -93.2650,
+            embedding: {emb}
+        }})"
+    );
+    let queries = vec!["immigration vigil Minneapolis".to_string(), "ICE response events".to_string()];
+    let q = query(&cypher)
+        .param("id", event_id.to_string())
+        .param("now", now)
+        .param("queries", queries);
+    client.inner().run(q).await.expect("create event");
+
+    // Link via DRAWN_TO (gravity scout edge)
+    writer
+        .create_drawn_to_edge(event_id, tension_id, 0.85, "solidarity", "vigil")
+        .await
+        .expect("create_drawn_to failed");
+
+    let collected = writer.get_recently_linked_signals_with_queries("twincities").await
+        .expect("query failed");
+    assert_eq!(collected.len(), 2, "Should collect queries from DRAWN_TO-linked events");
+    assert!(collected.contains(&"immigration vigil Minneapolis".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Test: get_active_tavily_queries returns active queries only
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn active_tavily_queries_filters_inactive() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    create_tavily_source(&client, "twincities", "immigration services Minneapolis", true).await;
+    create_tavily_source(&client, "twincities", "food shelf volunteer Minneapolis", true).await;
+    create_tavily_source(&client, "twincities", "deactivated old query", false).await;
+    create_tavily_source(&client, "nyc", "immigration services NYC", true).await;
+
+    let queries = writer.get_active_tavily_queries("twincities").await.expect("query failed");
+    assert_eq!(queries.len(), 2, "Should find 2 active twincities queries, got {}", queries.len());
+    assert!(queries.contains(&"immigration services Minneapolis".to_string()));
+    assert!(queries.contains(&"food shelf volunteer Minneapolis".to_string()));
+    assert!(!queries.iter().any(|q| q.contains("deactivated")), "Should not include inactive queries");
+    assert!(!queries.iter().any(|q| q.contains("NYC")), "Should not include other city queries");
+}
+
+// ---------------------------------------------------------------------------
+// Test: implied_queries round-trip through Neo4j as native List<String>
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn implied_queries_round_trip_neo4j() {
+    let (_container, client) = setup().await;
+
+    let give_id = Uuid::new_v4();
+    create_give_with_implied_queries(
+        &client,
+        give_id,
+        "Test Give",
+        &["query one", "query two", "query three"],
+    ).await;
+
+    // Read back as native list
+    let q = query(
+        "MATCH (g:Give {id: $id})
+         RETURN g.implied_queries AS queries, size(g.implied_queries) AS len"
+    )
+    .param("id", give_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let queries: Vec<String> = row.get("queries").expect("no queries");
+    let len: i64 = row.get("len").expect("no len");
+
+    assert_eq!(len, 3, "Should store 3 queries");
+    assert_eq!(queries, vec!["query one", "query two", "query three"]);
+}
+
+// ---------------------------------------------------------------------------
+// Test: empty implied_queries stored as null (not empty list)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn empty_implied_queries_stored_as_null() {
+    let (_container, client) = setup().await;
+
+    // Create a Give with empty implied_queries via Cypher CASE pattern
+    let give_id = Uuid::new_v4();
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let cypher = format!(
+        "CREATE (g:Give {{
+            id: $id, title: 'No Queries Give', summary: 'test',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://example.com',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: '', action_url: '', availability: '', is_ongoing: true,
+            implied_queries: CASE WHEN size($queries) > 0 THEN $queries ELSE null END,
+            lat: 44.9778, lng: -93.2650,
+            embedding: {emb}
+        }})"
+    );
+    let empty_queries: Vec<String> = vec![];
+    let q = query(&cypher)
+        .param("id", give_id.to_string())
+        .param("now", now)
+        .param("queries", empty_queries);
+    client.inner().run(q).await.expect("create give");
+
+    let q = query(
+        "MATCH (g:Give {id: $id})
+         RETURN g.implied_queries IS NULL AS is_null"
+    )
+    .param("id", give_id.to_string());
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let is_null: bool = row.get("is_null").expect("no is_null");
+    assert!(is_null, "Empty implied_queries should be stored as null, not empty list");
+}
+
+// ---------------------------------------------------------------------------
+// Test: Signal expansion source creation via upsert_source
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn signal_expansion_source_created_with_correct_method() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let source = SourceNode {
+        id: Uuid::new_v4(),
+        canonical_key: "twincities:tavily_query:emergency housing Minneapolis".to_string(),
+        canonical_value: "emergency housing Minneapolis".to_string(),
+        url: None,
+        source_type: SourceType::TavilyQuery,
+        discovery_method: DiscoveryMethod::SignalExpansion,
+        city: "twincities".to_string(),
+        created_at: Utc::now(),
+        last_scraped: None,
+        last_produced_signal: None,
+        signals_produced: 0,
+        signals_corroborated: 0,
+        consecutive_empty_runs: 0,
+        active: true,
+        gap_context: Some("Expanded from: Emergency bail fund for detained immigrants".to_string()),
+        weight: 0.5,
+        cadence_hours: None,
+        avg_signals_per_scrape: 0.0,
+        quality_penalty: 1.0,
+        source_role: SourceRole::Mixed,
+        scrape_count: 0,
+    };
+
+    writer.upsert_source(&source).await.expect("upsert_source failed");
+
+    // Verify the source was created with SignalExpansion discovery method
+    let q = query(
+        "MATCH (s:Source {canonical_key: $key})
+         RETURN s.discovery_method AS dm, s.gap_context AS gc, s.active AS active"
+    )
+    .param("key", "twincities:tavily_query:emergency housing Minneapolis");
+
+    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let row = stream.next().await.expect("stream error").expect("no row");
+    let dm: String = row.get("dm").expect("no dm");
+    let gc: String = row.get("gc").expect("no gc");
+    let active: bool = row.get("active").expect("no active");
+
+    assert_eq!(dm, "signal_expansion", "Discovery method should be signal_expansion");
+    assert!(gc.contains("Emergency bail fund"), "Gap context should reference originating signal");
+    assert!(active, "Source should be active");
 }

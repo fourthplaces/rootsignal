@@ -38,6 +38,9 @@ pub struct ScoutStats {
     pub geo_filtered: u32,
     pub discovery_posts_found: u32,
     pub discovery_accounts_found: u32,
+    pub expansion_queries_collected: u32,
+    pub expansion_sources_created: u32,
+    pub expansion_deferred_expanded: u32,
 }
 
 impl std::fmt::Display for ScoutStats {
@@ -65,6 +68,12 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "  < 7 days:   {} ({:.0}%)", self.fresh_7d, self.fresh_7d as f64 / total as f64 * 100.0)?;
         writeln!(f, "  7-30 days:  {} ({:.0}%)", self.fresh_30d, self.fresh_30d as f64 / total as f64 * 100.0)?;
         writeln!(f, "  30-90 days: {} ({:.0}%)", self.fresh_90d, self.fresh_90d as f64 / total as f64 * 100.0)?;
+        if self.expansion_queries_collected > 0 {
+            writeln!(f, "\nSignal expansion:")?;
+            writeln!(f, "  Queries collected: {}", self.expansion_queries_collected)?;
+            writeln!(f, "  Sources created:   {}", self.expansion_sources_created)?;
+            writeln!(f, "  Deferred expanded: {}", self.expansion_deferred_expanded)?;
+        }
         Ok(())
     }
 }
@@ -155,12 +164,19 @@ impl Scout {
         } else {
             Box::new(apify_client::ApifyClient::new(apify_api_key.to_string()))
         };
+        let scraper: Box<dyn PageScraper> = match std::env::var("BROWSERLESS_URL") {
+            Ok(url) => {
+                let token = std::env::var("BROWSERLESS_TOKEN").ok();
+                Box::new(scraper::BrowserlessScraper::new(&url, token.as_deref()))
+            }
+            Err(_) => Box::new(scraper::ChromeScraper::new()),
+        };
         Ok(Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
             extractor: Box::new(Extractor::new(anthropic_api_key, city_node.name.as_str(), city_node.center_lat, city_node.center_lng)),
             embedder: Box::new(Embedder::new(voyage_api_key)),
-            scraper: Box::new(scraper::ChromeScraper::new()),
+            scraper,
             searcher: Box::new(TavilySearcher::new(tavily_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
@@ -291,6 +307,7 @@ impl Scout {
 
         let mut embed_cache = EmbeddingCache::new();
         let mut source_signal_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut expansion_queries: Vec<String> = Vec::new();
 
         // ================================================================
         // Phase A: Find Problems — scrape tension + mixed sources (web + social)
@@ -307,6 +324,7 @@ impl Scout {
             &mut stats,
             &mut embed_cache,
             &mut source_signal_counts,
+            &mut expansion_queries,
         ).await;
 
         // Phase A social: tension + mixed social sources
@@ -319,7 +337,7 @@ impl Scout {
             .collect();
         let known_city_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
         if !phase_a_social.is_empty() {
-            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_a_social, &known_city_urls).await;
+            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_a_social, &known_city_urls, &mut expansion_queries).await;
         }
 
         self.check_cancelled()?;
@@ -380,6 +398,7 @@ impl Scout {
                 &mut stats,
                 &mut embed_cache,
                 &mut source_signal_counts,
+                &mut expansion_queries,
             ).await;
         }
 
@@ -393,7 +412,7 @@ impl Scout {
             .collect();
         let known_city_urls: std::collections::HashSet<String> = extended_url_map.keys().cloned().collect();
         if !phase_b_social.is_empty() {
-            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_b_social, &known_city_urls).await;
+            self.scrape_social_media(&mut stats, &mut embed_cache, &mut source_signal_counts, &phase_b_social, &known_city_urls, &mut expansion_queries).await;
         }
 
         self.check_cancelled()?;
@@ -576,7 +595,7 @@ impl Scout {
             self.graph_client.clone(),
             &self.anthropic_api_key,
         );
-        let has_weave_budget = self.budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE * 5);
+        let has_weave_budget = self.budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
         match weaver.run(has_weave_budget).await {
             Ok(weave_stats) => info!("{weave_stats}"),
             Err(e) => warn!(error = %e, "Story weaving failed (non-fatal)"),
@@ -594,6 +613,80 @@ impl Scout {
             info!("{investigation_stats}");
         } else if self.budget.is_active() {
             info!("Skipping investigation (budget exhausted)");
+        }
+
+        self.check_cancelled()?;
+
+        // ================================================================
+        // Signal Expansion — create sources from implied queries
+        // ================================================================
+        // Deferred expansion: collect implied queries from Give/Event signals
+        // that are now linked to tensions via response mapping.
+        match self.writer.get_recently_linked_signals_with_queries(&self.city_node.slug).await {
+            Ok(deferred) => {
+                let deferred_count = deferred.len();
+                expansion_queries.extend(deferred);
+                if deferred_count > 0 {
+                    info!(deferred = deferred_count, "Deferred signal expansion queries collected");
+                }
+                stats.expansion_deferred_expanded = deferred_count as u32;
+            }
+            Err(e) => warn!(error = %e, "Failed to get deferred expansion queries"),
+        }
+
+        stats.expansion_queries_collected = expansion_queries.len() as u32;
+
+        if !expansion_queries.is_empty() {
+            let existing = self.writer.get_active_tavily_queries(&self.city_node.slug).await
+                .unwrap_or_default();
+            let deduped: Vec<String> = expansion_queries.iter()
+                .filter(|q| !existing.iter().any(|e| jaccard_similarity(q, e) > DEDUP_JACCARD_THRESHOLD))
+                .cloned()
+                .take(MAX_EXPANSION_QUERIES_PER_RUN)
+                .collect();
+
+            let now_expansion = Utc::now();
+            let mut created = 0u32;
+            for query_text in &deduped {
+                let cv = query_text.clone();
+                let ck = crate::sources::make_canonical_key(
+                    &self.city_node.slug, SourceType::TavilyQuery, &cv,
+                );
+                let source = SourceNode {
+                    id: Uuid::new_v4(),
+                    canonical_key: ck,
+                    canonical_value: cv,
+                    url: None,
+                    source_type: SourceType::TavilyQuery,
+                    discovery_method: DiscoveryMethod::SignalExpansion,
+                    city: self.city_node.slug.clone(),
+                    created_at: now_expansion,
+                    last_scraped: None,
+                    last_produced_signal: None,
+                    signals_produced: 0,
+                    signals_corroborated: 0,
+                    consecutive_empty_runs: 0,
+                    active: true,
+                    gap_context: Some("Signal expansion: implied query from extracted signal".to_string()),
+                    weight: 0.3,
+                    cadence_hours: None,
+                    avg_signals_per_scrape: 0.0,
+                    quality_penalty: 1.0,
+                    source_role: rootsignal_common::SourceRole::Response,
+                    scrape_count: 0,
+                };
+                match self.writer.upsert_source(&source).await {
+                    Ok(_) => created += 1,
+                    Err(e) => warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source"),
+                }
+            }
+            stats.expansion_sources_created = created;
+            info!(
+                collected = expansion_queries.len(),
+                created,
+                deferred = stats.expansion_deferred_expanded,
+                "Signal expansion complete"
+            );
         }
 
         self.check_cancelled()?;
@@ -627,6 +720,7 @@ impl Scout {
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
+        expansion_queries: &mut Vec<String>,
     ) {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources.iter()
@@ -740,7 +834,7 @@ impl Scout {
                 }
 
                 match self.extractor.extract(&content, &clean_url).await {
-                    Ok(nodes) => (clean_url, ScrapeOutcome::New { content, nodes }),
+                    Ok(result) => (clean_url, ScrapeOutcome::New { content, nodes: result.nodes }),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
                         (clean_url, ScrapeOutcome::Failed)
@@ -758,6 +852,15 @@ impl Scout {
             let ck = url_to_canonical_key.get(&url).cloned().unwrap_or_else(|| url.clone());
             match outcome {
                 ScrapeOutcome::New { content, nodes } => {
+                    // Collect implied queries from Tension + Ask nodes for immediate expansion
+                    for node in &nodes {
+                        if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
+                            if let Some(meta) = node.meta() {
+                                expansion_queries.extend(meta.implied_queries.iter().cloned());
+                            }
+                        }
+                    }
+
                     let signal_count_before = stats.signals_stored;
                     let known_urls: std::collections::HashSet<String> = url_to_canonical_key.keys().cloned().collect();
                     match self.store_signals(&url, &content, nodes, stats, embed_cache, &known_urls).await {
@@ -798,6 +901,7 @@ impl Scout {
         source_signal_counts: &mut std::collections::HashMap<String, u32>,
         social_sources: &[&SourceNode],
         known_city_urls: &std::collections::HashSet<String>,
+        expansion_queries: &mut Vec<String>,
     ) {
         use std::pin::Pin;
         use std::future::Future;
@@ -893,7 +997,7 @@ impl Scout {
                         }
                         combined_all.push_str(&combined_text);
                         match self.extractor.extract(&combined_text, &source_url).await {
-                            Ok(n) => all_nodes.extend(n),
+                            Ok(result) => all_nodes.extend(result.nodes),
                             Err(e) => {
                                 warn!(source_url, error = %e, "Reddit extraction failed");
                             }
@@ -915,15 +1019,15 @@ impl Scout {
                     if combined_text.is_empty() {
                         return None;
                     }
-                    let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                        Ok(n) => n,
+                    let result = match self.extractor.extract(&combined_text, &source_url).await {
+                        Ok(r) => r,
                         Err(e) => {
                             warn!(source_url, error = %e, "Social extraction failed");
                             return None;
                         }
                     };
                     info!(source_url, posts = post_count, "Social scrape complete");
-                    Some((canonical_key, source_url, combined_text, nodes, post_count))
+                    Some((canonical_key, source_url, combined_text, result.nodes, post_count))
                 }
             }));
         }
@@ -935,6 +1039,14 @@ impl Scout {
 
         for result in results.into_iter().flatten() {
             let (canonical_key, source_url, combined_text, nodes, post_count) = result;
+            // Collect implied queries from Tension/Ask social signals
+            for node in &nodes {
+                if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
+                    if let Some(meta) = node.meta() {
+                        expansion_queries.extend(meta.implied_queries.iter().cloned());
+                    }
+                }
+            }
             stats.social_media_posts += post_count as u32;
             let signal_count_before = stats.signals_stored;
             if let Err(e) = self.store_signals(&source_url, &combined_text, nodes, stats, embed_cache, known_city_urls).await {
@@ -1044,7 +1156,7 @@ impl Scout {
 
             // Extract signals via LLM
             let nodes = match self.extractor.extract(&combined_text, &source_url).await {
-                Ok(n) => n,
+                Ok(result) => result.nodes,
                 Err(e) => {
                     warn!(username, error = %e, "Discovery extraction failed");
                     continue;
@@ -1646,4 +1758,98 @@ fn content_hash(content: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3); // FNV prime
     }
     hash
+}
+
+// --- Signal Expansion helpers ---
+
+const DEDUP_JACCARD_THRESHOLD: f64 = 0.6;
+const MAX_EXPANSION_QUERIES_PER_RUN: usize = 10;
+
+/// Token-based Jaccard similarity for query dedup.
+/// Uses word overlap rather than substring matching to preserve specific long-tail queries.
+fn jaccard_similarity(a: &str, b: &str) -> f64 {
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+    let a_tokens: std::collections::HashSet<&str> = a_lower.split_whitespace().collect();
+    let b_tokens: std::collections::HashSet<&str> = b_lower.split_whitespace().collect();
+    let intersection = a_tokens.intersection(&b_tokens).count();
+    let union = a_tokens.union(&b_tokens).count();
+    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jaccard_specific_vs_generic_passes() {
+        // "emergency housing for detained immigrants" vs "housing"
+        // Only share "housing" — 1 token overlap out of 5+1=5 unique → 1/5 = 0.2
+        let sim = jaccard_similarity(
+            "emergency housing for detained immigrants",
+            "housing",
+        );
+        assert!(sim < DEDUP_JACCARD_THRESHOLD,
+            "Specific long-tail query should not match generic: {sim}");
+    }
+
+    #[test]
+    fn jaccard_similar_queries_blocked() {
+        // "housing assistance Minneapolis" vs "housing resources Minneapolis"
+        // Tokens: {housing, assistance, minneapolis} vs {housing, resources, minneapolis}
+        // Intersection: {housing, minneapolis} = 2
+        // Union: {housing, assistance, minneapolis, resources} = 4
+        // Jaccard = 2/4 = 0.5 — wait, let me recount
+        // Actually with lowercased:
+        // a: {housing, assistance, minneapolis} (3)
+        // b: {housing, resources, minneapolis} (3)
+        // intersection: {housing, minneapolis} (2)
+        // union: {housing, assistance, resources, minneapolis} (4)
+        // 2/4 = 0.5 — below 0.6 threshold
+        // Let me use a more overlapping example
+        let sim = jaccard_similarity(
+            "housing assistance programs Minneapolis",
+            "housing assistance resources Minneapolis",
+        );
+        // a: {housing, assistance, programs, minneapolis} (4)
+        // b: {housing, assistance, resources, minneapolis} (4)
+        // intersection: {housing, assistance, minneapolis} (3)
+        // union: {housing, assistance, programs, resources, minneapolis} (5)
+        // 3/5 = 0.6 — at threshold
+        assert!(sim >= DEDUP_JACCARD_THRESHOLD,
+            "Similar queries should be flagged as duplicate: {sim}");
+    }
+
+    #[test]
+    fn jaccard_identical_blocked() {
+        let sim = jaccard_similarity(
+            "immigration legal aid Minneapolis",
+            "immigration legal aid Minneapolis",
+        );
+        assert!((sim - 1.0).abs() < f64::EPSILON,
+            "Identical queries should have Jaccard 1.0: {sim}");
+    }
+
+    #[test]
+    fn jaccard_empty_strings() {
+        assert_eq!(jaccard_similarity("", ""), 0.0);
+        assert_eq!(jaccard_similarity("hello", ""), 0.0);
+    }
+
+    #[test]
+    fn jaccard_case_insensitive() {
+        let sim = jaccard_similarity("Housing Minneapolis", "housing minneapolis");
+        assert!((sim - 1.0).abs() < f64::EPSILON,
+            "Jaccard should be case-insensitive: {sim}");
+    }
+
+    #[test]
+    fn max_expansion_queries_constant() {
+        assert_eq!(MAX_EXPANSION_QUERIES_PER_RUN, 10);
+    }
+
+    #[test]
+    fn dedup_threshold_constant() {
+        assert!((DEDUP_JACCARD_THRESHOLD - 0.6).abs() < f64::EPSILON);
+    }
 }

@@ -130,8 +130,9 @@ HOW TO INVESTIGATE:
 3. Think about MECHANISMS: what feeds this tension? What starves it?
 4. Follow threads creatively — an article about ICE funding might lead \
 you to boycott campaigns. A food drive might lead you to mutual aid networks.
-5. Search across platforms: GoFundMe, Reddit, Eventbrite, org websites, \
-government programs, church networks, legal clinics
+5. Search across platforms: donation drives, crowdfunding (GoFundMe, GiveSendGo), \
+solidarity funds, Venmo/CashApp mutual aid, fiscal sponsors, org donation pages, \
+Reddit, Eventbrite, church networks, legal clinics, government programs
 6. Go deep on the most promising threads (2-3 hops)
 
 WHAT DIFFUSES TENSION (examples, not exhaustive):
@@ -512,6 +513,7 @@ impl<'a> ResponseScout<'a> {
             external_ratio: 1.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
@@ -674,6 +676,7 @@ impl<'a> ResponseScout<'a> {
                 external_ratio: 1.0,
                 cause_heat: 0.0,
                 mentioned_actors: vec![],
+                implied_queries: vec![],
             },
             severity,
             category: Some(tension.category.clone()),
@@ -900,6 +903,7 @@ mod tests {
             external_ratio: 1.0,
             cause_heat: 0.0,
             mentioned_actors: vec![],
+            implied_queries: vec![],
         };
 
         let node = Node::Give(GiveNode {

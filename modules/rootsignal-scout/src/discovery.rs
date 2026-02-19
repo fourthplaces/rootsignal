@@ -10,7 +10,7 @@ use ai_client::claude::Claude;
 use rootsignal_common::{DiscoveryMethod, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
-    UnmetTension,
+    TensionResponseShape, UnmetTension,
 };
 
 use crate::budget::{BudgetTracker, OperationCost};
@@ -52,6 +52,7 @@ pub struct DiscoveryBriefing {
     pub city_name: String,
     pub gap_type_stats: Vec<GapTypeStats>,
     pub extraction_yield: Vec<ExtractionYield>,
+    pub response_shapes: Vec<TensionResponseShape>,
 }
 
 impl DiscoveryBriefing {
@@ -102,6 +103,34 @@ impl DiscoveryBriefing {
                     "   community attention: {} sources, {} corroborations, heat={:.1}\n",
                     t.source_diversity, t.corroboration_count, t.cause_heat,
                 ));
+            }
+            out.push('\n');
+        }
+
+        // Response shapes
+        if !self.response_shapes.is_empty() {
+            out.push_str("## RESPONSE SHAPE (what's missing from each tension's response)\n\n");
+            out.push_str("These tensions HAVE responses, but coverage may be uneven. Look for what's\n");
+            out.push_str("MISSING — if a tension has legal aid but no housing help, search for housing.\n");
+            out.push_str("If it has events but no donation channels, search for giving.\n\n");
+            for rs in &self.response_shapes {
+                let help = rs.what_would_help.as_deref().unwrap_or("unknown");
+                out.push_str(&format!(
+                    "- \"{}\" (heat: {:.1})\n",
+                    rs.title, rs.cause_heat,
+                ));
+                out.push_str(&format!("  What would help: {}\n", help));
+                out.push_str(&format!(
+                    "  Gives: {}, Events: {}, Asks: {}\n",
+                    rs.give_count, rs.event_count, rs.ask_count,
+                ));
+                if !rs.sample_titles.is_empty() {
+                    let titles = rs.sample_titles.iter()
+                        .map(|t| format!("\"{}\"", t))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("  Known: {}\n", titles));
+                }
             }
             out.push('\n');
         }
@@ -646,6 +675,9 @@ impl<'a> SourceDiscoverer<'a> {
         let extraction_yield = self.writer.get_extraction_yield(&self.city_slug).await
             .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
 
+        let response_shapes = self.writer.get_tension_response_shape(10).await
+            .map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
+
         // Get existing TavilyQuery sources for dedup
         let existing = self.writer.get_active_sources(&self.city_slug).await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
@@ -664,6 +696,7 @@ impl<'a> SourceDiscoverer<'a> {
             city_name: self.city_name.clone(),
             gap_type_stats,
             extraction_yield,
+            response_shapes,
         })
     }
 
@@ -856,6 +889,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         }
     }
 
@@ -962,6 +996,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         assert!(briefing.is_cold_start());
     }
@@ -981,6 +1016,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         assert!(briefing.is_cold_start(), "2 tensions + 0 stories should be cold start");
     }
@@ -1006,6 +1042,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         assert!(!briefing.is_cold_start());
     }
@@ -1041,6 +1078,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(prompt.contains("affordable housing programs Minneapolis"));
@@ -1070,6 +1108,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(prompt.contains("youth mentorship programs Minneapolis"));
@@ -1094,6 +1133,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         let prompt = briefing.format_prompt();
 
@@ -1124,6 +1164,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         let prompt = briefing.format_prompt();
 
@@ -1158,6 +1199,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         let prompt = briefing.format_prompt();
         assert!(
@@ -1320,6 +1362,7 @@ mod tests {
             city_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            response_shapes: vec![],
         };
         assert!(briefing.is_cold_start(), "Should be cold start with 1 tension");
         // Zero-engagement tension is still present — no gating
@@ -1453,5 +1496,42 @@ mod tests {
             prompt.contains("tavily_query has high contradiction rate (30%)"),
             "Missing high contradiction annotation. Prompt:\n{prompt}"
         );
+    }
+
+    // --- H. Response Shape ---
+
+    #[test]
+    fn briefing_format_includes_response_shape() {
+        let mut briefing = make_briefing();
+        briefing.response_shapes = vec![
+            TensionResponseShape {
+                title: "Immigration Enforcement Fear".to_string(),
+                what_would_help: Some("legal defense, emergency housing, mental health support".to_string()),
+                cause_heat: 0.8,
+                give_count: 3,
+                event_count: 2,
+                ask_count: 1,
+                sample_titles: vec![
+                    "ILCM Legal Clinic".to_string(),
+                    "Know Your Rights Workshop".to_string(),
+                    "ICE Rapid Response Fund".to_string(),
+                ],
+            },
+        ];
+        let prompt = briefing.format_prompt();
+        assert!(prompt.contains("## RESPONSE SHAPE"), "Missing RESPONSE SHAPE section");
+        assert!(prompt.contains("Immigration Enforcement Fear"), "Missing tension title");
+        assert!(prompt.contains("heat: 0.8"), "Missing cause heat");
+        assert!(prompt.contains("Gives: 3, Events: 2, Asks: 1"), "Missing response counts");
+        assert!(prompt.contains("ILCM Legal Clinic"), "Missing sample title");
+        assert!(prompt.contains("legal defense, emergency housing"), "Missing what_would_help");
+    }
+
+    #[test]
+    fn briefing_empty_response_shapes_omits_section() {
+        let briefing = make_briefing();
+        let prompt = briefing.format_prompt();
+        assert!(!prompt.contains("## RESPONSE SHAPE"),
+            "Empty response_shapes should not produce RESPONSE SHAPE section");
     }
 }

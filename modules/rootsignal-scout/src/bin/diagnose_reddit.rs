@@ -117,9 +117,9 @@ async fn main() -> Result<()> {
         println!("  Batch {} ({} posts, {} chars)...", batch_idx + 1, batch.len(), combined_text.len());
 
         match extractor.extract(&combined_text, SUBREDDIT_URL).await {
-            Ok(nodes) => {
-                println!("  → {} signals extracted\n", nodes.len());
-                for (j, node) in nodes.iter().enumerate() {
+            Ok(result) => {
+                println!("  → {} signals extracted\n", result.nodes.len());
+                for (j, node) in result.nodes.iter().enumerate() {
                     let meta = node.meta().unwrap();
                     println!("    {:>2}. [{:?}] \"{}\"", j + 1, node.node_type(), meta.title);
                     println!("        loc_name={:?}  lat={:?}  sensitivity={:?}",
@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 println!();
-                all_nodes.extend(nodes);
+                all_nodes.extend(result.nodes);
                 all_combined_text.push_str(&combined_text);
             }
             Err(e) => println!("  → EXTRACTION FAILED: {}\n", e),
