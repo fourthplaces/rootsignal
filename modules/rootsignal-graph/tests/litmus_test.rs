@@ -12,7 +12,7 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::EvidenceNode;
+use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::{query, GraphClient, GraphWriter};
 
 /// Spin up a fresh Neo4j container and run migrations.
@@ -824,4 +824,890 @@ async fn deduplicate_evidence_migration() {
         urls.push(url);
     }
     assert_eq!(urls, vec!["https://independent.org", "https://source-a.org"]);
+}
+
+// ---------------------------------------------------------------------------
+// Test: City proximity signal lookup (list_recent_for_city)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn city_proximity_signal_lookup() {
+    let (_container, client) = setup().await;
+
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+
+    // Minneapolis center: 44.9778, -93.2650
+    // Create signal in downtown Minneapolis (inside ~50km radius)
+    let mpls_id = Uuid::new_v4();
+    let cypher = format!(
+        "CREATE (n:Give {{
+            id: $id, title: 'Minneapolis food shelf', summary: 'Free meals',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://test.com/mpls',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: 'North Minneapolis', action_url: '', availability: '',
+            is_ongoing: true,
+            lat: 44.975, lng: -93.265,
+            embedding: {emb}
+        }})"
+    );
+    client.inner().run(
+        query(&cypher).param("id", mpls_id.to_string()).param("now", now.clone())
+    ).await.expect("create mpls signal");
+
+    // Create signal in St. Paul (inside ~50km radius of Minneapolis center)
+    let stp_id = Uuid::new_v4();
+    let cypher = format!(
+        "CREATE (n:Event {{
+            id: $id, title: 'St Paul community event', summary: 'Block party',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://test.com/stp',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: 'St Paul', starts_at: null, ends_at: null,
+            action_url: '', organizer: '', is_recurring: false,
+            lat: 44.9537, lng: -93.0900,
+            embedding: {emb}
+        }})"
+    );
+    client.inner().run(
+        query(&cypher).param("id", stp_id.to_string()).param("now", now.clone())
+    ).await.expect("create stp signal");
+
+    // Create signal in Duluth (outside ~50km radius — ~250km away)
+    let duluth_id = Uuid::new_v4();
+    let cypher = format!(
+        "CREATE (n:Event {{
+            id: $id, title: 'Duluth harbor event', summary: 'Far away',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://test.com/duluth',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: 'Duluth', starts_at: null, ends_at: null,
+            action_url: '', organizer: '', is_recurring: false,
+            lat: 46.786, lng: -92.100,
+            embedding: {emb}
+        }})"
+    );
+    client.inner().run(
+        query(&cypher).param("id", duluth_id.to_string()).param("now", now.clone())
+    ).await.expect("create duluth signal");
+
+    // Create signal at (0,0) — should be excluded
+    let zero_id = Uuid::new_v4();
+    let cypher = format!(
+        "CREATE (n:Ask {{
+            id: $id, title: 'Zero-coordinate signal', summary: 'Bad data',
+            sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
+            corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
+            cause_heat: 0.0, source_url: 'https://test.com/zero',
+            extracted_at: datetime($now), last_confirmed_active: datetime($now),
+            location_name: '', urgency: 'medium', what_needed: '', action_url: '', goal: '',
+            lat: 0.0, lng: 0.0,
+            embedding: {emb}
+        }})"
+    );
+    client.inner().run(
+        query(&cypher).param("id", zero_id.to_string()).param("now", now)
+    ).await.expect("create zero signal");
+
+    // Query via PublicGraphReader with Minneapolis center + 50km radius
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+    let results = reader
+        .list_recent_for_city(44.9778, -93.2650, 50.0, 100)
+        .await
+        .expect("list_recent_for_city failed");
+
+    let titles: Vec<&str> = results.iter().filter_map(|n| n.meta().map(|m| m.title.as_str())).collect();
+
+    // Should include Minneapolis and St. Paul signals
+    assert!(titles.contains(&"Minneapolis food shelf"), "Missing Minneapolis signal; got: {:?}", titles);
+    assert!(titles.contains(&"St Paul community event"), "Missing St Paul signal; got: {:?}", titles);
+
+    // Should NOT include Duluth or zero-coordinate signal
+    assert!(!titles.contains(&"Duluth harbor event"), "Duluth signal should be outside radius; got: {:?}", titles);
+    assert!(!titles.contains(&"Zero-coordinate signal"), "Zero-coordinate signal should be excluded; got: {:?}", titles);
+}
+
+// ---------------------------------------------------------------------------
+// Test: City proximity story lookup (top_stories_for_city)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn city_proximity_story_lookup() {
+    let (_container, client) = setup().await;
+
+    let now = neo4j_dt(&Utc::now());
+
+    // Story with centroid in Minneapolis
+    let mpls_story_id = Uuid::new_v4();
+    let q = query(
+        "CREATE (s:Story {
+            id: $id, headline: 'Minneapolis housing crisis', summary: 'Rents rising',
+            signal_count: 3, first_seen: datetime($now), last_updated: datetime($now),
+            velocity: 0.5, energy: 8.0,
+            centroid_lat: 44.975, centroid_lng: -93.265,
+            dominant_type: 'Tension', sensitivity: 'general',
+            source_count: 2, entity_count: 1, type_diversity: 2,
+            source_domains: ['reddit.com'], corroboration_depth: 1,
+            status: 'active'
+        })"
+    )
+    .param("id", mpls_story_id.to_string())
+    .param("now", now.clone());
+    client.inner().run(q).await.expect("create mpls story");
+
+    // Story with centroid in Duluth
+    let duluth_story_id = Uuid::new_v4();
+    let q = query(
+        "CREATE (s:Story {
+            id: $id, headline: 'Duluth port expansion', summary: 'New docks',
+            signal_count: 1, first_seen: datetime($now), last_updated: datetime($now),
+            velocity: 0.1, energy: 3.0,
+            centroid_lat: 46.786, centroid_lng: -92.100,
+            dominant_type: 'Notice', sensitivity: 'general',
+            source_count: 1, entity_count: 1, type_diversity: 1,
+            source_domains: ['duluthnewstribune.com'], corroboration_depth: 0,
+            status: 'emerging'
+        })"
+    )
+    .param("id", duluth_story_id.to_string())
+    .param("now", now.clone());
+    client.inner().run(q).await.expect("create duluth story");
+
+    // Story with no centroid
+    let no_geo_story_id = Uuid::new_v4();
+    let q = query(
+        "CREATE (s:Story {
+            id: $id, headline: 'Online-only discussion', summary: 'No location',
+            signal_count: 2, first_seen: datetime($now), last_updated: datetime($now),
+            velocity: 0.2, energy: 5.0,
+            dominant_type: 'Ask', sensitivity: 'general',
+            source_count: 1, entity_count: 0, type_diversity: 1,
+            source_domains: ['reddit.com'], corroboration_depth: 0,
+            status: 'emerging'
+        })"
+    )
+    .param("id", no_geo_story_id.to_string())
+    .param("now", now);
+    client.inner().run(q).await.expect("create no-geo story");
+
+    // Query stories near Minneapolis center, 50km radius
+    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
+    let results = reader
+        .top_stories_for_city(44.9778, -93.2650, 50.0, 100)
+        .await
+        .expect("top_stories_for_city failed");
+
+    let headlines: Vec<&str> = results.iter().map(|s| s.headline.as_str()).collect();
+
+    assert!(headlines.contains(&"Minneapolis housing crisis"), "Missing Minneapolis story; got: {:?}", headlines);
+    assert!(!headlines.contains(&"Duluth port expansion"), "Duluth story should be outside radius; got: {:?}", headlines);
+    assert!(!headlines.contains(&"Online-only discussion"), "No-centroid story should be excluded; got: {:?}", headlines);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Source last_scraped survives datetime() round-trip
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn source_last_scraped_round_trip() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let source = SourceNode {
+        id: Uuid::new_v4(),
+        canonical_key: "test-city:web:https://example.org".to_string(),
+        canonical_value: "https://example.org".to_string(),
+        url: Some("https://example.org".to_string()),
+        source_type: SourceType::Web,
+        discovery_method: DiscoveryMethod::Curated,
+        city: "test-city".to_string(),
+        created_at: Utc::now(),
+        last_scraped: None,
+        last_produced_signal: None,
+        signals_produced: 0,
+        signals_corroborated: 0,
+        consecutive_empty_runs: 0,
+        active: true,
+        gap_context: None,
+        weight: 0.5,
+        cadence_hours: None,
+        avg_signals_per_scrape: 0.0,
+        quality_penalty: 1.0,
+        source_role: SourceRole::Mixed,
+        scrape_count: 0,
+    };
+
+    writer.upsert_source(&source).await.expect("upsert_source failed");
+
+    // Record a scrape (stores last_scraped via Cypher datetime())
+    let scrape_time = Utc::now();
+    writer
+        .record_source_scrape(&source.canonical_key, 3, scrape_time)
+        .await
+        .expect("record_source_scrape failed");
+
+    // Read back via get_active_sources — the bug caused last_scraped to be None
+    // because row.get::<String>() silently failed on Neo4j DateTime types
+    let sources = writer.get_active_sources("test-city").await.expect("get_active_sources failed");
+    assert_eq!(sources.len(), 1, "should find 1 source");
+
+    let s = &sources[0];
+    assert!(s.last_scraped.is_some(), "last_scraped should be Some after record_source_scrape, got None");
+    assert!(s.last_produced_signal.is_some(), "last_produced_signal should be Some when signals > 0");
+    assert_eq!(s.signals_produced, 3);
+    assert_eq!(s.scrape_count, 1);
+    assert_eq!(s.consecutive_empty_runs, 0);
+
+    // Also verify created_at survived the round-trip (not just defaulting to now)
+    let age = Utc::now() - s.created_at;
+    assert!(age.num_seconds() < 60, "created_at should be recent, not a fallback value");
+}
+
+/// Helper: create a Tension with a specific embedding vector.
+async fn create_tension_with_embedding(
+    client: &GraphClient,
+    id: Uuid,
+    title: &str,
+    embedding: &[f64],
+) {
+    let now = neo4j_dt(&Utc::now());
+    let emb_str = format!(
+        "[{}]",
+        embedding.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(",")
+    );
+    let cypher = format!(
+        "CREATE (t:Tension {{
+            id: $id,
+            title: $title,
+            summary: $summary,
+            sensitivity: 'general',
+            confidence: 0.7,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            source_diversity: 1,
+            external_ratio: 1.0,
+            cause_heat: 0.0,
+            source_url: 'https://example.com',
+            extracted_at: datetime($now),
+            last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis',
+            severity: 'high',
+            category: 'safety',
+            what_would_help: 'more resources',
+            lat: 44.9778,
+            lng: -93.2650,
+            embedding: {emb_str}
+        }})"
+    );
+
+    let q = query(&cypher)
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", format!("Test tension: {title}"))
+        .param("now", now);
+
+    client.inner().run(q).await.expect("Failed to create tension");
+}
+
+#[tokio::test]
+async fn merge_duplicate_tensions_collapses_near_dupes() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create 3 near-identical youth violence tensions (would be >0.85 cosine)
+    let mut base_emb = vec![0.0f64; 1024];
+    base_emb[0] = 1.0;
+    base_emb[1] = 0.5;
+
+    let id1 = Uuid::new_v4();
+    let id2 = Uuid::new_v4();
+    let id3 = Uuid::new_v4();
+
+    let mut emb2 = base_emb.clone();
+    emb2[2] = 0.05; // tiny perturbation
+    let mut emb3 = base_emb.clone();
+    emb3[3] = 0.05; // tiny perturbation
+
+    create_tension_with_embedding(&client, id1, "Youth Violence in North Minneapolis", &base_emb).await;
+    create_tension_with_embedding(&client, id2, "Youth Violence Spike in North Minneapolis", &emb2).await;
+    create_tension_with_embedding(&client, id3, "Youth Violence and Lack of Safe Spaces", &emb3).await;
+
+    // Create one unrelated tension
+    let id_unrelated = Uuid::new_v4();
+    let mut unrelated_emb = vec![0.0f64; 1024];
+    unrelated_emb[500] = 1.0; // completely different
+    create_tension_with_embedding(&client, id_unrelated, "Housing Affordability Crisis", &unrelated_emb).await;
+
+    // Create a signal that RESPONDS_TO one of the duplicates
+    let signal_id = Uuid::new_v4();
+    create_signal(&client, "Give", signal_id, "NAZ Tutoring", "https://example.com/naz").await;
+    let q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'test'}]->(t)"
+    )
+    .param("gid", signal_id.to_string())
+    .param("tid", id2.to_string());
+    client.inner().run(q).await.expect("Failed to create edge");
+
+    // Verify: 4 tensions before merge
+    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().unwrap();
+    let count: i64 = row.get("cnt").unwrap();
+    assert_eq!(count, 4, "Should have 4 tensions before merge");
+
+    // Run merge
+    let merged = writer.merge_duplicate_tensions(0.85).await.expect("merge failed");
+    assert_eq!(merged, 2, "Should merge 2 duplicates (keep 1 of 3)");
+
+    // Verify: 2 tensions after merge (1 youth violence survivor + 1 housing)
+    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().unwrap();
+    let count: i64 = row.get("cnt").unwrap();
+    assert_eq!(count, 2, "Should have 2 tensions after merge");
+
+    // Verify: the RESPONDS_TO edge was re-pointed to the survivor (id1, the oldest)
+    let q = query(
+        "MATCH (g:Give {id: $gid})-[:RESPONDS_TO]->(t:Tension)
+         RETURN t.id AS tid"
+    )
+    .param("gid", signal_id.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Should have RESPONDS_TO edge");
+    let tid: String = row.get("tid").unwrap();
+    assert_eq!(tid, id1.to_string(), "Edge should point to survivor (oldest tension)");
+
+    // Verify: survivor got corroboration bumped
+    let q = query("MATCH (t:Tension {id: $id}) RETURN t.corroboration_count AS cnt")
+        .param("id", id1.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().unwrap();
+    let corr: i64 = row.get("cnt").unwrap();
+    assert_eq!(corr, 2, "Survivor should have corroboration_count = 2 (absorbed 2 dupes)");
+
+    // Verify: unrelated tension untouched
+    let q = query("MATCH (t:Tension {id: $id}) RETURN t.title AS title")
+        .param("id", id_unrelated.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Unrelated tension should survive");
+    let title: String = row.get("title").unwrap();
+    assert_eq!(title, "Housing Affordability Crisis");
+}
+
+#[tokio::test]
+async fn merge_duplicate_tensions_noop_when_no_dupes() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create two very different tensions
+    let mut emb1 = vec![0.0f64; 1024];
+    emb1[0] = 1.0;
+    let mut emb2 = vec![0.0f64; 1024];
+    emb2[500] = 1.0;
+
+    create_tension_with_embedding(&client, Uuid::new_v4(), "Youth Violence", &emb1).await;
+    create_tension_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
+
+    let merged = writer.merge_duplicate_tensions(0.85).await.expect("merge failed");
+    assert_eq!(merged, 0, "No duplicates should be merged");
+
+    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().unwrap();
+    let count: i64 = row.get("cnt").unwrap();
+    assert_eq!(count, 2, "Both tensions should survive");
+}
+
+// =============================================================================
+// Response Scout writer method tests
+// =============================================================================
+
+/// Helper: create a tension with specific confidence and optional response_scouted_at.
+async fn create_tension_for_response_scout(
+    client: &GraphClient,
+    id: Uuid,
+    title: &str,
+    confidence: f64,
+    response_scouted_at: Option<&str>,
+) {
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let scouted_clause = match response_scouted_at {
+        Some(dt) => format!(", response_scouted_at: datetime('{dt}')"),
+        None => String::new(),
+    };
+    let cypher = format!(
+        "CREATE (t:Tension {{
+            id: $id,
+            title: $title,
+            summary: $summary,
+            sensitivity: 'general',
+            confidence: $confidence,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            source_diversity: 1,
+            external_ratio: 1.0,
+            cause_heat: $cause_heat,
+            source_url: 'https://example.com',
+            extracted_at: datetime($now),
+            last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis',
+            severity: 'high',
+            category: 'safety',
+            what_would_help: 'more resources',
+            lat: 44.9778,
+            lng: -93.2650,
+            embedding: {emb}
+            {scouted_clause}
+        }})"
+    );
+
+    let q = query(&cypher)
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", format!("Test tension: {title}"))
+        .param("now", now)
+        .param("confidence", confidence)
+        .param("cause_heat", 0.5);
+
+    client.inner().run(q).await.expect("Failed to create tension");
+}
+
+#[tokio::test]
+async fn response_scout_targets_finds_unscouted_tensions() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+    let t2 = Uuid::new_v4();
+    let t3 = Uuid::new_v4();
+
+    // t1: never scouted, high confidence — should be found
+    create_tension_for_response_scout(&client, t1, "ICE Enforcement Fear", 0.7, None).await;
+    // t2: scouted recently — should NOT be found
+    create_tension_for_response_scout(
+        &client, t2, "Housing Crisis", 0.8,
+        Some("2026-02-17T00:00:00"),
+    ).await;
+    // t3: low confidence (below 0.5) — should NOT be found
+    create_tension_for_response_scout(&client, t3, "Emergent Tension", 0.3, None).await;
+
+    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+
+    assert_eq!(targets.len(), 1, "Only 1 target should qualify");
+    assert_eq!(targets[0].tension_id, t1);
+    assert_eq!(targets[0].title, "ICE Enforcement Fear");
+    assert_eq!(targets[0].response_count, 0);
+}
+
+#[tokio::test]
+async fn response_scout_targets_includes_stale_scouted_tensions() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+
+    // Scouted 30 days ago — should be found (>14 day threshold)
+    create_tension_for_response_scout(
+        &client, t1, "Old Tension", 0.7,
+        Some("2026-01-15T00:00:00"),
+    ).await;
+
+    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 1, "Stale-scouted tension should be re-eligible");
+    assert_eq!(targets[0].tension_id, t1);
+}
+
+#[tokio::test]
+async fn response_scout_targets_sorted_by_response_count_then_heat() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+    let t2 = Uuid::new_v4();
+
+    create_tension_for_response_scout(&client, t1, "Well-served", 0.7, None).await;
+    create_tension_for_response_scout(&client, t2, "Neglected", 0.7, None).await;
+
+    // Give t1 a response edge, t2 has none
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Food Shelf", "https://example.com/food").await;
+    let edge_q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", t1.to_string());
+    client.inner().run(edge_q).await.expect("edge creation failed");
+
+    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 2);
+    // t2 (0 responses) should come first
+    assert_eq!(targets[0].tension_id, t2, "Neglected tension should sort first");
+    assert_eq!(targets[0].response_count, 0);
+    assert_eq!(targets[1].tension_id, t1);
+    assert_eq!(targets[1].response_count, 1);
+}
+
+#[tokio::test]
+async fn get_existing_responses_returns_heuristics() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_response_scout(&client, tension_id, "Housing Crisis", 0.7, None).await;
+
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Rent Assistance Program", "https://example.com/rent").await;
+
+    let edge_q = query(
+        "MATCH (g:Give {id: $gid}), (t:Tension {id: $tid})
+         CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'provides rent help'}]->(t)",
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+    client.inner().run(edge_q).await.expect("edge creation failed");
+
+    let heuristics = writer.get_existing_responses(tension_id).await.expect("query failed");
+    assert_eq!(heuristics.len(), 1);
+    assert_eq!(heuristics[0].title, "Rent Assistance Program");
+    assert_eq!(heuristics[0].signal_type, "Give");
+}
+
+#[tokio::test]
+async fn mark_response_scouted_sets_timestamp() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_response_scout(&client, tension_id, "Test Tension", 0.7, None).await;
+
+    // Before marking — should be a target
+    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 1);
+
+    // Mark as scouted
+    writer.mark_response_scouted(tension_id).await.expect("mark failed");
+
+    // After marking — should NOT be a target (scouted < 14 days ago)
+    let targets = writer.find_response_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
+}
+
+#[tokio::test]
+async fn create_response_edge_wires_give_to_tension() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_response_scout(&client, tension_id, "Test Tension", 0.7, None).await;
+
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Mutual Aid Network", "https://example.com/aid").await;
+
+    writer.create_response_edge(give_id, tension_id, 0.85, "provides mutual aid").await
+        .expect("create_response_edge failed");
+
+    // Verify edge exists
+    let q = query(
+        "MATCH (g:Give {id: $gid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+         RETURN rel.match_strength AS strength, rel.explanation AS explanation",
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Edge should exist");
+    let strength: f64 = row.get("strength").unwrap();
+    let explanation: String = row.get("explanation").unwrap();
+
+    assert!((strength - 0.85).abs() < 0.001, "match_strength should be 0.85");
+    assert_eq!(explanation, "provides mutual aid");
+}
+
+// =============================================================================
+// Gravity Scout integration tests
+// =============================================================================
+
+/// Helper: create a tension with specific confidence, cause_heat, and optional gravity scouting state.
+async fn create_tension_for_gravity_scout(
+    client: &GraphClient,
+    id: Uuid,
+    title: &str,
+    confidence: f64,
+    cause_heat: f64,
+    gravity_scouted_at: Option<&str>,
+    gravity_scout_miss_count: Option<i64>,
+) {
+    let now = neo4j_dt(&Utc::now());
+    let emb = dummy_embedding();
+    let mut extra_props = String::new();
+    if let Some(dt) = gravity_scouted_at {
+        extra_props.push_str(&format!(", gravity_scouted_at: datetime('{dt}')"));
+    }
+    if let Some(mc) = gravity_scout_miss_count {
+        extra_props.push_str(&format!(", gravity_scout_miss_count: {mc}"));
+    }
+    let cypher = format!(
+        "CREATE (t:Tension {{
+            id: $id,
+            title: $title,
+            summary: $summary,
+            sensitivity: 'general',
+            confidence: $confidence,
+            freshness_score: 1.0,
+            corroboration_count: 0,
+            source_diversity: 1,
+            external_ratio: 1.0,
+            cause_heat: $cause_heat,
+            source_url: 'https://example.com',
+            extracted_at: datetime($now),
+            last_confirmed_active: datetime($now),
+            location_name: 'Minneapolis',
+            severity: 'high',
+            category: 'safety',
+            what_would_help: 'community solidarity',
+            lat: 44.9778,
+            lng: -93.2650,
+            embedding: {emb}
+            {extra_props}
+        }})"
+    );
+
+    let q = query(&cypher)
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", format!("Test tension: {title}"))
+        .param("now", now)
+        .param("confidence", confidence)
+        .param("cause_heat", cause_heat);
+
+    client.inner().run(q).await.expect("Failed to create tension for gravity scout");
+}
+
+#[tokio::test]
+async fn gravity_scout_targets_requires_minimum_heat() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+    let t2 = Uuid::new_v4();
+
+    // t1: has heat — should be found
+    create_tension_for_gravity_scout(&client, t1, "ICE Enforcement Fear", 0.7, 0.5, None, None).await;
+    // t2: no heat (0.0) — should NOT be found
+    create_tension_for_gravity_scout(&client, t2, "Cold Tension", 0.7, 0.0, None, None).await;
+
+    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 1, "Only hot tension should qualify");
+    assert_eq!(targets[0].tension_id, t1);
+}
+
+#[tokio::test]
+async fn gravity_scout_targets_sorted_by_heat_desc() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+    let t2 = Uuid::new_v4();
+
+    // t1: moderate heat
+    create_tension_for_gravity_scout(&client, t1, "Moderate", 0.7, 0.3, None, None).await;
+    // t2: high heat
+    create_tension_for_gravity_scout(&client, t2, "Hot", 0.7, 0.9, None, None).await;
+
+    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 2);
+    // Hottest first
+    assert_eq!(targets[0].tension_id, t2, "Hottest tension should sort first");
+    assert_eq!(targets[1].tension_id, t1);
+}
+
+#[tokio::test]
+async fn gravity_scout_respects_scouted_timestamp() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+
+    // Scouted 3 days ago — should NOT be found (7-day base window)
+    create_tension_for_gravity_scout(
+        &client, t1, "Recent", 0.7, 0.5,
+        Some("2026-02-15T00:00:00"), Some(0),
+    ).await;
+
+    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 0, "Recently scouted tension should not be a target");
+}
+
+#[tokio::test]
+async fn gravity_scout_backoff_on_consecutive_misses() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+
+    // Scouted 15 days ago with miss_count=2 — needs 21 days, so should NOT be found
+    create_tension_for_gravity_scout(
+        &client, t1, "Two misses", 0.7, 0.5,
+        Some("2026-02-03T00:00:00"), Some(2),
+    ).await;
+
+    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 0, "miss_count=2 requires 21-day window, only 15 days elapsed");
+
+    // Now try with miss_count=1 — needs 14 days, 15 days elapsed, should be found
+    let t2 = Uuid::new_v4();
+    create_tension_for_gravity_scout(
+        &client, t2, "One miss", 0.7, 0.5,
+        Some("2026-02-03T00:00:00"), Some(1),
+    ).await;
+
+    let targets = writer.find_gravity_scout_targets(10).await.expect("query failed");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].tension_id, t2);
+}
+
+#[tokio::test]
+async fn gravity_scout_backoff_resets_on_success() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let t1 = Uuid::new_v4();
+
+    // Start with miss_count=3
+    create_tension_for_gravity_scout(
+        &client, t1, "Was cold", 0.7, 0.5,
+        Some("2026-01-01T00:00:00"), Some(3),
+    ).await;
+
+    // Mark as scouted with success — should reset miss_count to 0
+    writer.mark_gravity_scouted(t1, true).await.expect("mark failed");
+
+    // Verify miss_count is 0
+    let q = query(
+        "MATCH (t:Tension {id: $id})
+         RETURN t.gravity_scout_miss_count AS mc",
+    )
+    .param("id", t1.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("should have row");
+    let mc: i64 = row.get("mc").unwrap();
+    assert_eq!(mc, 0, "Success should reset miss_count to 0");
+}
+
+#[tokio::test]
+async fn create_gravity_edge_includes_gathering_type() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None).await;
+
+    let event_id = Uuid::new_v4();
+    create_signal(&client, "Event", event_id, "Singing Rebellion", "https://example.com/singing").await;
+
+    writer
+        .create_gravity_edge(event_id, tension_id, 0.9, "solidarity through singing", "singing")
+        .await
+        .expect("create_gravity_edge failed");
+
+    // Verify edge exists with gathering_type
+    let q = query(
+        "MATCH (e:Event {id: $eid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+         RETURN rel.match_strength AS strength, rel.gathering_type AS gt",
+    )
+    .param("eid", event_id.to_string())
+    .param("tid", tension_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Edge should exist");
+    let strength: f64 = row.get("strength").unwrap();
+    let gt: String = row.get("gt").unwrap();
+
+    assert!((strength - 0.9).abs() < 0.001);
+    assert_eq!(gt, "singing");
+}
+
+#[tokio::test]
+async fn gravity_edge_coexists_with_response_edge() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let tension_id = Uuid::new_v4();
+    create_tension_for_gravity_scout(&client, tension_id, "Housing Crisis", 0.7, 0.5, None, None).await;
+
+    let give_id = Uuid::new_v4();
+    create_signal(&client, "Give", give_id, "Tenant Solidarity Fund", "https://example.com/fund").await;
+
+    // First: create a regular response edge (no gathering_type)
+    writer
+        .create_response_edge(give_id, tension_id, 0.8, "provides rent assistance")
+        .await
+        .expect("create_response_edge failed");
+
+    // Then: create a gravity edge for the same signal→tension
+    // This should use ON MATCH and set gathering_type via coalesce (won't overwrite)
+    writer
+        .create_gravity_edge(give_id, tension_id, 0.9, "solidarity fund", "solidarity fund")
+        .await
+        .expect("create_gravity_edge failed");
+
+    // Verify only ONE edge exists (MERGE should not create duplicate)
+    let q = query(
+        "MATCH (g:Give {id: $gid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+         RETURN count(rel) AS edge_count, rel.gathering_type AS gt, rel.match_strength AS strength",
+    )
+    .param("gid", give_id.to_string())
+    .param("tid", tension_id.to_string());
+
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Should have results");
+    let edge_count: i64 = row.get("edge_count").unwrap();
+    let gt: String = row.get("gt").unwrap_or_default();
+
+    assert_eq!(edge_count, 1, "Should have exactly one RESPONDS_TO edge, not two");
+    // gathering_type should NOT be overwritten since the original edge didn't have one,
+    // so coalesce picks the gravity value
+    assert!(!gt.is_empty(), "gathering_type should be set via coalesce");
+}
+
+#[tokio::test]
+async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    let event_id = Uuid::new_v4();
+    create_signal(&client, "Event", event_id, "Weekly Vigil", "https://example.com/vigil").await;
+
+    // Get initial timestamp
+    let q = query(
+        "MATCH (e:Event {id: $id})
+         RETURN e.last_confirmed_active AS lca",
+    )
+    .param("id", event_id.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().expect("Should have row");
+    let initial_lca: String = format!("{:?}", row.get::<chrono::NaiveDateTime>("lca"));
+
+    // Wait a tiny bit and touch
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    writer.touch_signal_timestamp(event_id).await.expect("touch failed");
+
+    // Verify timestamp was updated
+    let q2 = query(
+        "MATCH (e:Event {id: $id})
+         RETURN e.last_confirmed_active AS lca",
+    )
+    .param("id", event_id.to_string());
+    let mut stream2 = client.inner().execute(q2).await.unwrap();
+    let row2 = stream2.next().await.unwrap().expect("Should have row");
+    let updated_lca: String = format!("{:?}", row2.get::<chrono::NaiveDateTime>("lca"));
+
+    assert_ne!(initial_lca, updated_lca, "last_confirmed_active should have been updated");
 }

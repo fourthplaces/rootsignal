@@ -27,6 +27,12 @@ impl OperationCost {
     pub const TAVILY_CURIOSITY: u64 = 3;       // per signal: up to 3 searches
     pub const CHROME_CURIOSITY: u64 = 2;        // per signal: up to 2 page reads
     pub const CLAUDE_HAIKU_STORY_WEAVE: u64 = 1; // per story: synthesis enrichment
+    pub const CLAUDE_HAIKU_RESPONSE_SCOUT: u64 = 3; // per tension: investigation + structuring
+    pub const TAVILY_RESPONSE_SCOUT: u64 = 5;       // per tension: up to 5 searches
+    pub const CHROME_RESPONSE_SCOUT: u64 = 3;        // per tension: page reads
+    pub const CLAUDE_HAIKU_GRAVITY_SCOUT: u64 = 3;  // per tension: investigation + extraction (may terminate early)
+    pub const TAVILY_GRAVITY_SCOUT: u64 = 5;        // per tension: early termination uses ~2-3
+    pub const CHROME_GRAVITY_SCOUT: u64 = 3;        // per tension: page reads
 }
 
 impl BudgetTracker {
