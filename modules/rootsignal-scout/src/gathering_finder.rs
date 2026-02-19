@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::claude::Claude;
@@ -15,10 +16,10 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
-use crate::tension_linker::{ReadPageTool, ScraperHandle, SearcherHandle, WebSearchTool};
 use crate::embedder::TextEmbedder;
 use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
+use crate::tension_linker::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -269,34 +270,25 @@ pub struct GatheringFinder<'a> {
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
     city_slug: String,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<'a> GatheringFinder<'a> {
-    /// Create a new gathering finder.
-    ///
-    /// SAFETY: Same as TensionLinker — the `searcher` and `scraper` references are held via
-    /// raw pointers. The caller MUST ensure they outlive this GatheringFinder.
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: &dyn WebSearcher,
-        scraper: &dyn PageScraper,
+        searcher: Arc<dyn WebSearcher>,
+        scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         city: CityNode,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
-        let searcher_handle = Arc::new(SearcherHandle(unsafe {
-            std::mem::transmute::<*const dyn WebSearcher, *const dyn WebSearcher>(searcher)
-        }));
-        let scraper_handle = Arc::new(ScraperHandle(unsafe {
-            std::mem::transmute::<*const dyn PageScraper, *const dyn PageScraper>(scraper)
-        }));
-
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: searcher_handle,
+                searcher: searcher.clone(),
             })
             .tool(ReadPageTool {
-                scraper: scraper_handle,
+                scraper: scraper.clone(),
             });
 
         let city_slug = city.slug.clone();
@@ -306,6 +298,7 @@ impl<'a> GatheringFinder<'a> {
             embedder,
             city,
             city_slug,
+            cancelled,
         }
     }
 
@@ -333,6 +326,11 @@ impl<'a> GatheringFinder<'a> {
         info!(count = targets.len(), "Gathering finder targets selected");
 
         for target in &targets {
+            if self.cancelled.load(Ordering::Relaxed) {
+                info!("Gathering finder cancelled");
+                break;
+            }
+
             let found_gatherings = match self.investigate_tension(target, &mut stats).await {
                 Ok(found) => {
                     stats.targets_investigated += 1;
@@ -449,10 +447,7 @@ impl<'a> GatheringFinder<'a> {
             .into_iter()
             .take(MAX_GATHERINGS_PER_TENSION)
         {
-            if let Err(e) = self
-                .process_gathering(target, &gathering, stats)
-                .await
-            {
+            if let Err(e) = self.process_gathering(target, &gathering, stats).await {
                 warn!(
                     tension_id = %target.tension_id,
                     gathering_title = gathering.title.as_str(),
@@ -568,23 +563,31 @@ impl<'a> GatheringFinder<'a> {
             if !venue.is_empty() {
                 match self
                     .writer
-                    .find_or_create_place(venue, &self.city_slug, self.city.center_lat, self.city.center_lng)
+                    .find_or_create_place(
+                        venue,
+                        &self.city_slug,
+                        self.city.center_lat,
+                        self.city.center_lng,
+                    )
                     .await
                 {
                     Ok(place_id) => {
-                        if let Err(e) = self.writer.create_gathers_at_edge(signal_id, place_id).await {
+                        if let Err(e) = self
+                            .writer
+                            .create_gathers_at_edge(signal_id, place_id)
+                            .await
+                        {
                             warn!(venue, error = %e, "Failed to create GATHERS_AT edge (non-fatal)");
                         }
                     }
-                    Err(e) => warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)"),
+                    Err(e) => {
+                        warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)")
+                    }
                 }
 
                 // Venue seeding: create future source for the venue
                 let venue_query = format!("{} {} community events", venue, self.city.name);
-                if let Err(e) = self
-                    .create_future_query(&venue_query, target, stats)
-                    .await
-                {
+                if let Err(e) = self.create_future_query(&venue_query, target, stats).await {
                     warn!(venue, error = %e, "Failed to create venue-seeded future source");
                 }
             }
@@ -597,10 +600,7 @@ impl<'a> GatheringFinder<'a> {
         Ok(())
     }
 
-    async fn create_gathering_node(
-        &self,
-        gathering: &DiscoveredGathering,
-    ) -> Result<Uuid> {
+    async fn create_gathering_node(&self, gathering: &DiscoveredGathering) -> Result<Uuid> {
         let now = Utc::now();
         let meta = NodeMeta {
             id: Uuid::new_v4(),
@@ -628,18 +628,11 @@ impl<'a> GatheringFinder<'a> {
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
             "event" => {
-                let starts_at = gathering
-                    .event_date
-                    .as_deref()
-                    .and_then(|d| {
-                        chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                            .ok()
-                            .map(|nd| {
-                                nd.and_hms_opt(0, 0, 0)
-                                    .unwrap()
-                                    .and_utc()
-                            })
-                    });
+                let starts_at = gathering.event_date.as_deref().and_then(|d| {
+                    chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                        .ok()
+                        .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                });
                 Node::Event(EventNode {
                     meta,
                     starts_at,
@@ -762,7 +755,10 @@ impl<'a> GatheringFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::source_finder::initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
+            weight: crate::source_finder::initial_weight_for_method(
+                DiscoveryMethod::GapAnalysis,
+                Some("unmet_tension"),
+            ),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,
@@ -784,13 +780,7 @@ impl<'a> GatheringFinder<'a> {
 }
 
 fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
+    crate::util::cosine_similarity(a, b)
 }
 
 #[cfg(test)]

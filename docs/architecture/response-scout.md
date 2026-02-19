@@ -148,8 +148,8 @@ Events are inherently temporal. A "Know Your Rights workshop" from 2023 injected
 
 | File | Role |
 |------|------|
-| `modules/rootsignal-scout/src/response_scout.rs` | Main module: struct, prompts, investigation, finding processing |
-| `modules/rootsignal-scout/src/curiosity.rs` | Tool types shared via `pub(crate)`: `SearcherHandle`, `ScraperHandle`, `WebSearchTool`, `ReadPageTool` |
+| `modules/rootsignal-scout/src/response_finder.rs` | Main module: struct, prompts, investigation, finding processing |
+| `modules/rootsignal-scout/src/tension_linker.rs` | Tool types shared via `pub(crate)`: `WebSearchTool`, `ReadPageTool`. Searcher and scraper are passed as `Arc<dyn Trait>` — no raw pointer handles. |
 | `modules/rootsignal-graph/src/writer.rs` | New methods: `find_response_scout_targets`, `get_existing_responses`, `mark_response_scouted` |
 | `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_RESPONSE_SCOUT`, `SEARCH_RESPONSE_SCOUT`, `CHROME_RESPONSE_SCOUT` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs response scout after curiosity loop |

@@ -245,8 +245,8 @@ pub struct DiscoveredGathering {
 
 | File | Role |
 |------|------|
-| `modules/rootsignal-scout/src/gravity_scout.rs` | Main module: struct, prompts, investigation, finding processing |
-| `modules/rootsignal-scout/src/curiosity.rs` | Tool types shared via `pub(crate)`: `SearcherHandle`, `ScraperHandle`, `WebSearchTool`, `ReadPageTool` |
+| `modules/rootsignal-scout/src/gathering_finder.rs` | Main module: struct, prompts, investigation, finding processing |
+| `modules/rootsignal-scout/src/tension_linker.rs` | Tool types shared via `pub(crate)`: `WebSearchTool`, `ReadPageTool`. Searcher and scraper are passed as `Arc<dyn Trait>` — no raw pointer handles. |
 | `modules/rootsignal-graph/src/writer.rs` | Methods: `find_gravity_scout_targets`, `get_existing_gravity_signals`, `mark_gravity_scouted`, `create_gravity_edge`, `touch_signal_timestamp` |
 | `modules/rootsignal-scout/src/budget.rs` | Budget constants: `CLAUDE_HAIKU_GRAVITY_SCOUT`, `SEARCH_GRAVITY_SCOUT`, `CHROME_GRAVITY_SCOUT` |
 | `modules/rootsignal-scout/src/scout.rs` | Integration: runs gravity scout after response scout, before story weaving |

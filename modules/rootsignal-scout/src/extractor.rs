@@ -7,8 +7,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta,
-    NoticeNode, SensitivityLevel, Severity, TensionNode, Urgency,
+    AskNode, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta, NoticeNode,
+    SensitivityLevel, Severity, TensionNode, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
@@ -102,19 +102,17 @@ pub struct ExtractionResponse {
 }
 
 /// Handle LLM returning signals as either a proper JSON array or a stringified JSON array.
-fn deserialize_signals<'de, D>(deserializer: D) -> std::result::Result<Vec<ExtractedSignal>, D::Error>
+fn deserialize_signals<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<ExtractedSignal>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     use serde::de;
     let value = serde_json::Value::deserialize(deserializer)?;
     match value {
-        serde_json::Value::Array(_) => {
-            serde_json::from_value(value).map_err(de::Error::custom)
-        }
-        serde_json::Value::String(ref s) => {
-            serde_json::from_str(s).map_err(de::Error::custom)
-        }
+        serde_json::Value::Array(_) => serde_json::from_value(value).map_err(de::Error::custom),
+        serde_json::Value::String(ref s) => serde_json::from_str(s).map_err(de::Error::custom),
         serde_json::Value::Null => Ok(Vec::new()),
         _ => Err(de::Error::custom("signals must be an array or JSON string")),
     }
@@ -144,24 +142,31 @@ pub struct Extractor {
 }
 
 impl Extractor {
-    pub fn new(anthropic_api_key: &str, city_name: &str, default_lat: f64, default_lng: f64) -> Self {
+    pub fn new(
+        anthropic_api_key: &str,
+        city_name: &str,
+        default_lat: f64,
+        default_lng: f64,
+    ) -> Self {
         let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
         let system_prompt = build_system_prompt(city_name, default_lat, default_lng);
-        Self { claude, system_prompt }
+        Self {
+            claude,
+            system_prompt,
+        }
     }
 
     /// Create an extractor with a pre-built system prompt (for genome-driven evolution).
     pub fn with_system_prompt(anthropic_api_key: &str, system_prompt: String) -> Self {
         let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
-        Self { claude, system_prompt }
+        Self {
+            claude,
+            system_prompt,
+        }
     }
 
     /// Extract signals from page content (internal implementation).
-    async fn extract_impl(
-        &self,
-        content: &str,
-        source_url: &str,
-    ) -> Result<ExtractionResult> {
+    async fn extract_impl(&self, content: &str, source_url: &str) -> Result<ExtractionResult> {
         // Truncate content to avoid token limits
         let content = if content.len() > 30_000 {
             let mut end = 30_000;
@@ -179,7 +184,11 @@ impl Extractor {
 
         let response: ExtractionResponse = self
             .claude
-            .extract("claude-haiku-4-5-20251001", &self.system_prompt, &user_prompt)
+            .extract(
+                "claude-haiku-4-5-20251001",
+                &self.system_prompt,
+                &user_prompt,
+            )
             .await?;
 
         // Collect implied queries before converting to nodes
@@ -221,7 +230,11 @@ impl Extractor {
                         Some("neighborhood") => GeoPrecision::Neighborhood,
                         _ => GeoPrecision::City,
                     };
-                    Some(GeoPoint { lat, lng, precision })
+                    Some(GeoPoint {
+                        lat,
+                        lng,
+                        precision,
+                    })
                 }
                 _ => None,
             };
@@ -243,7 +256,7 @@ impl Extractor {
                 title: signal.title.clone(),
                 summary: signal.summary.clone(),
                 sensitivity,
-                confidence: 0.0, // Will be computed by QualityScorer
+                confidence: 0.0,      // Will be computed by QualityScorer
                 freshness_score: 1.0, // Fresh at extraction time
                 corroboration_count: 0,
                 location,
@@ -275,18 +288,14 @@ impl Extractor {
                         meta,
                         starts_at,
                         ends_at,
-                        action_url: signal
-                            .action_url
-                            .unwrap_or(effective_source_url),
+                        action_url: signal.action_url.unwrap_or(effective_source_url),
                         organizer: signal.organizer,
                         is_recurring: signal.is_recurring.unwrap_or(false),
                     })
                 }
                 "give" => Node::Give(GiveNode {
                     meta,
-                    action_url: signal
-                        .action_url
-                        .unwrap_or(effective_source_url),
+                    action_url: signal.action_url.unwrap_or(effective_source_url),
                     availability: signal.availability,
                     is_ongoing: signal.is_ongoing.unwrap_or(true),
                 }),
@@ -341,7 +350,11 @@ impl Extractor {
                     })
                 }
                 other => {
-                    warn!(signal_type = other, title = signal.title, "Unknown signal type, skipping");
+                    warn!(
+                        signal_type = other,
+                        title = signal.title,
+                        "Unknown signal type, skipping"
+                    );
                     continue;
                 }
             };
@@ -360,7 +373,11 @@ impl Extractor {
             implied_queries = implied_queries.len(),
             "Extracted signals"
         );
-        Ok(ExtractionResult { nodes, implied_queries, resource_tags })
+        Ok(ExtractionResult {
+            nodes,
+            implied_queries,
+            resource_tags,
+        })
     }
 }
 
@@ -373,6 +390,7 @@ impl SignalExtractor for Extractor {
 
 pub fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
+    let tension_cats = crate::util::TENSION_CATEGORIES;
     format!(
         r#"You are a signal extractor for {city_name}.
 
@@ -435,7 +453,7 @@ If a page describes only a problem with no actionable response, still extract th
 
 ## Tension Fields
 - severity: "low", "medium", "high", "critical"
-- category: "housing", "safety", "equity", "infrastructure", "environment", "governance", "health"
+- category: One of: {tension_cats}. These are guidance, not constraints — propose a new category if none fit.
 - what_would_help: What response would address this tension (e.g. "affordable housing policy", "community oversight board")
 
 ## Source URL
@@ -553,7 +571,10 @@ mod tests {
         };
 
         assert_eq!(signal.signal_type, "tension");
-        assert_eq!(signal.what_would_help.as_deref(), Some("affordable housing policy"));
+        assert_eq!(
+            signal.what_would_help.as_deref(),
+            Some("affordable housing policy")
+        );
         assert_eq!(signal.category.as_deref(), Some("housing"));
     }
 
@@ -657,7 +678,10 @@ mod tests {
         let response: ExtractionResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.signals.len(), 1);
         assert_eq!(response.signals[0].implied_queries.len(), 2);
-        assert_eq!(response.signals[0].implied_queries[0], "immigration legal aid Minneapolis");
+        assert_eq!(
+            response.signals[0].implied_queries[0],
+            "immigration legal aid Minneapolis"
+        );
     }
 
     #[test]
@@ -672,8 +696,10 @@ mod tests {
         }"#;
         let response: ExtractionResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.signals.len(), 1);
-        assert!(response.signals[0].implied_queries.is_empty(),
-            "Missing implied_queries should default to empty vec");
+        assert!(
+            response.signals[0].implied_queries.is_empty(),
+            "Missing implied_queries should default to empty vec"
+        );
     }
 
     #[test]
@@ -695,10 +721,7 @@ mod tests {
     fn extraction_result_collects_queries() {
         let result = ExtractionResult {
             nodes: vec![],
-            implied_queries: vec![
-                "query 1".to_string(),
-                "query 2".to_string(),
-            ],
+            implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
             resource_tags: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
@@ -727,9 +750,15 @@ mod tests {
     #[test]
     fn system_prompt_includes_resource_instructions() {
         let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
-        assert!(prompt.contains("Resource Capabilities"), "should have Resource Capabilities section");
+        assert!(
+            prompt.contains("Resource Capabilities"),
+            "should have Resource Capabilities section"
+        );
         assert!(prompt.contains("vehicle"), "should include seed vocabulary");
-        assert!(prompt.contains("bilingual-spanish"), "should include bilingual seed");
+        assert!(
+            prompt.contains("bilingual-spanish"),
+            "should include bilingual seed"
+        );
         assert!(prompt.contains("requires"), "should mention requires role");
         assert!(prompt.contains("offers"), "should mention offers role");
     }

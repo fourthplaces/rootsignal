@@ -83,9 +83,12 @@ impl ChromeScraper {
                         if output.stdout.is_empty() {
                             if attempt + 1 < CHROME_MAX_ATTEMPTS {
                                 let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
-                                let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                                let jitter =
+                                    Duration::from_millis(rand::rng().random_range(0..1000));
                                 warn!(
-                                    url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                                    url,
+                                    attempt = attempt + 1,
+                                    backoff_secs = backoff.as_secs(),
                                     "Chrome returned empty DOM, retrying after backoff"
                                 );
                                 tokio::time::sleep(backoff + jitter).await;
@@ -96,12 +99,16 @@ impl ChromeScraper {
                     }
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     // Transient fork/resource exhaustion — retry
-                    if stderr.contains("Cannot fork") || stderr.contains("Resource temporarily unavailable") {
+                    if stderr.contains("Cannot fork")
+                        || stderr.contains("Resource temporarily unavailable")
+                    {
                         if attempt + 1 < CHROME_MAX_ATTEMPTS {
                             let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
                             let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
                             warn!(
-                                url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                                url,
+                                attempt = attempt + 1,
+                                backoff_secs = backoff.as_secs(),
                                 "Chrome cannot fork, retrying after backoff"
                             );
                             tokio::time::sleep(backoff + jitter).await;
@@ -114,7 +121,8 @@ impl ChromeScraper {
                 Ok(Err(e)) => {
                     // Failed to launch process at all — retry on transient errors
                     let msg = e.to_string();
-                    if (msg.contains("Cannot fork") || msg.contains("Resource temporarily unavailable"))
+                    if (msg.contains("Cannot fork")
+                        || msg.contains("Resource temporarily unavailable"))
                         && attempt + 1 < CHROME_MAX_ATTEMPTS
                     {
                         let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
@@ -133,7 +141,9 @@ impl ChromeScraper {
                         let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
                         let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
                         warn!(
-                            url, attempt = attempt + 1, backoff_secs = backoff.as_secs(),
+                            url,
+                            attempt = attempt + 1,
+                            backoff_secs = backoff.as_secs(),
                             "Chrome timed out, retrying after backoff"
                         );
                         tokio::time::sleep(backoff + jitter).await;
@@ -151,7 +161,10 @@ impl ChromeScraper {
 #[async_trait]
 impl PageScraper for ChromeScraper {
     async fn scrape(&self, url: &str) -> Result<String> {
-        let _permit = self.semaphore.acquire().await
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
             .map_err(|_| anyhow::anyhow!("Chrome semaphore closed"))?;
 
         info!(url, scraper = "chrome", "Scraping URL");
@@ -184,16 +197,28 @@ impl PageScraper for ChromeScraper {
         let text = transform_content_input(input, &config);
 
         if text.trim().is_empty() {
-            warn!(url, scraper = "chrome", "Empty content after Readability extraction");
+            warn!(
+                url,
+                scraper = "chrome",
+                "Empty content after Readability extraction"
+            );
             return Ok(String::new());
         }
 
-        info!(url, scraper = "chrome", bytes = text.len(), "Scraped successfully");
+        info!(
+            url,
+            scraper = "chrome",
+            bytes = text.len(),
+            "Scraped successfully"
+        );
         Ok(text)
     }
 
     async fn scrape_raw(&self, url: &str) -> Result<String> {
-        let _permit = self.semaphore.acquire().await
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
             .map_err(|_| anyhow::anyhow!("Chrome semaphore closed"))?;
 
         info!(url, scraper = "chrome", "Scraping raw HTML");
@@ -206,7 +231,12 @@ impl PageScraper for ChromeScraper {
         }
 
         let text = String::from_utf8_lossy(&html).into_owned();
-        info!(url, scraper = "chrome", bytes = text.len(), "Raw HTML scraped");
+        info!(
+            url,
+            scraper = "chrome",
+            bytes = text.len(),
+            "Raw HTML scraped"
+        );
         Ok(text)
     }
 
@@ -267,11 +297,20 @@ impl PageScraper for BrowserlessScraper {
         let text = transform_content_input(input, &config);
 
         if text.trim().is_empty() {
-            warn!(url, scraper = "browserless", "Empty content after Readability extraction");
+            warn!(
+                url,
+                scraper = "browserless",
+                "Empty content after Readability extraction"
+            );
             return Ok(String::new());
         }
 
-        info!(url, scraper = "browserless", bytes = text.len(), "Scraped successfully");
+        info!(
+            url,
+            scraper = "browserless",
+            bytes = text.len(),
+            "Scraped successfully"
+        );
         Ok(text)
     }
 
@@ -284,7 +323,12 @@ impl PageScraper for BrowserlessScraper {
             .await
             .context("Browserless content request failed")?;
 
-        info!(url, scraper = "browserless", bytes = html.len(), "Raw HTML scraped");
+        info!(
+            url,
+            scraper = "browserless",
+            bytes = html.len(),
+            "Raw HTML scraped"
+        );
         Ok(html)
     }
 
@@ -367,9 +411,18 @@ pub trait SocialScraper: Send + Sync {
     async fn search_hashtags(&self, hashtags: &[&str], limit: u32) -> Result<Vec<SocialPost>>;
     /// Search a specific platform for topics (hashtags/keywords). Used by multi-platform
     /// topic discovery. Returns empty vec for unsupported platforms.
-    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>>;
+    async fn search_topics(
+        &self,
+        platform: &SocialPlatform,
+        topics: &[&str],
+        limit: u32,
+    ) -> Result<Vec<SocialPost>>;
     /// Search GoFundMe campaigns by keyword. Returns campaign data for signal extraction.
-    async fn search_gofundme(&self, keyword: &str, limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>>;
+    async fn search_gofundme(
+        &self,
+        keyword: &str,
+        limit: u32,
+    ) -> Result<Vec<apify_client::GoFundMeCampaign>>;
 }
 
 /// No-op social scraper for when no API key is configured.
@@ -385,11 +438,20 @@ impl SocialScraper for NoopSocialScraper {
         Ok(Vec::new())
     }
 
-    async fn search_topics(&self, _platform: &SocialPlatform, _topics: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
+    async fn search_topics(
+        &self,
+        _platform: &SocialPlatform,
+        _topics: &[&str],
+        _limit: u32,
+    ) -> Result<Vec<SocialPost>> {
         Ok(Vec::new())
     }
 
-    async fn search_gofundme(&self, _keyword: &str, _limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+    async fn search_gofundme(
+        &self,
+        _keyword: &str,
+        _limit: u32,
+    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
         Ok(Vec::new())
     }
 }
@@ -456,7 +518,10 @@ impl WebSearcher for SerperSearcher {
             .await
             .context("Serper API request failed")?;
 
-        let data: SerperResponse = resp.json().await.context("Failed to parse Serper response")?;
+        let data: SerperResponse = resp
+            .json()
+            .await
+            .context("Failed to parse Serper response")?;
 
         let results: Vec<SearchResult> = data
             .organic
@@ -482,7 +547,9 @@ impl SocialScraper for ApifyClient {
     async fn search_posts(&self, account: &SocialAccount, limit: u32) -> Result<Vec<SocialPost>> {
         match account.platform {
             SocialPlatform::Instagram => {
-                let posts = self.scrape_instagram_posts(&account.identifier, limit).await?;
+                let posts = self
+                    .scrape_instagram_posts(&account.identifier, limit)
+                    .await?;
                 Ok(posts
                     .into_iter()
                     .filter_map(|p| {
@@ -499,7 +566,9 @@ impl SocialScraper for ApifyClient {
                     .collect())
             }
             SocialPlatform::Facebook => {
-                let posts = self.scrape_facebook_posts(&account.identifier, limit).await?;
+                let posts = self
+                    .scrape_facebook_posts(&account.identifier, limit)
+                    .await?;
                 Ok(posts
                     .into_iter()
                     .filter_map(|p| {
@@ -561,8 +630,8 @@ impl SocialScraper for ApifyClient {
                     .into_iter()
                     .filter_map(|p| {
                         let content = p.text?;
-                        if content.is_empty() {
-                            return None;
+                        if content.len() < 20 {
+                            return None; // Skip sparse captions (same filter as search_topics)
                         }
                         Some(SocialPost {
                             content,
@@ -587,15 +656,24 @@ impl SocialScraper for ApifyClient {
             .collect())
     }
 
-    async fn search_gofundme(&self, keyword: &str, limit: u32) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        self.scrape_gofundme(keyword, limit).await.map_err(|e| anyhow::anyhow!("{e}"))
+    async fn search_gofundme(
+        &self,
+        keyword: &str,
+        limit: u32,
+    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
+        self.scrape_gofundme(keyword, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    async fn search_topics(&self, platform: &SocialPlatform, topics: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
+    async fn search_topics(
+        &self,
+        platform: &SocialPlatform,
+        topics: &[&str],
+        limit: u32,
+    ) -> Result<Vec<SocialPost>> {
         match platform {
-            SocialPlatform::Instagram => {
-                self.search_hashtags(topics, limit).await
-            }
+            SocialPlatform::Instagram => self.search_hashtags(topics, limit).await,
             SocialPlatform::Twitter => {
                 let posts = self.search_x_keywords(topics, limit).await?;
                 Ok(posts
