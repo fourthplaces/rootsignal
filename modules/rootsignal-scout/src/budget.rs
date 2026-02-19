@@ -23,6 +23,10 @@ impl OperationCost {
     pub const CLAUDE_HAIKU_INVESTIGATION: u64 = 1; // ~0.1 per query gen + ~1 per search
     pub const TAVILY_INVESTIGATION: u64 = 1;
     pub const CLAUDE_HAIKU_DISCOVERY: u64 = 1; // ~0.2 per discovery briefing
+    pub const CLAUDE_HAIKU_CURIOSITY: u64 = 2; // per signal: agentic investigation + structuring
+    pub const TAVILY_CURIOSITY: u64 = 3;       // per signal: up to 3 searches
+    pub const CHROME_CURIOSITY: u64 = 2;        // per signal: up to 2 page reads
+    pub const CLAUDE_HAIKU_STORY_WEAVE: u64 = 1; // per story: synthesis enrichment
 }
 
 impl BudgetTracker {

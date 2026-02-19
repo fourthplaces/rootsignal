@@ -115,6 +115,12 @@ impl Extractor {
         Self { claude, system_prompt }
     }
 
+    /// Create an extractor with a pre-built system prompt (for genome-driven evolution).
+    pub fn with_system_prompt(anthropic_api_key: &str, system_prompt: String) -> Self {
+        let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+        Self { claude, system_prompt }
+    }
+
     /// Extract civic signals from page content (internal implementation).
     async fn extract_impl(
         &self,
@@ -314,32 +320,42 @@ impl SignalExtractor for Extractor {
     }
 }
 
-fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
+pub fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
     format!(
         r#"You are a civic signal extractor for {city_name}.
 
-Extract civic signals from web page content. Each signal is something a community member can act on or should be aware of.
+Your job: find real problems and the people addressing them. The most valuable signal is a TENSION (something out of alignment in community or ecological life) paired with RESPONSES (the gives, asks, events, and notices that address it). A food shelf addressing a food desert, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these tension-response pairs are what gets people engaged in real-world problems.
 
-## Signal Types
+## Signal Types (ranked by value)
 
-- **Event**: A time-bound gathering. Has start time and location.
-- **Give**: An available resource, service, or offering. Has availability and contact info.
-- **Ask**: A community need requesting help. Has what's needed and how to help.
+**Highest — Tension + Response pairs:**
+- **Tension**: A community conflict, systemic problem, or ecological misalignment. Has severity and what would help. NOT the narrative itself — the underlying structural issue.
+- **Give**: A resource, service, or offering that addresses a need (food shelf, legal aid, habitat restoration). Has availability and contact info.
+- **Ask**: A call for help that mobilizes action (volunteer drives, donation needs, citizen science). Has what's needed and how to help.
+- **Event**: A gathering where people organize around a problem (town halls, cleanups, community meetings). Has start time and location.
+
+**Also valuable — standalone responses with an implicit tension:**
+- A "feed people on Sundays" program implies food insecurity. Extract it as a Give even without an explicit tension on the page.
+- A river cleanup implies pollution. Extract it as an Event.
+
+**Lower priority — routine civic activity:**
+- Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
+
+**Context signals:**
 - **Notice**: An official advisory or policy change. Has source authority and effective date.
-- **Tension**: A community conflict, systemic problem, or misalignment that people are experiencing. Has severity and what would help. NOT the narrative itself — the underlying structural issue.
 
 If content doesn't map to one of these types, return an empty signals array.
 
 ## Extracting from News and Crisis Content
-When a page describes a crisis, conflict, or problem, extract the COMMUNITY RESPONSES — not the narrative itself. The responses are the signals:
+When a page describes a crisis, conflict, or problem, extract BOTH the underlying tension AND the community responses:
+- The structural problem → Tension (always include what_would_help)
 - Legal aid hotlines, know-your-rights resources → Give
 - Community meetings, workshops, public hearings → Event
 - Volunteer calls, donation drives, petitions → Ask
 - Official advisories, policy changes → Notice
-- The underlying conflict or systemic problem → Tension (only when there IS a structural issue, not just news)
 
-If a page describes only a problem with no actionable response, return an empty signals array.
+If a page describes only a problem with no actionable response, still extract the Tension (with what_would_help) — the system will seek responses separately.
 
 ## Sensitivity
 - **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks

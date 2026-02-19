@@ -13,7 +13,7 @@ use rootsignal_common::CityNode;
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
-use rootsignal_scout::extractor::Extractor;
+use rootsignal_scout::extractor::{self, Extractor};
 use rootsignal_scout::fixtures::{
     CorpusSearcher, FixtureScraper, FixtureSearcher, FixtureSocialScraper,
     LayeredSearcher, ScenarioSearcher, ScenarioSocialScraper,
@@ -82,6 +82,36 @@ impl TestContext {
     /// Create a GraphWriter for direct graph manipulation in tests.
     pub fn writer(&self) -> GraphWriter {
         GraphWriter::new(self.client.clone())
+    }
+
+    /// The Anthropic API key for this context.
+    pub fn anthropic_key(&self) -> &str {
+        &self.anthropic_key
+    }
+
+    /// Capture the current extractor prompt template (with `{city_name}` / `{today}` placeholders).
+    pub fn baseline_extractor_prompt() -> String {
+        extractor::build_system_prompt("{city_name}", 0.0, 0.0)
+    }
+
+    /// Create a Scout wired to a SimulatedWeb, using a genome's extractor prompt.
+    pub fn sim_scout_with_genome(
+        &self,
+        sim: Arc<SimulatedWeb>,
+        city_node: CityNode,
+        genome: &simweb::ScoutGenome,
+    ) -> Scout {
+        let prompt = genome.render_extractor_prompt(&city_node.name);
+        Scout::with_deps(
+            self.client.clone(),
+            Box::new(Extractor::with_system_prompt(&self.anthropic_key, prompt)),
+            Box::new(Embedder::new(&self.voyage_key)),
+            Box::new(SimPageAdapter::new(sim.clone())),
+            Box::new(SimSearchAdapter::new(sim.clone())),
+            Box::new(SimSocialAdapter::new(sim)),
+            &self.anthropic_key,
+            city_node,
+        )
     }
 
     /// Create a Scout wired to a SimulatedWeb for fuzzy integration tests.

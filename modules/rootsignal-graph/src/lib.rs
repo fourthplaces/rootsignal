@@ -5,6 +5,7 @@ pub mod edition;
 pub mod reader;
 pub mod response;
 pub mod similarity;
+pub mod story_weaver;
 pub mod synthesizer;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
@@ -15,11 +16,12 @@ pub use client::GraphClient;
 pub use cluster::Clusterer;
 pub use reader::PublicGraphReader;
 pub use similarity::SimilarityBuilder;
+pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use writer::{
-    DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats, GraphWriter,
-    InvestigationTarget, ReapStats, SignalTypeCounts, SourceBrief, SourceStats, StoryBrief,
-    UnmetTension,
+    CuriosityOutcome, CuriosityTarget, DuplicateMatch, EvidenceSummary, ExtractionYield,
+    GapTypeStats, GraphWriter, InvestigationTarget, ReapStats, SignalTypeCounts, SourceBrief,
+    SourceStats, StoryBrief, StoryGrowth, TensionHub, TensionRespondent, UnmetTension,
 };
 
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).

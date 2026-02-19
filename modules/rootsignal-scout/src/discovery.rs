@@ -274,7 +274,7 @@ where
 
 // --- LLM Prompts ---
 
-fn discovery_system_prompt(city_name: &str) -> String {
+pub fn discovery_system_prompt(city_name: &str) -> String {
     format!(
         "You are the curiosity engine for a civic intelligence scout monitoring {city_name}.\n\
          \n\

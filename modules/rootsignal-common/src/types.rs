@@ -89,6 +89,7 @@ pub enum StoryArc {
     Growing,
     Stable,
     Fading,
+    Resurgent,
 }
 
 impl std::fmt::Display for StoryArc {
@@ -98,6 +99,7 @@ impl std::fmt::Display for StoryArc {
             StoryArc::Growing => write!(f, "growing"),
             StoryArc::Stable => write!(f, "stable"),
             StoryArc::Fading => write!(f, "fading"),
+            StoryArc::Resurgent => write!(f, "resurgent"),
         }
     }
 }
@@ -245,7 +247,7 @@ pub struct EventNode {
 pub struct GiveNode {
     pub meta: NodeMeta,
     pub action_url: String,
-    pub availability: String,
+    pub availability: Option<String>,
     pub is_ongoing: bool,
 }
 
@@ -253,7 +255,7 @@ pub struct GiveNode {
 pub struct AskNode {
     pub meta: NodeMeta,
     pub urgency: Urgency,
-    pub what_needed: String,
+    pub what_needed: Option<String>,
     pub action_url: Option<String>,
     pub goal: Option<String>,
 }
@@ -597,16 +599,12 @@ pub struct SourceNode {
     pub cadence_hours: Option<u32>,
     /// Rolling average signals per scrape.
     pub avg_signals_per_scrape: f64,
-    /// Cumulative API cost in cents.
-    pub total_cost_cents: u64,
-    /// Cost of last scrape in cents.
-    pub last_cost_cents: u64,
-    /// JSON string of signal type breakdown: `{"tension": N, "ask": N, ...}`.
-    pub taxonomy_stats: Option<String>,
     /// Quality penalty from supervisor (0.0-1.0, default 1.0). Multiplied with weight.
     pub quality_penalty: f64,
     /// What kind of signals this source tends to surface.
     pub source_role: SourceRole,
+    /// Number of times this source has been scraped (independent of signal count).
+    pub scrape_count: u32,
 }
 
 /// A human-submitted link with an optional reason for investigation.
