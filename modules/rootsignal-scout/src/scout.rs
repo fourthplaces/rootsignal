@@ -4,7 +4,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 use rootsignal_common::{
     CityNode, DiscoveryMethod, SourceNode, SourceType,
@@ -14,11 +13,12 @@ use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::TextEmbedder;
 use crate::extractor::{Extractor, SignalExtractor};
+use crate::expansion::Expansion;
+use crate::metrics::Metrics;
 use crate::scrape_phase::{RunContext, ScrapePhase};
 use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SerperSearcher, SocialScraper, WebSearcher,
 };
-use crate::sources;
 use crate::util::sanitize_url;
 
 /// Stats from a scout run.
@@ -436,116 +436,8 @@ impl Scout {
         // ================================================================
         // 6. Source metrics + weight updates
         // ================================================================
-        let now = Utc::now();
-
-        // Update per-source metrics in the graph (keyed by canonical_key).
-        // Skip queries where the search API itself errored.
-        for (canonical_key, signals_produced) in &ctx.source_signal_counts {
-            if ctx.query_api_errors.contains(canonical_key) {
-                continue;
-            }
-            if let Err(e) = self
-                .writer
-                .record_source_scrape(canonical_key, *signals_produced, now)
-                .await
-            {
-                warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
-            }
-        }
-
-        // Update source weights based on scrape results.
-        for source in &all_sources {
-            let tension_count = self
-                .writer
-                .count_source_tensions(&source.canonical_key)
-                .await
-                .unwrap_or(0);
-            let fresh_signals = ctx
-                .source_signal_counts
-                .get(&source.canonical_key)
-                .copied()
-                .unwrap_or(0);
-            let total_signals = source.signals_produced + fresh_signals;
-            let scrape_count = if fresh_signals > 0
-                || ctx
-                    .source_signal_counts
-                    .contains_key(&source.canonical_key)
-            {
-                (source.scrape_count + 1).max(1)
-            } else {
-                source.scrape_count.max(1)
-            };
-            let base_weight = crate::scheduler::compute_weight(
-                total_signals,
-                source.signals_corroborated,
-                scrape_count,
-                tension_count,
-                if fresh_signals > 0 {
-                    Some(now)
-                } else {
-                    source.last_produced_signal
-                },
-                now,
-            );
-            let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
-            let empty_runs = if ctx
-                .source_signal_counts
-                .contains_key(&source.canonical_key)
-                && fresh_signals == 0
-            {
-                source.consecutive_empty_runs + 1
-            } else {
-                source.consecutive_empty_runs
-            };
-            let cadence = if source.source_type == SourceType::WebQuery {
-                crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
-            } else {
-                crate::scheduler::cadence_hours_for_weight(new_weight)
-            };
-            if let Err(e) = self
-                .writer
-                .update_source_weight(&source.canonical_key, new_weight, cadence)
-                .await
-            {
-                warn!(canonical_key = source.canonical_key.as_str(), error = %e, "Failed to update source weight");
-            }
-        }
-
-        // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
-        match self
-            .writer
-            .deactivate_dead_sources(&self.city_node.slug, 10)
-            .await
-        {
-            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
-            Ok(_) => {}
-            Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
-        }
-
-        // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
-        match self
-            .writer
-            .deactivate_dead_web_queries(&self.city_node.slug)
-            .await
-        {
-            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
-            Ok(_) => {}
-            Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),
-        }
-
-        // Source stats
-        match self.writer.get_source_stats(&self.city_node.slug).await {
-            Ok(ss) => {
-                info!(
-                    total = ss.total,
-                    active = ss.active,
-                    curated = ss.curated,
-                    discovered = ss.discovered,
-                    "Source registry stats"
-                );
-            }
-            Err(e) => warn!(error = %e, "Failed to get source stats"),
-        }
+        let metrics = Metrics::new(&self.writer, &self.city_node.slug);
+        metrics.update(&all_sources, &ctx, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
         self.budget.log_status();
@@ -710,135 +602,8 @@ impl Scout {
         // ================================================================
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
-        // Deferred expansion: collect implied queries from Give/Event signals
-        // that are now linked to tensions via response mapping.
-        match self
-            .writer
-            .get_recently_linked_signals_with_queries(&self.city_node.slug)
-            .await
-        {
-            Ok(deferred) => {
-                let deferred_count = deferred.len();
-                ctx.expansion_queries.extend(deferred);
-                if deferred_count > 0 {
-                    info!(
-                        deferred = deferred_count,
-                        "Deferred signal expansion queries collected"
-                    );
-                }
-                ctx.stats.expansion_deferred_expanded = deferred_count as u32;
-            }
-            Err(e) => warn!(error = %e, "Failed to get deferred expansion queries"),
-        }
-
-        ctx.stats.expansion_queries_collected = ctx.expansion_queries.len() as u32;
-
-        if !ctx.expansion_queries.is_empty() {
-            let existing = self
-                .writer
-                .get_active_web_queries(&self.city_node.slug)
-                .await
-                .unwrap_or_default();
-            let deduped: Vec<String> = ctx
-                .expansion_queries
-                .iter()
-                .filter(|q| {
-                    !existing
-                        .iter()
-                        .any(|e| jaccard_similarity(q, e) > DEDUP_JACCARD_THRESHOLD)
-                })
-                .cloned()
-                .take(MAX_EXPANSION_QUERIES_PER_RUN)
-                .collect();
-
-            let now_expansion = Utc::now();
-            let mut created = 0u32;
-            let mut expansion_dupes_skipped = 0u32;
-            for query_text in &deduped {
-                // Embedding-based dedup for expansion queries
-                if let Ok(embedding) = self.embedder.embed(query_text).await {
-                    match self
-                        .writer
-                        .find_similar_query(&embedding, &self.city_node.slug, 0.90)
-                        .await
-                    {
-                        Ok(Some((existing_ck, sim))) => {
-                            info!(
-                                query = query_text.as_str(),
-                                existing_key = existing_ck.as_str(),
-                                similarity = format!("{sim:.3}").as_str(),
-                                "Skipping semantically duplicate expansion query"
-                            );
-                            expansion_dupes_skipped += 1;
-                            continue;
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            warn!(error = %e, "Expansion query dedup check failed, proceeding")
-                        }
-                    }
-                }
-
-                let cv = query_text.clone();
-                let ck = sources::make_canonical_key(
-                    &self.city_node.slug,
-                    SourceType::WebQuery,
-                    &cv,
-                );
-                let source = SourceNode {
-                    id: Uuid::new_v4(),
-                    canonical_key: ck.clone(),
-                    canonical_value: cv,
-                    url: None,
-                    source_type: SourceType::WebQuery,
-                    discovery_method: DiscoveryMethod::SignalExpansion,
-                    city: self.city_node.slug.clone(),
-                    created_at: now_expansion,
-                    last_scraped: None,
-                    last_produced_signal: None,
-                    signals_produced: 0,
-                    signals_corroborated: 0,
-                    consecutive_empty_runs: 0,
-                    active: true,
-                    gap_context: Some(
-                        "Signal expansion: implied query from extracted signal".to_string(),
-                    ),
-                    weight: crate::source_finder::initial_weight_for_method(
-                        DiscoveryMethod::SignalExpansion,
-                        None,
-                    ),
-                    cadence_hours: None,
-                    avg_signals_per_scrape: 0.0,
-                    quality_penalty: 1.0,
-                    source_role: rootsignal_common::SourceRole::Response,
-                    scrape_count: 0,
-                };
-                match self.writer.upsert_source(&source).await {
-                    Ok(_) => {
-                        created += 1;
-                        // Store embedding for future dedup
-                        if let Ok(embedding) = self.embedder.embed(query_text).await {
-                            if let Err(e) =
-                                self.writer.set_query_embedding(&ck, &embedding).await
-                            {
-                                warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source")
-                    }
-                }
-            }
-            ctx.stats.expansion_sources_created = created;
-            info!(
-                collected = ctx.expansion_queries.len(),
-                created,
-                deferred = ctx.stats.expansion_deferred_expanded,
-                embedding_dupes = expansion_dupes_skipped,
-                "Signal expansion complete"
-            );
-        }
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.city_node.slug);
+        expansion.run(&mut ctx).await;
 
         self.check_cancelled()?;
 
@@ -863,89 +628,5 @@ impl Scout {
 
         info!("{}", ctx.stats);
         Ok(ctx.stats)
-    }
-}
-
-// --- Signal Expansion helpers ---
-
-const DEDUP_JACCARD_THRESHOLD: f64 = 0.6;
-const MAX_EXPANSION_QUERIES_PER_RUN: usize = 10;
-
-/// Token-based Jaccard similarity for query dedup.
-/// Uses word overlap rather than substring matching to preserve specific long-tail queries.
-fn jaccard_similarity(a: &str, b: &str) -> f64 {
-    let a_lower = a.to_lowercase();
-    let b_lower = b.to_lowercase();
-    let a_tokens: std::collections::HashSet<&str> = a_lower.split_whitespace().collect();
-    let b_tokens: std::collections::HashSet<&str> = b_lower.split_whitespace().collect();
-    let intersection = a_tokens.intersection(&b_tokens).count();
-    let union = a_tokens.union(&b_tokens).count();
-    if union == 0 {
-        0.0
-    } else {
-        intersection as f64 / union as f64
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn jaccard_specific_vs_generic_passes() {
-        let sim = jaccard_similarity("emergency housing for detained immigrants", "housing");
-        assert!(
-            sim < DEDUP_JACCARD_THRESHOLD,
-            "Specific long-tail query should not match generic: {sim}"
-        );
-    }
-
-    #[test]
-    fn jaccard_similar_queries_blocked() {
-        let sim = jaccard_similarity(
-            "housing assistance programs Minneapolis",
-            "housing assistance resources Minneapolis",
-        );
-        assert!(
-            sim >= DEDUP_JACCARD_THRESHOLD,
-            "Similar queries should be flagged as duplicate: {sim}"
-        );
-    }
-
-    #[test]
-    fn jaccard_identical_blocked() {
-        let sim = jaccard_similarity(
-            "immigration legal aid Minneapolis",
-            "immigration legal aid Minneapolis",
-        );
-        assert!(
-            (sim - 1.0).abs() < f64::EPSILON,
-            "Identical queries should have Jaccard 1.0: {sim}"
-        );
-    }
-
-    #[test]
-    fn jaccard_empty_strings() {
-        assert_eq!(jaccard_similarity("", ""), 0.0);
-        assert_eq!(jaccard_similarity("hello", ""), 0.0);
-    }
-
-    #[test]
-    fn jaccard_case_insensitive() {
-        let sim = jaccard_similarity("Housing Minneapolis", "housing minneapolis");
-        assert!(
-            (sim - 1.0).abs() < f64::EPSILON,
-            "Jaccard should be case-insensitive: {sim}"
-        );
-    }
-
-    #[test]
-    fn max_expansion_queries_constant() {
-        assert_eq!(MAX_EXPANSION_QUERIES_PER_RUN, 10);
-    }
-
-    #[test]
-    fn dedup_threshold_constant() {
-        assert!((DEDUP_JACCARD_THRESHOLD - 0.6).abs() < f64::EPSILON);
     }
 }
