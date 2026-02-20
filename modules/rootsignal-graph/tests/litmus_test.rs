@@ -1482,9 +1482,9 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 4, "Should have 4 tensions before merge");
 
-    // Run merge
+    // Run merge (bbox covering Twin Cities test data)
     let merged = writer
-        .merge_duplicate_tensions(0.85)
+        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
         .expect("merge failed");
     assert_eq!(merged, 2, "Should merge 2 duplicates (keep 1 of 3)");
@@ -1554,7 +1554,7 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
     create_tension_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
 
     let merged = writer
-        .merge_duplicate_tensions(0.85)
+        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
         .expect("merge failed");
     assert_eq!(merged, 0, "No duplicates should be merged");
@@ -1564,6 +1564,59 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 2, "Both tensions should survive");
+}
+
+#[tokio::test]
+async fn merge_duplicate_tensions_preserves_cross_city_signals() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Create two near-identical tensions (cosine >0.85) in different cities
+    let mut base_emb = vec![0.0f64; 1024];
+    base_emb[0] = 1.0;
+    base_emb[1] = 0.5;
+
+    let mut chi_emb = base_emb.clone();
+    chi_emb[2] = 0.05; // tiny perturbation, still >0.85 cosine
+
+    let tc_id = Uuid::new_v4();
+    let chi_id = Uuid::new_v4();
+
+    // Twin Cities
+    create_tension_with_embedding_at(
+        &client,
+        tc_id,
+        "ICE Enforcement Actions",
+        &base_emb,
+        44.9778,
+        -93.2650,
+    )
+    .await;
+
+    // Chicago
+    create_tension_with_embedding_at(
+        &client,
+        chi_id,
+        "ICE Enforcement Actions",
+        &chi_emb,
+        41.8781,
+        -87.6298,
+    )
+    .await;
+
+    // Merge scoped to Twin Cities bbox — should not touch Chicago
+    let merged = writer
+        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+        .await
+        .expect("merge failed");
+    assert_eq!(merged, 0, "Cross-city tensions must not be merged");
+
+    // Both tensions survive
+    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap().unwrap();
+    let count: i64 = row.get("cnt").unwrap();
+    assert_eq!(count, 2, "Both city tensions should survive");
 }
 
 // =============================================================================
