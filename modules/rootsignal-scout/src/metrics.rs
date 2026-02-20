@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
-use rootsignal_common::{SourceNode, SourceType};
+use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::scrape_phase::RunContext;
@@ -91,7 +91,7 @@ impl<'a> Metrics<'a> {
             } else {
                 source.consecutive_empty_runs
             };
-            let cadence = if source.source_type == SourceType::WebQuery {
+            let cadence = if is_web_query(&source.canonical_value) {
                 crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
             } else {
                 crate::scheduler::cadence_hours_for_weight(new_weight)

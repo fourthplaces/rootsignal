@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, Config, DiscoveryMethod, SourceNode, SourceRole, SourceType, SubmissionNode,
+    CityNode, Config, DiscoveryMethod, SourceNode, SourceRole, SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -279,18 +279,16 @@ impl MutationRoot {
             return Err("URL must use http or https scheme".into());
         }
 
-        let source_type = SourceType::from_url(&url);
-        let canonical_value = canonical_value_from_url(source_type, &url);
-        let canonical_key = format!("{}:{}:{}", city_slug, source_type, canonical_value);
+        let cv = rootsignal_common::canonical_value(&url);
+        let canonical_key = format!("{}:{}", city_slug, cv);
         let source_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
         let source = SourceNode {
             id: source_id,
             canonical_key: canonical_key.clone(),
-            canonical_value,
+            canonical_value: cv,
             url: Some(url.clone()),
-            source_type,
             discovery_method: DiscoveryMethod::HumanSubmission,
             city: city_slug.clone(),
             created_at: now,
@@ -423,18 +421,16 @@ impl MutationRoot {
         }
 
         let city = city.unwrap_or_else(|| config.city.clone());
-        let source_type = SourceType::from_url(&url);
-        let canonical_value = canonical_value_from_url(source_type, &url);
-        let canonical_key = format!("{}:{}:{}", city, source_type, canonical_value);
+        let cv = rootsignal_common::canonical_value(&url);
+        let canonical_key = format!("{}:{}", city, cv);
         let source_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
         let source = SourceNode {
             id: source_id,
             canonical_key: canonical_key.clone(),
-            canonical_value,
+            canonical_value: cv,
             url: Some(url.clone()),
-            source_type,
             discovery_method: DiscoveryMethod::HumanSubmission,
             city: city.clone(),
             created_at: now,
@@ -577,35 +573,6 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
     let lat: f64 = first.lat.parse()?;
     let lon: f64 = first.lon.parse()?;
     Ok((lat, lon, first.display_name))
-}
-
-fn canonical_value_from_url(source_type: SourceType, url: &str) -> String {
-    match source_type {
-        SourceType::Instagram => {
-            // https://www.instagram.com/{username}/ → username
-            url.split("instagram.com/")
-                .nth(1)
-                .unwrap_or(url)
-                .trim_matches('/')
-                .split('/')
-                .next()
-                .unwrap_or(url)
-                .to_lowercase()
-        }
-        SourceType::Reddit => {
-            // https://reddit.com/r/{subreddit} → subreddit
-            if let Some(rest) = url.split("/r/").nth(1) {
-                rest.trim_matches('/')
-                    .split('/')
-                    .next()
-                    .unwrap_or(url)
-                    .to_lowercase()
-            } else {
-                url.to_lowercase()
-            }
-        }
-        _ => url.to_string(),
-    }
 }
 
 fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hour: usize) -> bool {

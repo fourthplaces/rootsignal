@@ -12,7 +12,7 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole};
 use rootsignal_graph::{query, GraphClient, GraphWriter};
 
 /// Spin up a fresh Neo4j container and run migrations.
@@ -1275,10 +1275,9 @@ async fn source_last_scraped_round_trip() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "test-city:web:https://example.org".to_string(),
+        canonical_key: "test-city:https://example.org".to_string(),
         canonical_value: "https://example.org".to_string(),
         url: Some("https://example.org".to_string()),
-        source_type: SourceType::Web,
         discovery_method: DiscoveryMethod::Curated,
         city: "test-city".to_string(),
         created_at: Utc::now(),
@@ -2451,8 +2450,6 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
             id: $id,
             canonical_key: $key,
             canonical_value: $query,
-            url: $query,
-            source_type: 'web_query',
             discovery_method: 'curated',
             city: $city,
             created_at: datetime($now),
@@ -2468,7 +2465,7 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
         })",
     )
     .param("id", id.to_string())
-    .param("key", format!("{city}:web_query:{query_text}"))
+    .param("key", format!("{city}:{query_text}"))
     .param("query", query_text)
     .param("city", city)
     .param("now", now)
@@ -3009,10 +3006,9 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "twincities:web_query:emergency housing Minneapolis".to_string(),
+        canonical_key: "twincities:emergency housing Minneapolis".to_string(),
         canonical_value: "emergency housing Minneapolis".to_string(),
         url: None,
-        source_type: SourceType::WebQuery,
         discovery_method: DiscoveryMethod::SignalExpansion,
         city: "twincities".to_string(),
         created_at: Utc::now(),

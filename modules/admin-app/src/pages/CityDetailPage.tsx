@@ -318,7 +318,7 @@ export function CityDetailPage() {
                   (s: {
                     id: string;
                     canonicalValue: string;
-                    sourceType: string;
+                    sourceLabel: string;
                     effectiveWeight: number;
                     signalsProduced: number;
                     cadenceHours: number;
@@ -326,7 +326,7 @@ export function CityDetailPage() {
                   }) => (
                     <tr key={s.id} className="border-b border-border/50">
                       <td className="py-2 truncate max-w-[200px]">{s.canonicalValue}</td>
-                      <td className="py-2">{s.sourceType}</td>
+                      <td className="py-2">{s.sourceLabel}</td>
                       <td className="py-2">{s.effectiveWeight.toFixed(2)}</td>
                       <td className="py-2">{s.signalsProduced}</td>
                       <td className="py-2">{s.cadenceHours}h</td>

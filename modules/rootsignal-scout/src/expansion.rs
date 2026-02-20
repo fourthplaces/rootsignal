@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType};
+use rootsignal_common::{DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::embedder::TextEmbedder;
@@ -120,13 +120,12 @@ impl<'a> Expansion<'a> {
             }
 
             let cv = query_text.clone();
-            let ck = sources::make_canonical_key(self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(self.city_slug, &cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::SignalExpansion,
                 city: self.city_slug.to_string(),
                 created_at: now_expansion,

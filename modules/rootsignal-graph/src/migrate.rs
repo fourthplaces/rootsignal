@@ -510,6 +510,15 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Backfill existing signals and stories as 'live' (already visible to users) ---
     backfill_review_status(client).await?;
 
+    // --- Migrate canonical keys: remove source_type from key format, add domain to social values ---
+    migrate_canonical_keys_remove_source_type(client).await?;
+
+    // --- Drop legacy source_type index (property kept as read-only breadcrumb) ---
+    match g.run(query("DROP INDEX source_type IF EXISTS")).await {
+        Ok(_) => {}
+        Err(e) => warn!("Drop source_type index failed (non-fatal): {e}"),
+    }
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -1304,5 +1313,145 @@ async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Erro
     }
 
     info!("Review status backfill complete");
+    Ok(())
+}
+
+/// Migrate canonical_keys to remove source_type from the key format, and add domain
+/// prefixes to social source canonical_values to prevent collisions.
+///
+/// Old format: `city:source_type:canonical_value` (e.g. `twincities:instagram:lakestreetstories`)
+/// New format: `city:canonical_value` (e.g. `twincities:instagram.com/lakestreetstories`)
+///
+/// Idempotent — skips sources whose canonical_value already contains a domain prefix.
+async fn migrate_canonical_keys_remove_source_type(
+    client: &GraphClient,
+) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    // Guard: check if migration is needed by looking for old-format keys (city:type:value)
+    let check = query(
+        "MATCH (s:Source)
+         WHERE s.source_type IS NOT NULL
+           AND s.canonical_key CONTAINS ':' + s.source_type + ':'
+         RETURN count(s) AS cnt",
+    );
+    let mut stream = g.execute(check).await?;
+    let needs_migration = match stream.next().await? {
+        Some(row) => row.get::<i64>("cnt").unwrap_or(0) > 0,
+        None => false,
+    };
+
+    if !needs_migration {
+        info!("canonical_key migration: already complete, skipping");
+        return Ok(());
+    }
+
+    info!("Migrating canonical_keys: removing source_type from key format...");
+
+    // Pre-migration collision audit: check if the new keys would collide
+    let collision_check = query(
+        "MATCH (s:Source)
+         WITH s.city + ':' +
+           CASE
+             WHEN s.source_type = 'instagram' AND NOT s.canonical_value STARTS WITH 'instagram.com/'
+               THEN 'instagram.com/' + s.canonical_value
+             WHEN s.source_type = 'reddit' AND NOT s.canonical_value STARTS WITH 'reddit.com/'
+               THEN 'reddit.com/r/' + s.canonical_value
+             WHEN s.source_type = 'twitter' AND NOT s.canonical_value STARTS WITH 'x.com/'
+               THEN 'x.com/' + s.canonical_value
+             WHEN s.source_type = 'tiktok' AND NOT s.canonical_value STARTS WITH 'tiktok.com/'
+               THEN 'tiktok.com/' + s.canonical_value
+             ELSE s.canonical_value
+           END AS new_key, collect(s.id) AS ids, count(*) AS cnt
+         WHERE cnt > 1
+         RETURN new_key, ids, cnt",
+    );
+    let mut stream = g.execute(collision_check).await?;
+    let mut has_collisions = false;
+    while let Some(row) = stream.next().await? {
+        let new_key: String = row.get("new_key").unwrap_or_default();
+        let cnt: i64 = row.get("cnt").unwrap_or(0);
+        warn!(new_key, cnt, "COLLISION detected in canonical_key migration — aborting");
+        has_collisions = true;
+    }
+
+    if has_collisions {
+        warn!("canonical_key migration aborted due to collisions — resolve manually");
+        return Ok(());
+    }
+
+    // Step 1: Rewrite canonical_value for social sources to include domain
+    let social_rewrites = [
+        ("instagram", "instagram.com/", "instagram.com/"),
+        ("reddit", "reddit.com/r/", "reddit.com/"),
+        ("twitter", "x.com/", "x.com/"),
+        ("tiktok", "tiktok.com/", "tiktok.com/"),
+    ];
+
+    for (source_type, prefix, guard) in &social_rewrites {
+        let q = query(
+            "MATCH (s:Source)
+             WHERE s.source_type = $source_type
+               AND NOT s.canonical_value STARTS WITH $guard
+             SET s.canonical_value = $prefix + s.canonical_value
+             RETURN count(s) AS updated",
+        )
+        .param("source_type", *source_type)
+        .param("prefix", *prefix)
+        .param("guard", *guard);
+
+        match g.execute(q).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(source_type, updated, "Rewrote canonical_value with domain prefix");
+                    }
+                }
+            }
+            Err(e) => warn!(source_type, "canonical_value rewrite failed: {e}"),
+        }
+    }
+
+    // Step 2: Rewrite all canonical_keys to new format (city:canonical_value)
+    let rewrite_keys = query(
+        "MATCH (s:Source)
+         WHERE s.source_type IS NOT NULL
+           AND s.canonical_key CONTAINS ':' + s.source_type + ':'
+         SET s.canonical_key = s.city + ':' + s.canonical_value
+         RETURN count(s) AS updated",
+    );
+    match g.execute(rewrite_keys).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                info!(updated, "Rewrote canonical_keys to city:value format");
+            }
+        }
+        Err(e) => warn!("canonical_key rewrite failed: {e}"),
+    }
+
+    // Step 3: Fix GoFundMe bootstrap sources (url should be null for query sources)
+    let fix_gofundme = query(
+        "MATCH (s:Source)
+         WHERE s.source_type = 'web_query'
+           AND s.url IS NOT NULL AND s.url <> ''
+           AND NOT (s.url STARTS WITH 'http://' OR s.url STARTS WITH 'https://')
+         SET s.url = null
+         RETURN count(s) AS updated",
+    );
+    match g.execute(fix_gofundme).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Fixed non-URL values stored in Source.url");
+                }
+            }
+        }
+        Err(e) => warn!("GoFundMe url fix failed (non-fatal): {e}"),
+    }
+
+    info!("canonical_key migration complete");
     Ok(())
 }

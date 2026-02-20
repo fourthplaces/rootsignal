@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, SourceType, Urgency,
+    NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
@@ -773,7 +773,7 @@ impl<'a> GatheringFinder<'a> {
         stats: &mut GatheringFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+        let ck = sources::make_canonical_key(&self.city_slug, &cv);
         let gap_context = format!(
             "Gathering finder: gathering discovery for \"{}\"",
             target.title,
@@ -784,7 +784,6 @@ impl<'a> GatheringFinder<'a> {
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::GapAnalysis,
             city: self.city_slug.clone(),
             created_at: Utc::now(),

@@ -205,7 +205,7 @@ export function DashboardPage() {
         <h2 className="text-sm font-medium mb-4">Extraction Yield</h2>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={d.extractionYield}>
-            <XAxis dataKey="sourceType" tick={{ fontSize: 11 }} />
+            <XAxis dataKey="sourceLabel" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
             <Bar dataKey="extracted" fill="#8b5cf6" name="Extracted" />

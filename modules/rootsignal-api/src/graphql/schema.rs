@@ -501,7 +501,7 @@ impl QueryRoot {
                 .unwrap_or_default()
                 .iter()
                 .map(|y| AdminYieldRow {
-                    source_type: y.source_type.clone(),
+                    source_label: y.source_label.clone(),
                     extracted: y.extracted,
                     survived: y.survived,
                     corroborated: y.corroborated,
@@ -577,11 +577,12 @@ impl QueryRoot {
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
                     rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
                 });
+                let source_label = source_label_from_value(s.value());
                 AdminSource {
                     id: s.id,
                     url: s.url.clone().unwrap_or_default(),
                     canonical_value: s.canonical_value.clone(),
-                    source_type: s.source_type.to_string(),
+                    source_label,
                     weight: s.weight,
                     quality_penalty: s.quality_penalty,
                     effective_weight,
@@ -696,7 +697,7 @@ pub struct AdminSourceRow {
 
 #[derive(SimpleObject)]
 pub struct AdminYieldRow {
-    pub source_type: String,
+    pub source_label: String,
     pub extracted: u32,
     pub survived: u32,
     pub corroborated: u32,
@@ -749,7 +750,7 @@ pub struct AdminSource {
     pub id: Uuid,
     pub url: String,
     pub canonical_value: String,
-    pub source_type: String,
+    pub source_label: String,
     pub weight: f64,
     pub quality_penalty: f64,
     pub effective_weight: f64,
@@ -761,6 +762,19 @@ pub struct AdminSource {
 }
 
 // ========== Helpers ==========
+
+fn source_label_from_value(value: &str) -> String {
+    if rootsignal_common::is_web_query(value) {
+        return "search".to_string();
+    }
+    // Extract domain from URL or canonical value (e.g. "instagram.com/handle" → "instagram.com")
+    let without_scheme = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(value);
+    let domain = without_scheme.split('/').next().unwrap_or(value);
+    domain.strip_prefix("www.").unwrap_or(domain).to_string()
+}
 
 fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
     let features: Vec<serde_json::Value> = nodes

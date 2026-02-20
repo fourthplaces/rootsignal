@@ -101,7 +101,7 @@ export const ADMIN_DASHBOARD = gql`
         emptyRuns
       }
       extractionYield {
-        sourceType
+        sourceLabel
         extracted
         survived
         corroborated
@@ -155,7 +155,7 @@ export const ADMIN_CITY_SOURCES = gql`
       id
       url
       canonicalValue
-      sourceType
+      sourceLabel
       weight
       qualityPenalty
       effectiveWeight

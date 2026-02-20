@@ -13,8 +13,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
-    TensionNode, Urgency,
+    NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
@@ -867,7 +866,7 @@ impl<'a> ResponseFinder<'a> {
         stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+        let ck = sources::make_canonical_key(&self.city_slug, &cv);
         let gap_context = format!(
             "Response finder: response discovery for \"{}\"",
             target.title,
@@ -878,7 +877,6 @@ impl<'a> ResponseFinder<'a> {
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::GapAnalysis,
             city: self.city_slug.clone(),
             created_at: Utc::now(),

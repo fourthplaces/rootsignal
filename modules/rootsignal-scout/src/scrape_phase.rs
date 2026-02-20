@@ -16,8 +16,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, ActorType, CityNode, DiscoveryMethod, EvidenceNode, GeoPoint, GeoPrecision, Node,
-    NodeType, SourceNode, SourceRole, SourceType,
+    is_web_query, scraping_strategy, ActorNode, ActorType, CityNode, DiscoveryMethod, EvidenceNode,
+    GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy, SocialPlatform as CommonSocialPlatform,
+    SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -221,11 +222,16 @@ impl<'a> ScrapePhase<'a> {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type.is_query())
+            .filter(|s| {
+                matches!(
+                    scraping_strategy(s.value()),
+                    ScrapingStrategy::WebQuery | ScrapingStrategy::HtmlListing { .. }
+                )
+            })
             .collect();
         let page_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type == SourceType::Web)
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::WebPage))
             .collect();
 
         let mut phase_urls: Vec<String> = Vec::new();
@@ -233,7 +239,7 @@ impl<'a> ScrapePhase<'a> {
         // Resolve query sources → URLs
         let api_queries: Vec<&&&SourceNode> = query_sources
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(s.value()))
             .collect();
         if !api_queries.is_empty() {
             info!(
@@ -287,10 +293,14 @@ impl<'a> ScrapePhase<'a> {
         // HTML-based queries
         let html_queries: Vec<&&&SourceNode> = query_sources
             .iter()
-            .filter(|s| s.source_type.link_pattern().is_some())
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::HtmlListing { .. }))
             .collect();
         for source in &html_queries {
-            if let (Some(url), Some(pattern)) = (&source.url, source.source_type.link_pattern()) {
+            let link_pattern = match scraping_strategy(source.value()) {
+                ScrapingStrategy::HtmlListing { link_pattern } => Some(link_pattern),
+                _ => None,
+            };
+            if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
                 match self.scraper.scrape_raw(url).await {
                     Ok(html) if !html.is_empty() => {
                         let links = scraper::extract_links_by_pattern(&html, url, pattern);
@@ -313,7 +323,7 @@ impl<'a> ScrapePhase<'a> {
         // RSS feeds — fetch feed XML, extract article URLs
         let rss_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type == SourceType::Rss)
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::Rss))
             .collect();
         if !rss_sources.is_empty() {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
@@ -496,11 +506,15 @@ impl<'a> ScrapePhase<'a> {
         let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
 
         for source in social_sources {
-            let (platform, identifier) = match source.source_type {
-                SourceType::Instagram => {
-                    (SocialPlatform::Instagram, source.canonical_value.clone())
+            let common_platform = match scraping_strategy(source.value()) {
+                ScrapingStrategy::Social(p) => p,
+                _ => continue,
+            };
+            let (platform, identifier) = match common_platform {
+                CommonSocialPlatform::Instagram => {
+                    (SocialPlatform::Instagram, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                SourceType::Facebook => {
+                CommonSocialPlatform::Facebook => {
                     let url = source
                         .url
                         .as_deref()
@@ -508,7 +522,7 @@ impl<'a> ScrapePhase<'a> {
                         .unwrap_or(&source.canonical_value);
                     (SocialPlatform::Facebook, url.to_string())
                 }
-                SourceType::Reddit => {
+                CommonSocialPlatform::Reddit => {
                     let url = source
                         .url
                         .as_deref()
@@ -523,11 +537,13 @@ impl<'a> ScrapePhase<'a> {
                     };
                     (SocialPlatform::Reddit, identifier)
                 }
-                SourceType::Twitter => {
-                    (SocialPlatform::Twitter, source.canonical_value.clone())
+                CommonSocialPlatform::Twitter => {
+                    (SocialPlatform::Twitter, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                SourceType::TikTok => (SocialPlatform::TikTok, source.canonical_value.clone()),
-                _ => continue,
+                CommonSocialPlatform::TikTok => {
+                    (SocialPlatform::TikTok, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
+                }
+                CommonSocialPlatform::Bluesky => continue, // Not yet supported by social scraper
             };
             let source_url = source
                 .url
@@ -758,12 +774,12 @@ impl<'a> ScrapePhase<'a> {
 
         // Search each social platform with the same topics
         let platforms = [
-            (SocialPlatform::Instagram, SourceType::Instagram),
-            (SocialPlatform::Twitter, SourceType::Twitter),
-            (SocialPlatform::TikTok, SourceType::TikTok),
+            SocialPlatform::Instagram,
+            SocialPlatform::Twitter,
+            SocialPlatform::TikTok,
         ];
 
-        for (platform, source_type) in &platforms {
+        for platform in &platforms {
             if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
                 break;
             }
@@ -883,9 +899,8 @@ impl<'a> ScrapePhase<'a> {
                 let produced = ctx.stats.signals_stored - signal_count_before;
 
                 // Create a Source node with correct platform type
-                let cv = sources::canonical_value_from_url(*source_type, &source_url);
-                let ck =
-                    sources::make_canonical_key(&self.city_node.slug, *source_type, &cv);
+                let cv = rootsignal_common::canonical_value(&source_url);
+                let ck = sources::make_canonical_key(&self.city_node.slug, &source_url);
                 let gap_context = format!(
                     "Topic: {}",
                     topics.first().map(|t| t.as_str()).unwrap_or("unknown")
@@ -895,7 +910,6 @@ impl<'a> ScrapePhase<'a> {
                     canonical_key: ck.clone(),
                     canonical_value: cv,
                     url: Some(source_url.clone()),
-                    source_type: *source_type,
                     discovery_method: DiscoveryMethod::HashtagDiscovery,
                     city: self.city_node.slug.clone(),
                     created_at: Utc::now(),
@@ -938,7 +952,7 @@ impl<'a> ScrapePhase<'a> {
         let site_sources: Vec<&SourceNode> = existing_sources
             .iter()
             .filter(|s| {
-                s.source_type == SourceType::WebQuery
+                is_web_query(&s.canonical_value)
                     && s.canonical_value.starts_with("site:")
             })
             .collect();

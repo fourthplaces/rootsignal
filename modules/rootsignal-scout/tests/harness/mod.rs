@@ -9,7 +9,7 @@ pub mod sim_adapter;
 
 use std::sync::Arc;
 
-use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
@@ -292,9 +292,8 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
     let now = chrono::Utc::now();
 
     for site in &world.sites {
-        let source_type = SourceType::Web;
-        let cv = site.url.clone();
-        let ck = sources::make_canonical_key(city_slug, source_type, &cv);
+        let cv = rootsignal_common::canonical_value(&site.url);
+        let ck = sources::make_canonical_key(city_slug, &site.url);
 
         let role = match site.kind.as_str() {
             "news" | "forum" | "reddit" => SourceRole::Tension,
@@ -309,7 +308,6 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
             canonical_key: ck,
             canonical_value: cv,
             url: Some(site.url.clone()),
-            source_type,
             discovery_method: DiscoveryMethod::Curated,
             city: city_slug.to_string(),
             created_at: now,
@@ -335,25 +333,25 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
     }
 
     for profile in &world.social_profiles {
-        let source_type = match profile.platform.to_lowercase().as_str() {
-            "reddit" => SourceType::Reddit,
-            "instagram" => SourceType::Instagram,
-            "facebook" => SourceType::Facebook,
-            "twitter" | "x" => SourceType::Twitter,
-            "tiktok" => SourceType::TikTok,
-            "bluesky" => SourceType::Bluesky,
-            _ => SourceType::Web,
+        // Build URL from platform + identifier for proper canonical_value computation
+        let url = match profile.platform.to_lowercase().as_str() {
+            "reddit" => format!("https://www.reddit.com/r/{}/", profile.identifier),
+            "instagram" => format!("https://www.instagram.com/{}/", profile.identifier),
+            "facebook" => format!("https://www.facebook.com/{}", profile.identifier),
+            "twitter" | "x" => format!("https://x.com/{}", profile.identifier),
+            "tiktok" => format!("https://www.tiktok.com/@{}", profile.identifier),
+            "bluesky" => format!("https://bsky.app/profile/{}", profile.identifier),
+            _ => profile.identifier.clone(),
         };
 
-        let cv = sources::canonical_value_from_url(source_type, &profile.identifier);
-        let ck = sources::make_canonical_key(city_slug, source_type, &cv);
+        let cv = rootsignal_common::canonical_value(&url);
+        let ck = sources::make_canonical_key(city_slug, &url);
 
         let source = SourceNode {
             id: uuid::Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
-            url: None,
-            source_type,
+            url: Some(url),
             discovery_method: DiscoveryMethod::Curated,
             city: city_slug.to_string(),
             created_at: now,

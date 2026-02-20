@@ -6,7 +6,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     ActorNode, NeedNode, CityNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
     AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
-    SourceType, StoryNode, TensionNode, NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS,
+    StoryNode, TensionNode, NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
@@ -1575,7 +1575,6 @@ impl GraphWriter {
                 s.id = $id,
                 s.canonical_value = $canonical_value,
                 s.url = $url,
-                s.source_type = $source_type,
                 s.discovery_method = $discovery_method,
                 s.city = $city,
                 s.created_at = datetime($created_at),
@@ -1597,7 +1596,6 @@ impl GraphWriter {
         .param("canonical_key", source.canonical_key.as_str())
         .param("canonical_value", source.canonical_value.as_str())
         .param("url", source.url.clone().unwrap_or_default())
-        .param("source_type", source.source_type.to_string())
         .param("discovery_method", source.discovery_method.to_string())
         .param("city", source.city.as_str())
         .param("created_at", format_datetime(&source.created_at))
@@ -1651,7 +1649,6 @@ impl GraphWriter {
             "MATCH (s:Source {city: $city, active: true})
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
-                    s.source_type AS source_type,
                     s.discovery_method AS discovery_method, s.city AS city,
                     s.created_at AS created_at, s.last_scraped AS last_scraped,
                     s.last_produced_signal AS last_produced_signal,
@@ -1675,9 +1672,6 @@ impl GraphWriter {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-
-            let source_type_str: String = row.get("source_type").unwrap_or_default();
-            let source_type = SourceType::from_str_loose(&source_type_str);
 
             let discovery_str: String = row.get("discovery_method").unwrap_or_default();
             let discovery_method = match discovery_str.as_str() {
@@ -1705,7 +1699,6 @@ impl GraphWriter {
                 canonical_key: row.get("canonical_key").unwrap_or_default(),
                 canonical_value: row.get("canonical_value").unwrap_or_default(),
                 url: if url.is_empty() { None } else { Some(url) },
-                source_type,
                 discovery_method,
                 city: row.get("city").unwrap_or_default(),
                 created_at,
@@ -1846,8 +1839,9 @@ impl GraphWriter {
     /// Protects curated and human-submitted sources.
     pub async fn deactivate_dead_web_queries(&self, city: &str) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true, city: $city, source_type: 'web_query'})
-             WHERE s.consecutive_empty_runs >= 5
+            "MATCH (s:Source {active: true, city: $city})
+             WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
+               AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
                AND s.signals_produced = 0
                AND s.discovery_method <> 'curated'
@@ -1868,7 +1862,8 @@ impl GraphWriter {
     /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
     pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true, source_type: 'web_query'})
+            "MATCH (s:Source {city: $city, active: true})
+             WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
              RETURN s.canonical_value AS query",
         )
         .param("city", city);
@@ -1897,7 +1892,8 @@ impl GraphWriter {
         let q = query(
             "CALL db.index.vector.queryNodes('source_query_embedding', 5, $embedding)
              YIELD node, score
-             WHERE node.city = $city AND node.active = true AND node.source_type = 'web_query'
+             WHERE node.city = $city AND node.active = true
+               AND NOT (node.canonical_value STARTS WITH 'http://' OR node.canonical_value STARTS WITH 'https://')
                AND score >= $threshold
              RETURN node.canonical_key AS canonical_key, score
              ORDER BY score DESC
@@ -3311,7 +3307,17 @@ impl GraphWriter {
         let q = query(
             "MATCH (s:Source {city: $city})
              WHERE s.active = true
-             RETURN s.source_type AS st, s.signals_produced AS sp,
+             WITH s,
+                  CASE
+                    WHEN NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
+                      THEN 'search'
+                    WHEN s.canonical_value STARTS WITH 'https://'
+                      THEN split(replace(substring(s.canonical_value, 8), 'www.', ''), '/')[0]
+                    WHEN s.canonical_value STARTS WITH 'http://'
+                      THEN split(replace(substring(s.canonical_value, 7), 'www.', ''), '/')[0]
+                    ELSE split(s.canonical_value, '/')[0]
+                  END AS st
+             RETURN st, s.signals_produced AS sp,
                     s.signals_corroborated AS sc, s.url AS url",
         )
         .param("city", city);
@@ -3334,7 +3340,7 @@ impl GraphWriter {
         }
 
         let mut results = Vec::new();
-        for (source_type, (extracted, corroborated, urls)) in &type_map {
+        for (source_label, (extracted, corroborated, urls)) in &type_map {
             // Count survived signals (still in graph) per source type via source_url
             let mut survived = 0u32;
             if !urls.is_empty() {
@@ -3374,7 +3380,7 @@ impl GraphWriter {
             }
 
             results.push(ExtractionYield {
-                source_type: source_type.clone(),
+                source_label: source_label.clone(),
                 extracted: *extracted,
                 survived,
                 corroborated: *corroborated,
@@ -4375,10 +4381,10 @@ pub struct GapTypeStats {
     pub avg_weight: f64,
 }
 
-/// Extraction yield metrics grouped by source_type.
+/// Extraction yield metrics grouped by source label (derived from URL domain).
 #[derive(Debug, Clone)]
 pub struct ExtractionYield {
-    pub source_type: String,
+    pub source_label: String,
     pub extracted: u32,    // from Source.signals_produced
     pub survived: u32,     // count of signals still in graph
     pub corroborated: u32, // from Source.signals_corroborated

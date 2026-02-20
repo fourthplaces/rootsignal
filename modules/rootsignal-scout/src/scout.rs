@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, DiscoveryMethod, SourceNode, SourceType,
+    is_web_query, scraping_strategy, CityNode, DiscoveryMethod, ScrapingStrategy, SourceNode,
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
@@ -299,7 +299,7 @@ impl Scout {
                 if !scheduled_keys.contains(&s.canonical_key) {
                     return false;
                 }
-                if s.source_type != SourceType::WebQuery {
+                if !is_web_query(&s.canonical_value) {
                     return true;
                 }
                 wq_scheduled_keys.contains(&s.canonical_key)
@@ -336,14 +336,8 @@ impl Scout {
         let phase_a_social: Vec<&SourceNode> = scheduled_sources
             .iter()
             .filter(|s| {
-                matches!(
-                    s.source_type,
-                    SourceType::Instagram
-                        | SourceType::Facebook
-                        | SourceType::Reddit
-                        | SourceType::Twitter
-                        | SourceType::TikTok
-                ) && tension_phase_keys.contains(&s.canonical_key)
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && tension_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();
@@ -416,14 +410,8 @@ impl Scout {
         let phase_b_social: Vec<&SourceNode> = scheduled_sources
             .iter()
             .filter(|s| {
-                matches!(
-                    s.source_type,
-                    SourceType::Instagram
-                        | SourceType::Facebook
-                        | SourceType::Reddit
-                        | SourceType::Twitter
-                        | SourceType::TikTok
-                ) && response_phase_keys.contains(&s.canonical_key)
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && response_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();

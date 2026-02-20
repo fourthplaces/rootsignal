@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use ai_client::claude::Claude;
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
     TensionResponseShape, UnmetTension,
@@ -241,7 +241,7 @@ impl DiscoveryBriefing {
                 };
                 out.push_str(&format!(
                     "- {}: {} extracted, {} survived ({}%), {} corroborated, {} contradicted\n",
-                    y.source_type,
+                    y.source_label,
                     y.extracted,
                     y.survived,
                     survival_pct,
@@ -251,7 +251,7 @@ impl DiscoveryBriefing {
                 if y.extracted >= 10 && survival_pct < 50 {
                     out.push_str(&format!(
                         "→ {} survival rate below 50% — signals from this source type are frequently reaped.\n",
-                        y.source_type,
+                        y.source_label,
                     ));
                 }
                 let contradiction_pct = if y.extracted > 0 {
@@ -262,7 +262,7 @@ impl DiscoveryBriefing {
                 if y.extracted >= 10 && contradiction_pct >= 20 {
                     out.push_str(&format!(
                         "→ {} has high contradiction rate ({}%) — evidence frequently disputes these signals.\n",
-                        y.source_type, contradiction_pct,
+                        y.source_label, contradiction_pct,
                     ));
                 }
             }
@@ -527,8 +527,8 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let cv = sources::canonical_value_from_url(SourceType::Web, &url);
-                let ck = sources::make_canonical_key(&self.city_slug, SourceType::Web, &cv);
+                let ck = sources::make_canonical_key(&self.city_slug, &url);
+                let cv = rootsignal_common::canonical_value(&url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
                     continue;
@@ -539,7 +539,6 @@ impl<'a> SourceFinder<'a> {
                     canonical_key: ck,
                     canonical_value: cv,
                     url: Some(url.clone()),
-                    source_type: SourceType::Web,
                     discovery_method: DiscoveryMethod::SignalReference,
                     city: self.city_slug.clone(),
                     created_at: now,
@@ -577,9 +576,8 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source_type = SourceType::from_url(social_url);
-                let cv = sources::canonical_value_from_url(source_type, social_url);
-                let ck = sources::make_canonical_key(&self.city_slug, source_type, &cv);
+                let ck = sources::make_canonical_key(&self.city_slug, social_url);
+                let cv = rootsignal_common::canonical_value(social_url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
                     continue;
@@ -590,7 +588,6 @@ impl<'a> SourceFinder<'a> {
                     canonical_key: ck,
                     canonical_value: cv,
                     url: Some(social_url.clone()),
-                    source_type,
                     discovery_method: DiscoveryMethod::SignalReference,
                     city: self.city_slug.clone(),
                     created_at: now,
@@ -755,7 +752,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = dq.query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_slug, &cv);
 
             let gap_context = format!(
                 "Curiosity: {} | Gap: {} | Related: {}",
@@ -781,7 +778,6 @@ impl<'a> SourceFinder<'a> {
                 canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
                 city: self.city_slug.clone(),
                 created_at: now,
@@ -876,7 +872,7 @@ impl<'a> SourceFinder<'a> {
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
         let existing_queries: Vec<String> = existing
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(&s.canonical_value))
             .map(|s| s.canonical_value.clone())
             .collect();
 
@@ -934,7 +930,7 @@ impl<'a> SourceFinder<'a> {
 
         let existing_queries: HashSet<String> = existing
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(&s.canonical_value))
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
 
@@ -961,7 +957,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_slug, &cv);
 
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
@@ -971,7 +967,6 @@ impl<'a> SourceFinder<'a> {
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
                 city: self.city_slug.clone(),
                 created_at: now,
@@ -1865,14 +1860,14 @@ mod tests {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![
             ExtractionYield {
-                source_type: "web".to_string(),
+                source_label: "web".to_string(),
                 extracted: 142,
                 survived: 118,
                 corroborated: 23,
                 contradicted: 2,
             },
             ExtractionYield {
-                source_type: "web_query".to_string(),
+                source_label: "web_query".to_string(),
                 extracted: 67,
                 survived: 31,
                 corroborated: 4,
@@ -1898,7 +1893,7 @@ mod tests {
     fn briefing_extraction_yield_annotates_low_survival() {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![ExtractionYield {
-            source_type: "web_query".to_string(),
+            source_label: "web_query".to_string(),
             extracted: 67,
             survived: 31,
             corroborated: 4,
@@ -1915,7 +1910,7 @@ mod tests {
     fn briefing_extraction_yield_annotates_high_contradiction() {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![ExtractionYield {
-            source_type: "web_query".to_string(),
+            source_label: "web_query".to_string(),
             extracted: 50,
             survived: 40,
             corroborated: 4,

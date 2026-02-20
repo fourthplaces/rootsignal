@@ -3,7 +3,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 use crate::scraper::{RssFetcher, WebSearcher};
@@ -50,13 +50,12 @@ impl<'a> Bootstrapper<'a> {
         let now = Utc::now();
         for query in &queries {
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_node.slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&self.city_node.slug, &cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::ColdStart,
                 city: self.city_node.slug.clone(),
                 created_at: now,
@@ -141,15 +140,40 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         let city_name_encoded = city_name.replace(' ', "+");
         let now = Utc::now();
 
-        let make = |source_type: SourceType, url: &str, role: SourceRole| {
-            let cv = sources::canonical_value_from_url(source_type, url);
-            let ck = sources::make_canonical_key(slug, source_type, &cv);
+        let make_url = |url: &str, role: SourceRole| {
+            let ck = sources::make_canonical_key(slug, url);
+            let cv = rootsignal_common::canonical_value(url);
             SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: cv,
                 url: Some(url.to_string()),
-                source_type,
+                discovery_method: DiscoveryMethod::ColdStart,
+                city: slug.clone(),
+                created_at: now,
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: None,
+                weight: 0.5,
+                cadence_hours: None,
+                avg_signals_per_scrape: 0.0,
+                quality_penalty: 1.0,
+                source_role: role,
+                scrape_count: 0,
+            }
+        };
+
+        let make_query = |query: &str, role: SourceRole| {
+            let ck = sources::make_canonical_key(slug, query);
+            SourceNode {
+                id: Uuid::new_v4(),
+                canonical_key: ck,
+                canonical_value: query.to_string(),
+                url: None,
                 discovery_method: DiscoveryMethod::ColdStart,
                 city: slug.clone(),
                 created_at: now,
@@ -170,24 +194,21 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         };
 
         let mut sources = vec![
-            make(
-                SourceType::EventbriteQuery,
+            make_url(
                 &format!(
                     "https://www.eventbrite.com/d/united-states--{}/community/",
                     city_name_encoded
                 ),
                 SourceRole::Response,
             ),
-            make(
-                SourceType::EventbriteQuery,
+            make_url(
                 &format!(
                     "https://www.eventbrite.com/d/united-states--{}/volunteer/",
                     city_name_encoded
                 ),
                 SourceRole::Response,
             ),
-            make(
-                SourceType::VolunteerMatchQuery,
+            make_url(
                 &format!(
                     "https://www.volunteermatch.org/search?l={}&k=&v=true",
                     city_name_encoded
@@ -195,8 +216,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 SourceRole::Response,
             ),
             // Site-scoped search: Serper will query `site:gofundme.com/f/ {city} {topic}`
-            make(
-                SourceType::WebQuery,
+            make_query(
                 &format!("site:gofundme.com/f/ {}", city_name),
                 SourceRole::Response,
             ),
@@ -210,8 +230,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                     "Discovered subreddits for {}", city_name
                 );
                 for sub in subreddits {
-                    sources.push(make(
-                        SourceType::Reddit,
+                    sources.push(make_url(
                         &format!("https://www.reddit.com/r/{}/", sub),
                         SourceRole::Mixed,
                     ));
@@ -234,8 +253,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                     // Validate the feed URL is reachable by attempting a fetch
                     match fetcher.fetch_items(&feed_url).await {
                         Ok(_) => {
-                            let mut source = make(
-                                SourceType::Rss,
+                            let mut source = make_url(
                                 &feed_url,
                                 SourceRole::Mixed,
                             );
@@ -367,13 +385,12 @@ pub async fn tension_seed_queries(
         let query = format!("organizations helping with {} in {}", help_text, city);
 
         let cv = query.clone();
-        let ck = sources::make_canonical_key(&city_node.slug, SourceType::WebQuery, &cv);
+        let ck = sources::make_canonical_key(&city_node.slug, &cv);
         all_sources.push(SourceNode {
             id: Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::TensionSeed,
             city: city_node.slug.clone(),
             created_at: now,

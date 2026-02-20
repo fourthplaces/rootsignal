@@ -24,14 +24,14 @@ pub struct Config {
     pub admin_username: String,
     pub admin_password: String,
 
-    // City
-    pub city: String,
+    // Region
+    pub region: String,
 
-    // City bootstrap (optional — for cold-start or explicit override)
-    pub city_name: Option<String>,
-    pub city_lat: Option<f64>,
-    pub city_lng: Option<f64>,
-    pub city_radius_km: Option<f64>,
+    // Region bootstrap (optional — for cold-start or explicit override)
+    pub region_name: Option<String>,
+    pub region_lat: Option<f64>,
+    pub region_lng: Option<f64>,
+    pub region_radius_km: Option<f64>,
 
     // Budget
     /// Daily budget limit in cents. 0 = unlimited.
@@ -69,11 +69,11 @@ impl Config {
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
             session_secret: String::new(),
-            city: String::new(),
-            city_name: None,
-            city_lat: None,
-            city_lng: None,
-            city_radius_km: None,
+            region: String::new(),
+            region_name: None,
+            region_lat: None,
+            region_lng: None,
+            region_radius_km: None,
             daily_budget_cents: 0,
             twilio_account_sid: String::new(),
             twilio_auth_token: String::new(),
@@ -97,11 +97,11 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
-            city_name: env::var("CITY_NAME").ok(),
-            city_lat: env::var("CITY_LAT").ok().and_then(|v| v.parse().ok()),
-            city_lng: env::var("CITY_LNG").ok().and_then(|v| v.parse().ok()),
-            city_radius_km: env::var("CITY_RADIUS_KM").ok().and_then(|v| v.parse().ok()),
+            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region_name: env::var("REGION_NAME").or_else(|_| env::var("CITY_NAME")).ok(),
+            region_lat: env::var("REGION_LAT").or_else(|_| env::var("CITY_LAT")).ok().and_then(|v| v.parse().ok()),
+            region_lng: env::var("REGION_LNG").or_else(|_| env::var("CITY_LNG")).ok().and_then(|v| v.parse().ok()),
+            region_radius_km: env::var("REGION_RADIUS_KM").or_else(|_| env::var("CITY_RADIUS_KM")).ok().and_then(|v| v.parse().ok()),
             daily_budget_cents: env::var("DAILY_BUDGET_CENTS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -113,7 +113,7 @@ impl Config {
         }
     }
 
-    /// Load config for the scout supervisor (Neo4j + Anthropic + city + notifications).
+    /// Load config for the scout supervisor (Neo4j + Anthropic + region + notifications).
     pub fn supervisor_from_env() -> Self {
         Self {
             neo4j_uri: required_env("NEO4J_URI"),
@@ -128,11 +128,11 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            city: env::var("CITY").unwrap_or_else(|_| "twincities".to_string()),
-            city_name: None,
-            city_lat: None,
-            city_lng: None,
-            city_radius_km: None,
+            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region_name: None,
+            region_lat: None,
+            region_lng: None,
+            region_radius_km: None,
             daily_budget_cents: env::var("SUPERVISOR_DAILY_BUDGET_CENTS")
                 .ok()
                 .and_then(|v| v.parse().ok())

@@ -387,10 +387,15 @@ pub struct ClusterSnapshot {
     pub run_at: DateTime<Utc>,
 }
 
-// --- City Node (graph-backed city configuration) ---
+// --- Region Node (graph-backed region configuration) ---
+
+/// An operational sandbox for scout's attention — defines where scout looks.
+/// Drives scheduling, locks, metrics, and bootstrap. The Neo4j label is still
+/// `:City` (renamed in Phase 2).
+pub type CityNode = RegionNode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CityNode {
+pub struct RegionNode {
     pub id: Uuid,
     pub name: String,
     pub slug: String,
@@ -451,103 +456,122 @@ pub struct TagNode {
     pub created_at: DateTime<Utc>,
 }
 
-// --- Source Types (for emergent source discovery) ---
+// --- Scraping Strategy (computed from URL, never stored) ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceType {
-    Web,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SocialPlatform {
     Instagram,
     Facebook,
     Reddit,
-    WebQuery,
-    TikTok,
     Twitter,
-    EventbriteQuery,
-    VolunteerMatchQuery,
+    TikTok,
     Bluesky,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrapingStrategy {
+    WebQuery,
+    WebPage,
     Rss,
+    Social(SocialPlatform),
+    HtmlListing { link_pattern: &'static str },
 }
 
-impl std::fmt::Display for SourceType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SourceType::Web => write!(f, "web"),
-            SourceType::Instagram => write!(f, "instagram"),
-            SourceType::Facebook => write!(f, "facebook"),
-            SourceType::Reddit => write!(f, "reddit"),
-            SourceType::WebQuery => write!(f, "web_query"),
-            SourceType::TikTok => write!(f, "tiktok"),
-            SourceType::Twitter => write!(f, "twitter"),
-            SourceType::EventbriteQuery => write!(f, "eventbrite_query"),
-            SourceType::VolunteerMatchQuery => write!(f, "volunteermatch_query"),
-            SourceType::Bluesky => write!(f, "bluesky"),
-            SourceType::Rss => write!(f, "rss"),
-        }
-    }
+/// Returns true if the value is a plain-text web query (not a URL).
+pub fn is_web_query(value: &str) -> bool {
+    !value.starts_with("http://") && !value.starts_with("https://")
 }
 
-impl SourceType {
-    pub fn from_str_loose(s: &str) -> Self {
-        match s {
-            "instagram" => Self::Instagram,
-            "facebook" => Self::Facebook,
-            "reddit" => Self::Reddit,
-            "web_query" | "tavily_query" => Self::WebQuery,
-            "tiktok" => Self::TikTok,
-            "twitter" => Self::Twitter,
-            "gofundme" | "gofundme_query" => Self::WebQuery,
-            "eventbrite_search" | "eventbrite_query" => Self::EventbriteQuery,
-            "volunteermatch_query" => Self::VolunteerMatchQuery,
-            "bluesky" => Self::Bluesky,
-            "rss" => Self::Rss,
-            _ => Self::Web,
+/// Derive scraping strategy from a source's value (URL or query text).
+pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
+    if is_web_query(value) {
+        return ScrapingStrategy::WebQuery;
+    }
+    let lower = value.to_lowercase();
+    if lower.contains("instagram.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Instagram);
+    }
+    if lower.contains("facebook.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Facebook);
+    }
+    if lower.contains("reddit.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Reddit);
+    }
+    if lower.contains("tiktok.com") {
+        return ScrapingStrategy::Social(SocialPlatform::TikTok);
+    }
+    if lower.contains("twitter.com") || lower.contains("x.com/") {
+        return ScrapingStrategy::Social(SocialPlatform::Twitter);
+    }
+    if lower.contains("bsky.app") {
+        return ScrapingStrategy::Social(SocialPlatform::Bluesky);
+    }
+    if lower.contains("eventbrite.com") && lower.contains("/d/") {
+        return ScrapingStrategy::HtmlListing {
+            link_pattern: "eventbrite.com/e/",
+        };
+    }
+    if lower.contains("volunteermatch.org") && lower.contains("/search") {
+        return ScrapingStrategy::HtmlListing {
+            link_pattern: "volunteermatch.org/search/opp",
+        };
+    }
+    if lower.contains("/feed")
+        || lower.contains("/rss")
+        || lower.contains("/atom")
+        || lower.ends_with(".rss")
+        || lower.ends_with(".xml")
+    {
+        return ScrapingStrategy::Rss;
+    }
+    ScrapingStrategy::WebPage
+}
+
+/// Compute a canonical value from a source's raw value (URL or query text).
+/// Includes the domain for social sources to prevent key collisions.
+pub fn canonical_value(value: &str) -> String {
+    if is_web_query(value) {
+        return value.to_string();
+    }
+    let lower = value.to_lowercase();
+    if lower.contains("instagram.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value);
+        return format!("instagram.com/{}", handle);
+    }
+    if lower.contains("reddit.com") {
+        if let Some(idx) = value.find("/r/") {
+            let sub = value[idx + 3..]
+                .trim_end_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or(value);
+            return format!("reddit.com/r/{}", sub);
         }
     }
-
-    /// Infer SourceType from a URL based on known platform domains.
-    pub fn from_url(url: &str) -> Self {
-        if url.contains("instagram.com") {
-            Self::Instagram
-        } else if url.contains("facebook.com") {
-            Self::Facebook
-        } else if url.contains("reddit.com") {
-            Self::Reddit
-        } else if url.contains("tiktok.com") {
-            Self::TikTok
-        } else if url.contains("twitter.com") || url.contains("x.com") {
-            Self::Twitter
-        } else if url.contains("bsky.app") {
-            Self::Bluesky
-        } else if url.contains("eventbrite.com") {
-            Self::EventbriteQuery
-        } else if url.contains("volunteermatch.org") {
-            Self::VolunteerMatchQuery
-        } else if url.contains("/feed") || url.contains("/rss") || url.contains("/atom") || url.ends_with(".rss") || url.ends_with(".xml") {
-            Self::Rss
-        } else {
-            Self::Web
-        }
+    if lower.contains("tiktok.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value)
+            .trim_start_matches('@');
+        return format!("tiktok.com/{}", handle);
     }
-
-    /// Returns true if this source type produces URLs (queries) rather than content (pages).
-    pub fn is_query(&self) -> bool {
-        matches!(
-            self,
-            Self::WebQuery
-                | Self::EventbriteQuery
-                | Self::VolunteerMatchQuery
-        )
+    if lower.contains("twitter.com") || lower.contains("x.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value)
+            .trim_start_matches('@');
+        return format!("x.com/{}", handle);
     }
-
-    /// For HTML-based query sources, returns the URL pattern that identifies individual item pages.
-    pub fn link_pattern(&self) -> Option<&'static str> {
-        match self {
-            Self::EventbriteQuery => Some("eventbrite.com/e/"),
-            Self::VolunteerMatchQuery => Some("volunteermatch.org/search/opp"),
-            _ => None,
-        }
-    }
+    // Everything else: full URL as canonical value
+    value.to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -620,19 +644,18 @@ impl SourceRole {
 }
 
 /// A tracked source in the graph — either curated (from seed list) or discovered.
-/// Identity is `canonical_key` = `city_slug:source_type:canonical_value`.
+/// Identity is `canonical_key` = `canonical_value` (region-independent).
+/// Regions link to sources via `:SCOUTS` relationships in the graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceNode {
     pub id: Uuid,
-    /// Unique identity: `city_slug:source_type:canonical_value`.
+    /// Unique identity: the canonical_value (URL/content hash). Region-independent.
     pub canonical_key: String,
     /// The handle/query/URL that identifies this source within its type.
     pub canonical_value: String,
     /// URL for web/social sources. None for query-type sources (WebQuery).
     pub url: Option<String>,
-    pub source_type: SourceType,
     pub discovery_method: DiscoveryMethod,
-    pub city: String,
     pub created_at: DateTime<Utc>,
     pub last_scraped: Option<DateTime<Utc>>,
     pub last_produced_signal: Option<DateTime<Utc>>,
@@ -653,6 +676,14 @@ pub struct SourceNode {
     pub source_role: SourceRole,
     /// Number of times this source has been scraped (independent of signal count).
     pub scrape_count: u32,
+}
+
+impl SourceNode {
+    /// Returns the source's primary value: the URL if present, otherwise the canonical_value.
+    /// This is the single source of truth for "what is this source."
+    pub fn value(&self) -> &str {
+        self.url.as_deref().unwrap_or(&self.canonical_value)
+    }
 }
 
 /// A human-submitted link with an optional reason for investigation.
