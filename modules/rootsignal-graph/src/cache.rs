@@ -231,7 +231,7 @@ impl CacheStore {
         let hours: u64 = std::env::var("CACHE_RELOAD_HOURS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(6);
+            .unwrap_or(1);
 
         let store = Arc::clone(self);
         tokio::spawn(async move {
