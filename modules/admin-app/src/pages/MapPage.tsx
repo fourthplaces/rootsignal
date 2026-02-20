@@ -1,20 +1,25 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@apollo/client";
 import { SIGNALS_NEAR_GEO_JSON, ADMIN_CITIES } from "@/graphql/queries";
-import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
 import type { FeatureCollection } from "geojson";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 
-function FlyToCity({ lat, lng }: { lat: number; lng: number }) {
-  const map = useMap();
-  useEffect(() => {
-    map.flyTo([lat, lng], 12);
-  }, [lat, lng, map]);
-  return null;
-}
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
+
+const TYPE_COLORS: Record<string, string> = {
+  Event: "#3b82f6",
+  Give: "#22c55e",
+  Ask: "#f97316",
+  Notice: "#6b7280",
+  Tension: "#ef4444",
+};
 
 export function MapPage() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const popupRef = useRef<mapboxgl.Popup | null>(null);
+
   const { data: citiesData } = useQuery(ADMIN_CITIES);
   const cities = citiesData?.adminCities ?? [];
 
@@ -46,6 +51,173 @@ export function MapPage() {
     ? JSON.parse(geoData.signalsNearGeoJson)
     : null;
 
+  // Initialize map
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+
+    const map = new mapboxgl.Map({
+      container: containerRef.current,
+      style: "mapbox://styles/mapbox/dark-v11",
+      center: [selectedCity?.centerLng ?? -93.27, selectedCity?.centerLat ?? 44.97],
+      zoom: 12,
+    });
+
+    mapRef.current = map;
+
+    map.on("load", () => {
+      map.addSource("signals", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: true,
+        clusterMaxZoom: 14,
+        clusterRadius: 50,
+      });
+
+      // Cluster circles
+      map.addLayer({
+        id: "signal-clusters",
+        type: "circle",
+        source: "signals",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#6366f1",
+            10,
+            "#8b5cf6",
+            50,
+            "#a78bfa",
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            16,
+            10,
+            22,
+            50,
+            30,
+          ],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#1e1b4b",
+        },
+      });
+
+      // Cluster count labels
+      map.addLayer({
+        id: "signal-cluster-count",
+        type: "symbol",
+        source: "signals",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 12,
+        },
+        paint: {
+          "text-color": "#ffffff",
+        },
+      });
+
+      // Individual signal points
+      map.addLayer({
+        id: "signal-points",
+        type: "circle",
+        source: "signals",
+        filter: ["!", ["has", "point_count"]],
+        paint: {
+          "circle-color": [
+            "match",
+            ["get", "type"],
+            "Event",
+            TYPE_COLORS.Event!,
+            "Give",
+            TYPE_COLORS.Give!,
+            "Ask",
+            TYPE_COLORS.Ask!,
+            "Notice",
+            TYPE_COLORS.Notice!,
+            "Tension",
+            TYPE_COLORS.Tension!,
+            "#6366f1",
+          ],
+          "circle-radius": 7,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#18181b",
+        },
+      });
+
+      // Click clusters → zoom in
+      map.on("click", "signal-clusters", (e) => {
+        const feature = e.features?.[0];
+        if (!feature || feature.geometry.type !== "Point") return;
+        const clusterId = feature.properties?.cluster_id as number;
+        const source = map.getSource("signals") as mapboxgl.GeoJSONSource;
+        source.getClusterExpansionZoom(clusterId, (_err, zoom) => {
+          if (zoom == null) return;
+          map.easeTo({
+            center: feature.geometry.type === "Point"
+              ? (feature.geometry.coordinates as [number, number])
+              : [0, 0],
+            zoom,
+          });
+        });
+      });
+
+      // Click signal point → show popup
+      map.on("click", "signal-points", (e) => {
+        const feature = e.features?.[0];
+        if (!feature || feature.geometry.type !== "Point") return;
+        const coords = feature.geometry.coordinates.slice() as [number, number];
+        const title = feature.properties?.title ?? "";
+        const type = feature.properties?.type ?? "";
+
+        popupRef.current?.remove();
+        popupRef.current = new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
+          .setLngLat(coords)
+          .setHTML(`<b>${title}</b><br/>${type}`)
+          .addTo(map);
+      });
+
+      // Cursor on hover
+      map.on("mouseenter", "signal-points", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "signal-points", () => {
+        map.getCanvas().style.cursor = "";
+      });
+      map.on("mouseenter", "signal-clusters", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "signal-clusters", () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update GeoJSON data
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource("signals") as mapboxgl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(geojson ?? { type: "FeatureCollection", features: [] });
+  }, [geojson]);
+
+  // Fly to selected city
+  useEffect(() => {
+    if (!selectedCity || !mapRef.current) return;
+    mapRef.current.flyTo({
+      center: [selectedCity.centerLng, selectedCity.centerLat],
+      zoom: 12,
+      essential: true,
+    });
+  }, [selectedCity]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -68,43 +240,11 @@ export function MapPage() {
         </select>
       </div>
 
-      <div className="rounded-lg border border-border overflow-hidden" style={{ height: "calc(100vh - 160px)" }}>
-        <MapContainer
-          center={[selectedCity?.centerLat ?? 44.97, selectedCity?.centerLng ?? -93.27]}
-          zoom={12}
-          style={{ height: "100%", width: "100%" }}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          {selectedCity && (
-            <FlyToCity lat={selectedCity.centerLat} lng={selectedCity.centerLng} />
-          )}
-          {geojson && (
-            <GeoJSON
-              key={JSON.stringify(geojson).slice(0, 100)}
-              data={geojson}
-              pointToLayer={(_feature, latlng) =>
-                L.circleMarker(latlng, {
-                  radius: 6,
-                  fillColor: "#8b5cf6",
-                  color: "#6d28d9",
-                  weight: 1,
-                  fillOpacity: 0.8,
-                })
-              }
-              onEachFeature={(feature, layer) => {
-                if (feature.properties?.title) {
-                  layer.bindPopup(
-                    `<b>${feature.properties.title}</b><br/>${feature.properties.type ?? ""}`,
-                  );
-                }
-              }}
-            />
-          )}
-        </MapContainer>
-      </div>
+      <div
+        ref={containerRef}
+        className="rounded-lg border border-border overflow-hidden"
+        style={{ height: "calc(100vh - 160px)" }}
+      />
     </div>
   );
 }
