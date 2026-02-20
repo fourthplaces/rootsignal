@@ -1,20 +1,15 @@
-pub mod actor_extractor;
-pub mod bootstrap;
-pub mod budget;
-pub mod embedder;
-pub mod expansion;
-pub mod extractor;
+pub mod discovery;
+pub mod enrichment;
+pub mod infra;
+pub mod pipeline;
+pub mod scheduling;
+
 pub mod fixtures;
-pub mod gathering_finder;
-pub mod investigator;
-pub mod metrics;
-pub mod quality;
-pub mod response_finder;
-pub mod scheduler;
 pub mod scout;
-pub mod scrape_phase;
-pub mod scraper;
-pub mod source_finder;
-pub mod sources;
-pub mod tension_linker;
-pub mod util;
+
+// Re-export submodules at crate root for backwards compatibility
+pub use discovery::{gathering_finder, response_finder, source_finder, tension_linker};
+pub use enrichment::{actor_extractor, expansion, investigator, quality};
+pub use infra::{embedder, util};
+pub use pipeline::{extractor, scrape_phase, scraper, sources};
+pub use scheduling::{bootstrap, budget, metrics, scheduler};
