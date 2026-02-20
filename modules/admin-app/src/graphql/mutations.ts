@@ -69,6 +69,30 @@ export const RESET_SCOUT_LOCK = gql`
   }
 `;
 
+export const TAG_STORY = gql`
+  mutation TagStory($storyId: UUID!, $tagSlug: String!) {
+    tagStory(storyId: $storyId, tagSlug: $tagSlug) {
+      success
+    }
+  }
+`;
+
+export const UNTAG_STORY = gql`
+  mutation UntagStory($storyId: UUID!, $tagSlug: String!) {
+    untagStory(storyId: $storyId, tagSlug: $tagSlug) {
+      success
+    }
+  }
+`;
+
+export const MERGE_TAGS = gql`
+  mutation MergeTags($sourceSlug: String!, $targetSlug: String!) {
+    mergeTags(sourceSlug: $sourceSlug, targetSlug: $targetSlug) {
+      success
+    }
+  }
+`;
+
 export const SUBMIT_SOURCE = gql`
   mutation SubmitSource($url: String!, $description: String, $city: String) {
     submitSource(url: $url, description: $description, city: $city) {

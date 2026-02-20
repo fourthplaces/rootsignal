@@ -265,6 +265,10 @@ export const STORY_DETAIL = gql`
       status
       lede
       narrative
+      tags {
+        slug
+        name
+      }
     }
   }
 `;
@@ -282,3 +286,11 @@ export const ACTORS = gql`
   }
 `;
 
+export const ALL_TAGS = gql`
+  query Tags($limit: Int) {
+    tags(limit: $limit) {
+      slug
+      name
+    }
+  }
+`;
