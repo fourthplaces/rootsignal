@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@apollo/client";
 import { MapView } from "@/components/MapView";
-import { SearchInput, parseQuery } from "@/components/SearchInput";
+import { SearchInput, parseQuery, toggleToken } from "@/components/SearchInput";
 import { TabBar } from "@/components/TabBar";
 import { SignalCard } from "@/components/SignalCard";
 import { StoryCard } from "@/components/StoryCard";
@@ -15,7 +15,6 @@ import {
   STORIES_IN_BOUNDS,
   SEARCH_SIGNALS_IN_BOUNDS,
   SEARCH_STORIES_IN_BOUNDS,
-  TAGS,
 } from "@/graphql/queries";
 
 // Maps type filter keys to GraphQL __typename values
@@ -41,10 +40,6 @@ export function SearchPage() {
   const hasTextQuery = parsed.text.length > 0;
   const hasTypeFilter = parsed.types.length > 0;
   const hasTagFilter = parsed.tags.length > 0;
-
-  // Fetch available tags for the pill bar
-  const { data: tagsData } = useQuery(TAGS, { variables: { limit: 20 } });
-  const availableTags = tagsData?.tags ?? [];
 
   const boundsVars = bounds
     ? {
@@ -232,6 +227,26 @@ export function SearchPage() {
     url.updateUrl({ id: undefined }, { replace: true });
   }, [url]);
 
+  const handleTypeClick = useCallback(
+    (typeKey: string) => {
+      const next = toggleToken(rawQuery, "type", typeKey);
+      setRawQuery(next);
+      setSelectedId(null);
+      url.updateUrl({ q: next || undefined }, { replace: false });
+    },
+    [rawQuery, url],
+  );
+
+  const handleTagClick = useCallback(
+    (tagSlug: string) => {
+      const next = toggleToken(rawQuery, "tag", tagSlug);
+      setRawQuery(next);
+      setSelectedId(null);
+      url.updateUrl({ q: next || undefined }, { replace: false });
+    },
+    [rawQuery, url],
+  );
+
   // Initial map position from URL
   const initialCenter: [number, number] | undefined =
     url.lng != null && url.lat != null ? [url.lng, url.lat] : undefined;
@@ -246,8 +261,6 @@ export function SearchPage() {
             initialValue={rawQuery}
             onSearch={handleSearch}
             loading={loading}
-            availableTags={availableTags}
-            activeTab={tab}
           />
         </div>
 
@@ -279,6 +292,7 @@ export function SearchPage() {
                   }
                   isSelected={selectedId === signal.id}
                   onClick={() => handleSignalSelect(signal)}
+                  onTypeClick={handleTypeClick}
                 />
               ))
             )
@@ -299,6 +313,7 @@ export function SearchPage() {
                 }
                 isSelected={selectedId === story.id}
                 onClick={() => handleStorySelect(story)}
+                onTagClick={handleTagClick}
               />
             ))
           )}

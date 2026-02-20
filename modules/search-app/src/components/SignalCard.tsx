@@ -8,17 +8,27 @@ const TYPE_STYLES: Record<string, { bg: string; text: string; label: string }> =
   GqlTensionSignal: { bg: "bg-tension/10", text: "text-tension", label: "Tension" },
 };
 
+const TYPENAME_TO_TYPE_KEY: Record<string, string> = {
+  GqlGatheringSignal: "gathering",
+  GqlAidSignal: "aid",
+  GqlNeedSignal: "need",
+  GqlNoticeSignal: "notice",
+  GqlTensionSignal: "tension",
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface SignalCardProps {
   signal: Record<string, unknown>;
   score?: number;
   isSelected: boolean;
   onClick: () => void;
+  onTypeClick?: (typeKey: string) => void;
 }
 
-export function SignalCard({ signal, score, isSelected, onClick }: SignalCardProps) {
+export function SignalCard({ signal, score, isSelected, onClick, onTypeClick }: SignalCardProps) {
   const typename = (signal.__typename as string) ?? "";
   const style = TYPE_STYLES[typename] ?? { bg: "bg-muted", text: "text-muted-foreground", label: "Signal" };
+  const typeKey = TYPENAME_TO_TYPE_KEY[typename];
 
   return (
     <button
@@ -29,7 +39,15 @@ export function SignalCard({ signal, score, isSelected, onClick }: SignalCardPro
       )}
     >
       <div className="flex items-center gap-2 mb-1">
-        <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", style.bg, style.text)}>
+        <span
+          role={onTypeClick && typeKey ? "button" : undefined}
+          onClick={onTypeClick && typeKey ? (e) => { e.stopPropagation(); onTypeClick(typeKey); } : undefined}
+          className={cn(
+            "rounded px-1.5 py-0.5 text-xs font-medium",
+            style.bg, style.text,
+            onTypeClick && typeKey && "cursor-pointer hover:ring-1 hover:ring-current",
+          )}
+        >
           {style.label}
         </span>
         {score != null && (

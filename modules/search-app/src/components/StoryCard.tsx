@@ -6,6 +6,7 @@ interface StoryCardProps {
   topMatchingSignalTitle?: string | null;
   isSelected: boolean;
   onClick: () => void;
+  onTagClick?: (tagSlug: string) => void;
 }
 
 const ARC_COLORS: Record<string, string> = {
@@ -16,7 +17,7 @@ const ARC_COLORS: Record<string, string> = {
   Resurgent: "text-purple-400",
 };
 
-export function StoryCard({ story, score, topMatchingSignalTitle, isSelected, onClick }: StoryCardProps) {
+export function StoryCard({ story, score, topMatchingSignalTitle, isSelected, onClick, onTagClick }: StoryCardProps) {
   const arc = (story.arc as string) ?? "";
   const category = (story.category as string) ?? "";
   const signalCount = (story.signalCount as number) ?? 0;
@@ -49,7 +50,15 @@ export function StoryCard({ story, score, topMatchingSignalTitle, isSelected, on
       {Array.isArray(story.tags) && story.tags.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-1">
           {(story.tags as Array<{ slug: string; name: string }>).slice(0, 3).map((tag) => (
-            <span key={tag.slug} className="text-xs bg-muted px-1.5 py-0.5 rounded">
+            <span
+              key={tag.slug}
+              role={onTagClick ? "button" : undefined}
+              onClick={onTagClick ? (e) => { e.stopPropagation(); onTagClick(tag.slug); } : undefined}
+              className={cn(
+                "text-xs bg-muted px-1.5 py-0.5 rounded",
+                onTagClick && "cursor-pointer hover:bg-muted/80 hover:ring-1 hover:ring-muted-foreground",
+              )}
+            >
               {tag.name}
             </span>
           ))}
