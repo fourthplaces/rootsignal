@@ -248,6 +248,22 @@ export const STORIES = gql`
   }
 `;
 
+export const STORIES_IN_BOUNDS = gql`
+  query StoriesInBounds($minLat: Float!, $maxLat: Float!, $minLng: Float!, $maxLng: Float!, $limit: Int) {
+    storiesInBounds(minLat: $minLat, maxLat: $maxLat, minLng: $minLng, maxLng: $maxLng, limit: $limit) {
+      id
+      headline
+      summary
+      arc
+      category
+      energy
+      signalCount
+      firstSeen
+      status
+    }
+  }
+`;
+
 export const STORY_DETAIL = gql`
   query Story($id: UUID!) {
     story(id: $id) {

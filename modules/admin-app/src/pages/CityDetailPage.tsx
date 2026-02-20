@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_CITY, ADMIN_CITY_SOURCES, ADMIN_SCOUT_STATUS, SIGNALS_NEAR_GEO_JSON, STORIES } from "@/graphql/queries";
+import { ADMIN_CITY, ADMIN_CITY_SOURCES, ADMIN_SCOUT_STATUS, SIGNALS_NEAR_GEO_JSON, STORIES_IN_BOUNDS } from "@/graphql/queries";
 import { ADD_SOURCE, RUN_SCOUT, RESET_SCOUT_LOCK } from "@/graphql/mutations";
 import { CityMap } from "./MapPage";
 import type { FeatureCollection } from "geojson";
@@ -37,9 +37,21 @@ export function CityDetailPage() {
     skip: !city || tab !== "signals",
   });
 
-  const { data: storiesData } = useQuery(STORIES, {
-    variables: { limit: 50 },
-    skip: tab !== "stories",
+  const { data: storiesData } = useQuery(STORIES_IN_BOUNDS, {
+    variables: city
+      ? (() => {
+          const latDelta = city.radiusKm / 111.0;
+          const lngDelta = city.radiusKm / (111.0 * Math.cos((city.centerLat * Math.PI) / 180));
+          return {
+            minLat: city.centerLat - latDelta,
+            maxLat: city.centerLat + latDelta,
+            minLng: city.centerLng - lngDelta,
+            maxLng: city.centerLng + lngDelta,
+            limit: 50,
+          };
+        })()
+      : undefined,
+    skip: !city || tab !== "stories",
   });
 
   const [addSource] = useMutation(ADD_SOURCE);
@@ -70,7 +82,7 @@ export function CityDetailPage() {
   if (!city) return <p className="text-muted-foreground">City not found</p>;
 
   const sources = sourcesData?.adminCitySources ?? [];
-  const stories = storiesData?.stories ?? [];
+  const stories = storiesData?.storiesInBounds ?? [];
 
   const signalFeatures: { id: string; title: string; type: string; lat: number; lng: number }[] = [];
   if (geoData?.signalsNearGeoJson) {
