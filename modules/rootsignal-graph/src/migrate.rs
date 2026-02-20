@@ -409,6 +409,26 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     g.run(query("CREATE VECTOR INDEX resource_embedding IF NOT EXISTS FOR (r:Resource) ON (r.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}")).await?;
     info!("Resource constraints and indexes created");
 
+    // --- Tag node constraints and indexes ---
+    let tag_constraints = [
+        "CREATE CONSTRAINT tag_id_unique IF NOT EXISTS FOR (t:Tag) REQUIRE t.id IS UNIQUE",
+        "CREATE CONSTRAINT tag_slug_unique IF NOT EXISTS FOR (t:Tag) REQUIRE t.slug IS UNIQUE",
+        "CREATE CONSTRAINT tag_slug_exists IF NOT EXISTS FOR (t:Tag) REQUIRE t.slug IS NOT NULL",
+        "CREATE CONSTRAINT tag_name_exists IF NOT EXISTS FOR (t:Tag) REQUIRE t.name IS NOT NULL",
+    ];
+
+    for c in &tag_constraints {
+        g.run(query(c)).await?;
+    }
+    info!("Tag constraints created");
+
+    // --- Story geo composite index (benefits all story geo queries) ---
+    g.run(query(
+        "CREATE INDEX story_centroid_lat_lng IF NOT EXISTS FOR (s:Story) ON (s.centroid_lat, s.centroid_lng)",
+    ))
+    .await?;
+    info!("Story geo composite index created");
+
     // --- Convert RESPONDS_TO gathering edges to DRAWN_TO ---
     convert_gathering_edges(client).await?;
 

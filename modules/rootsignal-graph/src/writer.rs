@@ -3984,6 +3984,59 @@ impl GraphWriter {
         );
         Ok(stats)
     }
+
+    /// Find-or-create Tag nodes by slug and wire TAGGED edges from a signal.
+    /// Uses a single UNWIND query for the batch to minimise round-trips.
+    pub async fn batch_tag_signals(
+        &self,
+        signal_id: Uuid,
+        tag_slugs: &[String],
+    ) -> Result<(), neo4rs::Error> {
+        if tag_slugs.is_empty() {
+            return Ok(());
+        }
+
+        let now = format_datetime(&Utc::now());
+
+        // Each element: {slug, name, id}
+        let params: Vec<neo4rs::BoltType> = tag_slugs
+            .iter()
+            .map(|slug| {
+                let name = slug.replace('-', " ");
+                neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
+                    (
+                        neo4rs::BoltString::from("slug"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(slug.as_str())),
+                    ),
+                    (
+                        neo4rs::BoltString::from("name"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(name.as_str())),
+                    ),
+                    (
+                        neo4rs::BoltString::from("id"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(
+                            Uuid::new_v4().to_string().as_str(),
+                        )),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let q = query(
+            "MATCH (s) WHERE s.id = $sid
+             UNWIND $tags AS t
+             MERGE (tag:Tag {slug: t.slug})
+               ON CREATE SET tag.id = t.id,
+                             tag.name = t.name,
+                             tag.created_at = datetime($now)
+             MERGE (s)-[:TAGGED]->(tag)",
+        )
+        .param("sid", signal_id.to_string())
+        .param("tags", params)
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
 }
 
 /// Stats from resource consolidation batch job.

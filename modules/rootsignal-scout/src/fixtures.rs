@@ -460,6 +460,7 @@ impl SignalExtractor for FixtureExtractor {
             nodes: self.nodes.clone(),
             implied_queries: Vec::new(),
             resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
         })
     }
 }

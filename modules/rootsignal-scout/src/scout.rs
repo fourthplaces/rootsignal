@@ -108,6 +108,7 @@ enum ScrapeOutcome {
         content: String,
         nodes: Vec<Node>,
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+        signal_tags: Vec<(Uuid, Vec<String>)>,
     },
     Unchanged,
     Failed,
@@ -1159,6 +1160,7 @@ impl Scout {
                         content,
                         nodes: result.nodes,
                         resource_tags: result.resource_tags,
+                        signal_tags: result.signal_tags,
                     }),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
@@ -1183,6 +1185,7 @@ impl Scout {
                     content,
                     nodes,
                     resource_tags,
+                    signal_tags,
                 } => {
                     // Collect implied queries from Tension + Need nodes for immediate expansion
                     for node in &nodes {
@@ -1202,6 +1205,7 @@ impl Scout {
                             &content,
                             nodes,
                             resource_tags,
+                            signal_tags,
                             stats,
                             embed_cache,
                             &known_urls,
@@ -1258,8 +1262,9 @@ impl Scout {
             String,
             Vec<Node>,
             Vec<(Uuid, Vec<ResourceTag>)>,
+            Vec<(Uuid, Vec<String>)>,
             usize,
-        )>; // (canonical_key, source_url, combined_text, nodes, resource_tags, post_count)
+        )>; // (canonical_key, source_url, combined_text, nodes, resource_tags, signal_tags, post_count)
 
         // Build uniform list of SocialAccounts from SourceNodes
         let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
@@ -1373,6 +1378,7 @@ impl Scout {
                     let batches: Vec<_> = posts.chunks(10).collect();
                     let mut all_nodes = Vec::new();
                     let mut all_resource_tags = Vec::new();
+                    let mut all_signal_tags = Vec::new();
                     let mut combined_all = String::new();
                     for batch in batches {
                         let combined_text: String = batch
@@ -1389,6 +1395,7 @@ impl Scout {
                             Ok(result) => {
                                 all_nodes.extend(result.nodes);
                                 all_resource_tags.extend(result.resource_tags);
+                                all_signal_tags.extend(result.signal_tags);
                             }
                             Err(e) => {
                                 warn!(source_url, error = %e, "Reddit extraction failed");
@@ -1405,6 +1412,7 @@ impl Scout {
                         combined_all,
                         all_nodes,
                         all_resource_tags,
+                        all_signal_tags,
                         post_count,
                     ))
                 } else {
@@ -1432,6 +1440,7 @@ impl Scout {
                         combined_text,
                         result.nodes,
                         result.resource_tags,
+                        result.signal_tags,
                         post_count,
                     ))
                 }
@@ -1441,7 +1450,7 @@ impl Scout {
         let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
         for result in results.into_iter().flatten() {
-            let (canonical_key, source_url, combined_text, nodes, resource_tags, post_count) =
+            let (canonical_key, source_url, combined_text, nodes, resource_tags, signal_tags, post_count) =
                 result;
             // Collect implied queries from Tension/Need social signals
             for node in &nodes {
@@ -1459,6 +1468,7 @@ impl Scout {
                     &combined_text,
                     nodes,
                     resource_tags,
+                    signal_tags,
                     stats,
                     embed_cache,
                     known_city_urls,
@@ -1625,6 +1635,7 @@ impl Scout {
                         &combined_text,
                         result.nodes,
                         result.resource_tags,
+                        result.signal_tags,
                         stats,
                         embed_cache,
                         known_city_urls,
@@ -1747,6 +1758,7 @@ impl Scout {
                         &content,
                         result.nodes,
                         result.resource_tags,
+                        result.signal_tags,
                         stats,
                         embed_cache,
                         known_city_urls,
@@ -1771,6 +1783,7 @@ impl Scout {
         content: &str,
         mut nodes: Vec<Node>,
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+        signal_tags: Vec<(Uuid, Vec<String>)>,
         stats: &mut ScoutStats,
         embed_cache: &mut EmbeddingCache,
         known_city_urls: &std::collections::HashSet<String>,
@@ -1781,6 +1794,10 @@ impl Scout {
         // Build lookup map from node ID → resource tags
         let resource_map: std::collections::HashMap<Uuid, Vec<ResourceTag>> =
             resource_tags.into_iter().collect();
+
+        // Build lookup map from extraction-time node ID → tag slugs
+        let tag_map: std::collections::HashMap<Uuid, Vec<String>> =
+            signal_tags.into_iter().collect();
 
         // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
         let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
@@ -2332,6 +2349,21 @@ impl Scout {
                         };
                         if let Err(e) = edge_result {
                             warn!(error = %e, slug = slug.as_str(), "Resource edge creation failed (non-fatal)");
+                        }
+                    }
+                }
+            }
+
+            // Wire signal tags (Tag nodes + TAGGED edges)
+            if let Some(meta) = node.meta() {
+                if let Some(slugs) = tag_map.get(&meta.id) {
+                    if !slugs.is_empty() {
+                        if let Err(e) = self
+                            .writer
+                            .batch_tag_signals(node_id, slugs)
+                            .await
+                        {
+                            warn!(error = %e, "Signal tag creation failed (non-fatal)");
                         }
                     }
                 }

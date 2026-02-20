@@ -427,6 +427,20 @@ pub struct ResourceNode {
     pub signal_count: u32,
 }
 
+// --- Tag Node (thematic tagging for signals and stories) ---
+
+/// A thematic tag that can be applied to signals and stories.
+/// Global taxonomy — not city-scoped. Tags are lowercased, slugified.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagNode {
+    pub id: Uuid,
+    /// Canonical slug (e.g. "ice-enforcement", "housing-displacement")
+    pub slug: String,
+    /// Human-readable display name (e.g. "ICE Enforcement")
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
 // --- Source Types (for emergent source discovery) ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -741,6 +755,10 @@ pub enum EdgeType {
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,
+    /// Signal/Story -> Tag (thematic tag)
+    Tagged,
+    /// Story -> Tag (admin suppressed an auto-aggregated tag)
+    SuppressedTag,
     /// Need/Gathering -> Resource (must have this capability to help). Properties: confidence, quantity, notes
     Requires,
     /// Need/Gathering -> Resource (better if you have it, not required). Properties: confidence

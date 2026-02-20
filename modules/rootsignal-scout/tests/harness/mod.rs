@@ -98,7 +98,7 @@ impl TestContext {
 
     /// Capture the current extractor prompt template (with `{city_name}` / `{today}` placeholders).
     pub fn baseline_extractor_prompt() -> String {
-        extractor::build_system_prompt("{city_name}", 0.0, 0.0)
+        extractor::build_system_prompt("{city_name}", 0.0, 0.0, &[])
     }
 
     /// Create a Scout wired to a SimulatedWeb, using a genome's extractor prompt.

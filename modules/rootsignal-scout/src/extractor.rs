@@ -73,6 +73,9 @@ pub struct ExtractedSignal {
     /// Resource capabilities this signal requires, prefers, or offers.
     #[serde(default)]
     pub resources: Vec<ResourceTag>,
+    /// 3-5 thematic tags as lowercase-with-hyphens slugs (e.g. "ice-enforcement", "housing-displacement").
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// A resource capability extracted from a signal.
@@ -127,6 +130,8 @@ pub struct ExtractionResult {
     pub implied_queries: Vec<String>,
     /// Resource tags paired with the signal node UUID they came from.
     pub resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+    /// Thematic tags paired with the signal node UUID they came from.
+    pub signal_tags: Vec<(Uuid, Vec<String>)>,
 }
 
 // --- SignalExtractor trait ---
@@ -148,8 +153,19 @@ impl Extractor {
         default_lat: f64,
         default_lng: f64,
     ) -> Self {
+        Self::with_tag_vocabulary(anthropic_api_key, city_name, default_lat, default_lng, &[])
+    }
+
+    pub fn with_tag_vocabulary(
+        anthropic_api_key: &str,
+        city_name: &str,
+        default_lat: f64,
+        default_lng: f64,
+        tag_vocabulary: &[String],
+    ) -> Self {
         let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
-        let system_prompt = build_system_prompt(city_name, default_lat, default_lng);
+        let system_prompt =
+            build_system_prompt(city_name, default_lat, default_lng, tag_vocabulary);
         Self {
             claude,
             system_prompt,
@@ -201,6 +217,7 @@ impl Extractor {
         let now = Utc::now();
         let mut nodes = Vec::new();
         let mut resource_tags: Vec<(Uuid, Vec<ResourceTag>)> = Vec::new();
+        let mut signal_tags: Vec<(Uuid, Vec<String>)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -364,6 +381,19 @@ impl Extractor {
                 resource_tags.push((node_id, signal.resources.clone()));
             }
 
+            // Collect thematic tags for this signal (slugify each tag)
+            if !signal.tags.is_empty() {
+                let slugified: Vec<String> = signal
+                    .tags
+                    .iter()
+                    .map(|t| rootsignal_common::slugify(t))
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !slugified.is_empty() {
+                    signal_tags.push((node_id, slugified));
+                }
+            }
+
             nodes.push(node);
         }
 
@@ -377,6 +407,7 @@ impl Extractor {
             nodes,
             implied_queries,
             resource_tags,
+            signal_tags,
         })
     }
 }
@@ -388,9 +419,22 @@ impl SignalExtractor for Extractor {
     }
 }
 
-pub fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64) -> String {
+pub fn build_system_prompt(
+    city_name: &str,
+    _default_lat: f64,
+    _default_lng: f64,
+    tag_vocabulary: &[String],
+) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
     let tension_cats = crate::util::TENSION_CATEGORIES;
+    let tag_vocab_section = if tag_vocabulary.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "**Existing tag vocabulary** (prefer these when they fit; only invent new tags when no existing tag matches):\n`{}`\n\n",
+            tag_vocabulary.join("`, `")
+        )
+    };
     format!(
         r#"You are a signal extractor for {city_name}.
 
@@ -508,6 +552,18 @@ This enables matching: "I have a car" finds all orgs needing drivers; "I need fo
 
 Only include resources when the capability is clear from the content. Omit the resources array for signals with no resource semantics (e.g. Notices, Tensions).
 
+## THEMATIC TAGS
+
+For each signal, output 3-5 thematic tags as lowercase-with-hyphens slugs.
+Tags describe the themes, issues, and topics the signal relates to.
+{tag_vocab_section}
+**Examples:**
+- An ICE enforcement story → tags: ["ice-enforcement", "immigration", "civil-rights"]
+- A food shelf → tags: ["food-insecurity", "mutual-aid", "hunger"]
+- A housing town hall → tags: ["housing", "governance", "displacement"]
+
+If no thematic tags apply, return an empty tags array.
+
 ## IMPLIED QUERIES (optional — signal quality is always the priority)
 
 For signals with a clear community tension connection, provide up to 3
@@ -535,7 +591,7 @@ mod tests {
 
     #[test]
     fn system_prompt_includes_tension() {
-        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
         assert!(
             prompt.contains("Tension"),
             "system prompt should mention Tension as a signal type"
@@ -735,6 +791,7 @@ mod tests {
             nodes: vec![],
             implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
             resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
     }
@@ -748,7 +805,7 @@ mod tests {
 
     #[test]
     fn system_prompt_includes_implied_queries_instructions() {
-        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
         assert!(
             prompt.contains("IMPLIED QUERIES"),
             "system prompt should mention IMPLIED QUERIES section"
@@ -761,7 +818,7 @@ mod tests {
 
     #[test]
     fn system_prompt_includes_resource_instructions() {
-        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650);
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
         assert!(
             prompt.contains("Resource Capabilities"),
             "should have Resource Capabilities section"
