@@ -479,6 +479,55 @@ impl MutationRoot {
             source_id: Some(source_id.to_string()),
         })
     }
+
+    /// Add a curated tag to a story.
+    #[graphql(guard = "AdminGuard")]
+    async fn tag_story(
+        &self,
+        ctx: &Context<'_>,
+        story_id: Uuid,
+        tag_slug: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let slug = rootsignal_common::slugify(&tag_slug);
+        writer
+            .batch_tag_signals(story_id, &[slug])
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to tag story: {e}")))?;
+        Ok(true)
+    }
+
+    /// Remove a tag from a story (deletes TAGGED + creates SUPPRESSED_TAG).
+    #[graphql(guard = "AdminGuard")]
+    async fn untag_story(
+        &self,
+        ctx: &Context<'_>,
+        story_id: Uuid,
+        tag_slug: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        writer
+            .suppress_story_tag(story_id, &tag_slug)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to untag story: {e}")))?;
+        Ok(true)
+    }
+
+    /// Merge tag B into tag A (repoints all edges, deletes B).
+    #[graphql(guard = "AdminGuard")]
+    async fn merge_tags(
+        &self,
+        ctx: &Context<'_>,
+        source_slug: String,
+        target_slug: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        writer
+            .merge_tags(&source_slug, &target_slug)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to merge tags: {e}")))?;
+        Ok(true)
+    }
 }
 
 fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {

@@ -9,7 +9,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, EvidenceNode, Node, NodeType, StoryNode, TensionResponse,
+    ActorNode, EvidenceNode, Node, NodeType, StoryNode, TagNode, TensionResponse,
     CONFIDENCE_DISPLAY_LIMITED,
 };
 
@@ -37,6 +37,10 @@ pub struct SignalCache {
     pub stories_by_actor: HashMap<Uuid, Vec<usize>>,
     pub tension_responses: HashMap<Uuid, Vec<TensionResponse>>,
     pub actors_for_story: HashMap<Uuid, Vec<usize>>,
+
+    pub tags: Vec<TagNode>,
+    pub tag_by_id: HashMap<Uuid, usize>,
+    pub tags_by_story: HashMap<Uuid, Vec<usize>>,
 
     pub loaded_at: DateTime<Utc>,
 }
@@ -80,13 +84,22 @@ impl SignalCache {
             .map(|(i, a)| (a.id, i))
             .collect();
 
+        // Load tags
+        let tags = load_all_tags(client).await?;
+        let tag_by_id: HashMap<Uuid, usize> = tags
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id, i))
+            .collect();
+
         // Load relationships concurrently
-        let (evidence_result, actor_signal_result, story_signal_result, tension_resp_result) =
+        let (evidence_result, actor_signal_result, story_signal_result, tension_resp_result, story_tag_result) =
             tokio::join!(
                 load_evidence(client),
                 load_actor_signal_edges(client),
                 load_story_signal_edges(client),
                 load_tension_responses(client),
+                load_story_tag_edges(client),
             );
 
         let evidence_by_signal = evidence_result?;
@@ -150,11 +163,24 @@ impl SignalCache {
 
         let tension_responses = tension_resp_result?;
 
+        // Build tags_by_story map (story_id -> vec of tag indices)
+        let story_tag_edges = story_tag_result?;
+        let mut tags_by_story: HashMap<Uuid, Vec<usize>> = HashMap::new();
+        for (story_id, tag_id) in &story_tag_edges {
+            if let Some(&tag_idx) = tag_by_id.get(tag_id) {
+                let entries = tags_by_story.entry(*story_id).or_default();
+                if !entries.contains(&tag_idx) {
+                    entries.push(tag_idx);
+                }
+            }
+        }
+
         let elapsed = start.elapsed();
         info!(
             signals = signals.len(),
             stories = stories.len(),
             actors = actors.len(),
+            tags = tags.len(),
             evidence_signals = evidence_by_signal.len(),
             tension_responses = tension_responses.len(),
             elapsed_ms = elapsed.as_millis(),
@@ -175,6 +201,9 @@ impl SignalCache {
             stories_by_actor,
             tension_responses,
             actors_for_story,
+            tags,
+            tag_by_id,
+            tags_by_story,
             loaded_at: Utc::now(),
         })
     }
@@ -401,4 +430,49 @@ async fn load_tension_responses(
         }
     }
     Ok(map)
+}
+
+async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Error> {
+    let cypher = "MATCH (t:Tag) RETURN t.id AS id, t.slug AS slug, t.name AS name, t.created_at AS created_at";
+    let q = query(cypher);
+    let mut tags = Vec::new();
+    let mut stream = client.graph.execute(q).await?;
+
+    while let Some(row) = stream.next().await? {
+        let id_str: String = row.get("id").unwrap_or_default();
+        let Ok(id) = Uuid::parse_str(&id_str) else {
+            continue;
+        };
+        let slug: String = row.get("slug").unwrap_or_default();
+        let name: String = row.get("name").unwrap_or_default();
+        let created_at = crate::writer::row_datetime_opt_pub(&row, "created_at")
+            .unwrap_or_else(Utc::now);
+
+        tags.push(TagNode {
+            id,
+            slug,
+            name,
+            created_at,
+        });
+    }
+    Ok(tags)
+}
+
+async fn load_story_tag_edges(
+    client: &GraphClient,
+) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+    let cypher = "MATCH (s:Story)-[:TAGGED]->(t:Tag)
+         RETURN s.id AS story_id, t.id AS tag_id";
+    let q = query(cypher);
+    let mut edges = Vec::new();
+    let mut stream = client.graph.execute(q).await?;
+
+    while let Some(row) = stream.next().await? {
+        let sid_str: String = row.get("story_id").unwrap_or_default();
+        let tid_str: String = row.get("tag_id").unwrap_or_default();
+        if let (Ok(sid), Ok(tid)) = (Uuid::parse_str(&sid_str), Uuid::parse_str(&tid_str)) {
+            edges.push((sid, tid));
+        }
+    }
+    Ok(edges)
 }

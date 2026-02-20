@@ -11,11 +11,13 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     ActorNode, AidNode, EvidenceNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
-    StoryNode, TensionNode,
+    StoryNode, TagNode, TensionNode,
 };
 use rootsignal_graph::CachedReader;
 
-use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader};
+use super::loaders::{
+    ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader, TagsByStoryLoader,
+};
 
 // --- GraphQL Enums ---
 
@@ -633,6 +635,29 @@ impl GqlStory {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let counts = reader.story_evidence_counts(&[self.0.id]).await?;
         Ok(counts.into_iter().next().map(|(_, c)| c).unwrap_or(0))
+    }
+
+    async fn tags(&self, ctx: &Context<'_>) -> Result<Vec<GqlTag>> {
+        let loader = ctx.data_unchecked::<DataLoader<TagsByStoryLoader>>();
+        let tags = loader.load_one(self.0.id).await?.unwrap_or_default();
+        Ok(tags.into_iter().map(GqlTag).collect())
+    }
+}
+
+// --- Tag ---
+
+pub struct GqlTag(pub TagNode);
+
+#[Object]
+impl GqlTag {
+    async fn id(&self) -> Uuid {
+        self.0.id
+    }
+    async fn slug(&self) -> &str {
+        &self.0.slug
+    }
+    async fn name(&self) -> &str {
+        &self.0.name
     }
 }
 

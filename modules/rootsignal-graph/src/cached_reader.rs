@@ -4,7 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, EvidenceNode, Node, NodeType, StoryNode, TensionResponse,
+    ActorNode, EvidenceNode, Node, NodeType, StoryNode, TagNode, TensionResponse,
 };
 
 use crate::cache::CacheStore;
@@ -123,7 +123,32 @@ impl CachedReader {
         max_lng: f64,
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        self.stories_in_bounds_filtered(min_lat, max_lat, min_lng, max_lng, None, limit)
+            .await
+    }
+
+    pub async fn stories_in_bounds_filtered(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        tag: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let snap = self.cache.load_full();
+
+        // If filtering by tag, find the tag index and the set of story_ids with that tag
+        let tag_story_filter: Option<std::collections::HashSet<Uuid>> = tag.and_then(|slug| {
+            let tag_idx = snap.tags.iter().position(|t| t.slug == slug)?;
+            Some(
+                snap.tags_by_story
+                    .iter()
+                    .filter(|(_, indices)| indices.contains(&tag_idx))
+                    .map(|(story_id, _)| *story_id)
+                    .collect(),
+            )
+        });
 
         let mut results: Vec<StoryNode> = snap
             .stories
@@ -134,6 +159,12 @@ impl CachedReader {
                 } else {
                     false
                 }
+            })
+            .filter(|s| {
+                tag_story_filter
+                    .as_ref()
+                    .map(|f| f.contains(&s.id))
+                    .unwrap_or(true)
             })
             .cloned()
             .collect();
@@ -745,5 +776,119 @@ impl CachedReader {
 
     pub async fn resource_gap_analysis(&self) -> Result<Vec<crate::ResourceGap>, neo4rs::Error> {
         self.neo4j_reader.resource_gap_analysis().await
+    }
+
+    /// Tags for a single story, served from cache.
+    pub async fn tags_for_story(&self, story_id: Uuid) -> Result<Vec<TagNode>, neo4rs::Error> {
+        let snap = self.cache.load_full();
+        let tags = snap
+            .tags_by_story
+            .get(&story_id)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&idx| snap.tags[idx].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(tags)
+    }
+
+    /// Batch tags for multiple stories (dataloader).
+    pub async fn batch_tags_by_story_ids(
+        &self,
+        keys: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<TagNode>>, anyhow::Error> {
+        let snap = self.cache.load_full();
+        let mut result = HashMap::new();
+        for &story_id in keys {
+            let tags = snap
+                .tags_by_story
+                .get(&story_id)
+                .map(|indices| {
+                    indices
+                        .iter()
+                        .map(|&idx| snap.tags[idx].clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            result.insert(story_id, tags);
+        }
+        Ok(result)
+    }
+
+    /// Top tags sorted by number of stories they appear on.
+    pub async fn top_tags(&self, limit: usize) -> Result<Vec<TagNode>, neo4rs::Error> {
+        let snap = self.cache.load_full();
+
+        // Count stories per tag
+        let mut tag_story_count: HashMap<usize, usize> = HashMap::new();
+        for indices in snap.tags_by_story.values() {
+            for &idx in indices {
+                *tag_story_count.entry(idx).or_default() += 1;
+            }
+        }
+
+        let mut ranked: Vec<(usize, usize)> = tag_story_count.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.truncate(limit);
+
+        Ok(ranked
+            .into_iter()
+            .map(|(idx, _)| snap.tags[idx].clone())
+            .collect())
+    }
+
+    /// Stories that have a specific tag, optionally bounded geographically.
+    pub async fn stories_by_tag(
+        &self,
+        tag_slug: &str,
+        min_lat: Option<f64>,
+        max_lat: Option<f64>,
+        min_lng: Option<f64>,
+        max_lng: Option<f64>,
+        limit: u32,
+    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
+        let snap = self.cache.load_full();
+
+        // Find the tag index by slug
+        let tag_idx = snap.tags.iter().position(|t| t.slug == tag_slug);
+        let Some(tag_idx) = tag_idx else {
+            return Ok(vec![]);
+        };
+
+        // Find all story_ids that have this tag
+        let mut results: Vec<StoryNode> = snap
+            .tags_by_story
+            .iter()
+            .filter(|(_, indices)| indices.contains(&tag_idx))
+            .filter_map(|(story_id, _)| {
+                snap.story_by_id
+                    .get(story_id)
+                    .map(|&idx| &snap.stories[idx])
+            })
+            .filter(|s| {
+                if let (Some(min_lat), Some(max_lat), Some(min_lng), Some(max_lng)) =
+                    (min_lat, max_lat, min_lng, max_lng)
+                {
+                    if let (Some(lat), Some(lng)) = (s.centroid_lat, s.centroid_lng) {
+                        lat >= min_lat && lat <= max_lat && lng >= min_lng && lng <= max_lng
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.energy
+                .partial_cmp(&a.energy)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(limit as usize);
+        Ok(results)
     }
 }

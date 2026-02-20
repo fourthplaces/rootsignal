@@ -9,7 +9,9 @@ use rootsignal_common::{CityNode, Node, NodeType};
 use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
-use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader};
+use super::loaders::{
+    ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader, TagsByStoryLoader,
+};
 use super::mutations::MutationRoot;
 use super::types::*;
 
@@ -118,6 +120,7 @@ impl QueryRoot {
     }
 
     /// Find stories within a bounding box (by centroid), sorted by energy.
+    /// Optionally filter by tag slug.
     async fn stories_in_bounds(
         &self,
         ctx: &Context<'_>,
@@ -125,12 +128,20 @@ impl QueryRoot {
         max_lat: f64,
         min_lng: f64,
         max_lng: f64,
+        tag: Option<String>,
         limit: Option<u32>,
     ) -> Result<Vec<GqlStory>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader
-            .stories_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .stories_in_bounds_filtered(
+                min_lat,
+                max_lat,
+                min_lng,
+                max_lng,
+                tag.as_deref(),
+                limit,
+            )
             .await?;
         Ok(stories.into_iter().map(GqlStory).collect())
     }
@@ -255,6 +266,37 @@ impl QueryRoot {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader.stories_by_arc(&arc, limit).await?;
+        Ok(stories.into_iter().map(GqlStory).collect())
+    }
+
+    /// List available tags, sorted by story count.
+    async fn tags(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlTag>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(50).min(200) as usize;
+        let tags = reader.top_tags(limit).await?;
+        Ok(tags.into_iter().map(GqlTag).collect())
+    }
+
+    /// Stories that have a specific tag, optionally bounded geographically.
+    async fn stories_by_tag(
+        &self,
+        ctx: &Context<'_>,
+        tag: String,
+        min_lat: Option<f64>,
+        max_lat: Option<f64>,
+        min_lng: Option<f64>,
+        max_lng: Option<f64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlStory>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(20).min(100);
+        let stories = reader
+            .stories_by_tag(&tag, min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
         Ok(stories.into_iter().map(GqlStory).collect())
     }
 
@@ -764,6 +806,12 @@ pub fn build_schema(
         },
         tokio::spawn,
     );
+    let tags_loader = DataLoader::new(
+        TagsByStoryLoader {
+            reader: reader.clone(),
+        },
+        tokio::spawn,
+    );
 
     // Create Voyage AI embedder for semantic search (if API key is available)
     let embedder = {
@@ -787,6 +835,7 @@ pub fn build_schema(
         .data(evidence_loader)
         .data(actors_loader)
         .data(story_loader)
+        .data(tags_loader)
         .data(embedder)
         .finish()
 }

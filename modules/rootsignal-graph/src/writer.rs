@@ -4060,6 +4060,71 @@ impl GraphWriter {
 
         self.client.graph.run(q).await
     }
+
+    /// Remove a tag from a story: delete TAGGED edge + create SUPPRESSED_TAG.
+    /// This prevents auto-aggregation from re-adding the tag.
+    pub async fn suppress_story_tag(
+        &self,
+        story_id: Uuid,
+        tag_slug: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+
+        let q = query(
+            "MATCH (s:Story {id: $sid})-[r:TAGGED]->(t:Tag {slug: $slug})
+             DELETE r
+             MERGE (s)-[sup:SUPPRESSED_TAG]->(t)
+               ON CREATE SET sup.suppressed_at = datetime($now)",
+        )
+        .param("sid", story_id.to_string())
+        .param("slug", tag_slug)
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
+
+    /// Merge source tag into target tag. Atomic: repoints all edges, deletes source.
+    pub async fn merge_tags(
+        &self,
+        source_slug: &str,
+        target_slug: &str,
+    ) -> Result<(), neo4rs::Error> {
+        // Repoint TAGGED edges
+        let q1 = query(
+            "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
+             WITH src, tgt
+             OPTIONAL MATCH (n)-[old:TAGGED]->(src)
+             WITH src, tgt, n, old
+             WHERE old IS NOT NULL
+             MERGE (n)-[:TAGGED]->(tgt)
+             DELETE old",
+        )
+        .param("source", source_slug)
+        .param("target", target_slug);
+
+        self.client.graph.run(q1).await?;
+
+        // Repoint SUPPRESSED_TAG edges
+        let q2 = query(
+            "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
+             WITH src, tgt
+             OPTIONAL MATCH (s)-[old:SUPPRESSED_TAG]->(src)
+             WITH src, tgt, s, old
+             WHERE old IS NOT NULL
+             MERGE (s)-[:SUPPRESSED_TAG]->(tgt)
+             DELETE old",
+        )
+        .param("source", source_slug)
+        .param("target", target_slug);
+
+        self.client.graph.run(q2).await?;
+
+        // Delete source tag
+        let q3 = query("MATCH (t:Tag {slug: $source}) DETACH DELETE t")
+            .param("source", source_slug);
+
+        self.client.graph.run(q3).await
+    }
 }
 
 /// Stats from resource consolidation batch job.
@@ -4386,6 +4451,11 @@ fn row_datetime_opt(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc>> {
     row.get::<String>(key)
         .ok()
         .and_then(|s| parse_datetime_opt(&s))
+}
+
+/// Public version of row_datetime_opt for use by cache.rs.
+pub fn row_datetime_opt_pub(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc>> {
+    row_datetime_opt(row, key)
 }
 
 #[cfg(test)]
