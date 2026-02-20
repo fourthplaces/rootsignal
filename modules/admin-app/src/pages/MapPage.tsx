@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery } from "@apollo/client";
-import { SIGNALS_NEAR_GEO_JSON, ADMIN_CITIES } from "@/graphql/queries";
+import { SIGNALS_NEAR_GEO_JSON } from "@/graphql/queries";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { FeatureCollection } from "geojson";
@@ -15,36 +15,17 @@ const TYPE_COLORS: Record<string, string> = {
   Tension: "#ef4444",
 };
 
-export function MapPage() {
+interface CityMapProps {
+  city: { centerLat: number; centerLng: number; radiusKm: number };
+}
+
+export function CityMap({ city }: CityMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
 
-  const { data: citiesData } = useQuery(ADMIN_CITIES);
-  const cities = citiesData?.adminCities ?? [];
-
-  const [selectedCity, setSelectedCity] = useState<{
-    slug: string;
-    centerLat: number;
-    centerLng: number;
-    radiusKm: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (cities.length > 0 && !selectedCity) {
-      setSelectedCity(cities[0]);
-    }
-  }, [cities, selectedCity]);
-
   const { data: geoData } = useQuery(SIGNALS_NEAR_GEO_JSON, {
-    variables: selectedCity
-      ? {
-          lat: selectedCity.centerLat,
-          lng: selectedCity.centerLng,
-          radiusKm: selectedCity.radiusKm,
-        }
-      : undefined,
-    skip: !selectedCity,
+    variables: { lat: city.centerLat, lng: city.centerLng, radiusKm: city.radiusKm },
   });
 
   const geojson: FeatureCollection | null = geoData?.signalsNearGeoJson
@@ -58,7 +39,7 @@ export function MapPage() {
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
-      center: [selectedCity?.centerLng ?? -93.27, selectedCity?.centerLat ?? 44.97],
+      center: [city.centerLng, city.centerLat],
       zoom: 12,
     });
 
@@ -73,7 +54,6 @@ export function MapPage() {
         clusterRadius: 50,
       });
 
-      // Cluster circles
       map.addLayer({
         id: "signal-clusters",
         type: "circle",
@@ -103,7 +83,6 @@ export function MapPage() {
         },
       });
 
-      // Cluster count labels
       map.addLayer({
         id: "signal-cluster-count",
         type: "symbol",
@@ -113,12 +92,9 @@ export function MapPage() {
           "text-field": ["get", "point_count_abbreviated"],
           "text-size": 12,
         },
-        paint: {
-          "text-color": "#ffffff",
-        },
+        paint: { "text-color": "#ffffff" },
       });
 
-      // Individual signal points
       map.addLayer({
         id: "signal-points",
         type: "circle",
@@ -127,17 +103,12 @@ export function MapPage() {
         paint: {
           "circle-color": [
             "match",
-            ["get", "type"],
-            "Gathering",
-            TYPE_COLORS.Gathering!,
-            "Aid",
-            TYPE_COLORS.Aid!,
-            "Need",
-            TYPE_COLORS.Need!,
-            "Notice",
-            TYPE_COLORS.Notice!,
-            "Tension",
-            TYPE_COLORS.Tension!,
+            ["get", "node_type"],
+            "Gathering", TYPE_COLORS.Gathering!,
+            "Aid", TYPE_COLORS.Aid!,
+            "Need", TYPE_COLORS.Need!,
+            "Notice", TYPE_COLORS.Notice!,
+            "Tension", TYPE_COLORS.Tension!,
             "#6366f1",
           ],
           "circle-radius": 7,
@@ -146,7 +117,6 @@ export function MapPage() {
         },
       });
 
-      // Click clusters → zoom in
       map.on("click", "signal-clusters", (e) => {
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
@@ -163,14 +133,12 @@ export function MapPage() {
         });
       });
 
-      // Click signal point → show popup
       map.on("click", "signal-points", (e) => {
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
         const coords = feature.geometry.coordinates.slice() as [number, number];
         const title = feature.properties?.title ?? "";
-        const type = feature.properties?.type ?? "";
-
+        const type = feature.properties?.node_type ?? "";
         popupRef.current?.remove();
         popupRef.current = new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
           .setLngLat(coords)
@@ -178,19 +146,10 @@ export function MapPage() {
           .addTo(map);
       });
 
-      // Cursor on hover
-      map.on("mouseenter", "signal-points", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "signal-points", () => {
-        map.getCanvas().style.cursor = "";
-      });
-      map.on("mouseenter", "signal-clusters", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "signal-clusters", () => {
-        map.getCanvas().style.cursor = "";
-      });
+      for (const layer of ["signal-points", "signal-clusters"]) {
+        map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
+      }
     });
 
     return () => {
@@ -208,43 +167,11 @@ export function MapPage() {
     source.setData(geojson ?? { type: "FeatureCollection", features: [] });
   }, [geojson]);
 
-  // Fly to selected city
-  useEffect(() => {
-    if (!selectedCity || !mapRef.current) return;
-    mapRef.current.flyTo({
-      center: [selectedCity.centerLng, selectedCity.centerLat],
-      zoom: 12,
-      essential: true,
-    });
-  }, [selectedCity]);
-
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Map</h1>
-        <select
-          value={selectedCity?.slug ?? ""}
-          onChange={(e) => {
-            const c = cities.find(
-              (c: { slug: string }) => c.slug === e.target.value,
-            );
-            if (c) setSelectedCity(c);
-          }}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          {cities.map((c: { slug: string; name: string }) => (
-            <option key={c.slug} value={c.slug}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div
-        ref={containerRef}
-        className="rounded-lg border border-border overflow-hidden"
-        style={{ height: "calc(100vh - 160px)" }}
-      />
-    </div>
+    <div
+      ref={containerRef}
+      className="rounded-lg border border-border overflow-hidden"
+      style={{ height: "calc(100vh - 200px)" }}
+    />
   );
 }

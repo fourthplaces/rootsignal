@@ -4,7 +4,6 @@ import { LoginPage } from "@/pages/LoginPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { CitiesPage } from "@/pages/CitiesPage";
 import { CityDetailPage } from "@/pages/CityDetailPage";
-import { MapPage } from "@/pages/MapPage";
 import { SignalsPage } from "@/pages/SignalsPage";
 import { SignalDetailPage } from "@/pages/SignalDetailPage";
 import { StoriesPage } from "@/pages/StoriesPage";
@@ -19,7 +18,6 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="cities" element={<CitiesPage />} />
         <Route path="cities/:slug" element={<CityDetailPage />} />
-        <Route path="map" element={<MapPage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />
         <Route path="stories" element={<StoriesPage />} />
