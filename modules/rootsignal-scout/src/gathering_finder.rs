@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
+    CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, NeedNode, Node,
     NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, SourceType, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
@@ -48,7 +48,7 @@ pub struct GravityFinding {
 pub struct DiscoveredGathering {
     pub title: String,
     pub summary: String,
-    /// "event", "give", or "ask"
+    /// "event", "give", or "need"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -192,11 +192,11 @@ that DO pull people together.
 SIGNAL TYPE SEMANTICS:
 - If the gathering is a physical or virtual EVENT: provide venue, event_date, \
 is_recurring, organizer.
-- If the gravity manifests as a Give (e.g., a solidarity fund) or Ask \
+- If the gravity manifests as a Give (e.g., a solidarity fund) or Need \
 (e.g., a call to action): leave venue and event_date null. These are \
 gravity expressions that don't have a physical location or date.
 
-For each gathering, note: the URL, what type it is (event/give/ask), \
+For each gathering, note: the URL, what type it is (event/give/need), \
 the venue or location if known, whether it's recurring, the organizer if known, \
 and how it relates to the tension (what kind of gravity it represents)."
     )
@@ -244,7 +244,7 @@ If you found NO evidence of gatherings after your initial searches, set:
 Otherwise, for each gathering you discovered:
 - title: short name of the gathering
 - summary: 1-2 sentences about what happens there
-- signal_type: \"event\" (physical/virtual gatherings), \"give\" (solidarity funds, mutual aid), or \"ask\" (calls to action)
+- signal_type: \"event\" (physical/virtual gatherings), \"give\" (solidarity funds, mutual aid), or \"need\" (direct expressions of need — e.g. GoFundMe campaigns, volunteer signups, petition drives)
 - url: the EXACT URL you read via read_page (do not reconstruct or guess)
 - gathering_type: freeform category (e.g. \"vigil\", \"singing\", \"solidarity meal\", \"tenant meetup\", \"cleanup\")
 - venue: where people gather (church name, park, community center) — null if not applicable
@@ -270,6 +270,10 @@ pub struct GatheringFinder<'a> {
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
     city_slug: String,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -291,11 +295,17 @@ impl<'a> GatheringFinder<'a> {
                 scraper: scraper.clone(),
             });
 
+        let lat_delta = city.radius_km / 111.0;
+        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
         let city_slug = city.slug.clone();
         Self {
             writer,
             claude,
             embedder,
+            min_lat: city.center_lat - lat_delta,
+            max_lat: city.center_lat + lat_delta,
+            min_lng: city.center_lng - lng_delta,
+            max_lng: city.center_lng + lng_delta,
             city,
             city_slug,
             cancelled,
@@ -493,14 +503,22 @@ impl<'a> GatheringFinder<'a> {
 
         let node_type = match gathering.signal_type.to_lowercase().as_str() {
             "event" => NodeType::Event,
-            "ask" => NodeType::Ask,
+            "need" => NodeType::Need,
             _ => NodeType::Give, // Default to Give for unknown types
         };
 
-        // Check for duplicate
+        // Check for duplicate (city-scoped)
         let existing = self
             .writer
-            .find_duplicate(&embedding, node_type, 0.85)
+            .find_duplicate(
+                &embedding,
+                node_type,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await;
 
         let was_new;
@@ -642,7 +660,7 @@ impl<'a> GatheringFinder<'a> {
                     is_recurring: gathering.is_recurring,
                 })
             }
-            "ask" => Node::Ask(AskNode {
+            "need" => Node::Need(NeedNode {
                 meta,
                 urgency: Urgency::Medium,
                 what_needed: Some(gathering.summary.clone()),

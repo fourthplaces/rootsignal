@@ -31,7 +31,7 @@ pub struct ScoutStats {
     pub signals_extracted: u32,
     pub signals_deduplicated: u32,
     pub signals_stored: u32,
-    pub by_type: [u32; 5], // Event, Give, Ask, Notice, Tension
+    pub by_type: [u32; 5], // Event, Give, Need, Notice, Tension
     pub fresh_7d: u32,
     pub fresh_30d: u32,
     pub fresh_90d: u32,
@@ -62,7 +62,7 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "\nBy type:")?;
         writeln!(f, "  Event:   {}", self.by_type[0])?;
         writeln!(f, "  Give:    {}", self.by_type[1])?;
-        writeln!(f, "  Ask:     {}", self.by_type[2])?;
+        writeln!(f, "  Need:    {}", self.by_type[2])?;
         writeln!(f, "  Notice:  {}", self.by_type[3])?;
         writeln!(f, "  Tension: {}", self.by_type[4])?;
         let total = self.signals_stored.max(1);
@@ -292,10 +292,10 @@ impl Scout {
         info!("Reaping expired signals...");
         match self.writer.reap_expired().await {
             Ok(reap) => {
-                if reap.events + reap.asks + reap.stale > 0 {
+                if reap.events + reap.needs + reap.stale > 0 {
                     info!(
                         events = reap.events,
-                        asks = reap.asks,
+                        needs = reap.needs,
                         stale = reap.stale,
                         "Expired signals removed"
                     );
@@ -718,7 +718,7 @@ impl Scout {
         );
 
         let (rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
-            // Response mapping — match Give/Event to Tensions/Asks
+            // Response mapping — match Give/Event to Tensions/Needs
             async {
                 if run_response_mapping {
                     info!("Starting response mapping...");
@@ -1184,9 +1184,9 @@ impl Scout {
                     nodes,
                     resource_tags,
                 } => {
-                    // Collect implied queries from Tension + Ask nodes for immediate expansion
+                    // Collect implied queries from Tension + Need nodes for immediate expansion
                     for node in &nodes {
-                        if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
+                        if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                             if let Some(meta) = node.meta() {
                                 expansion_queries.extend(meta.implied_queries.iter().cloned());
                             }
@@ -1443,9 +1443,9 @@ impl Scout {
         for result in results.into_iter().flatten() {
             let (canonical_key, source_url, combined_text, nodes, resource_tags, post_count) =
                 result;
-            // Collect implied queries from Tension/Ask social signals
+            // Collect implied queries from Tension/Need social signals
             for node in &nodes {
-                if matches!(node.node_type(), NodeType::Tension | NodeType::Ask) {
+                if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                     if let Some(meta) = node.meta() {
                         expansion_queries.extend(meta.implied_queries.iter().cloned());
                     }
@@ -2056,7 +2056,7 @@ impl Scout {
             let type_idx = match node_type {
                 NodeType::Event => 0,
                 NodeType::Give => 1,
-                NodeType::Ask => 2,
+                NodeType::Need => 2,
                 NodeType::Notice => 3,
                 NodeType::Tension => 4,
                 NodeType::Evidence => continue,
@@ -2122,10 +2122,21 @@ impl Scout {
                 }
             }
 
-            // 3b: Check graph index (catches dupes from previous runs)
+            // 3b: Check graph index (catches dupes from previous runs, city-scoped)
+            let lat_delta = self.city_node.radius_km / 111.0;
+            let lng_delta = self.city_node.radius_km
+                / (111.0 * self.city_node.center_lat.to_radians().cos());
             match self
                 .writer
-                .find_duplicate(&embedding, node_type, 0.85)
+                .find_duplicate(
+                    &embedding,
+                    node_type,
+                    0.85,
+                    self.city_node.center_lat - lat_delta,
+                    self.city_node.center_lat + lat_delta,
+                    self.city_node.center_lng - lng_delta,
+                    self.city_node.center_lng + lng_delta,
+                )
                 .await
             {
                 Ok(Some(dup)) => {
@@ -2396,7 +2407,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     match node {
         Node::Event(n) => Some(&mut n.meta),
         Node::Give(n) => Some(&mut n.meta),
-        Node::Ask(n) => Some(&mut n.meta),
+        Node::Need(n) => Some(&mut n.meta),
         Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),
         Node::Evidence(_) => None,

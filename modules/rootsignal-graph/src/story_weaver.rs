@@ -504,7 +504,7 @@ impl StoryWeaver {
              WITH CASE
                  WHEN n:Event THEN 'event'
                  WHEN n:Give THEN 'give'
-                 WHEN n:Ask THEN 'ask'
+                 WHEN n:Need THEN 'need'
                  WHEN n:Notice THEN 'notice'
                  WHEN n:Tension THEN 'tension'
              END AS node_type
@@ -529,7 +529,7 @@ impl StoryWeaver {
                   count(DISTINCT CASE
                       WHEN n:Event THEN 'event'
                       WHEN n:Give THEN 'give'
-                      WHEN n:Ask THEN 'ask'
+                      WHEN n:Need THEN 'need'
                       WHEN n:Notice THEN 'notice'
                       WHEN n:Tension THEN 'tension'
                   END) AS type_div
@@ -604,7 +604,7 @@ impl StoryWeaver {
     ) -> Result<Vec<SignalMeta>, neo4rs::Error> {
         let mut results = Vec::new();
 
-        for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        for label in &["Event", "Give", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE n.id IN $ids

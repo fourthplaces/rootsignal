@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::writer::GraphWriter;
 use crate::GraphClient;
 
-/// Maps responses (Give/Event) to active Tensions/Asks using embedding similarity + LLM verification.
+/// Maps responses (Give/Event) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper {
     client: GraphClient,
     writer: GraphWriter,
@@ -37,7 +37,7 @@ impl ResponseMapper {
         }
     }
 
-    /// For each active Tension/Ask, find Give/Event signals that might respond to it.
+    /// For each active Tension/Need, find Give/Event signals that might respond to it.
     /// Uses embedding similarity as a cheap filter, then LLM as a verifier.
     pub async fn map_responses(
         &self,
@@ -121,7 +121,7 @@ impl ResponseMapper {
 
         let mut candidates = Vec::new();
 
-        for index in &["give_embedding", "event_embedding", "ask_embedding"] {
+        for index in &["give_embedding", "event_embedding", "need_embedding"] {
             let q = query(&format!(
                 "CALL db.index.vector.queryNodes('{}', 20, $embedding)
                  YIELD node, score AS similarity
@@ -158,7 +158,7 @@ impl ResponseMapper {
     async fn get_signal_info(&self, id: Uuid) -> Result<Option<SignalInfo>, neo4rs::Error> {
         use neo4rs::query;
 
-        for label in &["Tension", "Ask", "Give", "Event"] {
+        for label in &["Tension", "Need", "Give", "Event"] {
             let q = query(&format!(
                 "MATCH (n:{label} {{id: $id}})
                  RETURN n.title AS title, n.summary AS summary"

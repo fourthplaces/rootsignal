@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, Node,
+    CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, NeedNode, Node,
     NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
     TensionNode, Urgency,
 };
@@ -47,7 +47,7 @@ pub struct ResponseFinding {
 pub struct DiscoveredResponse {
     pub title: String,
     pub summary: String,
-    /// "give", "event", or "ask"
+    /// "give", "event", or "need"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -209,7 +209,7 @@ Based on your investigation, extract your findings as JSON.
 For each response you discovered:
 - title: short name of the response (org, program, campaign, event)
 - summary: 1-2 sentences about what it does
-- signal_type: \"give\" (resources offered), \"event\" (gatherings/actions), or \"ask\" (needs/requests)
+- signal_type: \"give\" (resources offered), \"event\" (gatherings/actions), or \"need\" (someone expressing their need with a way to respond — NOT news coverage of problems)
 - url: the EXACT URL you read via read_page (do not reconstruct or guess)
 - diffusion_mechanism: how this response takes the air out of the tension (freeform — invent a category if needed)
 - explanation: why this diffuses rather than escalates
@@ -220,7 +220,7 @@ For each response you discovered:
 
 For each response, also extract resource capabilities:
 - resources: array of {slug, role, confidence, context}
-  - role: \"requires\" (Ask/Event need this), \"prefers\" (nice to have), or \"offers\" (Give provides this)
+  - role: \"requires\" (Need/Event need this), \"prefers\" (nice to have), or \"offers\" (Give provides this)
   - Use these slugs when they fit: vehicle, bilingual-spanish, bilingual-somali, bilingual-hmong, \
 legal-expertise, food, shelter-space, clothing, childcare, medical-professional, mental-health, \
 physical-labor, kitchen-space, event-space, storage-space, technology, reliable-internet, \
@@ -244,6 +244,10 @@ pub struct ResponseFinder<'a> {
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
     city_slug: String,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -265,11 +269,17 @@ impl<'a> ResponseFinder<'a> {
                 scraper: scraper.clone(),
             });
 
+        let lat_delta = city.radius_km / 111.0;
+        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
         let city_slug = city.slug.clone();
         Self {
             writer,
             claude,
             embedder,
+            min_lat: city.center_lat - lat_delta,
+            max_lat: city.center_lat + lat_delta,
+            min_lng: city.center_lng - lng_delta,
+            max_lng: city.center_lng + lng_delta,
             city,
             city_slug,
             cancelled,
@@ -433,14 +443,22 @@ impl<'a> ResponseFinder<'a> {
         let node_type = match response.signal_type.to_lowercase().as_str() {
             "give" => NodeType::Give,
             "event" => NodeType::Event,
-            "ask" => NodeType::Ask,
+            "need" => NodeType::Need,
             _ => NodeType::Give, // Default to Give for unknown types
         };
 
-        // Check for duplicate
+        // Check for duplicate (city-scoped)
         let existing = self
             .writer
-            .find_duplicate(&embedding, node_type, 0.85)
+            .find_duplicate(
+                &embedding,
+                node_type,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await;
 
         let was_new;
@@ -615,7 +633,7 @@ impl<'a> ResponseFinder<'a> {
                     is_recurring: response.is_recurring,
                 })
             }
-            "ask" => Node::Ask(AskNode {
+            "need" => Node::Need(NeedNode {
                 meta,
                 urgency: Urgency::Medium,
                 what_needed: Some(response.summary.clone()),
@@ -709,10 +727,18 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        // Dedup check
+        // Dedup check (city-scoped)
         let existing = self
             .writer
-            .find_duplicate(&embedding, NodeType::Tension, 0.85)
+            .find_duplicate(
+                &embedding,
+                NodeType::Tension,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await;
 
         match existing {

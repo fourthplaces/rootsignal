@@ -283,6 +283,10 @@ pub struct TensionLinker<'a> {
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -304,10 +308,17 @@ impl<'a> TensionLinker<'a> {
                 scraper: scraper.clone(),
             });
 
+        let lat_delta = city.radius_km / 111.0;
+        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+
         Self {
             writer,
             claude,
             embedder,
+            min_lat: city.center_lat - lat_delta,
+            max_lat: city.center_lat + lat_delta,
+            min_lng: city.center_lng - lng_delta,
+            max_lng: city.center_lng + lng_delta,
             city,
             cancelled,
         }
@@ -318,7 +329,13 @@ impl<'a> TensionLinker<'a> {
 
         let targets = match self
             .writer
-            .find_tension_linker_targets(MAX_TENSION_LINKER_TARGETS_PER_RUN)
+            .find_tension_linker_targets(
+                MAX_TENSION_LINKER_TARGETS_PER_RUN,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await
         {
             Ok(t) => t,
@@ -337,7 +354,11 @@ impl<'a> TensionLinker<'a> {
         info!(count = targets.len(), "Curiosity targets selected");
 
         // Load tension landscape for context
-        let tension_landscape = match self.writer.get_tension_landscape().await {
+        let tension_landscape = match self
+            .writer
+            .get_tension_landscape(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
+            .await
+        {
             Ok(tensions) => {
                 if tensions.is_empty() {
                     "No tensions known yet.".to_string()
@@ -474,10 +495,18 @@ impl<'a> TensionLinker<'a> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        // Check for duplicate tension
+        // Check for duplicate tension (city-scoped)
         let existing = self
             .writer
-            .find_duplicate(&embedding, NodeType::Tension, 0.85)
+            .find_duplicate(
+                &embedding,
+                NodeType::Tension,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await;
 
         let tension_id = match existing {

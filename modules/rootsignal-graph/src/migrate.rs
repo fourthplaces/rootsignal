@@ -10,11 +10,38 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     info!("Running schema migrations...");
 
+    // --- Ask → Need rename: drop old constraints/indexes and relabel nodes ---
+    let ask_drops = [
+        "DROP CONSTRAINT ask_id_unique IF EXISTS",
+        "DROP CONSTRAINT ask_sensitivity_exists IF EXISTS",
+        "DROP CONSTRAINT ask_confidence_exists IF EXISTS",
+        "DROP INDEX ask_lat IF EXISTS",
+        "DROP INDEX ask_lng IF EXISTS",
+        "DROP INDEX ask_source_diversity IF EXISTS",
+        "DROP INDEX ask_cause_heat IF EXISTS",
+        "DROP INDEX ask_text IF EXISTS",
+        "DROP INDEX ask_embedding IF EXISTS",
+    ];
+
+    for d in &ask_drops {
+        match g.run(query(d)).await {
+            Ok(_) => {}
+            Err(e) => warn!("Ask→Need drop step failed (non-fatal): {e}"),
+        }
+    }
+
+    // Relabel existing Ask nodes to Need
+    match g.run(query("MATCH (n:Ask) SET n:Need REMOVE n:Ask")).await {
+        Ok(_) => {}
+        Err(e) => warn!("Ask→Need relabel failed (non-fatal): {e}"),
+    }
+    info!("Ask→Need migration steps complete");
+
     // --- UUID uniqueness constraints ---
     let constraints = [
         "CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (n:Event) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT give_id_unique IF NOT EXISTS FOR (n:Give) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT ask_id_unique IF NOT EXISTS FOR (n:Ask) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT need_id_unique IF NOT EXISTS FOR (n:Need) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT notice_id_unique IF NOT EXISTS FOR (n:Notice) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT tension_id_unique IF NOT EXISTS FOR (n:Tension) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT evidence_id_unique IF NOT EXISTS FOR (n:Evidence) REQUIRE n.id IS UNIQUE",
@@ -33,9 +60,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         // Give
         "CREATE CONSTRAINT give_sensitivity_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.sensitivity IS NOT NULL",
         "CREATE CONSTRAINT give_confidence_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.confidence IS NOT NULL",
-        // Ask
-        "CREATE CONSTRAINT ask_sensitivity_exists IF NOT EXISTS FOR (n:Ask) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT ask_confidence_exists IF NOT EXISTS FOR (n:Ask) REQUIRE n.confidence IS NOT NULL",
+        // Need
+        "CREATE CONSTRAINT need_sensitivity_exists IF NOT EXISTS FOR (n:Need) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT need_confidence_exists IF NOT EXISTS FOR (n:Need) REQUIRE n.confidence IS NOT NULL",
         // Notice
         "CREATE CONSTRAINT notice_sensitivity_exists IF NOT EXISTS FOR (n:Notice) REQUIRE n.sensitivity IS NOT NULL",
         "CREATE CONSTRAINT notice_confidence_exists IF NOT EXISTS FOR (n:Notice) REQUIRE n.confidence IS NOT NULL",
@@ -55,8 +82,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE INDEX event_lng IF NOT EXISTS FOR (n:Event) ON (n.lng)",
         "CREATE INDEX give_lat IF NOT EXISTS FOR (n:Give) ON (n.lat)",
         "CREATE INDEX give_lng IF NOT EXISTS FOR (n:Give) ON (n.lng)",
-        "CREATE INDEX ask_lat IF NOT EXISTS FOR (n:Ask) ON (n.lat)",
-        "CREATE INDEX ask_lng IF NOT EXISTS FOR (n:Ask) ON (n.lng)",
+        "CREATE INDEX need_lat IF NOT EXISTS FOR (n:Need) ON (n.lat)",
+        "CREATE INDEX need_lng IF NOT EXISTS FOR (n:Need) ON (n.lng)",
         "CREATE INDEX notice_lat IF NOT EXISTS FOR (n:Notice) ON (n.lat)",
         "CREATE INDEX notice_lng IF NOT EXISTS FOR (n:Notice) ON (n.lng)",
         "CREATE INDEX tension_lat IF NOT EXISTS FOR (n:Tension) ON (n.lat)",
@@ -72,7 +99,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let backfill = [
         "MATCH (n:Event) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Give) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
-        "MATCH (n:Ask) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Need) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Notice) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Tension) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n) WHERE n.location IS NOT NULL REMOVE n.location",
@@ -90,7 +117,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let diversity_indexes = [
         "CREATE INDEX event_source_diversity IF NOT EXISTS FOR (n:Event) ON (n.source_diversity)",
         "CREATE INDEX give_source_diversity IF NOT EXISTS FOR (n:Give) ON (n.source_diversity)",
-        "CREATE INDEX ask_source_diversity IF NOT EXISTS FOR (n:Ask) ON (n.source_diversity)",
+        "CREATE INDEX need_source_diversity IF NOT EXISTS FOR (n:Need) ON (n.source_diversity)",
         "CREATE INDEX notice_source_diversity IF NOT EXISTS FOR (n:Notice) ON (n.source_diversity)",
         "CREATE INDEX tension_source_diversity IF NOT EXISTS FOR (n:Tension) ON (n.source_diversity)",
     ];
@@ -104,7 +131,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let heat_indexes = [
         "CREATE INDEX event_cause_heat IF NOT EXISTS FOR (n:Event) ON (n.cause_heat)",
         "CREATE INDEX give_cause_heat IF NOT EXISTS FOR (n:Give) ON (n.cause_heat)",
-        "CREATE INDEX ask_cause_heat IF NOT EXISTS FOR (n:Ask) ON (n.cause_heat)",
+        "CREATE INDEX need_cause_heat IF NOT EXISTS FOR (n:Need) ON (n.cause_heat)",
         "CREATE INDEX notice_cause_heat IF NOT EXISTS FOR (n:Notice) ON (n.cause_heat)",
         "CREATE INDEX tension_cause_heat IF NOT EXISTS FOR (n:Tension) ON (n.cause_heat)",
     ];
@@ -118,7 +145,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let fulltext = [
         "CREATE FULLTEXT INDEX event_text IF NOT EXISTS FOR (n:Event) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX give_text IF NOT EXISTS FOR (n:Give) ON EACH [n.title, n.summary]",
-        "CREATE FULLTEXT INDEX ask_text IF NOT EXISTS FOR (n:Ask) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX need_text IF NOT EXISTS FOR (n:Need) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX notice_text IF NOT EXISTS FOR (n:Notice) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX tension_text IF NOT EXISTS FOR (n:Tension) ON EACH [n.title, n.summary]",
     ];
@@ -132,7 +159,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let vector = [
         "CREATE VECTOR INDEX event_embedding IF NOT EXISTS FOR (n:Event) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX give_embedding IF NOT EXISTS FOR (n:Give) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
-        "CREATE VECTOR INDEX ask_embedding IF NOT EXISTS FOR (n:Ask) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX need_embedding IF NOT EXISTS FOR (n:Need) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX notice_embedding IF NOT EXISTS FOR (n:Notice) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX tension_embedding IF NOT EXISTS FOR (n:Tension) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
     ];
@@ -341,6 +368,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Clean up off-geography signals and cross-geo edges ---
     cleanup_off_geo_signals(client).await?;
 
+    // --- Deactivate duplicate city nodes ---
+    deactivate_duplicate_cities(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -419,7 +449,7 @@ pub async fn backfill_source_diversity(
     let mut total = 0u32;
     let mut updated = 0u32;
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Event", "Give", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
@@ -494,7 +524,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Keeps evs[0] (arbitrary but stable), deletes evs[1..].
     let dedup_q = query(
         "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-         WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+         WHERE n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension
          WITH n, ev.source_url AS src, collect(ev) AS evs
          WHERE size(evs) > 1
          UNWIND evs[1..] AS dup
@@ -517,7 +547,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Step 2: Recompute corroboration_count = (evidence_count - 1) for all signals.
     // After dedup, each evidence node = one unique source URL.
     // The original source isn't a corroboration, so subtract 1.
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Event", "Give", "Need", "Notice", "Tension"] {
         let recount_q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
@@ -887,7 +917,7 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
     // Step 1: Delete off-geo non-tension signals
     let delete_signals = query(
         "MATCH (n)
-         WHERE (n:Event OR n:Give OR n:Ask OR n:Notice)
+         WHERE (n:Event OR n:Give OR n:Need OR n:Notice)
            AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
          DETACH DELETE n
          RETURN count(n) AS deleted",
@@ -898,18 +928,37 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
             if let Some(row) = stream.next().await? {
                 let deleted: i64 = row.get("deleted").unwrap_or(0);
                 if deleted > 0 {
-                    info!(deleted, "Deleted off-geo signals (Event/Give/Ask/Notice)");
+                    info!(deleted, "Deleted off-geo signals (Event/Give/Need/Notice)");
                 }
             }
         }
         Err(e) => warn!("Off-geo signal cleanup failed (non-fatal): {e}"),
     }
 
-    // Step 2: Delete off-geo tensions that are NOT in stories
+    // Step 2a: Unlink off-geo tensions from stories (CONTAINS edges)
+    let unlink_tensions = query(
+        "MATCH (s:Story)-[r:CONTAINS]->(t:Tension)
+         WHERE t.lat < 43.0 OR t.lat > 46.5 OR t.lng < -95.5 OR t.lng > -91.0
+         DELETE r
+         RETURN count(r) AS unlinked",
+    );
+
+    match g.execute(unlink_tensions).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let unlinked: i64 = row.get("unlinked").unwrap_or(0);
+                if unlinked > 0 {
+                    info!(unlinked, "Unlinked off-geo tensions from stories");
+                }
+            }
+        }
+        Err(e) => warn!("Off-geo tension unlinking failed (non-fatal): {e}"),
+    }
+
+    // Step 2b: Delete all off-geo tensions (now safe — none linked to stories)
     let delete_tensions = query(
         "MATCH (n:Tension)
-         WHERE (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
-           AND NOT (n)<-[:CONTAINS]-(:Story)
+         WHERE n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0
          DETACH DELETE n
          RETURN count(n) AS deleted",
     );
@@ -919,7 +968,7 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
             if let Some(row) = stream.next().await? {
                 let deleted: i64 = row.get("deleted").unwrap_or(0);
                 if deleted > 0 {
-                    info!(deleted, "Deleted off-geo tensions (not in stories)");
+                    info!(deleted, "Deleted off-geo tensions");
                 }
             }
         }
@@ -951,7 +1000,7 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
         "MATCH (s:Story)
          WHERE NOT (s)-[:CONTAINS]->(:Event)
            AND NOT (s)-[:CONTAINS]->(:Give)
-           AND NOT (s)-[:CONTAINS]->(:Ask)
+           AND NOT (s)-[:CONTAINS]->(:Need)
            AND NOT (s)-[:CONTAINS]->(:Notice)
          SET s.arc = 'archived'
          RETURN count(s) AS archived",
@@ -970,5 +1019,109 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
     }
 
     info!("Off-geography cleanup complete");
+    Ok(())
+}
+
+/// Deactivate duplicate City nodes and reassign their sources to the canonical city.
+/// Cities created from running the scout with different slugs for the same coordinates
+/// (e.g. "twincities", "minneapolis", "minneapolis-minnesota") produce duplicates.
+/// For each group of cities within ~1km of each other, keeps the one with the most
+/// active sources, deactivates the rest, and reassigns their sources.
+/// Idempotent — WHERE clauses match nothing after cleanup.
+pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Deactivating duplicate city nodes...");
+
+    // Re-activate all cities so the dedup logic can see the full set
+    // (previous migration runs may have deactivated the wrong ones)
+    let reactivate = query(
+        "MATCH (c:City {active: false})
+         SET c.active = true
+         RETURN count(c) AS reactivated",
+    );
+    match g.execute(reactivate).await {
+        Ok(mut stream) => {
+            if let Ok(Some(row)) = stream.next().await {
+                let reactivated: i64 = row.get("reactivated").unwrap_or(0);
+                if reactivated > 0 {
+                    info!(reactivated, "Re-activated cities for dedup evaluation");
+                }
+            }
+        }
+        Err(e) => warn!("City reactivation failed (non-fatal): {e}"),
+    }
+
+    // For each pair of active cities at the same location, find the one with more sources
+    // and reassign the other's sources to it, then deactivate.
+    let q = query(
+        "MATCH (a:City {active: true}), (b:City {active: true})
+         WHERE a.slug < b.slug
+           AND abs(a.center_lat - b.center_lat) < 0.01
+           AND abs(a.center_lng - b.center_lng) < 0.01
+         WITH a, b
+         OPTIONAL MATCH (sa:Source {active: true}) WHERE sa.city = a.slug
+         WITH a, b, count(sa) AS a_sources
+         OPTIONAL MATCH (sb:Source {active: true}) WHERE sb.city = b.slug
+         WITH a, b, a_sources, count(sb) AS b_sources
+         WITH CASE WHEN a_sources >= b_sources THEN a ELSE b END AS keeper,
+              CASE WHEN a_sources >= b_sources THEN b ELSE a END AS loser
+         RETURN keeper.slug AS keeper_slug, loser.slug AS loser_slug",
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            let mut pairs = Vec::new();
+            while let Ok(Some(row)) = stream.next().await {
+                let keeper: String = row.get("keeper_slug").unwrap_or_default();
+                let loser: String = row.get("loser_slug").unwrap_or_default();
+                if !keeper.is_empty() && !loser.is_empty() {
+                    pairs.push((keeper, loser));
+                }
+            }
+
+            for (keeper, loser) in &pairs {
+                // Reassign sources from loser to keeper
+                let reassign = query(
+                    "MATCH (s:Source) WHERE s.city = $loser
+                     SET s.city = $keeper
+                     RETURN count(s) AS reassigned",
+                )
+                .param("loser", loser.as_str())
+                .param("keeper", keeper.as_str());
+
+                match g.execute(reassign).await {
+                    Ok(mut s) => {
+                        if let Ok(Some(row)) = s.next().await {
+                            let reassigned: i64 = row.get("reassigned").unwrap_or(0);
+                            if reassigned > 0 {
+                                info!(
+                                    reassigned,
+                                    from = loser.as_str(),
+                                    to = keeper.as_str(),
+                                    "Reassigned sources to canonical city"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => warn!(loser, keeper, "Source reassignment failed (non-fatal): {e}"),
+                }
+
+                // Deactivate the loser city
+                let deactivate = query(
+                    "MATCH (c:City {slug: $slug}) SET c.active = false",
+                )
+                .param("slug", loser.as_str());
+
+                match g.run(deactivate).await {
+                    Ok(_) => info!(slug = loser.as_str(), "Deactivated duplicate city"),
+                    Err(e) => warn!(slug = loser.as_str(), "City deactivation failed (non-fatal): {e}"),
+                }
+            }
+        }
+        Err(e) => warn!("Duplicate city detection failed (non-fatal): {e}"),
+    }
+
+    info!("Duplicate city cleanup complete");
     Ok(())
 }

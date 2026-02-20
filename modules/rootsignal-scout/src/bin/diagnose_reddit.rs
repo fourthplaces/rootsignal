@@ -426,7 +426,20 @@ async fn main() -> Result<()> {
                     let node_type = node.node_type();
                     let title = node.meta().unwrap().title.clone();
 
-                    match writer.find_duplicate(&embedding, node_type, 0.85).await {
+                    let lat_delta = RADIUS_KM / 111.0;
+                    let lng_delta = RADIUS_KM / (111.0 * CENTER_LAT.to_radians().cos());
+                    match writer
+                        .find_duplicate(
+                            &embedding,
+                            node_type,
+                            0.85,
+                            CENTER_LAT - lat_delta,
+                            CENTER_LAT + lat_delta,
+                            CENTER_LNG - lng_delta,
+                            CENTER_LNG + lng_delta,
+                        )
+                        .await
+                    {
                         Ok(Some(dup)) => {
                             let is_same = dup.source_url.contains("reddit.com/r/Minneapolis");
                             if is_same {
@@ -559,7 +572,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     match node {
         Node::Event(n) => Some(&mut n.meta),
         Node::Give(n) => Some(&mut n.meta),
-        Node::Ask(n) => Some(&mut n.meta),
+        Node::Need(n) => Some(&mut n.meta),
         Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),
         Node::Evidence(_) => None,
