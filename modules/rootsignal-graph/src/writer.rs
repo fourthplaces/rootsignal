@@ -2499,6 +2499,10 @@ impl GraphWriter {
     /// categories with per-source-domain dedup (max 1 per domain to prevent budget exhaustion).
     pub async fn find_investigation_targets(
         &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
     ) -> Result<Vec<InvestigationTarget>, neo4rs::Error> {
         let mut targets = Vec::new();
         let mut seen_domains = std::collections::HashSet::new();
@@ -2507,6 +2511,8 @@ impl GraphWriter {
         let q = query(
             "MATCH (t:Tension)
              WHERE datetime(t.extracted_at) > datetime() - duration('P1D')
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND (t.investigated_at IS NULL OR datetime(t.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (t)-[:SOURCED_FROM]->(ev:Evidence)
              WITH t, count(ev) AS ev_count
@@ -2514,7 +2520,11 @@ impl GraphWriter {
              RETURN t.id AS id, 'Tension' AS label, t.title AS title, t.summary AS summary,
                     t.source_url AS source_url, t.sensitivity AS sensitivity
              LIMIT 10"
-        );
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
         self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
             .await?;
 
@@ -2522,6 +2532,8 @@ impl GraphWriter {
         let q = query(
             "MATCH (a:Need)
              WHERE a.urgency IN ['high', 'critical']
+               AND a.lat >= $min_lat AND a.lat <= $max_lat
+               AND a.lng >= $min_lng AND a.lng <= $max_lng
                AND (a.investigated_at IS NULL OR datetime(a.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (a)-[:SOURCED_FROM]->(ev:Evidence)
              WITH a, count(ev) AS ev_count
@@ -2529,7 +2541,11 @@ impl GraphWriter {
              RETURN a.id AS id, 'Need' AS label, a.title AS title, a.summary AS summary,
                     a.source_url AS source_url, a.sensitivity AS sensitivity
              LIMIT 10"
-        );
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
         self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
             .await?;
 
@@ -2537,6 +2553,8 @@ impl GraphWriter {
         let q = query(
             "MATCH (s:Story {status: 'emerging'})-[:CONTAINS]->(n)
              WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+               AND n.lat >= $min_lat AND n.lat <= $max_lat
+               AND n.lng >= $min_lng AND n.lng <= $max_lng
                AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
              WITH n, count(ev) AS ev_count,
@@ -2550,7 +2568,11 @@ impl GraphWriter {
              RETURN n.id AS id, label, n.title AS title, n.summary AS summary,
                     n.source_url AS source_url, n.sensitivity AS sensitivity
              LIMIT 10"
-        );
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
         self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
             .await?;
 
@@ -3382,10 +3404,16 @@ impl GraphWriter {
     pub async fn find_response_finder_targets(
         &self,
         limit: u32,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
     ) -> Result<Vec<ResponseFinderTarget>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              WHERE t.confidence >= 0.5
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND coalesce(datetime(t.response_scouted_at), datetime('2000-01-01'))
                    < datetime() - duration('P14D')
              OPTIONAL MATCH (t)<-[:RESPONDS_TO]-(r)
@@ -3398,7 +3426,11 @@ impl GraphWriter {
              ORDER BY response_count ASC, t.cause_heat DESC, t.confidence DESC
              LIMIT $limit",
         )
-        .param("limit", limit as i64);
+        .param("limit", limit as i64)
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -3486,10 +3518,16 @@ impl GraphWriter {
     pub async fn find_gathering_finder_targets(
         &self,
         limit: u32,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
     ) -> Result<Vec<GatheringFinderTarget>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              WHERE t.confidence >= 0.5
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND coalesce(t.cause_heat, 0.0) >= 0.1
                AND coalesce(datetime(t.gravity_scouted_at), datetime('2000-01-01'))
                    < datetime() - duration({days:
@@ -3507,7 +3545,11 @@ impl GraphWriter {
              ORDER BY t.cause_heat DESC, t.confidence DESC
              LIMIT $limit",
         )
-        .param("limit", limit as i64);
+        .param("limit", limit as i64)
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;

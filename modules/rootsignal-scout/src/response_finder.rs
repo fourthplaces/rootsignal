@@ -302,7 +302,13 @@ impl<'a> ResponseFinder<'a> {
 
         let targets = match self
             .writer
-            .find_response_finder_targets(MAX_RESPONSE_TARGETS_PER_RUN as u32)
+            .find_response_finder_targets(
+                MAX_RESPONSE_TARGETS_PER_RUN as u32,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
             .await
         {
             Ok(t) => t,

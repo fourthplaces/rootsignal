@@ -9,7 +9,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::EvidenceNode;
+use rootsignal_common::{CityNode, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::scraper::WebSearcher;
@@ -23,6 +23,10 @@ pub struct Investigator<'a> {
     searcher: &'a dyn WebSearcher,
     claude: Claude,
     city: String,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -112,14 +116,20 @@ impl<'a> Investigator<'a> {
         writer: &'a GraphWriter,
         searcher: &'a dyn WebSearcher,
         anthropic_api_key: &str,
-        city: &str,
+        city: &CityNode,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
+        let lat_delta = city.radius_km / 111.0;
+        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
         Self {
             writer,
             searcher,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
-            city: city.to_string(),
+            city: city.name.clone(),
+            min_lat: city.center_lat - lat_delta,
+            max_lat: city.center_lat + lat_delta,
+            min_lng: city.center_lng - lng_delta,
+            max_lng: city.center_lng + lng_delta,
             cancelled,
         }
     }
@@ -128,7 +138,16 @@ impl<'a> Investigator<'a> {
     pub async fn run(&self) -> InvestigationStats {
         let mut stats = InvestigationStats::default();
 
-        let targets = match self.writer.find_investigation_targets().await {
+        let targets = match self
+            .writer
+            .find_investigation_targets(
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to find investigation targets");
