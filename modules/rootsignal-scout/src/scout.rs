@@ -561,7 +561,7 @@ impl Scout {
                         &self.writer,
                         &*self.searcher,
                         &self.anthropic_api_key,
-                        &self.city_node.name,
+                        &self.city_node,
                         self.cancelled.clone(),
                     );
                     let investigation_stats = investigator.run().await;

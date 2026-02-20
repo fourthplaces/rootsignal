@@ -1702,7 +1702,7 @@ async fn response_finder_targets_finds_unscouted_tensions() {
     create_tension_for_response_finder(&client, t3, "Emergent Tension", 0.3, None).await;
 
     let targets = writer
-        .find_response_finder_targets(10)
+        .find_response_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
 
@@ -1730,7 +1730,7 @@ async fn response_finder_targets_includes_stale_scouted_tensions() {
     .await;
 
     let targets = writer
-        .find_response_finder_targets(10)
+        .find_response_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -1775,7 +1775,7 @@ async fn response_finder_targets_sorted_by_response_count_then_heat() {
         .expect("edge creation failed");
 
     let targets = writer
-        .find_response_finder_targets(10)
+        .find_response_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 2);
@@ -1838,7 +1838,7 @@ async fn mark_response_found_sets_timestamp() {
 
     // Before marking — should be a target
     let targets = writer
-        .find_response_finder_targets(10)
+        .find_response_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 1);
@@ -1851,7 +1851,7 @@ async fn mark_response_found_sets_timestamp() {
 
     // After marking — should NOT be a target (scouted < 14 days ago)
     let targets = writer
-        .find_response_finder_targets(10)
+        .find_response_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -1983,7 +1983,7 @@ async fn gathering_finder_targets_requires_minimum_heat() {
     create_tension_for_gathering_finder(&client, t2, "Cold Tension", 0.7, 0.0, None, None).await;
 
     let targets = writer
-        .find_gathering_finder_targets(10)
+        .find_gathering_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 1, "Only hot tension should qualify");
@@ -2004,7 +2004,7 @@ async fn gathering_finder_targets_sorted_by_heat_desc() {
     create_tension_for_gathering_finder(&client, t2, "Hot", 0.7, 0.9, None, None).await;
 
     let targets = writer
-        .find_gathering_finder_targets(10)
+        .find_gathering_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 2);
@@ -2036,7 +2036,7 @@ async fn gathering_finder_respects_scouted_timestamp() {
     .await;
 
     let targets = writer
-        .find_gathering_finder_targets(10)
+        .find_gathering_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -2066,7 +2066,7 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
     .await;
 
     let targets = writer
-        .find_gathering_finder_targets(10)
+        .find_gathering_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -2089,7 +2089,7 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
     .await;
 
     let targets = writer
-        .find_gathering_finder_targets(10)
+        .find_gathering_finder_targets(10, -90.0, 90.0, -180.0, 180.0)
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 1);
