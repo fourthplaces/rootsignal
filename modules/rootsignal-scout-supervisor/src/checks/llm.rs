@@ -1,4 +1,6 @@
 use anyhow::Result;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use tracing::{info, warn};
 
 use ai_client::claude::Claude;
@@ -9,6 +11,44 @@ use crate::types::{IssueType, Severity, ValidationIssue};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const SONNET_MODEL: &str = "claude-sonnet-4-5-20250929";
+
+// =============================================================================
+// Structured output types for LLM checks
+// =============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MisclassificationResult {
+    /// Whether the signal is correctly classified
+    is_correct: bool,
+    /// If misclassified, the correct type (Gathering, Aid, Need, Notice, Tension)
+    suggested_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CoherenceResult {
+    /// Whether the signals form a coherent story
+    is_coherent: bool,
+    /// If incoherent, explanation of why signals don't belong together
+    explanation: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RespondsToResult {
+    /// Whether the response genuinely addresses the tension
+    is_valid: bool,
+    /// If invalid, explanation of why the match is wrong
+    explanation: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct DuplicateResult {
+    /// Whether the two signals describe the same real-world thing
+    is_duplicate: bool,
+}
+
+// =============================================================================
+// Main check function
+// =============================================================================
 
 /// Run LLM-powered checks on triaged suspects. Respects the budget cap.
 /// Returns a list of ValidationIssues for confirmed problems.
@@ -87,23 +127,20 @@ async fn check_misclassification(
     claude: &Claude,
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
-    let system =
-        "You are a signal classifier. Given a signal's title, summary, and source evidence, \
+    let system = "You are a signal classifier. Given a signal's title, summary, and source evidence, \
         determine if it is correctly classified. Signal types are: Gathering (time-bound gathering), \
         Aid (available resource/service), Need (community need requesting help), \
-        Notice (official advisory/policy), Tension (community conflict or systemic problem). \
-        Respond with ONLY one of: CORRECT or WRONG:<correct_type> (e.g., WRONG:Gathering)";
+        Notice (official advisory/policy), Tension (community conflict or systemic problem).";
 
     let user = format!(
         "Signal title: {}\nSignal summary: {}\n\n{}",
         suspect.title, suspect.summary, suspect.context,
     );
 
-    let response = claude.chat_completion(system, &user).await?;
-    let response = response.trim();
+    let result: MisclassificationResult = claude.extract(HAIKU_MODEL, system, &user).await?;
 
-    if response.starts_with("WRONG:") {
-        let suggested_type = response.strip_prefix("WRONG:").unwrap_or("unknown").trim();
+    if !result.is_correct {
+        let suggested_type = result.suggested_type.as_deref().unwrap_or("unknown");
         Ok(Some(ValidationIssue::new(
             "", // city set by caller
             IssueType::Misclassification,
@@ -127,25 +164,17 @@ async fn check_incoherent_story(
 ) -> Result<Option<ValidationIssue>> {
     let system = "You are a narrative coherence reviewer. Given a story headline and its constituent \
         signals, determine if they form a coherent narrative about a single topic or related set of events. \
-        Respond with COHERENT if the signals tell a unified story, or INCOHERENT followed by a brief \
-        explanation of why the signals don't belong together. If incoherent, identify which signals \
-        (by their title) seem out of place.";
+        If incoherent, identify which signals (by their title) seem out of place.";
 
     let user = format!(
         "Story headline: {}\nStory summary: {}\n\n{}",
         suspect.title, suspect.summary, suspect.context,
     );
 
-    let response = claude.chat_completion(system, &user).await?;
-    let response = response.trim();
+    let result: CoherenceResult = claude.extract(SONNET_MODEL, system, &user).await?;
 
-    if response.starts_with("INCOHERENT") {
-        let explanation = response
-            .strip_prefix("INCOHERENT")
-            .unwrap_or("")
-            .trim_start_matches(|c: char| c == ':' || c == ' ')
-            .to_string();
-
+    if !result.is_coherent {
+        let explanation = result.explanation.unwrap_or_default();
         Ok(Some(ValidationIssue::new(
             "",
             IssueType::IncoherentStory,
@@ -168,24 +197,17 @@ async fn check_bad_responds_to(
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
     let system = "You are reviewing whether a community resource or event genuinely addresses a \
-        community tension or need. Respond with VALID if the response genuinely helps address the \
-        tension, or INVALID followed by a brief explanation of why the match is wrong.";
+        community tension or need.";
 
     let user = format!(
         "Signal: {} — {}\n\n{}",
         suspect.title, suspect.summary, suspect.context,
     );
 
-    let response = claude.chat_completion(system, &user).await?;
-    let response = response.trim();
+    let result: RespondsToResult = claude.extract(SONNET_MODEL, system, &user).await?;
 
-    if response.starts_with("INVALID") {
-        let explanation = response
-            .strip_prefix("INVALID")
-            .unwrap_or("")
-            .trim_start_matches(|c: char| c == ':' || c == ' ')
-            .to_string();
-
+    if !result.is_valid {
+        let explanation = result.explanation.unwrap_or_default();
         Ok(Some(ValidationIssue::new(
             "",
             IssueType::BadRespondsTo,
@@ -208,15 +230,11 @@ async fn check_near_duplicate(
     suspect: &Suspect,
 ) -> Result<Option<ValidationIssue>> {
     let system = "You are checking whether two signals describe the same real-world thing. \
-        They may use different words but refer to the same event, resource, need, or issue. \
-        Respond with DUPLICATE if they are the same thing, or DISTINCT if they are genuinely different.";
+        They may use different words but refer to the same event, resource, need, or issue.";
 
-    let user = suspect.context.clone();
+    let result: DuplicateResult = claude.extract(HAIKU_MODEL, system, &suspect.context).await?;
 
-    let response = claude.chat_completion(system, &user).await?;
-    let response = response.trim();
-
-    if response.starts_with("DUPLICATE") {
+    if result.is_duplicate {
         Ok(Some(ValidationIssue::new(
             "",
             IssueType::NearDuplicate,

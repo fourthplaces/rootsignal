@@ -293,6 +293,7 @@ impl<'a> GatheringFinder<'a> {
             })
             .tool(ReadPageTool {
                 scraper: scraper.clone(),
+                visited_urls: None,
             });
 
         let lat_delta = city.radius_km / 111.0;
@@ -400,6 +401,7 @@ impl<'a> GatheringFinder<'a> {
             .claude
             .prompt(&user)
             .preamble(&system)
+            .temperature(0.7)
             .multi_turn(MAX_TOOL_TURNS)
             .send()
             .await?;

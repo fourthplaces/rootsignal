@@ -108,12 +108,20 @@ impl Synthesizer {
             .iter()
             .take(20)
             .map(|s| {
-                let url_part = s
+                let source_part = if s.source_url.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (source: {})", s.source_url)
+                };
+                let action_part = s
                     .action_url
                     .as_deref()
                     .map(|u| format!(" (action: {u})"))
                     .unwrap_or_default();
-                format!("- [{}] {}: {}{}", s.node_type, s.title, s.summary, url_part)
+                format!(
+                    "- [{}] {}: {}{}{}",
+                    s.node_type, s.title, s.summary, source_part, action_part
+                )
             })
             .collect();
 
@@ -135,7 +143,8 @@ Write a story synthesis as structured JSON. The synthesis should:
 5. key_entities: Names of organizations, groups, or individuals mentioned across the signals.
 6. category: One of: resource, gathering, crisis, governance, stewardship, community
 
-Write for community members, not journalists. Be specific, not generic."#,
+Write for community members, not journalists. Be specific, not generic.
+GROUNDING: Only include facts present in the signals above. Do not invent details, organizations, or events not mentioned. Use source URLs to verify claims."#,
             signals = signal_descriptions.join("\n"),
         );
 

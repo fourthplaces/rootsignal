@@ -1618,7 +1618,7 @@ fn label_to_node_type(label: &str) -> Option<NodeType> {
 
 /// Parse a row that includes a `node_label` column (from UNION queries) and dispatch
 /// to `row_to_node` with the correct NodeType.
-fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
+pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
     let label: String = row.get("node_label").ok()?;
     let nt = label_to_node_type(&label)?;
     row_to_node(row, nt)
@@ -1626,7 +1626,7 @@ fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
 
 /// Per-type Cypher WHERE clause fragment for expiration.
 /// Returns an AND clause (or empty string) to inject into existing WHERE blocks.
-fn expiry_clause(nt: NodeType) -> String {
+pub(crate) fn expiry_clause(nt: NodeType) -> String {
     match nt {
         NodeType::Gathering => format!(
             "AND (n.is_recurring = true \
@@ -1659,7 +1659,7 @@ fn expiry_clause(nt: NodeType) -> String {
 }
 
 /// Apply sensitivity-based coordinate fuzzing to a node.
-fn fuzz_node(mut node: Node) -> Node {
+pub(crate) fn fuzz_node(mut node: Node) -> Node {
     if let Some(meta) = node_meta_mut(&mut node) {
         if let Some(ref mut loc) = meta.location {
             *loc = fuzz_location(*loc, meta.sensitivity);
@@ -1681,7 +1681,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
 
 /// Safety-net display filter. Primary filtering happens in Cypher queries via `expiry_clause()`;
 /// this catches anything that slips through (e.g. direct ID lookups).
-fn passes_display_filter(node: &Node) -> bool {
+pub(crate) fn passes_display_filter(node: &Node) -> bool {
     let Some(meta) = node.meta() else {
         return true;
     };
@@ -1973,7 +1973,7 @@ pub fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     Utc::now()
 }
 
-fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
+pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
     // Evidence nodes come as a collected list, sorted by confidence descending
     let nodes: Vec<neo4rs::Node> = row.get("evidence").unwrap_or_default();
     let mut evidence: Vec<EvidenceNode> = nodes
@@ -2119,7 +2119,7 @@ fn parse_evidence_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     Utc::now()
 }
 
-fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::ActorNode> {
+pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::ActorNode> {
     let n: neo4rs::Node = row.get("a").ok()?;
 
     let id_str: String = n.get("id").ok()?;

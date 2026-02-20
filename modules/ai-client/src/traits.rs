@@ -62,6 +62,7 @@ pub trait Agent: Clone + Send + Sync {
 #[async_trait]
 pub trait PromptBuilder: Send + Sized {
     fn preamble(self, preamble: impl Into<String>) -> Self;
+    fn temperature(self, temperature: f32) -> Self;
     fn multi_turn(self, max_turns: usize) -> Self;
     fn messages(self, messages: Vec<Message>) -> Self;
     async fn send(self) -> Result<String>;

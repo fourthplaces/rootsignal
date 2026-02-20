@@ -5,12 +5,12 @@ use async_graphql::dataloader::Loader;
 use uuid::Uuid;
 
 use rootsignal_common::{ActorNode, EvidenceNode, StoryNode};
-use rootsignal_graph::PublicGraphReader;
+use rootsignal_graph::CachedReader;
 
 // --- EvidenceBySignalLoader ---
 
 pub struct EvidenceBySignalLoader {
-    pub reader: Arc<PublicGraphReader>,
+    pub reader: Arc<CachedReader>,
 }
 
 impl Loader<Uuid> for EvidenceBySignalLoader {
@@ -28,7 +28,7 @@ impl Loader<Uuid> for EvidenceBySignalLoader {
 // --- ActorsBySignalLoader ---
 
 pub struct ActorsBySignalLoader {
-    pub reader: Arc<PublicGraphReader>,
+    pub reader: Arc<CachedReader>,
 }
 
 impl Loader<Uuid> for ActorsBySignalLoader {
@@ -46,7 +46,7 @@ impl Loader<Uuid> for ActorsBySignalLoader {
 // --- StoryBySignalLoader ---
 
 pub struct StoryBySignalLoader {
-    pub reader: Arc<PublicGraphReader>,
+    pub reader: Arc<CachedReader>,
 }
 
 impl Loader<Uuid> for StoryBySignalLoader {

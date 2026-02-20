@@ -13,6 +13,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::GraphWriter;
 
+use rootsignal_graph::cache::CacheStore;
 use rootsignal_graph::cause_heat::compute_cause_heat;
 use rootsignal_graph::GraphClient;
 use rootsignal_scout::scout::Scout;
@@ -348,11 +349,13 @@ impl MutationRoot {
             });
         }
 
+        let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
         spawn_scout_run(
             (**graph_client).clone(),
             (**config).clone(),
             city_slug,
             cancel.0.clone(),
+            cache_store.clone(),
         );
 
         Ok(ScoutResult {
@@ -572,6 +575,7 @@ fn spawn_scout_run(
     config: rootsignal_common::Config,
     city_slug: String,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    cache_store: Arc<CacheStore>,
 ) {
     use std::sync::atomic::Ordering;
     cancel.store(false, Ordering::Relaxed);
@@ -581,6 +585,8 @@ fn spawn_scout_run(
         rt.block_on(async move {
             if let Err(e) = run_scout(&client, &config, &city_slug, cancel).await {
                 tracing::error!(error = %e, "Scout run failed");
+            } else {
+                cache_store.reload(&client).await;
             }
         });
     });
@@ -627,6 +633,7 @@ pub fn start_scout_interval(
     client: GraphClient,
     config: rootsignal_common::Config,
     interval_hours: u64,
+    cache_store: Arc<CacheStore>,
 ) {
     use std::sync::atomic::AtomicBool;
     info!(interval_hours, "Starting multi-city scout interval loop");
@@ -663,6 +670,8 @@ pub fn start_scout_interval(
                     let cancel = Arc::new(AtomicBool::new(false));
                     if let Err(e) = run_scout(&client, &config, &city.slug, cancel).await {
                         tracing::error!(city = city.slug.as_str(), error = %e, "Scout interval run failed");
+                    } else {
+                        cache_store.reload(&client).await;
                     }
                     break;
                 }

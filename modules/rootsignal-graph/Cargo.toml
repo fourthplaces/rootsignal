@@ -21,5 +21,6 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 schemars = { workspace = true }
 url = "2"
+arc-swap = "1"
 futures = { workspace = true }
 testcontainers = { workspace = true, optional = true }

@@ -13,7 +13,7 @@ use rootsignal_common::{
     ActorNode, AidNode, EvidenceNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
     StoryNode, TensionNode,
 };
-use rootsignal_graph::PublicGraphReader;
+use rootsignal_graph::CachedReader;
 
 use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader};
 
@@ -535,7 +535,7 @@ impl GqlTensionSignal {
         self.0.what_would_help.as_deref()
     }
     async fn responses(&self, ctx: &Context<'_>) -> Result<Vec<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let nodes = reader.tension_responses(self.0.meta.id).await?;
         Ok(nodes
             .into_iter()
@@ -618,19 +618,19 @@ impl GqlStory {
     }
 
     async fn signals(&self, ctx: &Context<'_>) -> Result<Vec<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let nodes = reader.get_story_signals(self.0.id).await?;
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let actors = reader.actors_for_story(self.0.id).await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 
     async fn evidence_count(&self, ctx: &Context<'_>) -> Result<u32> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let counts = reader.story_evidence_counts(&[self.0.id]).await?;
         Ok(counts.into_iter().next().map(|(_, c)| c).unwrap_or(0))
     }
@@ -680,7 +680,7 @@ impl GqlActor {
     }
 
     async fn stories(&self, ctx: &Context<'_>) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let stories = reader.actor_stories(self.0.id, 20).await?;
         Ok(stories.into_iter().map(GqlStory).collect())
     }

@@ -16,6 +16,7 @@ pub struct OpenAiPromptBuilder {
     agent: OpenAi,
     input: String,
     preamble: Option<String>,
+    temperature: Option<f32>,
     max_turns: usize,
     messages: Vec<Message>,
 }
@@ -26,6 +27,7 @@ impl OpenAiPromptBuilder {
             agent,
             input,
             preamble: None,
+            temperature: None,
             max_turns: 1,
             messages: Vec::new(),
         }
@@ -46,6 +48,11 @@ impl OpenAiPromptBuilder {
 impl PromptBuilder for OpenAiPromptBuilder {
     fn preamble(mut self, preamble: impl Into<String>) -> Self {
         self.preamble = Some(preamble.into());
+        self
+    }
+
+    fn temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
         self
     }
 
@@ -81,6 +88,10 @@ impl PromptBuilder for OpenAiPromptBuilder {
         }
 
         let mut request = ChatRequest::new(&self.agent.model).messages(messages);
+
+        if let Some(temp) = self.temperature {
+            request = request.temperature(temp);
+        }
 
         // Add tools
         for tool in &self.agent.tools {

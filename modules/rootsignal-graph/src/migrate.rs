@@ -1101,8 +1101,9 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
 /// Deactivate duplicate City nodes and reassign their sources to the canonical city.
 /// Cities created from running the scout with different slugs for the same coordinates
 /// (e.g. "twincities", "minneapolis", "minneapolis-minnesota") produce duplicates.
-/// For each group of cities within ~1km of each other, keeps the one with the most
-/// active sources, deactivates the rest, and reassigns their sources.
+/// Two cities are considered duplicates if they're within ~5km of each other OR if one
+/// city's name contains the other's (case-insensitive). For each duplicate pair, keeps
+/// the one with the most active sources, deactivates the other, and reassigns its sources.
 /// Idempotent — WHERE clauses match nothing after cleanup.
 pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
@@ -1128,13 +1129,21 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
         Err(e) => warn!("City reactivation failed (non-fatal): {e}"),
     }
 
-    // For each pair of active cities at the same location, find the one with more sources
-    // and reassign the other's sources to it, then deactivate.
+    // For each pair of active cities at the same location (within ~5km) or with
+    // overlapping names, find the one with more sources and reassign the other's.
     let q = query(
         "MATCH (a:City {active: true}), (b:City {active: true})
          WHERE a.slug < b.slug
-           AND abs(a.center_lat - b.center_lat) < 0.01
-           AND abs(a.center_lng - b.center_lng) < 0.01
+           AND (
+             // Coordinate proximity: 0.05° ≈ 5km — catches same city with different slugs
+             // but won't merge genuinely separate cities (Minneapolis↔St Paul is ~0.13°)
+             (abs(a.center_lat - b.center_lat) < 0.05 AND abs(a.center_lng - b.center_lng) < 0.05)
+             OR
+             // Name containment: 'Minneapolis' contains 'Minneapolis' in 'Minneapolis-Minnesota'
+             toLower(a.name) CONTAINS toLower(b.name)
+             OR
+             toLower(b.name) CONTAINS toLower(a.name)
+           )
          WITH a, b
          OPTIONAL MATCH (sa:Source {active: true}) WHERE sa.city = a.slug
          WITH a, b, count(sa) AS a_sources

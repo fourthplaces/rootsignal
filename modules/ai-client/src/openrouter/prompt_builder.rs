@@ -16,6 +16,7 @@ pub struct OpenRouterPromptBuilder {
     agent: OpenRouter,
     input: String,
     preamble: Option<String>,
+    temperature: Option<f32>,
     max_turns: usize,
     messages: Vec<Message>,
 }
@@ -26,6 +27,7 @@ impl OpenRouterPromptBuilder {
             agent,
             input,
             preamble: None,
+            temperature: None,
             max_turns: 1,
             messages: Vec::new(),
         }
@@ -46,6 +48,11 @@ impl OpenRouterPromptBuilder {
 impl PromptBuilder for OpenRouterPromptBuilder {
     fn preamble(mut self, preamble: impl Into<String>) -> Self {
         self.preamble = Some(preamble.into());
+        self
+    }
+
+    fn temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
         self
     }
 
@@ -81,6 +88,10 @@ impl PromptBuilder for OpenRouterPromptBuilder {
         }
 
         let mut request = ChatRequest::new(&self.agent.model).messages(messages);
+
+        if let Some(temp) = self.temperature {
+            request = request.temperature(temp);
+        }
 
         // Add tools
         for tool in &self.agent.tools {

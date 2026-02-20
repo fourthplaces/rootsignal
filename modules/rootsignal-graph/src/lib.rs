@@ -1,3 +1,5 @@
+pub mod cache;
+pub mod cached_reader;
 pub mod cause_heat;
 pub mod client;
 pub mod cluster;
@@ -11,6 +13,8 @@ pub mod synthesizer;
 pub mod testutil;
 pub mod writer;
 
+pub use cache::CacheStore;
+pub use cached_reader::CachedReader;
 pub use client::GraphClient;
 pub use cluster::Clusterer;
 pub use reader::{PublicGraphReader, ResourceGap, ResourceMatch};

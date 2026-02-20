@@ -150,6 +150,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9f3647c145568cec02c42054e07bdf9a5a698e15b466fb2341bfc393cd24aa5"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ascii_utils"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3016,6 +3025,7 @@ version = "0.1.0"
 dependencies = [
  "ai-client",
  "anyhow",
+ "arc-swap",
  "chrono",
  "futures",
  "neo4rs",
@@ -3074,6 +3084,7 @@ dependencies = [
  "reqwest",
  "rootsignal-common",
  "rootsignal-graph",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

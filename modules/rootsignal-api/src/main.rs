@@ -20,7 +20,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::Config;
-use rootsignal_graph::{GraphClient, GraphWriter, PublicGraphReader};
+use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphWriter, PublicGraphReader};
 use twilio::TwilioService;
 
 mod graphql;
@@ -117,7 +117,18 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
 
-    let reader = Arc::new(PublicGraphReader::new(client.clone()));
+    // Build the in-memory cache. Block until loaded — no HTTP traffic until ready.
+    info!("Loading signal cache from Neo4j…");
+    let initial_cache = rootsignal_graph::cache::SignalCache::load(&client)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load initial cache: {e}"))?;
+    let cache_store = Arc::new(CacheStore::new(initial_cache));
+
+    // Spawn background reload loop
+    cache_store.spawn_reload_loop(client.clone());
+
+    let neo4j_reader = PublicGraphReader::new(client.clone());
+    let reader = Arc::new(CachedReader::new(cache_store.clone(), neo4j_reader));
     let writer = Arc::new(GraphWriter::new(client.clone()));
     let jwt_service = JwtService::new(
         if config.session_secret.is_empty() {
@@ -154,6 +165,7 @@ async fn main() -> Result<()> {
         RateLimiter(Mutex::new(HashMap::new())),
         scout_cancel.clone(),
         Arc::new(client.clone()),
+        cache_store.clone(),
     );
 
     // Start scout interval loop if configured (before client is moved into AppState)
@@ -166,7 +178,7 @@ async fn main() -> Result<()> {
         && !config.voyage_api_key.is_empty()
         && !config.serper_api_key.is_empty()
     {
-        graphql::mutations::start_scout_interval(client.clone(), config.clone(), scout_interval);
+        graphql::mutations::start_scout_interval(client.clone(), config.clone(), scout_interval, cache_store.clone());
     } else if scout_interval > 0 {
         info!(
             "SCOUT_INTERVAL_HOURS={scout_interval} but API keys not set — scout interval disabled"

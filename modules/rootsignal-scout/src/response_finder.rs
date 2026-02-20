@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ai_client::claude::Claude;
 use ai_client::traits::{Agent, PromptBuilder};
@@ -240,7 +241,9 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
-    claude: Claude,
+    anthropic_api_key: String,
+    searcher: Arc<dyn WebSearcher>,
+    scraper: Arc<dyn PageScraper>,
     embedder: &'a dyn TextEmbedder,
     city: CityNode,
     city_slug: String,
@@ -261,20 +264,14 @@ impl<'a> ResponseFinder<'a> {
         city: CityNode,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
-            .tool(WebSearchTool {
-                searcher: searcher.clone(),
-            })
-            .tool(ReadPageTool {
-                scraper: scraper.clone(),
-            });
-
         let lat_delta = city.radius_km / 111.0;
         let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
         let city_slug = city.slug.clone();
         Self {
             writer,
-            claude,
+            anthropic_api_key: anthropic_api_key.to_string(),
+            searcher,
+            scraper,
             embedder,
             min_lat: city.center_lat - lat_delta,
             max_lat: city.center_lat + lat_delta,
@@ -284,6 +281,20 @@ impl<'a> ResponseFinder<'a> {
             city_slug,
             cancelled,
         }
+    }
+
+    /// Build a Claude agent with URL tracking for a single investigation.
+    fn build_tracked_agent(&self) -> (Claude, Arc<Mutex<HashSet<String>>>) {
+        let visited = Arc::new(Mutex::new(HashSet::new()));
+        let claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL)
+            .tool(WebSearchTool {
+                searcher: self.searcher.clone(),
+            })
+            .tool(ReadPageTool {
+                scraper: self.scraper.clone(),
+                visited_urls: Some(visited.clone()),
+            });
+        (claude, visited)
     }
 
     pub async fn run(&self) -> ResponseFinderStats {
@@ -357,11 +368,14 @@ impl<'a> ResponseFinder<'a> {
         let system = investigation_system_prompt(&self.city.name);
         let user = investigation_user_prompt(target, &existing);
 
+        // Build a tracked agent for this investigation
+        let (claude, visited_urls) = self.build_tracked_agent();
+
         // Phase 1: Agentic investigation with web_search + read_page tools
-        let reasoning = self
-            .claude
+        let reasoning = claude
             .prompt(&user)
             .preamble(&system)
+            .temperature(0.7)
             .multi_turn(MAX_TOOL_TURNS)
             .send()
             .await?;
@@ -372,16 +386,34 @@ impl<'a> ResponseFinder<'a> {
             target.title, target.summary, reasoning,
         );
 
-        let finding: ResponseFinding = self
-            .claude
+        let extraction_claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL);
+        let finding: ResponseFinding = extraction_claude
             .extract(HAIKU_MODEL, STRUCTURING_SYSTEM, &structuring_user)
             .await?;
 
-        stats.responses_discovered += finding.responses.len() as u32;
+        // Validate URLs: only keep responses whose URLs were actually visited
+        let visited = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
+        let validated_responses: Vec<_> = finding
+            .responses
+            .into_iter()
+            .filter(|r| {
+                if visited.contains(&r.url) {
+                    true
+                } else {
+                    warn!(
+                        url = r.url.as_str(),
+                        title = r.title.as_str(),
+                        "Dropping response with unvisited URL (possible hallucination)"
+                    );
+                    false
+                }
+            })
+            .collect();
+
+        stats.responses_discovered += validated_responses.len() as u32;
 
         // Process discovered responses
-        for response in finding
-            .responses
+        for response in validated_responses
             .into_iter()
             .take(MAX_RESPONSES_PER_TENSION)
         {
@@ -444,7 +476,14 @@ impl<'a> ResponseFinder<'a> {
             "aid" => NodeType::Aid,
             "gathering" => NodeType::Gathering,
             "need" => NodeType::Need,
-            _ => NodeType::Aid, // Default to Aid for unknown types
+            other => {
+                warn!(
+                    signal_type = other,
+                    title = response.title.as_str(),
+                    "Unknown signal type from LLM, skipping response"
+                );
+                return Ok(());
+            }
         };
 
         // Check for duplicate (city-scoped)

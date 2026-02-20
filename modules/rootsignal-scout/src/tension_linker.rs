@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ai_client::claude::Claude;
 use ai_client::tool::{Tool, ToolDefinition};
@@ -109,6 +110,8 @@ impl Tool for WebSearchTool {
 
 pub(crate) struct ReadPageTool {
     pub(crate) scraper: Arc<dyn PageScraper>,
+    /// When set, records every URL successfully read for post-hoc validation.
+    pub(crate) visited_urls: Option<Arc<Mutex<HashSet<String>>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +151,13 @@ impl Tool for ReadPageTool {
             .scrape(&args.url)
             .await
             .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
+
+        // Record this URL as successfully visited
+        if let Some(ref visited) = self.visited_urls {
+            if let Ok(mut set) = visited.lock() {
+                set.insert(args.url.clone());
+            }
+        }
 
         // Truncate to ~8k chars to fit in context
         let max_len = 8000;
@@ -306,6 +316,7 @@ impl<'a> TensionLinker<'a> {
             })
             .tool(ReadPageTool {
                 scraper: scraper.clone(),
+                visited_urls: None,
             });
 
         let lat_delta = city.radius_km / 111.0;
@@ -467,6 +478,7 @@ impl<'a> TensionLinker<'a> {
             .claude
             .prompt(&user)
             .preamble(&system)
+            .temperature(0.7)
             .multi_turn(MAX_TOOL_TURNS)
             .send()
             .await?;

@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::{CityNode, Node, NodeType};
-use rootsignal_graph::{GraphWriter, PublicGraphReader};
+use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader};
@@ -39,7 +39,7 @@ impl QueryRoot {
         radius_km: f64,
         types: Option<Vec<SignalType>>,
     ) -> Result<Vec<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let node_types: Option<Vec<NodeType>> =
             types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
         let radius = radius_km.min(50.0);
@@ -58,7 +58,7 @@ impl QueryRoot {
         radius_km: f64,
         types: Option<Vec<SignalType>>,
     ) -> Result<String> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let node_types: Option<Vec<NodeType>> =
             types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
         let radius = radius_km.min(50.0);
@@ -70,7 +70,7 @@ impl QueryRoot {
 
     /// Get story signals as a GeoJSON FeatureCollection string.
     async fn story_signals_geo_json(&self, ctx: &Context<'_>, story_id: Uuid) -> Result<String> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let signals = reader.get_story_signals(story_id).await?;
         Ok(serde_json::to_string(&nodes_to_geojson(&signals))?)
     }
@@ -82,7 +82,7 @@ impl QueryRoot {
         limit: Option<u32>,
         types: Option<Vec<SignalType>>,
     ) -> Result<Vec<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let node_types: Option<Vec<NodeType>> =
             types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
         let limit = limit.unwrap_or(50).min(200);
@@ -92,7 +92,7 @@ impl QueryRoot {
 
     /// Get a single signal by ID.
     async fn signal(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let node = reader.get_signal_by_id(id).await?;
         Ok(node.map(GqlSignal::from))
     }
@@ -109,7 +109,7 @@ impl QueryRoot {
         max_lng: f64,
         limit: Option<u32>,
     ) -> Result<Vec<GqlSignal>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
         let nodes = reader
             .signals_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
@@ -127,7 +127,7 @@ impl QueryRoot {
         max_lng: f64,
         limit: Option<u32>,
     ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader
             .stories_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
@@ -147,7 +147,7 @@ impl QueryRoot {
         max_lng: f64,
         limit: Option<u32>,
     ) -> Result<Vec<GqlSearchResult>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
         let limit = limit.unwrap_or(50).min(200);
 
@@ -182,7 +182,7 @@ impl QueryRoot {
         max_lng: f64,
         limit: Option<u32>,
     ) -> Result<Vec<GqlStorySearchResult>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
         let limit = limit.unwrap_or(20).min(100);
 
@@ -217,7 +217,7 @@ impl QueryRoot {
         limit: Option<u32>,
         status: Option<String>,
     ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader
             .top_stories_by_energy(limit, status.as_deref())
@@ -227,7 +227,7 @@ impl QueryRoot {
 
     /// Get a single story by ID.
     async fn story(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let story = reader.get_story_by_id(id).await?;
         Ok(story.map(GqlStory))
     }
@@ -239,7 +239,7 @@ impl QueryRoot {
         category: String,
         limit: Option<u32>,
     ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader.stories_by_category(&category, limit).await?;
         Ok(stories.into_iter().map(GqlStory).collect())
@@ -252,7 +252,7 @@ impl QueryRoot {
         arc: String,
         limit: Option<u32>,
     ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(20).min(100);
         let stories = reader.stories_by_arc(&arc, limit).await?;
         Ok(stories.into_iter().map(GqlStory).collect())
@@ -265,7 +265,7 @@ impl QueryRoot {
         city: String,
         limit: Option<u32>,
     ) -> Result<Vec<GqlActor>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
         let actors = reader.actors_active_in_area(&city, limit).await?;
         Ok(actors.into_iter().map(GqlActor).collect())
@@ -273,7 +273,7 @@ impl QueryRoot {
 
     /// Get a single actor by ID.
     async fn actor(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlActor>> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let actor = reader.actor_detail(id).await?;
         Ok(actor.map(GqlActor))
     }
@@ -283,7 +283,7 @@ impl QueryRoot {
     /// Dashboard data for a city.
     #[graphql(guard = "AdminGuard")]
     async fn admin_dashboard(&self, ctx: &Context<'_>, city: String) -> Result<AdminDashboardData> {
-        let reader = ctx.data_unchecked::<Arc<PublicGraphReader>>();
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
 
         let (
@@ -734,7 +734,7 @@ fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
 }
 
 pub fn build_schema(
-    reader: Arc<PublicGraphReader>,
+    reader: Arc<CachedReader>,
     writer: Arc<GraphWriter>,
     jwt_service: JwtService,
     config: Arc<Config>,
@@ -742,6 +742,7 @@ pub fn build_schema(
     rate_limiter: super::mutations::RateLimiter,
     scout_cancel: Arc<std::sync::atomic::AtomicBool>,
     graph_client: Arc<rootsignal_graph::GraphClient>,
+    cache_store: Arc<rootsignal_graph::CacheStore>,
 ) -> ApiSchema {
     use super::mutations::ScoutCancel;
 
@@ -773,7 +774,6 @@ pub fn build_schema(
         Arc::new(rootsignal_scout::embedder::Embedder::new(voyage_key))
     };
 
-
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
         .data(writer)
@@ -783,6 +783,7 @@ pub fn build_schema(
         .data(rate_limiter)
         .data(ScoutCancel(scout_cancel))
         .data(graph_client)
+        .data(cache_store)
         .data(evidence_loader)
         .data(actors_loader)
         .data(story_loader)

@@ -16,6 +16,7 @@ pub struct ClaudePromptBuilder {
     agent: Claude,
     input: String,
     preamble: Option<String>,
+    temperature: Option<f32>,
     max_turns: usize,
     messages: Vec<Message>,
 }
@@ -26,6 +27,7 @@ impl ClaudePromptBuilder {
             agent,
             input,
             preamble: None,
+            temperature: None,
             max_turns: 1,
             messages: Vec::new(),
         }
@@ -48,6 +50,11 @@ impl PromptBuilder for ClaudePromptBuilder {
         self
     }
 
+    fn temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
     fn multi_turn(mut self, max_turns: usize) -> Self {
         self.max_turns = max_turns;
         self
@@ -62,6 +69,10 @@ impl PromptBuilder for ClaudePromptBuilder {
         let client = self.agent.client();
 
         let mut request = ChatRequest::new(&self.agent.model);
+
+        if let Some(temp) = self.temperature {
+            request = request.temperature(temp);
+        }
 
         if let Some(ref preamble) = self.preamble {
             request = request.system(preamble);
@@ -180,7 +191,8 @@ impl<T: DeserializeOwned + JsonSchema + Send + 'static> OutputBuilder<T>
 
         let client = self.builder.agent.client();
 
-        let mut request = ChatRequest::new(&self.builder.agent.model);
+        let mut request = ChatRequest::new(&self.builder.agent.model)
+            .temperature(0.0); // Structured extraction must be deterministic
 
         if let Some(ref preamble) = self.builder.preamble {
             request = request.system(preamble);
