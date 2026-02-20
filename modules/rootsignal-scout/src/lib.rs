@@ -10,6 +10,7 @@ pub mod quality;
 pub mod response_finder;
 pub mod scheduler;
 pub mod scout;
+pub mod scrape_phase;
 pub mod scraper;
 pub mod source_finder;
 pub mod sources;

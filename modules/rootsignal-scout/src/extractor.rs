@@ -636,6 +636,7 @@ mod tests {
             source_url: None,
             implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
             resources: vec![],
+            tags: vec![],
         };
 
         assert_eq!(signal.signal_type, "tension");
