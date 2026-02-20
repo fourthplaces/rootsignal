@@ -70,8 +70,12 @@ pub async fn run_actor_extraction(
     client: &GraphClient,
     anthropic_api_key: &str,
     city: &str,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
 ) -> ActorExtractorStats {
-    match run_actor_extraction_inner(writer, client, anthropic_api_key, city).await {
+    match run_actor_extraction_inner(writer, client, anthropic_api_key, city, min_lat, max_lat, min_lng, max_lng).await {
         Ok(stats) => stats,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
@@ -85,18 +89,28 @@ async fn run_actor_extraction_inner(
     client: &GraphClient,
     anthropic_api_key: &str,
     city: &str,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
 ) -> Result<ActorExtractorStats> {
     let mut stats = ActorExtractorStats::default();
 
-    // Find signals with no ACTED_IN edges pointing at them
+    // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
         "MATCH (n)
          WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
            AND NOT ()-[:ACTED_IN]->(n)
+           AND n.lat >= $min_lat AND n.lat <= $max_lat
+           AND n.lng >= $min_lng AND n.lng <= $max_lng
          RETURN n.id AS id, n.title AS title, n.summary AS summary
          ORDER BY n.extracted_at DESC
          LIMIT 200",
-    );
+    )
+    .param("min_lat", min_lat)
+    .param("max_lat", max_lat)
+    .param("min_lng", min_lng)
+    .param("max_lng", max_lng);
 
     let mut stream = client.inner().execute(q).await?;
     let mut signals: Vec<SignalInfo> = Vec::new();

@@ -184,12 +184,16 @@ async fn main() -> Result<()> {
         &client,
         &config.anthropic_api_key,
         &city_name,
+        min_lat,
+        max_lat,
+        min_lng,
+        max_lng,
     )
     .await;
     info!("{sweep_stats}");
 
     // Compute cause heat (cross-story signal boosting via embedding similarity)
-    compute_cause_heat(&client, 0.7).await?;
+    compute_cause_heat(&client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
 
     Ok(())
 }

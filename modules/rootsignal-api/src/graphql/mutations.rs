@@ -656,6 +656,14 @@ async fn run_scout(
 
     info!(city = city_slug, "Scout run starting");
 
+    // Save city geo bounds before moving city_node into Scout
+    let lat_delta = city_node.radius_km / 111.0;
+    let lng_delta = city_node.radius_km / (111.0 * city_node.center_lat.to_radians().cos());
+    let min_lat = city_node.center_lat - lat_delta;
+    let max_lat = city_node.center_lat + lat_delta;
+    let min_lng = city_node.center_lng - lng_delta;
+    let max_lng = city_node.center_lng + lng_delta;
+
     let scout = Scout::new(
         client.clone(),
         &config.anthropic_api_key,
@@ -670,7 +678,7 @@ async fn run_scout(
     let stats = scout.run().await?;
     info!("Scout run complete. {stats}");
 
-    compute_cause_heat(client, 0.7).await?;
+    compute_cause_heat(client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
 
     writer.set_city_scout_completed(city_slug).await?;
 

@@ -11,7 +11,7 @@ struct SignalEmbed {
     source_diversity: u32,
 }
 
-/// Compute cause_heat for all signals in the graph.
+/// Compute cause_heat for signals within a geographic bounding box.
 ///
 /// Cause heat measures how much independent community attention exists in a
 /// signal's semantic neighborhood. A food shelf Need near a hot housing cluster
@@ -19,28 +19,41 @@ struct SignalEmbed {
 /// has genuine multi-source attention.
 ///
 /// Algorithm:
-/// 1. Load all signals with embeddings and source_diversity
+/// 1. Load signals with embeddings and source_diversity within the bbox
 /// 2. Compute all-pairs cosine similarity in memory
 /// 3. For each signal, sum (similarity × neighbor.source_diversity) for Tension
 ///    neighbors above threshold. Only Tensions radiate heat — Gatherings, Gives, Needs,
 ///    and Notices absorb heat from nearby Tensions but do not generate it.
 /// 4. Normalize to 0.0–1.0
 /// 5. Write back to graph
-pub async fn compute_cause_heat(client: &GraphClient, threshold: f64) -> Result<(), neo4rs::Error> {
+pub async fn compute_cause_heat(
+    client: &GraphClient,
+    threshold: f64,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
+) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
     info!(threshold, "Computing cause heat...");
 
-    // 1. Load all signals with embeddings
+    // 1. Load signals with embeddings within the bounding box
     let mut signals: Vec<SignalEmbed> = Vec::new();
 
     for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.embedding IS NOT NULL
+               AND n.lat >= $min_lat AND n.lat <= $max_lat
+               AND n.lng >= $min_lng AND n.lng <= $max_lng
              RETURN n.id AS id, n.embedding AS embedding,
                     n.source_diversity AS source_diversity"
-        ));
+        ))
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut stream = g.execute(q).await?;
         while let Some(row) = stream.next().await? {
@@ -523,7 +536,8 @@ mod tests {
             .await
             .expect("Failed to connect to Neo4j");
 
-        compute_cause_heat(&client, 0.7)
+        // Use Twin Cities bbox for live test
+        compute_cause_heat(&client, 0.7, 44.0, 46.0, -94.0, -92.0)
             .await
             .expect("compute_cause_heat failed");
 
