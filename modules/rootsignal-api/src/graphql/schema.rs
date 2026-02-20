@@ -324,17 +324,23 @@ impl QueryRoot {
         let (top_sources, bottom_sources) = discovery.unwrap_or_default();
         let all_cities = all_cities.unwrap_or_default();
 
-        // Build scout status for each city
+        // Build scout status for each city using batch queries (2 queries instead of 2N)
+        let city_slugs: Vec<String> = all_cities.iter().map(|c| c.slug.clone()).collect();
+        let (running_map, due_map) = tokio::join!(
+            writer.batch_scout_running(&city_slugs),
+            writer.batch_due_sources(&city_slugs),
+        );
+        let running_map = running_map.unwrap_or_default();
+        let due_map = due_map.unwrap_or_default();
+
         let mut scout_statuses = Vec::new();
         for c in &all_cities {
-            let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
-            let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
             scout_statuses.push(CityScoutStatus {
                 city_name: c.name.clone(),
                 city_slug: c.slug.clone(),
                 last_scouted: c.last_scout_completed_at,
-                sources_due: due,
-                running,
+                sources_due: *due_map.get(&c.slug).unwrap_or(&0),
+                running: *running_map.get(&c.slug).unwrap_or(&false),
             });
         }
 
@@ -351,11 +357,11 @@ impl QueryRoot {
             scout_statuses,
             signal_volume_by_day: signal_volume
                 .iter()
-                .map(|(day, ev, gi, ask, not, ten)| DayVolume {
+                .map(|(day, ev, gi, need, not, ten)| DayVolume {
                     day: day.clone(),
-                    events: *ev,
-                    gives: *gi,
-                    asks: *ask,
+                    gatherings: *ev,
+                    aids: *gi,
+                    needs: *need,
                     notices: *not,
                     tensions: *ten,
                 })
@@ -460,12 +466,22 @@ impl QueryRoot {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let cities = writer.list_cities().await?;
 
-        let mut results = Vec::new();
-        for c in &cities {
-            let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
-            let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
-            results.push(AdminCity::from_city_node(c, running, due));
-        }
+        let city_slugs: Vec<String> = cities.iter().map(|c| c.slug.clone()).collect();
+        let (running_map, due_map) = tokio::join!(
+            writer.batch_scout_running(&city_slugs),
+            writer.batch_due_sources(&city_slugs),
+        );
+        let running_map = running_map.unwrap_or_default();
+        let due_map = due_map.unwrap_or_default();
+
+        let results = cities
+            .iter()
+            .map(|c| {
+                let running = *running_map.get(&c.slug).unwrap_or(&false);
+                let due = *due_map.get(&c.slug).unwrap_or(&0);
+                AdminCity::from_city_node(c, running, due)
+            })
+            .collect();
         Ok(results)
     }
 
@@ -582,9 +598,9 @@ pub struct CityScoutStatus {
 #[derive(SimpleObject)]
 pub struct DayVolume {
     pub day: String,
-    pub events: u64,
-    pub gives: u64,
-    pub asks: u64,
+    pub gatherings: u64,
+    pub aids: u64,
+    pub needs: u64,
     pub notices: u64,
     pub tensions: u64,
 }

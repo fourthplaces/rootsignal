@@ -37,10 +37,72 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Ask→Need migration steps complete");
 
+    // --- Event → Gathering rename: drop old constraints/indexes and relabel nodes ---
+    let event_drops = [
+        "DROP CONSTRAINT event_id_unique IF EXISTS",
+        "DROP CONSTRAINT event_sensitivity_exists IF EXISTS",
+        "DROP CONSTRAINT event_confidence_exists IF EXISTS",
+        "DROP INDEX event_lat IF EXISTS",
+        "DROP INDEX event_lng IF EXISTS",
+        "DROP INDEX event_source_diversity IF EXISTS",
+        "DROP INDEX event_cause_heat IF EXISTS",
+        "DROP INDEX event_text IF EXISTS",
+        "DROP INDEX event_embedding IF EXISTS",
+    ];
+
+    for d in &event_drops {
+        match g.run(query(d)).await {
+            Ok(_) => {}
+            Err(e) => warn!("Event→Gathering drop step failed (non-fatal): {e}"),
+        }
+    }
+
+    // Relabel existing Event nodes to Gathering
+    match g
+        .run(query(
+            "MATCH (n:Event) SET n:Gathering REMOVE n:Event",
+        ))
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => warn!("Event→Gathering relabel failed (non-fatal): {e}"),
+    }
+    info!("Event→Gathering migration steps complete");
+
+    // --- Give → Aid rename: drop old constraints/indexes and relabel nodes ---
+    let give_drops = [
+        "DROP CONSTRAINT give_id_unique IF EXISTS",
+        "DROP CONSTRAINT give_sensitivity_exists IF EXISTS",
+        "DROP CONSTRAINT give_confidence_exists IF EXISTS",
+        "DROP INDEX give_lat IF EXISTS",
+        "DROP INDEX give_lng IF EXISTS",
+        "DROP INDEX give_source_diversity IF EXISTS",
+        "DROP INDEX give_cause_heat IF EXISTS",
+        "DROP INDEX give_text IF EXISTS",
+        "DROP INDEX give_embedding IF EXISTS",
+    ];
+
+    for d in &give_drops {
+        match g.run(query(d)).await {
+            Ok(_) => {}
+            Err(e) => warn!("Give→Aid drop step failed (non-fatal): {e}"),
+        }
+    }
+
+    // Relabel existing Give nodes to Aid
+    match g
+        .run(query("MATCH (n:Give) SET n:Aid REMOVE n:Give"))
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => warn!("Give→Aid relabel failed (non-fatal): {e}"),
+    }
+    info!("Give→Aid migration steps complete");
+
     // --- UUID uniqueness constraints ---
     let constraints = [
-        "CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (n:Event) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT give_id_unique IF NOT EXISTS FOR (n:Give) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT gathering_id_unique IF NOT EXISTS FOR (n:Gathering) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT aid_id_unique IF NOT EXISTS FOR (n:Aid) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT need_id_unique IF NOT EXISTS FOR (n:Need) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT notice_id_unique IF NOT EXISTS FOR (n:Notice) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT tension_id_unique IF NOT EXISTS FOR (n:Tension) REQUIRE n.id IS UNIQUE",
@@ -54,12 +116,12 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Existence (NOT NULL) constraints ---
     let existence = [
-        // Event
-        "CREATE CONSTRAINT event_sensitivity_exists IF NOT EXISTS FOR (n:Event) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT event_confidence_exists IF NOT EXISTS FOR (n:Event) REQUIRE n.confidence IS NOT NULL",
-        // Give
-        "CREATE CONSTRAINT give_sensitivity_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.sensitivity IS NOT NULL",
-        "CREATE CONSTRAINT give_confidence_exists IF NOT EXISTS FOR (n:Give) REQUIRE n.confidence IS NOT NULL",
+        // Gathering
+        "CREATE CONSTRAINT gathering_sensitivity_exists IF NOT EXISTS FOR (n:Gathering) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT gathering_confidence_exists IF NOT EXISTS FOR (n:Gathering) REQUIRE n.confidence IS NOT NULL",
+        // Aid
+        "CREATE CONSTRAINT aid_sensitivity_exists IF NOT EXISTS FOR (n:Aid) REQUIRE n.sensitivity IS NOT NULL",
+        "CREATE CONSTRAINT aid_confidence_exists IF NOT EXISTS FOR (n:Aid) REQUIRE n.confidence IS NOT NULL",
         // Need
         "CREATE CONSTRAINT need_sensitivity_exists IF NOT EXISTS FOR (n:Need) REQUIRE n.sensitivity IS NOT NULL",
         "CREATE CONSTRAINT need_confidence_exists IF NOT EXISTS FOR (n:Need) REQUIRE n.confidence IS NOT NULL",
@@ -78,10 +140,10 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Property indexes (lat/lng for bounding box queries) ---
     let indexes = [
-        "CREATE INDEX event_lat IF NOT EXISTS FOR (n:Event) ON (n.lat)",
-        "CREATE INDEX event_lng IF NOT EXISTS FOR (n:Event) ON (n.lng)",
-        "CREATE INDEX give_lat IF NOT EXISTS FOR (n:Give) ON (n.lat)",
-        "CREATE INDEX give_lng IF NOT EXISTS FOR (n:Give) ON (n.lng)",
+        "CREATE INDEX gathering_lat IF NOT EXISTS FOR (n:Gathering) ON (n.lat)",
+        "CREATE INDEX gathering_lng IF NOT EXISTS FOR (n:Gathering) ON (n.lng)",
+        "CREATE INDEX aid_lat IF NOT EXISTS FOR (n:Aid) ON (n.lat)",
+        "CREATE INDEX aid_lng IF NOT EXISTS FOR (n:Aid) ON (n.lng)",
         "CREATE INDEX need_lat IF NOT EXISTS FOR (n:Need) ON (n.lat)",
         "CREATE INDEX need_lng IF NOT EXISTS FOR (n:Need) ON (n.lng)",
         "CREATE INDEX notice_lat IF NOT EXISTS FOR (n:Notice) ON (n.lat)",
@@ -95,10 +157,24 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Property indexes created");
 
+    // --- Composite lat/lng indexes for bounding-box queries ---
+    let composite_geo_indexes = [
+        "CREATE INDEX gathering_lat_lng IF NOT EXISTS FOR (n:Gathering) ON (n.lat, n.lng)",
+        "CREATE INDEX aid_lat_lng IF NOT EXISTS FOR (n:Aid) ON (n.lat, n.lng)",
+        "CREATE INDEX need_lat_lng IF NOT EXISTS FOR (n:Need) ON (n.lat, n.lng)",
+        "CREATE INDEX notice_lat_lng IF NOT EXISTS FOR (n:Notice) ON (n.lat, n.lng)",
+        "CREATE INDEX tension_lat_lng IF NOT EXISTS FOR (n:Tension) ON (n.lat, n.lng)",
+    ];
+
+    for idx in &composite_geo_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Composite geo indexes created");
+
     // --- Backfill lat/lng from point() locations, then drop point() property ---
     let backfill = [
-        "MATCH (n:Event) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
-        "MATCH (n:Give) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Gathering) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
+        "MATCH (n:Aid) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Need) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Notice) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
         "MATCH (n:Tension) WHERE n.location IS NOT NULL AND n.lat IS NULL SET n.lat = n.location.y, n.lng = n.location.x",
@@ -115,8 +191,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Source diversity indexes ---
     let diversity_indexes = [
-        "CREATE INDEX event_source_diversity IF NOT EXISTS FOR (n:Event) ON (n.source_diversity)",
-        "CREATE INDEX give_source_diversity IF NOT EXISTS FOR (n:Give) ON (n.source_diversity)",
+        "CREATE INDEX gathering_source_diversity IF NOT EXISTS FOR (n:Gathering) ON (n.source_diversity)",
+        "CREATE INDEX aid_source_diversity IF NOT EXISTS FOR (n:Aid) ON (n.source_diversity)",
         "CREATE INDEX need_source_diversity IF NOT EXISTS FOR (n:Need) ON (n.source_diversity)",
         "CREATE INDEX notice_source_diversity IF NOT EXISTS FOR (n:Notice) ON (n.source_diversity)",
         "CREATE INDEX tension_source_diversity IF NOT EXISTS FOR (n:Tension) ON (n.source_diversity)",
@@ -129,8 +205,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Cause heat indexes ---
     let heat_indexes = [
-        "CREATE INDEX event_cause_heat IF NOT EXISTS FOR (n:Event) ON (n.cause_heat)",
-        "CREATE INDEX give_cause_heat IF NOT EXISTS FOR (n:Give) ON (n.cause_heat)",
+        "CREATE INDEX gathering_cause_heat IF NOT EXISTS FOR (n:Gathering) ON (n.cause_heat)",
+        "CREATE INDEX aid_cause_heat IF NOT EXISTS FOR (n:Aid) ON (n.cause_heat)",
         "CREATE INDEX need_cause_heat IF NOT EXISTS FOR (n:Need) ON (n.cause_heat)",
         "CREATE INDEX notice_cause_heat IF NOT EXISTS FOR (n:Notice) ON (n.cause_heat)",
         "CREATE INDEX tension_cause_heat IF NOT EXISTS FOR (n:Tension) ON (n.cause_heat)",
@@ -143,8 +219,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Full-text indexes ---
     let fulltext = [
-        "CREATE FULLTEXT INDEX event_text IF NOT EXISTS FOR (n:Event) ON EACH [n.title, n.summary]",
-        "CREATE FULLTEXT INDEX give_text IF NOT EXISTS FOR (n:Give) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX gathering_text IF NOT EXISTS FOR (n:Gathering) ON EACH [n.title, n.summary]",
+        "CREATE FULLTEXT INDEX aid_text IF NOT EXISTS FOR (n:Aid) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX need_text IF NOT EXISTS FOR (n:Need) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX notice_text IF NOT EXISTS FOR (n:Notice) ON EACH [n.title, n.summary]",
         "CREATE FULLTEXT INDEX tension_text IF NOT EXISTS FOR (n:Tension) ON EACH [n.title, n.summary]",
@@ -157,8 +233,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Vector indexes (1024-dim for Voyage embeddings) ---
     let vector = [
-        "CREATE VECTOR INDEX event_embedding IF NOT EXISTS FOR (n:Event) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
-        "CREATE VECTOR INDEX give_embedding IF NOT EXISTS FOR (n:Give) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX gathering_embedding IF NOT EXISTS FOR (n:Gathering) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX aid_embedding IF NOT EXISTS FOR (n:Aid) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX need_embedding IF NOT EXISTS FOR (n:Need) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX notice_embedding IF NOT EXISTS FOR (n:Notice) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
         "CREATE VECTOR INDEX tension_embedding IF NOT EXISTS FOR (n:Tension) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
@@ -449,7 +525,7 @@ pub async fn backfill_source_diversity(
     let mut total = 0u32;
     let mut updated = 0u32;
 
-    for label in &["Event", "Give", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
@@ -524,7 +600,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Keeps evs[0] (arbitrary but stable), deletes evs[1..].
     let dedup_q = query(
         "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-         WHERE n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension
+         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
          WITH n, ev.source_url AS src, collect(ev) AS evs
          WHERE size(evs) > 1
          UNWIND evs[1..] AS dup
@@ -547,7 +623,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Step 2: Recompute corroboration_count = (evidence_count - 1) for all signals.
     // After dedup, each evidence node = one unique source URL.
     // The original source isn't a corroboration, so subtract 1.
-    for label in &["Event", "Give", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let recount_q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
@@ -575,23 +651,23 @@ pub async fn backfill_event_dates(client: &GraphClient) -> Result<(), neo4rs::Er
 
     let steps = [
         // Null out empty strings
-        "MATCH (e:Event) WHERE e.starts_at = '' SET e.starts_at = null",
-        "MATCH (e:Event) WHERE e.ends_at = '' SET e.ends_at = null",
+        "MATCH (e:Gathering) WHERE e.starts_at = '' SET e.starts_at = null",
+        "MATCH (e:Gathering) WHERE e.ends_at = '' SET e.ends_at = null",
         // Null out starts_at that equals extracted_at (scrape timestamp mistaken for event date)
-        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND e.starts_at = e.extracted_at SET e.starts_at = null",
+        "MATCH (e:Gathering) WHERE e.starts_at IS NOT NULL AND e.starts_at = e.extracted_at SET e.starts_at = null",
         // Convert remaining string-typed dates to datetime (Neo4j 5.11+ type predicate syntax)
-        "MATCH (e:Event) WHERE e.starts_at IS NOT NULL AND e.starts_at IS :: STRING SET e.starts_at = datetime(e.starts_at)",
-        "MATCH (e:Event) WHERE e.ends_at IS NOT NULL AND e.ends_at IS :: STRING SET e.ends_at = datetime(e.ends_at)",
+        "MATCH (e:Gathering) WHERE e.starts_at IS NOT NULL AND e.starts_at IS :: STRING SET e.starts_at = datetime(e.starts_at)",
+        "MATCH (e:Gathering) WHERE e.ends_at IS NOT NULL AND e.ends_at IS :: STRING SET e.ends_at = datetime(e.ends_at)",
     ];
 
     for step in &steps {
         match g.run(query(step)).await {
             Ok(_) => {}
-            Err(e) => warn!("Event date backfill step failed (non-fatal): {e}"),
+            Err(e) => warn!("Gathering date backfill step failed (non-fatal): {e}"),
         }
     }
 
-    info!("Event date backfill complete");
+    info!("Gathering date backfill complete");
     Ok(())
 }
 
@@ -917,7 +993,7 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
     // Step 1: Delete off-geo non-tension signals
     let delete_signals = query(
         "MATCH (n)
-         WHERE (n:Event OR n:Give OR n:Need OR n:Notice)
+         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice)
            AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
          DETACH DELETE n
          RETURN count(n) AS deleted",
@@ -928,7 +1004,7 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
             if let Some(row) = stream.next().await? {
                 let deleted: i64 = row.get("deleted").unwrap_or(0);
                 if deleted > 0 {
-                    info!(deleted, "Deleted off-geo signals (Event/Give/Need/Notice)");
+                    info!(deleted, "Deleted off-geo signals (Gathering/Aid/Need/Notice)");
                 }
             }
         }
@@ -998,8 +1074,8 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
     // Step 4: Archive orphaned stories (lost all non-tension signals)
     let archive_orphans = query(
         "MATCH (s:Story)
-         WHERE NOT (s)-[:CONTAINS]->(:Event)
-           AND NOT (s)-[:CONTAINS]->(:Give)
+         WHERE NOT (s)-[:CONTAINS]->(:Gathering)
+           AND NOT (s)-[:CONTAINS]->(:Aid)
            AND NOT (s)-[:CONTAINS]->(:Need)
            AND NOT (s)-[:CONTAINS]->(:Notice)
          SET s.arc = 'archived'

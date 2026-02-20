@@ -1,11 +1,12 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
+use futures::future::join_all;
 use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, AskNode, EventNode, EvidenceNode, GeoPoint, GeoPrecision, GiveNode, Node,
+    fuzz_location, NeedNode, GatheringNode, EvidenceNode, GeoPoint, GeoPrecision, AidNode, Node,
     NodeMeta, NodeType, NoticeNode, SensitivityLevel, Severity, StoryNode, TensionNode,
-    TensionResponse, Urgency, ASK_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, EVENT_PAST_GRACE_HOURS,
+    TensionResponse, Urgency, NEED_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, GATHERING_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
@@ -36,50 +37,58 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let types = node_types.map(|t| t.to_vec()).unwrap_or_else(|| {
             vec![
-                NodeType::Event,
-                NodeType::Give,
-                NodeType::Ask,
+                NodeType::Gathering,
+                NodeType::Aid,
+                NodeType::Need,
                 NodeType::Notice,
                 NodeType::Tension,
             ]
         });
 
+        // Use bounding box on plain lat/lng properties.
+        // ~1 degree lat ≈ 111km, 1 degree lng ≈ 111km * cos(lat)
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
+
+        let branches: Vec<String> = types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})
+                     OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
+                     WHERE n.lat <> 0.0
+                       AND n.lat >= $min_lat AND n.lat <= $max_lat
+                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                       AND n.confidence >= $min_confidence
+                       {expiry}
+                     RETURN n, labels(n)[0] AS node_label,
+                            coalesce(s.type_diversity, 0) AS _sort_tri,
+                            n.cause_heat AS _sort_heat,
+                            n.confidence AS _sort_conf,
+                            n.last_confirmed_active AS _sort_time
+                     ORDER BY _sort_tri DESC, _sort_heat DESC, _sort_conf DESC, _sort_time DESC
+                     LIMIT 200",
+                    expiry = expiry_clause(*nt),
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("min_lat", lat - lat_delta)
+            .param("max_lat", lat + lat_delta)
+            .param("min_lng", lng - lng_delta)
+            .param("max_lng", lng + lng_delta)
+            .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
+
         let mut results = Vec::new();
-
-        for nt in &types {
-            let label = node_type_label(*nt);
-            // Use bounding box on plain lat/lng properties.
-            // ~1 degree lat ≈ 111km, 1 degree lng ≈ 111km * cos(lat)
-            let lat_delta = radius_km / 111.0;
-            let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
-
-            let cypher = format!(
-                "MATCH (n:{label})
-                 OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                 WHERE n.lat <> 0.0
-                   AND n.lat >= $min_lat AND n.lat <= $max_lat
-                   AND n.lng >= $min_lng AND n.lng <= $max_lng
-                   AND n.confidence >= $min_confidence
-                   {expiry}
-                 RETURN n
-                 ORDER BY coalesce(s.type_diversity, 0) DESC, n.cause_heat DESC, n.confidence DESC, n.last_confirmed_active DESC
-                 LIMIT 200",
-                expiry = expiry_clause(*nt),
-            );
-
-            let q = query(&cypher)
-                .param("min_lat", lat - lat_delta)
-                .param("max_lat", lat + lat_delta)
-                .param("min_lng", lng - lng_delta)
-                .param("max_lng", lng + lng_delta)
-                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
-
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        results.push(fuzz_node(node));
-                    }
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                if passes_display_filter(&node) {
+                    results.push(fuzz_node(node));
                 }
             }
         }
@@ -96,9 +105,9 @@ impl PublicGraphReader {
 
         // Search across all signal types
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
         ] {
@@ -136,41 +145,45 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let types = node_types.map(|t| t.to_vec()).unwrap_or_else(|| {
             vec![
-                NodeType::Event,
-                NodeType::Give,
-                NodeType::Ask,
+                NodeType::Gathering,
+                NodeType::Aid,
+                NodeType::Need,
                 NodeType::Notice,
                 NodeType::Tension,
             ]
         });
 
+        let branches: Vec<String> = types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})
+                     OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
+                     WHERE n.confidence >= $min_confidence
+                       {expiry}
+                     RETURN n, labels(n)[0] AS node_label, coalesce(s.type_diversity, 0) AS story_triangulation
+                     ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
+                     LIMIT $limit",
+                    expiry = expiry_clause(*nt),
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
+            .param("limit", limit as i64);
+
         // Carry (node, story_type_diversity) for cross-type sorting
         let mut ranked: Vec<(Node, i64)> = Vec::new();
-
-        for nt in &types {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (n:{label})
-                 OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                 WHERE n.confidence >= $min_confidence
-                   {expiry}
-                 RETURN n, coalesce(s.type_diversity, 0) AS story_triangulation
-                 ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
-                 LIMIT $limit",
-                expiry = expiry_clause(*nt),
-            );
-
-            let q = query(&cypher)
-                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
-                .param("limit", limit as i64);
-
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                let tri: i64 = row.get("story_triangulation").unwrap_or(0);
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        ranked.push((fuzz_node(node), tri));
-                    }
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let tri: i64 = row.get("story_triangulation").unwrap_or(0);
+            if let Some(node) = row_to_node_by_label(&row) {
+                if passes_display_filter(&node) {
+                    ranked.push((fuzz_node(node), tri));
                 }
             }
         }
@@ -237,37 +250,47 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        let mut all: Vec<Node> = Vec::new();
-        for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+        let all_types = [
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
-        ] {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (n:{label})
-                 WHERE n.lat <> 0.0
-                   AND n.lat >= $min_lat AND n.lat <= $max_lat
-                   AND n.lng >= $min_lng AND n.lng <= $max_lng
-                 RETURN n
-                 ORDER BY coalesce(n.cause_heat, 0) DESC, n.last_confirmed_active DESC
-                 LIMIT $limit"
-            );
-            let q = query(&cypher)
-                .param("min_lat", lat - lat_delta)
-                .param("max_lat", lat + lat_delta)
-                .param("min_lng", lng - lng_delta)
-                .param("max_lng", lng + lng_delta)
-                .param("limit", limit as i64);
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    all.push(node);
-                }
+        ];
+
+        let branches: Vec<String> = all_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})
+                     WHERE n.lat <> 0.0
+                       AND n.lat >= $min_lat AND n.lat <= $max_lat
+                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY coalesce(n.cause_heat, 0) DESC, n.last_confirmed_active DESC
+                     LIMIT $limit"
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("min_lat", lat - lat_delta)
+            .param("max_lat", lat + lat_delta)
+            .param("min_lng", lng - lng_delta)
+            .param("max_lng", lng + lng_delta)
+            .param("limit", limit as i64);
+
+        let mut all: Vec<Node> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                all.push(node);
             }
         }
+
         // Sort by cause_heat (tension-connected signals first), then recency
         all.sort_by(|a, b| {
             let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
@@ -346,29 +369,35 @@ impl PublicGraphReader {
 
     /// Get the constituent signals for a story.
     pub async fn get_story_signals(&self, story_id: Uuid) -> Result<Vec<Node>, neo4rs::Error> {
-        let mut signals = Vec::new();
-
-        for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+        let all_types = [
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
-        ] {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label})
-                 RETURN n
-                 ORDER BY n.confidence DESC"
-            );
+        ];
 
-            let q = query(&cypher).param("id", story_id.to_string());
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        signals.push(fuzz_node(node));
-                    }
+        let branches: Vec<String> = all_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label})
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY n.confidence DESC"
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+        let q = query(&cypher).param("id", story_id.to_string());
+
+        let mut signals = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                if passes_display_filter(&node) {
+                    signals.push(fuzz_node(node));
                 }
             }
         }
@@ -384,9 +413,9 @@ impl PublicGraphReader {
         let id_str = signal_id.to_string();
 
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
         ] {
@@ -445,7 +474,7 @@ impl PublicGraphReader {
         story_id: Uuid,
     ) -> Result<Vec<(Uuid, Vec<EvidenceNode>)>, neo4rs::Error> {
         let cypher = "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence)
-             WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+             WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
              RETURN n.id AS signal_id, collect(ev) AS evidence";
 
         let q = query(cypher).param("id", story_id.to_string());
@@ -471,7 +500,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<(Uuid, Vec<serde_json::Value>)>, neo4rs::Error> {
         let cypher =
             "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[rel:RESPONDS_TO|DRAWN_TO]-(resp)
-             WHERE resp:Give OR resp:Event OR resp:Ask
+             WHERE resp:Aid OR resp:Gathering OR resp:Need
              RETURN t.id AS tension_id, resp.id AS resp_id, resp.title AS resp_title,
                     resp.summary AS resp_summary,
                     labels(resp) AS resp_labels,
@@ -666,34 +695,40 @@ impl PublicGraphReader {
 
     // --- Tension response queries ---
 
-    /// Get Give/Event/Ask signals that respond to a tension, with edge metadata.
+    /// Get Aid/Gathering/Need signals that respond to a tension, with edge metadata.
     pub async fn tension_responses(
         &self,
         tension_id: Uuid,
     ) -> Result<Vec<TensionResponse>, neo4rs::Error> {
+        let response_types = [NodeType::Aid, NodeType::Gathering, NodeType::Need];
+
+        let branches: Vec<String> = response_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO|DRAWN_TO]-(n:{label})
+                     RETURN n, labels(n)[0] AS node_label, rel.match_strength AS match_strength, rel.explanation AS explanation
+                     ORDER BY n.confidence DESC"
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+        let q = query(&cypher).param("id", tension_id.to_string());
+
         let mut results = Vec::new();
-
-        for nt in &[NodeType::Give, NodeType::Event, NodeType::Ask] {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO|DRAWN_TO]-(n:{label})
-                 RETURN n, rel.match_strength AS match_strength, rel.explanation AS explanation
-                 ORDER BY n.confidence DESC"
-            );
-
-            let q = query(&cypher).param("id", tension_id.to_string());
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
-                        let explanation: String = row.get("explanation").unwrap_or_default();
-                        results.push(TensionResponse {
-                            node: fuzz_node(node),
-                            match_strength,
-                            explanation,
-                        });
-                    }
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                if passes_display_filter(&node) {
+                    let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
+                    let explanation: String = row.get("explanation").unwrap_or_default();
+                    results.push(TensionResponse {
+                        node: fuzz_node(node),
+                        match_strength,
+                        explanation,
+                    });
                 }
             }
         }
@@ -713,43 +748,53 @@ impl PublicGraphReader {
         max_lng: f64,
         limit: u32,
     ) -> Result<Vec<Node>, neo4rs::Error> {
-        let mut all: Vec<Node> = Vec::new();
-        for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+        let all_types = [
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
-        ] {
-            let label = node_type_label(*nt);
-            let cypher = format!(
-                "MATCH (n:{label})
-                 WHERE n.lat <> 0.0
-                   AND n.lat >= $min_lat AND n.lat <= $max_lat
-                   AND n.lng >= $min_lng AND n.lng <= $max_lng
-                   AND n.confidence >= $min_confidence
-                   {expiry}
-                 RETURN n
-                 ORDER BY coalesce(n.cause_heat, 0) DESC, n.confidence DESC
-                 LIMIT $limit",
-                expiry = expiry_clause(*nt),
-            );
-            let q = query(&cypher)
-                .param("min_lat", min_lat)
-                .param("max_lat", max_lat)
-                .param("min_lng", min_lng)
-                .param("max_lng", max_lng)
-                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
-                .param("limit", limit as i64);
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
-                    if passes_display_filter(&node) {
-                        all.push(fuzz_node(node));
-                    }
+        ];
+
+        let branches: Vec<String> = all_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})
+                     WHERE n.lat <> 0.0
+                       AND n.lat >= $min_lat AND n.lat <= $max_lat
+                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                       AND n.confidence >= $min_confidence
+                       {expiry}
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY coalesce(n.cause_heat, 0) DESC, n.confidence DESC
+                     LIMIT $limit",
+                    expiry = expiry_clause(*nt),
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("min_lat", min_lat)
+            .param("max_lat", max_lat)
+            .param("min_lng", min_lng)
+            .param("max_lng", max_lng)
+            .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
+            .param("limit", limit as i64);
+
+        let mut all: Vec<Node> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                if passes_display_filter(&node) {
+                    all.push(fuzz_node(node));
                 }
             }
         }
+
         all.sort_by(|a, b| {
             let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
             let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
@@ -799,6 +844,7 @@ impl PublicGraphReader {
     /// Semantic search for signals within a bounding box using vector KNN.
     /// Over-fetches from the vector index (K per type), then post-filters by bbox.
     /// Returns (node, blended_score) pairs sorted by blended score.
+    /// All 5 vector index queries run concurrently via join_all.
     pub async fn semantic_search_signals_in_bounds(
         &self,
         embedding: &[f32],
@@ -812,60 +858,64 @@ impl PublicGraphReader {
         let k_per_type = 100_i64;
         let min_score = 0.3_f64;
 
-        let mut scored: Vec<(Node, f64)> = Vec::new();
-
         let index_names = [
-            ("Event", "event_embedding"),
-            ("Give", "give_embedding"),
-            ("Ask", "ask_embedding"),
-            ("Notice", "notice_embedding"),
-            ("Tension", "tension_embedding"),
+            ("Gathering", "gathering_embedding", NodeType::Gathering),
+            ("Aid", "aid_embedding", NodeType::Aid),
+            ("Need", "need_embedding", NodeType::Need),
+            ("Notice", "notice_embedding", NodeType::Notice),
+            ("Tension", "tension_embedding", NodeType::Tension),
         ];
-        let type_map = [
-            ("Event", NodeType::Event),
-            ("Give", NodeType::Give),
-            ("Ask", NodeType::Ask),
-            ("Notice", NodeType::Notice),
-            ("Tension", NodeType::Tension),
-        ];
-        let type_lookup: std::collections::HashMap<&str, NodeType> =
-            type_map.iter().cloned().collect();
 
-        for (label, index_name) in &index_names {
-            let nt = type_lookup[label];
-            let cypher = format!(
-                "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
-                 YIELD node, score
-                 WHERE score >= $min_score
-                   AND node.lat <> 0.0
-                   AND node.lat >= $min_lat AND node.lat <= $max_lat
-                   AND node.lng >= $min_lng AND node.lng <= $max_lng
-                   AND node.confidence >= $min_confidence
-                 RETURN node AS n, score"
-            );
+        let futures: Vec<_> = index_names
+            .iter()
+            .map(|(_label, index_name, nt)| {
+                let nt = *nt;
+                let embedding_vec = embedding_vec.clone();
+                let graph = &self.client.graph;
+                async move {
+                    let cypher =
+                        "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                         YIELD node, score
+                         WHERE score >= $min_score
+                           AND node.lat <> 0.0
+                           AND node.lat >= $min_lat AND node.lat <= $max_lat
+                           AND node.lng >= $min_lng AND node.lng <= $max_lng
+                           AND node.confidence >= $min_confidence
+                         RETURN node AS n, score";
 
-            let q = query(&cypher)
-                .param("index_name", *index_name)
-                .param("k", k_per_type)
-                .param("embedding", embedding_vec.clone())
-                .param("min_score", min_score)
-                .param("min_lat", min_lat)
-                .param("max_lat", max_lat)
-                .param("min_lng", min_lng)
-                .param("max_lng", max_lng)
-                .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
+                    let q = query(cypher)
+                        .param("index_name", *index_name)
+                        .param("k", k_per_type)
+                        .param("embedding", embedding_vec)
+                        .param("min_score", min_score)
+                        .param("min_lat", min_lat)
+                        .param("max_lat", max_lat)
+                        .param("min_lng", min_lng)
+                        .param("max_lng", max_lng)
+                        .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
 
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                let similarity: f64 = row.get("score").unwrap_or(0.0);
-                if let Some(node) = row_to_node(&row, nt) {
-                    if passes_display_filter(&node) {
-                        let heat = node.meta().map(|m| m.cause_heat).unwrap_or(0.0);
-                        let blended = similarity * 0.6 + heat * 0.4;
-                        scored.push((fuzz_node(node), blended));
+                    let mut results: Vec<(Node, f64)> = Vec::new();
+                    let mut stream = graph.execute(q).await?;
+                    while let Some(row) = stream.next().await? {
+                        let similarity: f64 = row.get("score").unwrap_or(0.0);
+                        if let Some(node) = row_to_node(&row, nt) {
+                            if passes_display_filter(&node) {
+                                let heat = node.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+                                let blended = similarity * 0.6 + heat * 0.4;
+                                results.push((fuzz_node(node), blended));
+                            }
+                        }
                     }
+                    Ok::<_, neo4rs::Error>(results)
                 }
-            }
+            })
+            .collect();
+
+        let all_results = join_all(futures).await;
+
+        let mut scored: Vec<(Node, f64)> = Vec::new();
+        for result in all_results {
+            scored.extend(result?);
         }
 
         scored.sort_by(|(_, a), (_, b)| {
@@ -896,9 +946,9 @@ impl PublicGraphReader {
             std::collections::HashMap::new();
 
         let index_names = [
-            ("Event", "event_embedding"),
-            ("Give", "give_embedding"),
-            ("Ask", "ask_embedding"),
+            ("Gathering", "gathering_embedding"),
+            ("Aid", "aid_embedding"),
+            ("Need", "need_embedding"),
             ("Notice", "notice_embedding"),
             ("Tension", "tension_embedding"),
         ];
@@ -978,9 +1028,9 @@ impl PublicGraphReader {
     pub async fn count_by_type(&self) -> Result<Vec<(NodeType, u64)>, neo4rs::Error> {
         let mut counts = Vec::new();
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
         ] {
@@ -999,7 +1049,7 @@ impl PublicGraphReader {
     pub async fn confidence_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+            WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
             WITH CASE
                 WHEN n.confidence >= 0.8 THEN 'high (0.8+)'
                 WHEN n.confidence >= 0.6 THEN 'good (0.6-0.8)'
@@ -1024,7 +1074,7 @@ impl PublicGraphReader {
     pub async fn freshness_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+            WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
             WITH (datetime() - n.last_confirmed_active).day AS age_days
             WITH CASE
                 WHEN age_days <= 7 THEN '< 7 days'
@@ -1053,7 +1103,7 @@ impl PublicGraphReader {
     }
 
     /// Signal volume by day for last 30 days, grouped by type.
-    /// Returns Vec<(date_string, event, give, ask, notice, tension)>.
+    /// Returns Vec<(date_string, gathering, aid, need, notice, tension)>.
     pub async fn signal_volume_by_day(
         &self,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, neo4rs::Error> {
@@ -1061,16 +1111,16 @@ impl PublicGraphReader {
             "WITH date(datetime() - duration('P30D')) AS cutoff
              UNWIND range(0, 29) AS offset
              WITH date(datetime() - duration('P' + toString(offset) + 'D')) AS day
-             OPTIONAL MATCH (e:Event) WHERE date(e.extracted_at) = day
+             OPTIONAL MATCH (e:Gathering) WHERE date(e.extracted_at) = day
              WITH day, count(e) AS events
-             OPTIONAL MATCH (g:Give) WHERE date(g.extracted_at) = day
+             OPTIONAL MATCH (g:Aid) WHERE date(g.extracted_at) = day
              WITH day, events, count(g) AS gives
-             OPTIONAL MATCH (a:Ask) WHERE date(a.extracted_at) = day
-             WITH day, events, gives, count(a) AS asks
+             OPTIONAL MATCH (a:Need) WHERE date(a.extracted_at) = day
+             WITH day, events, gives, count(a) AS needs
              OPTIONAL MATCH (n:Notice) WHERE date(n.extracted_at) = day
-             WITH day, events, gives, asks, count(n) AS notices
+             WITH day, events, gives, needs, count(n) AS notices
              OPTIONAL MATCH (t:Tension) WHERE date(t.extracted_at) = day
-             RETURN toString(day) AS day, events, gives, asks, notices, count(t) AS tensions
+             RETURN toString(day) AS day, events, gives, needs, notices, count(t) AS tensions
              ORDER BY day",
         );
 
@@ -1080,14 +1130,14 @@ impl PublicGraphReader {
             let day: String = row.get("day").unwrap_or_default();
             let events: i64 = row.get("events").unwrap_or(0);
             let gives: i64 = row.get("gives").unwrap_or(0);
-            let asks: i64 = row.get("asks").unwrap_or(0);
+            let needs: i64 = row.get("needs").unwrap_or(0);
             let notices: i64 = row.get("notices").unwrap_or(0);
             let tensions: i64 = row.get("tensions").unwrap_or(0);
             results.push((
                 day,
                 events as u64,
                 gives as u64,
-                asks as u64,
+                needs as u64,
                 notices as u64,
                 tensions as u64,
             ));
@@ -1181,7 +1231,7 @@ impl PublicGraphReader {
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-             WHERE n.id IN $ids AND (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+             WHERE n.id IN $ids AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
              RETURN n.id AS signal_id, collect(ev) AS evidence";
 
         let q = query(cypher).param("ids", id_strs);
@@ -1264,9 +1314,9 @@ impl PublicGraphReader {
 
     // ─── Resource Capability Matching ────────────────────────────────
 
-    /// Find Ask/Event nodes that REQUIRE a specific resource.
+    /// Find Need/Gathering nodes that REQUIRE a specific resource.
     /// Returns matches scored by resource completeness, sorted by score descending.
-    pub async fn find_asks_by_resource(
+    pub async fn find_needs_by_resource(
         &self,
         slug: &str,
         lat: f64,
@@ -1274,13 +1324,13 @@ impl PublicGraphReader {
         radius_km: f64,
         limit: u32,
     ) -> Result<Vec<ResourceMatch>, neo4rs::Error> {
-        self.find_asks_by_resources(&[slug.to_string()], lat, lng, radius_km, limit)
+        self.find_needs_by_resources(&[slug.to_string()], lat, lng, radius_km, limit)
             .await
     }
 
-    /// Find Ask/Event nodes matching ANY of the provided resource slugs.
+    /// Find Need/Gathering nodes matching ANY of the provided resource slugs.
     /// Scores by match completeness: each matched Requires = 1/total_requires, +0.2 per matched Prefers.
-    pub async fn find_asks_by_resources(
+    pub async fn find_needs_by_resources(
         &self,
         slugs: &[String],
         lat: f64,
@@ -1291,10 +1341,10 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        // Find all Ask/Event nodes linked to ANY of the requested resources
+        // Find all Need/Gathering nodes linked to ANY of the requested resources
         let cypher = "MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(s)
              WHERE r.slug IN $slugs
-               AND (s:Ask OR s:Event)
+               AND (s:Need OR s:Gathering)
                AND s.confidence >= $min_confidence
                AND (
                    (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
@@ -1323,9 +1373,9 @@ impl PublicGraphReader {
 
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            // Try to parse as Ask or Event
+            // Try to parse as Need or Gathering
             let node =
-                row_to_node(&row, NodeType::Ask).or_else(|| row_to_node(&row, NodeType::Event));
+                row_to_node(&row, NodeType::Need).or_else(|| row_to_node(&row, NodeType::Gathering));
 
             let Some(node) = node else { continue };
             if !passes_display_filter(&node) {
@@ -1378,8 +1428,8 @@ impl PublicGraphReader {
         Ok(matches)
     }
 
-    /// Find Give nodes that OFFER a specific resource.
-    pub async fn find_gives_by_resource(
+    /// Find Aid nodes that OFFER a specific resource.
+    pub async fn find_aids_by_resource(
         &self,
         slug: &str,
         lat: f64,
@@ -1390,7 +1440,7 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        let cypher = "MATCH (r:Resource {slug: $slug})<-[:OFFERS]-(s:Give)
+        let cypher = "MATCH (r:Resource {slug: $slug})<-[:OFFERS]-(s:Aid)
              WHERE s.confidence >= $min_confidence
                AND (
                    (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
@@ -1413,7 +1463,7 @@ impl PublicGraphReader {
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            if let Some(node) = row_to_node(&row, NodeType::Give) {
+            if let Some(node) = row_to_node(&row, NodeType::Aid) {
                 if passes_display_filter(&node) {
                     results.push(ResourceMatch {
                         node: fuzz_node(node),
@@ -1544,20 +1594,41 @@ fn parse_row_datetime(row: &neo4rs::Row, key: &str) -> DateTime<Utc> {
 
 pub fn node_type_label(nt: NodeType) -> &'static str {
     match nt {
-        NodeType::Event => "Event",
-        NodeType::Give => "Give",
-        NodeType::Ask => "Ask",
+        NodeType::Gathering => "Gathering",
+        NodeType::Aid => "Aid",
+        NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
         NodeType::Evidence => "Evidence",
     }
 }
 
+/// Inverse of `node_type_label`: map a Neo4j label string back to a NodeType.
+fn label_to_node_type(label: &str) -> Option<NodeType> {
+    match label {
+        "Gathering" => Some(NodeType::Gathering),
+        "Aid" => Some(NodeType::Aid),
+        "Need" => Some(NodeType::Need),
+        "Notice" => Some(NodeType::Notice),
+        "Tension" => Some(NodeType::Tension),
+        "Evidence" => Some(NodeType::Evidence),
+        _ => None,
+    }
+}
+
+/// Parse a row that includes a `node_label` column (from UNION queries) and dispatch
+/// to `row_to_node` with the correct NodeType.
+fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
+    let label: String = row.get("node_label").ok()?;
+    let nt = label_to_node_type(&label)?;
+    row_to_node(row, nt)
+}
+
 /// Per-type Cypher WHERE clause fragment for expiration.
 /// Returns an AND clause (or empty string) to inject into existing WHERE blocks.
 fn expiry_clause(nt: NodeType) -> String {
     match nt {
-        NodeType::Event => format!(
+        NodeType::Gathering => format!(
             "AND (n.is_recurring = true \
              OR n.starts_at IS NULL OR n.starts_at = '' \
              OR CASE \
@@ -1565,13 +1636,13 @@ fn expiry_clause(nt: NodeType) -> String {
                THEN datetime(n.ends_at) >= datetime() - duration('PT{grace}H') \
                ELSE datetime(n.starts_at) >= datetime() - duration('PT{grace}H') \
              END)",
-            grace = EVENT_PAST_GRACE_HOURS,
+            grace = GATHERING_PAST_GRACE_HOURS,
         ),
-        NodeType::Ask => format!(
+        NodeType::Need => format!(
             "AND datetime(n.extracted_at) >= datetime() - duration('P{days}D')",
-            days = ASK_EXPIRE_DAYS,
+            days = NEED_EXPIRE_DAYS,
         ),
-        NodeType::Give => format!(
+        NodeType::Aid => format!(
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
@@ -1599,9 +1670,9 @@ fn fuzz_node(mut node: Node) -> Node {
 
 fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
     match node {
-        Node::Event(n) => Some(&mut n.meta),
-        Node::Give(n) => Some(&mut n.meta),
-        Node::Ask(n) => Some(&mut n.meta),
+        Node::Gathering(n) => Some(&mut n.meta),
+        Node::Aid(n) => Some(&mut n.meta),
+        Node::Need(n) => Some(&mut n.meta),
         Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),
         Node::Evidence(_) => None,
@@ -1617,22 +1688,22 @@ fn passes_display_filter(node: &Node) -> bool {
 
     let now = Utc::now();
 
-    // Event-specific: hide past non-recurring events (only if date is known)
-    if let Node::Event(e) = node {
+    // Gathering-specific: hide past non-recurring events (only if date is known)
+    if let Node::Gathering(e) = node {
         if !e.is_recurring {
             if let Some(starts_at) = e.starts_at {
                 let event_end = e.ends_at.unwrap_or(starts_at);
-                if (now - event_end).num_hours() > EVENT_PAST_GRACE_HOURS {
+                if (now - event_end).num_hours() > GATHERING_PAST_GRACE_HOURS {
                     return false;
                 }
             }
-            // Events with no starts_at: fall through to general freshness check
+            // Gatherings with no starts_at: fall through to general freshness check
         }
     }
 
-    // Ask-specific: expire after ASK_EXPIRE_DAYS
-    if matches!(node, Node::Ask(_)) {
-        if (now - meta.extracted_at).num_days() > ASK_EXPIRE_DAYS {
+    // Need-specific: expire after NEED_EXPIRE_DAYS
+    if matches!(node, Node::Need(_)) {
+        if (now - meta.extracted_at).num_days() > NEED_EXPIRE_DAYS {
             return false;
         }
     }
@@ -1648,7 +1719,7 @@ fn passes_display_filter(node: &Node) -> bool {
     let age_days = (now - meta.last_confirmed_active).num_days();
     if age_days > FRESHNESS_MAX_DAYS {
         match node {
-            Node::Event(e) if e.is_recurring => {}
+            Node::Gathering(e) if e.is_recurring => {}
             _ => return false,
         }
     }
@@ -1714,7 +1785,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     };
 
     match node_type {
-        NodeType::Event => {
+        NodeType::Gathering => {
             let starts_at = parse_optional_datetime_prop(&n, "starts_at");
             let ends_at_str: String = n.get("ends_at").unwrap_or_default();
             let ends_at = if ends_at_str.is_empty() {
@@ -1733,7 +1804,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             let organizer: String = n.get("organizer").unwrap_or_default();
             let is_recurring: bool = n.get("is_recurring").unwrap_or(false);
 
-            Some(Node::Event(EventNode {
+            Some(Node::Gathering(GatheringNode {
                 meta,
                 starts_at,
                 ends_at,
@@ -1746,12 +1817,12 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 is_recurring,
             }))
         }
-        NodeType::Give => {
+        NodeType::Aid => {
             let action_url: String = n.get("action_url").unwrap_or_default();
             let availability: String = n.get("availability").unwrap_or_default();
             let is_ongoing: bool = n.get("is_ongoing").unwrap_or(false);
 
-            Some(Node::Give(GiveNode {
+            Some(Node::Aid(AidNode {
                 meta,
                 action_url,
                 availability: if availability.is_empty() {
@@ -1762,7 +1833,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 is_ongoing,
             }))
         }
-        NodeType::Ask => {
+        NodeType::Need => {
             let urgency_str: String = n.get("urgency").unwrap_or_default();
             let urgency = match urgency_str.as_str() {
                 "high" => Urgency::High,
@@ -1774,7 +1845,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             let action_url: String = n.get("action_url").unwrap_or_default();
             let goal: String = n.get("goal").unwrap_or_default();
 
-            Some(Node::Ask(AskNode {
+            Some(Node::Need(NeedNode {
                 meta,
                 urgency,
                 what_needed: if what_needed.is_empty() {

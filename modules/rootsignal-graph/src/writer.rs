@@ -4,9 +4,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, NeedNode, CityNode, ClusterSnapshot, DiscoveryMethod, EventNode, EvidenceNode,
-    GiveNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
-    SourceType, StoryNode, TensionNode, NEED_EXPIRE_DAYS, EVENT_PAST_GRACE_HOURS,
+    ActorNode, NeedNode, CityNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
+    AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
+    SourceType, StoryNode, TensionNode, NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS,
     FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
@@ -25,8 +25,8 @@ impl GraphWriter {
     /// Create a typed node in the graph. Returns the node's UUID.
     pub async fn create_node(&self, node: &Node, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         match node {
-            Node::Event(n) => self.create_event(n, embedding).await,
-            Node::Give(n) => self.create_give(n, embedding).await,
+            Node::Gathering(n) => self.create_gathering(n, embedding).await,
+            Node::Aid(n) => self.create_aid(n, embedding).await,
             Node::Need(n) => self.create_need(n, embedding).await,
             Node::Notice(n) => self.create_notice(n, embedding).await,
             Node::Tension(n) => self.create_tension(n, embedding).await,
@@ -38,9 +38,9 @@ impl GraphWriter {
         }
     }
 
-    async fn create_event(&self, n: &EventNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_gathering(&self, n: &GatheringNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         let q = query(
-            "CREATE (e:Event {
+            "CREATE (e:Gathering {
                 id: $id,
                 title: $title,
                 summary: $summary,
@@ -108,9 +108,9 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_give(&self, n: &GiveNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_aid(&self, n: &AidNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
         let q = query(
-            "CREATE (g:Give {
+            "CREATE (g:Aid {
                 id: $id,
                 title: $title,
                 summary: $summary,
@@ -370,8 +370,8 @@ impl GraphWriter {
         // ON CREATE: set all fields on the new Evidence node.
         // ON MATCH: update hash + timestamp (page content changed but same source).
         let q = query(
-            "OPTIONAL MATCH (e:Event {id: $signal_id})
-            OPTIONAL MATCH (g:Give {id: $signal_id})
+            "OPTIONAL MATCH (e:Gathering {id: $signal_id})
+            OPTIONAL MATCH (g:Aid {id: $signal_id})
             OPTIONAL MATCH (a:Need {id: $signal_id})
             OPTIONAL MATCH (nc:Notice {id: $signal_id})
             OPTIONAL MATCH (t:Tension {id: $signal_id})
@@ -415,8 +415,8 @@ impl GraphWriter {
         now: DateTime<Utc>,
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -451,8 +451,8 @@ impl GraphWriter {
         let mut best: Option<DuplicateMatch> = None;
 
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
+            NodeType::Gathering,
+            NodeType::Aid,
             NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
@@ -481,8 +481,8 @@ impl GraphWriter {
         max_lng: f64,
     ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
         let index_name = match node_type {
-            NodeType::Event => "event_embedding",
-            NodeType::Give => "give_embedding",
+            NodeType::Gathering => "gathering_embedding",
+            NodeType::Aid => "aid_embedding",
             NodeType::Need => "need_embedding",
             NodeType::Notice => "notice_embedding",
             NodeType::Tension => "tension_embedding",
@@ -554,7 +554,7 @@ impl GraphWriter {
     ) -> Result<u64, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND n.source_url = $url
              SET n.last_confirmed_active = datetime($now)
              RETURN count(n) AS refreshed",
@@ -578,7 +578,7 @@ impl GraphWriter {
     ) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND n.source_url = $url
              RETURN n.title AS title",
         )
@@ -608,14 +608,14 @@ impl GraphWriter {
 
         // Query each label once with all titles for that type
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
+            NodeType::Gathering,
+            NodeType::Aid,
             NodeType::Need,
             NodeType::Notice,
         ] {
             let label = match nt {
-                NodeType::Event => "Event",
-                NodeType::Give => "Give",
+                NodeType::Gathering => "Gathering",
+                NodeType::Aid => "Aid",
                 NodeType::Need => "Need",
                 NodeType::Notice => "Notice",
                 _ => continue,
@@ -661,8 +661,8 @@ impl GraphWriter {
         entity_mappings: &[rootsignal_common::EntityMappingOwned],
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -709,8 +709,8 @@ impl GraphWriter {
         entity_mappings: &[rootsignal_common::EntityMappingOwned],
     ) -> Result<(u32, f32), neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -770,7 +770,7 @@ impl GraphWriter {
 
         // 1. Past non-recurring events (only those with a known start date)
         let q = query(&format!(
-            "MATCH (n:Event)
+            "MATCH (n:Gathering)
              WHERE n.is_recurring = false
                AND n.starts_at IS NOT NULL AND n.starts_at <> ''
                AND CASE
@@ -781,10 +781,10 @@ impl GraphWriter {
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
-            EVENT_PAST_GRACE_HOURS, EVENT_PAST_GRACE_HOURS
+            GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
         ));
         if let Some(row) = self.client.graph.execute(q).await?.next().await? {
-            stats.events = row.get::<i64>("deleted").unwrap_or(0) as u64;
+            stats.gatherings = row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
         // 2. Expired needs
@@ -814,7 +814,7 @@ impl GraphWriter {
         }
 
         // 4. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
-        for label in &["Give", "Tension"] {
+        for label in &["Aid", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
@@ -829,10 +829,10 @@ impl GraphWriter {
             }
         }
 
-        let total = stats.events + stats.needs + stats.stale;
+        let total = stats.gatherings + stats.needs + stats.stale;
         if total > 0 {
             info!(
-                events = stats.events,
+                gatherings = stats.gatherings,
                 needs = stats.needs,
                 stale = stats.stale,
                 "Reaped expired signals"
@@ -945,6 +945,63 @@ impl GraphWriter {
             return Ok(due as u32);
         }
         Ok(0)
+    }
+
+    /// Batch check scout running status for multiple cities in a single query.
+    pub async fn batch_scout_running(
+        &self,
+        slugs: &[String],
+    ) -> Result<std::collections::HashMap<String, bool>, neo4rs::Error> {
+        let mut map = std::collections::HashMap::new();
+        if slugs.is_empty() {
+            return Ok(map);
+        }
+
+        let q = query(
+            "UNWIND $slugs AS slug
+             OPTIONAL MATCH (lock:ScoutLock {city: slug})
+             WHERE lock.started_at >= datetime() - duration('PT30M')
+             RETURN slug, lock IS NOT NULL AS running",
+        )
+        .param("slugs", slugs.to_vec());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let slug: String = row.get("slug").unwrap_or_default();
+            let running: bool = row.get("running").unwrap_or(false);
+            map.insert(slug, running);
+        }
+
+        Ok(map)
+    }
+
+    /// Batch count due sources for multiple cities in a single query.
+    pub async fn batch_due_sources(
+        &self,
+        slugs: &[String],
+    ) -> Result<std::collections::HashMap<String, u32>, neo4rs::Error> {
+        let mut map = std::collections::HashMap::new();
+        if slugs.is_empty() {
+            return Ok(map);
+        }
+
+        let q = query(
+            "UNWIND $slugs AS slug
+             OPTIONAL MATCH (s:Source {city: slug, active: true})
+             WHERE s.last_scraped IS NULL
+                OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
+             RETURN slug, count(s) AS due",
+        )
+        .param("slugs", slugs.to_vec());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let slug: String = row.get("slug").unwrap_or_default();
+            let due: i64 = row.get("due").unwrap_or(0);
+            map.insert(slug, due as u32);
+        }
+
+        Ok(map)
     }
 
     /// Get the earliest time a source becomes due for scraping.
@@ -1084,7 +1141,7 @@ impl GraphWriter {
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (s:Story {id: $story_id})
-             MATCH (n) WHERE n.id = $signal_id AND (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+             MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
              MERGE (s)-[:CONTAINS]->(n)"
         )
         .param("story_id", story_id.to_string())
@@ -1416,7 +1473,7 @@ impl GraphWriter {
             let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
             let nq = query(
                 "MATCH (n)
-                 WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+                 WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                    AND n.lat <> 0.0
                    AND n.lat >= $min_lat AND n.lat <= $max_lat
                    AND n.lng >= $min_lng AND n.lng <= $max_lng
@@ -1809,7 +1866,7 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Get implied queries from Give/Event signals recently linked to heated tensions.
+    /// Get implied queries from Aid/Gathering signals recently linked to heated tensions.
     /// These signals were extracted with implied_queries but deferred expansion until
     /// response mapping connected them to a tension. Clears queries after collection
     /// to prevent replay on subsequent runs.
@@ -1817,10 +1874,10 @@ impl GraphWriter {
         &self,
         _city: &str,
     ) -> Result<Vec<String>, neo4rs::Error> {
-        // Find Give/Event signals with implied_queries that are linked to heated tensions
+        // Find Aid/Gathering signals with implied_queries that are linked to heated tensions
         let q = query(
             "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Tension)
-             WHERE (s:Give OR s:Event)
+             WHERE (s:Aid OR s:Gathering)
                AND s.implied_queries IS NOT NULL
                AND size(s.implied_queries) > 0
                AND coalesce(t.cause_heat, 0.0) >= 0.1
@@ -1846,7 +1903,7 @@ impl GraphWriter {
             for id in &signal_ids {
                 let clear_q = query(
                     "MATCH (s {id: $id})
-                     WHERE s:Give OR s:Event
+                     WHERE s:Aid OR s:Gathering
                      SET s.implied_queries = null",
                 )
                 .param("id", id.as_str());
@@ -1872,17 +1929,17 @@ impl GraphWriter {
              ORDER BY coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit
              OPTIONAL MATCH (r)-[:RESPONDS_TO]->(t)
-             WHERE r:Give OR r:Event OR r:Need
+             WHERE r:Aid OR r:Gathering OR r:Need
              WITH t,
-                  count(CASE WHEN r:Give THEN 1 END) AS give_count,
-                  count(CASE WHEN r:Event THEN 1 END) AS event_count,
+                  count(CASE WHEN r:Aid THEN 1 END) AS aid_count,
+                  count(CASE WHEN r:Gathering THEN 1 END) AS gathering_count,
                   count(CASE WHEN r:Need THEN 1 END) AS need_count,
                   collect(DISTINCT r.title)[..5] AS sample_titles
-             WHERE give_count + event_count + need_count > 0
+             WHERE aid_count + gathering_count + need_count > 0
              RETURN t.title AS title,
                     t.what_would_help AS what_would_help,
                     coalesce(t.cause_heat, 0.0) AS cause_heat,
-                    give_count, event_count, need_count,
+                    aid_count, gathering_count, need_count,
                     sample_titles",
         )
         .param("limit", limit as i64);
@@ -1893,8 +1950,8 @@ impl GraphWriter {
             let title: String = row.get("title").unwrap_or_default();
             let what_would_help: Option<String> = row.get("what_would_help").ok();
             let cause_heat: f64 = row.get("cause_heat").unwrap_or(0.0);
-            let give_count: i64 = row.get("give_count").unwrap_or(0);
-            let event_count: i64 = row.get("event_count").unwrap_or(0);
+            let aid_count: i64 = row.get("aid_count").unwrap_or(0);
+            let gathering_count: i64 = row.get("gathering_count").unwrap_or(0);
             let need_count: i64 = row.get("need_count").unwrap_or(0);
             let sample_titles: Vec<String> = row.get("sample_titles").unwrap_or_default();
 
@@ -1902,8 +1959,8 @@ impl GraphWriter {
                 title,
                 what_would_help,
                 cause_heat,
-                give_count: give_count as u32,
-                event_count: event_count as u32,
+                aid_count: aid_count as u32,
+                gathering_count: gathering_count as u32,
                 need_count: need_count as u32,
                 sample_titles,
             });
@@ -1997,7 +2054,7 @@ impl GraphWriter {
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {id: $actor_id})
-             MATCH (n) WHERE n.id = $signal_id AND (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+             MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
              MERGE (a)-[:ACTED_IN {role: $role}]->(n)"
         )
         .param("actor_id", actor_id.to_string())
@@ -2086,7 +2143,7 @@ impl GraphWriter {
 
     // --- Response mapping operations ---
 
-    /// Create a RESPONDS_TO edge between a Give/Event signal and a Tension.
+    /// Create a RESPONDS_TO edge between a Aid/Gathering signal and a Tension.
     pub async fn create_response_edge(
         &self,
         responder_id: Uuid,
@@ -2095,7 +2152,7 @@ impl GraphWriter {
         explanation: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event OR resp:Need)
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
              MATCH (t:Tension {id: $tension_id})
              MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
         )
@@ -2143,7 +2200,7 @@ impl GraphWriter {
              WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
-                  count(CASE WHEN n:Give OR n:Event THEN 1 END) AS response_signals,
+                  count(CASE WHEN n:Aid OR n:Gathering THEN 1 END) AS response_signals,
                   count(CASE WHEN n:Tension THEN 1 END) AS tension_signals
              RETURN a.name AS name, a.domains AS domains, a.social_urls AS social_urls,
                     CASE
@@ -2269,8 +2326,8 @@ impl GraphWriter {
         let mut counts = SignalTypeCounts::default();
 
         for (label, field) in &[
-            ("Event", "events"),
-            ("Give", "gives"),
+            ("Gathering", "gatherings"),
+            ("Aid", "aids"),
             ("Need", "needs"),
             ("Notice", "notices"),
             ("Tension", "tensions"),
@@ -2284,8 +2341,8 @@ impl GraphWriter {
             if let Some(row) = stream.next().await? {
                 let cnt = row.get::<i64>("cnt").unwrap_or(0) as u32;
                 match *field {
-                    "events" => counts.events = cnt,
-                    "gives" => counts.gives = cnt,
+                    "gatherings" => counts.gatherings = cnt,
+                    "aids" => counts.aids = cnt,
                     "needs" => counts.needs = cnt,
                     "notices" => counts.notices = cnt,
                     "tensions" => counts.tensions = cnt,
@@ -2449,12 +2506,12 @@ impl GraphWriter {
         // Priority 3: Thin-story signals (from emerging stories, < 2 evidence nodes)
         let q = query(
             "MATCH (s:Story {status: 'emerging'})-[:CONTAINS]->(n)
-             WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
              WITH n, count(ev) AS ev_count,
-                  CASE WHEN n:Event THEN 'Event'
-                       WHEN n:Give THEN 'Give'
+                  CASE WHEN n:Gathering THEN 'Gathering'
+                       WHEN n:Aid THEN 'Aid'
                        WHEN n:Need THEN 'Need'
                        WHEN n:Notice THEN 'Notice'
                        WHEN n:Tension THEN 'Tension'
@@ -2487,8 +2544,8 @@ impl GraphWriter {
 
             let label: String = row.get("label").unwrap_or_default();
             let node_type = match label.as_str() {
-                "Event" => NodeType::Event,
-                "Give" => NodeType::Give,
+                "Gathering" => NodeType::Gathering,
+                "Aid" => NodeType::Aid,
                 "Need" => NodeType::Need,
                 "Notice" => NodeType::Notice,
                 "Tension" => NodeType::Tension,
@@ -2528,8 +2585,8 @@ impl GraphWriter {
         node_type: NodeType,
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -2565,7 +2622,7 @@ impl GraphWriter {
         // Pre-pass: promote exhausted retries to abandoned
         let promote = query(
             "MATCH (n)
-             WHERE (n:Give OR n:Event OR n:Need OR n:Notice)
+             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
                AND n.curiosity_investigated = 'failed'
                AND n.curiosity_retry_count >= 3
              SET n.curiosity_investigated = 'abandoned'",
@@ -2574,7 +2631,7 @@ impl GraphWriter {
 
         let q = query(
             "MATCH (n)
-             WHERE (n:Give OR n:Event OR n:Need OR n:Notice)
+             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
                AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
                AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)
                AND n.confidence >= 0.5
@@ -2582,8 +2639,8 @@ impl GraphWriter {
                AND n.lng >= $min_lng AND n.lng <= $max_lng
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
                     n.source_url AS source_url,
-                    CASE WHEN n:Event THEN 'Event'
-                         WHEN n:Give THEN 'Give'
+                    CASE WHEN n:Gathering THEN 'Gathering'
+                         WHEN n:Aid THEN 'Aid'
                          WHEN n:Need THEN 'Need'
                          WHEN n:Notice THEN 'Notice'
                     END AS label
@@ -2627,7 +2684,7 @@ impl GraphWriter {
         outcome: TensionLinkerOutcome,
     ) -> Result<(), neo4rs::Error> {
         let label = match label {
-            "Event" | "Give" | "Need" | "Notice" => label,
+            "Gathering" | "Aid" | "Need" | "Notice" => label,
             _ => return Ok(()),
         };
 
@@ -2847,7 +2904,7 @@ impl GraphWriter {
     pub async fn count_abandoned_signals(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Give OR n:Event OR n:Need OR n:Notice)
+             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
                AND n.curiosity_investigated = 'abandoned'
              RETURN count(n) AS cnt",
         );
@@ -2990,8 +3047,8 @@ impl GraphWriter {
         new_confidence: f32,
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -3017,8 +3074,8 @@ impl GraphWriter {
         node_type: NodeType,
     ) -> Result<f32, neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -3047,8 +3104,8 @@ impl GraphWriter {
         node_type: NodeType,
     ) -> Result<Vec<EvidenceSummary>, neo4rs::Error> {
         let label = match node_type {
-            NodeType::Event => "Event",
-            NodeType::Give => "Give",
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
@@ -3175,7 +3232,7 @@ impl GraphWriter {
                 for url in urls {
                     let q = query(
                         "MATCH (n)
-                         WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+                         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                            AND n.source_url = $url
                          RETURN count(n) AS cnt",
                     )
@@ -3194,7 +3251,7 @@ impl GraphWriter {
                 for url in urls {
                     let q = query(
                         "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence {relevance: 'CONTRADICTING'})
-                         WHERE (n:Event OR n:Give OR n:Need OR n:Notice OR n:Tension)
+                         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                            AND n.source_url = $url
                          RETURN count(DISTINCT n) AS cnt",
                     )
@@ -3317,7 +3374,7 @@ impl GraphWriter {
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let q = query(
             "MATCH (r)-[:RESPONDS_TO]->(t:Tension {id: $id})
-             WHERE r:Give OR r:Event OR r:Need
+             WHERE r:Aid OR r:Gathering OR r:Need
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
@@ -3428,7 +3485,7 @@ impl GraphWriter {
         let lng_delta = radius_km / (111.0 * city_lat.to_radians().cos());
         let q = query(
             "MATCH (r)-[rel:DRAWN_TO]->(t:Tension {id: $id})
-             WHERE (r:Give OR r:Event OR r:Need)
+             WHERE (r:Aid OR r:Gathering OR r:Need)
                AND r.lat >= $lat_min AND r.lat <= $lat_max
                AND r.lng >= $lng_min AND r.lng <= $lng_max
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
@@ -3486,7 +3543,7 @@ impl GraphWriter {
         gathering_type: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Give OR resp:Event OR resp:Need)
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
              MATCH (t:Tension {id: $tension_id})
              MERGE (resp)-[r:DRAWN_TO]->(t)
              ON CREATE SET
@@ -3558,7 +3615,7 @@ impl GraphWriter {
         place_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Give OR s:Event OR s:Need)
+            "MATCH (s) WHERE s.id = $sid AND (s:Aid OR s:Gathering OR s:Need)
              MATCH (p:Place {id: $pid})
              MERGE (s)-[:GATHERS_AT]->(p)",
         )
@@ -3575,7 +3632,7 @@ impl GraphWriter {
         let now = format_datetime(&Utc::now());
         let q = query(
             "MATCH (n)
-             WHERE n.id = $id AND (n:Give OR n:Event OR n:Need)
+             WHERE n.id = $id AND (n:Aid OR n:Gathering OR n:Need)
              SET n.last_confirmed_active = datetime($now)",
         )
         .param("id", signal_id.to_string())
@@ -3632,7 +3689,7 @@ impl GraphWriter {
         Ok(new_id)
     }
 
-    /// Create a REQUIRES edge from a signal (Need/Event) to a Resource.
+    /// Create a REQUIRES edge from a signal (Need/Gathering) to a Resource.
     /// Uses MERGE for idempotency; updates properties on match.
     pub async fn create_requires_edge(
         &self,
@@ -3643,7 +3700,7 @@ impl GraphWriter {
         notes: Option<&str>,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Event)
+            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:REQUIRES]->(r)
              ON CREATE SET
@@ -3665,7 +3722,7 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Create a PREFERS edge from a signal (Need/Event) to a Resource.
+    /// Create a PREFERS edge from a signal (Need/Gathering) to a Resource.
     /// Uses MERGE for idempotency.
     pub async fn create_prefers_edge(
         &self,
@@ -3674,7 +3731,7 @@ impl GraphWriter {
         confidence: f32,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Event)
+            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:PREFERS]->(r)
              ON CREATE SET e.confidence = $conf
@@ -3688,7 +3745,7 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Create an OFFERS edge from a Give signal to a Resource.
+    /// Create an OFFERS edge from an Aid signal to a Resource.
     /// Uses MERGE for idempotency.
     pub async fn create_offers_edge(
         &self,
@@ -3698,7 +3755,7 @@ impl GraphWriter {
         capacity: Option<&str>,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s:Give {id: $sid})
+            "MATCH (s:Aid {id: $sid})
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:OFFERS]->(r)
              ON CREATE SET
@@ -3939,7 +3996,7 @@ pub struct ConsolidationStats {
 
 #[derive(Debug, Default)]
 pub struct ReapStats {
-    pub events: u64,
+    pub gatherings: u64,
     pub needs: u64,
     pub stale: u64,
 }
@@ -3990,8 +4047,8 @@ pub struct StoryBrief {
 /// Aggregate counts of each signal type.
 #[derive(Debug, Clone, Default)]
 pub struct SignalTypeCounts {
-    pub events: u32,
-    pub gives: u32,
+    pub gatherings: u32,
+    pub aids: u32,
     pub needs: u32,
     pub notices: u32,
     pub tensions: u32,
@@ -4040,8 +4097,8 @@ pub struct TensionResponseShape {
     pub title: String,
     pub what_would_help: Option<String>,
     pub cause_heat: f64,
-    pub give_count: u32,
-    pub event_count: u32,
+    pub aid_count: u32,
+    pub gathering_count: u32,
     pub need_count: u32,
     pub sample_titles: Vec<String>,
 }
