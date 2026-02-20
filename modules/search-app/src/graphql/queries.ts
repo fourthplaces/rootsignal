@@ -83,6 +83,7 @@ export const STORIES_IN_BOUNDS = gql`
     $maxLat: Float!
     $minLng: Float!
     $maxLng: Float!
+    $tag: String
     $limit: Int
   ) {
     storiesInBounds(
@@ -90,6 +91,7 @@ export const STORIES_IN_BOUNDS = gql`
       maxLat: $maxLat
       minLng: $minLng
       maxLng: $maxLng
+      tag: $tag
       limit: $limit
     ) {
       id
@@ -104,6 +106,10 @@ export const STORIES_IN_BOUNDS = gql`
       arc
       category
       lede
+      tags {
+        slug
+        name
+      }
     }
   }
 `;
@@ -221,6 +227,10 @@ export const SEARCH_STORIES_IN_BOUNDS = gql`
         arc
         category
         lede
+        tags {
+          slug
+          name
+        }
       }
       topMatchingSignalTitle
     }
@@ -241,6 +251,19 @@ export const STORY_DETAIL = gql`
       lede
       narrative
       actionGuidance
+      tags {
+        slug
+        name
+      }
+    }
+  }
+`;
+
+export const TAGS = gql`
+  query Tags($limit: Int) {
+    tags(limit: $limit) {
+      slug
+      name
     }
   }
 `;

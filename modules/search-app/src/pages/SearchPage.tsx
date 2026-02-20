@@ -7,6 +7,7 @@ import { SignalCard } from "@/components/SignalCard";
 import { StoryCard } from "@/components/StoryCard";
 import { SignalDetail } from "@/components/SignalDetail";
 import { StoryDetail } from "@/components/StoryDetail";
+import { TagFilter } from "@/components/TagFilter";
 import { EmptyState } from "@/components/EmptyState";
 import { useDebouncedBounds, type Bounds } from "@/hooks/useDebouncedBounds";
 import { useUrlState, type Tab } from "@/hooks/useUrlState";
@@ -26,6 +27,7 @@ export function SearchPage() {
   const [selectedId, setSelectedId] = useState<string | null>(url.id);
   const [selectedType, setSelectedType] = useState<"signal" | "story">("signal");
   const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number } | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   // Determine which query to use based on search state
   const hasQuery = query.trim().length > 0;
@@ -55,7 +57,7 @@ export function SearchPage() {
     {
       variables: hasQuery
         ? { query, ...boundsVars, limit: 20 }
-        : { ...boundsVars, limit: 20 },
+        : { ...boundsVars, tag: selectedTag, limit: 20 },
       skip: !bounds || tab !== "stories",
     },
   );
@@ -220,6 +222,10 @@ export function SearchPage() {
           signalCount={tab === "signals" ? signals.length : undefined}
           storyCount={tab === "stories" ? stories.length : undefined}
         />
+
+        {tab === "stories" && !hasQuery && (
+          <TagFilter selectedTag={selectedTag} onTagSelect={setSelectedTag} />
+        )}
 
         {/* Content area: detail or list */}
         <div className="flex-1 overflow-y-auto">

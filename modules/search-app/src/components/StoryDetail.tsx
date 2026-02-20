@@ -46,6 +46,15 @@ export function StoryDetail({ storyId, onBack }: StoryDetailProps) {
             <h2 className="text-lg font-semibold text-foreground">
               {story.headline}
             </h2>
+            {story.tags?.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {story.tags.map((tag: { slug: string; name: string }) => (
+                  <span key={tag.slug} className="text-xs bg-muted px-2 py-0.5 rounded">
+                    {tag.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {story.lede && (
