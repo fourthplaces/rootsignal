@@ -619,6 +619,28 @@ impl GqlStory {
         self.0.narrative.as_deref()
     }
 
+    async fn cause_heat(&self) -> f64 {
+        self.0.cause_heat
+    }
+    async fn need_count(&self) -> u32 {
+        self.0.ask_count
+    }
+    async fn aid_count(&self) -> u32 {
+        self.0.give_count
+    }
+    async fn gathering_count(&self) -> u32 {
+        self.0.event_count
+    }
+    async fn drawn_to_count(&self) -> u32 {
+        self.0.drawn_to_count
+    }
+    async fn gap_score(&self) -> i32 {
+        self.0.gap_score
+    }
+    async fn gap_velocity(&self) -> f64 {
+        self.0.gap_velocity
+    }
+
     async fn signals(&self, ctx: &Context<'_>) -> Result<Vec<GqlSignal>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let nodes = reader.get_story_signals(self.0.id).await?;

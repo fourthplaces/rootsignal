@@ -1046,14 +1046,20 @@ impl GraphWriter {
                 centroid_lat: $centroid_lat,
                 centroid_lng: $centroid_lng,
                 dominant_type: $dominant_type,
-
                 sensitivity: $sensitivity,
                 source_count: $source_count,
                 entity_count: $entity_count,
                 type_diversity: $type_diversity,
                 source_domains: $source_domains,
                 corroboration_depth: $corroboration_depth,
-                status: $status
+                status: $status,
+                cause_heat: $cause_heat,
+                ask_count: $ask_count,
+                give_count: $give_count,
+                event_count: $event_count,
+                drawn_to_count: $drawn_to_count,
+                gap_score: $gap_score,
+                gap_velocity: $gap_velocity
             })",
         )
         .param("id", story.id.to_string())
@@ -1071,7 +1077,14 @@ impl GraphWriter {
         .param("type_diversity", story.type_diversity as i64)
         .param("source_domains", story.source_domains.clone())
         .param("corroboration_depth", story.corroboration_depth as i64)
-        .param("status", story.status.as_str());
+        .param("status", story.status.as_str())
+        .param("cause_heat", story.cause_heat)
+        .param("ask_count", story.ask_count as i64)
+        .param("give_count", story.give_count as i64)
+        .param("event_count", story.event_count as i64)
+        .param("drawn_to_count", story.drawn_to_count as i64)
+        .param("gap_score", story.gap_score as i64)
+        .param("gap_velocity", story.gap_velocity);
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
@@ -1097,14 +1110,20 @@ impl GraphWriter {
                  s.centroid_lat = $centroid_lat,
                  s.centroid_lng = $centroid_lng,
                  s.dominant_type = $dominant_type,
-
                  s.sensitivity = $sensitivity,
                  s.source_count = $source_count,
                  s.entity_count = $entity_count,
                  s.type_diversity = $type_diversity,
                  s.source_domains = $source_domains,
                  s.corroboration_depth = $corroboration_depth,
-                 s.status = $status",
+                 s.status = $status,
+                 s.cause_heat = $cause_heat,
+                 s.ask_count = $ask_count,
+                 s.give_count = $give_count,
+                 s.event_count = $event_count,
+                 s.drawn_to_count = $drawn_to_count,
+                 s.gap_score = $gap_score,
+                 s.gap_velocity = $gap_velocity",
         )
         .param("id", story.id.to_string())
         .param("headline", story.headline.as_str())
@@ -1120,7 +1139,14 @@ impl GraphWriter {
         .param("type_diversity", story.type_diversity as i64)
         .param("source_domains", story.source_domains.clone())
         .param("corroboration_depth", story.corroboration_depth as i64)
-        .param("status", story.status.as_str());
+        .param("status", story.status.as_str())
+        .param("cause_heat", story.cause_heat)
+        .param("ask_count", story.ask_count as i64)
+        .param("give_count", story.give_count as i64)
+        .param("event_count", story.event_count as i64)
+        .param("drawn_to_count", story.drawn_to_count as i64)
+        .param("gap_score", story.gap_score as i64)
+        .param("gap_velocity", story.gap_velocity);
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
@@ -1192,6 +1218,8 @@ impl GraphWriter {
                 story_id: $story_id,
                 signal_count: $signal_count,
                 entity_count: $entity_count,
+                ask_count: $ask_count,
+                give_count: $give_count,
                 run_at: datetime($run_at)
             })",
         )
@@ -1199,6 +1227,8 @@ impl GraphWriter {
         .param("story_id", snapshot.story_id.to_string())
         .param("signal_count", snapshot.signal_count as i64)
         .param("entity_count", snapshot.entity_count as i64)
+        .param("ask_count", snapshot.ask_count as i64)
+        .param("give_count", snapshot.give_count as i64)
         .param("run_at", format_datetime(&snapshot.run_at));
 
         self.client.graph.run(q).await?;
@@ -2769,8 +2799,9 @@ impl GraphWriter {
              WHERE size(respondents) >= 2
              RETURN t.id AS tension_id, t.title AS title, t.summary AS summary,
                     t.category AS category, t.what_would_help AS what_would_help,
+                    t.cause_heat AS cause_heat,
                     respondents
-             ORDER BY size(respondents) DESC
+             ORDER BY size(respondents) DESC, coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit",
         )
         .param("limit", limit as i64)
@@ -2792,6 +2823,7 @@ impl GraphWriter {
             let summary: String = row.get("summary").unwrap_or_default();
             let category: Option<String> = row.get("category").ok();
             let what_would_help: Option<String> = row.get("what_would_help").ok();
+            let cause_heat: f64 = row.get("cause_heat").unwrap_or(0.0);
 
             // Parse respondents from neo4j map list
             let respondent_maps: Vec<neo4rs::BoltMap> = row.get("respondents").unwrap_or_default();
@@ -2818,6 +2850,7 @@ impl GraphWriter {
                 summary,
                 category,
                 what_would_help,
+                cause_heat,
                 respondents,
             });
         }
@@ -2916,21 +2949,35 @@ impl GraphWriter {
         Ok(0)
     }
 
-    /// Merge near-duplicate Tension nodes.
+    /// Merge near-duplicate Tension nodes within a geographic bounding box.
     ///
-    /// Loads all tension embeddings, finds pairs above `threshold` cosine similarity,
-    /// and merges the newer tension into the older one — re-pointing all incoming
-    /// RESPONDS_TO edges to the survivor and deleting the duplicate.
+    /// Loads tension embeddings within the bbox, finds pairs above `threshold`
+    /// cosine similarity, and merges the newer into the older — re-pointing all
+    /// incoming RESPONDS_TO and DRAWN_TO edges to the survivor and deleting the
+    /// duplicate.
     ///
     /// Returns the number of tensions merged (deleted).
-    pub async fn merge_duplicate_tensions(&self, threshold: f64) -> Result<u32, neo4rs::Error> {
-        // Load all tensions with embeddings
+    pub async fn merge_duplicate_tensions(
+        &self,
+        threshold: f64,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<u32, neo4rs::Error> {
+        // Load tensions with embeddings within the bounding box
         let q = query(
             "MATCH (t:Tension)
              WHERE t.embedding IS NOT NULL
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
              RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
              ORDER BY t.extracted_at ASC",
-        );
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         struct TensionEmbed {
             id: String,
@@ -3297,6 +3344,30 @@ impl GraphWriter {
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(Some(cnt as u32));
+        }
+
+        Ok(None)
+    }
+
+    /// Get the snapshot gap score (ask_count - give_count) from 7 days ago for gap velocity calculation.
+    pub async fn get_snapshot_gap_7d_ago(
+        &self,
+        story_id: Uuid,
+    ) -> Result<Option<i32>, neo4rs::Error> {
+        let q = query(
+            "MATCH (cs:ClusterSnapshot {story_id: $story_id})
+             WHERE datetime(cs.run_at) >= datetime() - duration('P8D')
+               AND datetime(cs.run_at) <= datetime() - duration('P6D')
+             RETURN (cs.ask_count - cs.give_count) AS gap
+             ORDER BY cs.run_at ASC
+             LIMIT 1",
+        )
+        .param("story_id", story_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let gap: i64 = row.get("gap").unwrap_or(0);
+            return Ok(Some(gap as i32));
         }
 
         Ok(None)
@@ -4297,6 +4368,7 @@ pub struct TensionHub {
     pub summary: String,
     pub category: Option<String>,
     pub what_would_help: Option<String>,
+    pub cause_heat: f64,
     pub respondents: Vec<TensionRespondent>,
 }
 
@@ -4417,7 +4489,7 @@ fn format_datetime(dt: &DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// Public version of format_datetime for use by other modules (e.g. cluster.rs).
+/// Public version of format_datetime for use by other modules (e.g. story_weaver.rs).
 pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
     format_datetime(dt)
 }
@@ -4537,6 +4609,7 @@ mod tests {
             summary: "Rents rising faster than wages".to_string(),
             category: Some("housing".to_string()),
             what_would_help: Some("Rent stabilization policies".to_string()),
+            cause_heat: 0.7,
             respondents: vec![
                 TensionRespondent {
                     signal_id: Uuid::new_v4(),

@@ -298,6 +298,25 @@ impl QueryRoot {
             .stories_by_tag(&tag, min_lat, max_lat, min_lng, max_lng, limit)
             .await?;
         Ok(stories.into_iter().map(GqlStory).collect())
+
+    }
+
+    /// Find tensions with < 2 respondents, not yet in any story, within bounds.
+    async fn unresponded_tensions_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(20).min(100);
+        let nodes = reader
+            .unresponded_tensions_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
+        Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
     /// List actors in a city.

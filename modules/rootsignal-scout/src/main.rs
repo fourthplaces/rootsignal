@@ -144,25 +144,14 @@ async fn main() -> Result<()> {
     // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
     backfill_source_diversity(&client, &[]).await?;
 
-    // Backfill lat/lng on tensions missing coordinates (from before the geo fix)
-    let backfill_q = query(
-        "MATCH (t:Tension)
-         WHERE t.lat IS NULL
-         SET t.lat = $lat, t.lng = $lng
-         RETURN count(t) AS cnt",
-    )
-    .param("lat", city_node.center_lat)
-    .param("lng", city_node.center_lng);
-    let mut stream = client.inner().execute(backfill_q).await?;
-    if let Some(row) = stream.next().await? {
-        let cnt: i64 = row.get("cnt").unwrap_or(0);
-        if cnt > 0 {
-            info!(count = cnt, "Backfilled tension coordinates to city center");
-        }
-    }
-
-    // Save city name before moving city_node into Scout
+    // Save city geo bounds before moving city_node into Scout
     let city_name = city_node.name.clone();
+    let lat_delta = city_node.radius_km / 111.0;
+    let lng_delta = city_node.radius_km / (111.0 * city_node.center_lat.to_radians().cos());
+    let min_lat = city_node.center_lat - lat_delta;
+    let max_lat = city_node.center_lat + lat_delta;
+    let min_lng = city_node.center_lng - lng_delta;
+    let max_lng = city_node.center_lng + lng_delta;
 
     // Create and run scout
     let scout = Scout::new(
@@ -181,7 +170,9 @@ async fn main() -> Result<()> {
 
     // Merge near-duplicate tensions before computing heat
     let writer_ref = GraphWriter::new(client.clone());
-    let merged = writer_ref.merge_duplicate_tensions(0.85).await?;
+    let merged = writer_ref
+        .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
+        .await?;
     if merged > 0 {
         info!(merged, "Merged duplicate tensions");
     }

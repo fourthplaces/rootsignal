@@ -467,6 +467,19 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Deactivate duplicate city nodes ---
     deactivate_duplicate_cities(client).await?;
 
+    // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
+    cleanup_leiden_stories(client).await?;
+
+    // --- New story metric indexes ---
+    let metric_indexes = [
+        "CREATE INDEX story_cause_heat IF NOT EXISTS FOR (n:Story) ON (n.cause_heat)",
+        "CREATE INDEX story_gap_score IF NOT EXISTS FOR (n:Story) ON (n.gap_score)",
+    ];
+    for idx in &metric_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Story metric indexes created");
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -1002,15 +1015,11 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
 }
 
 /// Delete off-geography signals that contaminate Twin Cities data.
-/// Uses a generous bbox (~43.0-46.5 lat, -95.5 to -91.0 lng) covering the metro area.
-/// Also removes cross-geography RESPONDS_TO/DRAWN_TO edges and archives orphaned stories.
-/// Idempotent — WHERE clauses match nothing after cleanup.
 pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
     info!("Cleaning up off-geography signals...");
 
-    // Step 1: Delete off-geo non-tension signals
     let delete_signals = query(
         "MATCH (n)
          WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice)
@@ -1031,7 +1040,6 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
         Err(e) => warn!("Off-geo signal cleanup failed (non-fatal): {e}"),
     }
 
-    // Step 2a: Unlink off-geo tensions from stories (CONTAINS edges)
     let unlink_tensions = query(
         "MATCH (s:Story)-[r:CONTAINS]->(t:Tension)
          WHERE t.lat < 43.0 OR t.lat > 46.5 OR t.lng < -95.5 OR t.lng > -91.0
@@ -1051,7 +1059,6 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
         Err(e) => warn!("Off-geo tension unlinking failed (non-fatal): {e}"),
     }
 
-    // Step 2b: Delete all off-geo tensions (now safe — none linked to stories)
     let delete_tensions = query(
         "MATCH (n:Tension)
          WHERE n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0
@@ -1071,7 +1078,6 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
         Err(e) => warn!("Off-geo tension cleanup failed (non-fatal): {e}"),
     }
 
-    // Step 3: Delete cross-geography edges (signal and tension >1 degree apart)
     let delete_cross_geo_edges = query(
         "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
          WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
@@ -1091,7 +1097,6 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
         Err(e) => warn!("Cross-geo edge cleanup failed (non-fatal): {e}"),
     }
 
-    // Step 4: Archive orphaned stories (lost all non-tension signals)
     let archive_orphans = query(
         "MATCH (s:Story)
          WHERE NOT (s)-[:CONTAINS]->(:Gathering)
@@ -1119,19 +1124,11 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
 }
 
 /// Deactivate duplicate City nodes and reassign their sources to the canonical city.
-/// Cities created from running the scout with different slugs for the same coordinates
-/// (e.g. "twincities", "minneapolis", "minneapolis-minnesota") produce duplicates.
-/// Two cities are considered duplicates if they're within ~5km of each other OR if one
-/// city's name contains the other's (case-insensitive). For each duplicate pair, keeps
-/// the one with the most active sources, deactivates the other, and reassigns its sources.
-/// Idempotent — WHERE clauses match nothing after cleanup.
 pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
     info!("Deactivating duplicate city nodes...");
 
-    // Re-activate all cities so the dedup logic can see the full set
-    // (previous migration runs may have deactivated the wrong ones)
     let reactivate = query(
         "MATCH (c:City {active: false})
          SET c.active = true
@@ -1149,20 +1146,13 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
         Err(e) => warn!("City reactivation failed (non-fatal): {e}"),
     }
 
-    // For each pair of active cities at the same location (within ~5km) or with
-    // overlapping names, find the one with more sources and reassign the other's.
     let q = query(
         "MATCH (a:City {active: true}), (b:City {active: true})
          WHERE a.slug < b.slug
            AND (
-             // Coordinate proximity: 0.05° ≈ 5km — catches same city with different slugs
-             // but won't merge genuinely separate cities (Minneapolis↔St Paul is ~0.13°)
              (abs(a.center_lat - b.center_lat) < 0.05 AND abs(a.center_lng - b.center_lng) < 0.05)
-             OR
-             // Name containment: 'Minneapolis' contains 'Minneapolis' in 'Minneapolis-Minnesota'
-             toLower(a.name) CONTAINS toLower(b.name)
-             OR
-             toLower(b.name) CONTAINS toLower(a.name)
+             OR toLower(a.name) CONTAINS toLower(b.name)
+             OR toLower(b.name) CONTAINS toLower(a.name)
            )
          WITH a, b
          OPTIONAL MATCH (sa:Source {active: true}) WHERE sa.city = a.slug
@@ -1186,7 +1176,6 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
             }
 
             for (keeper, loser) in &pairs {
-                // Reassign sources from loser to keeper
                 let reassign = query(
                     "MATCH (s:Source) WHERE s.city = $loser
                      SET s.city = $keeper
@@ -1212,7 +1201,6 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
                     Err(e) => warn!(loser, keeper, "Source reassignment failed (non-fatal): {e}"),
                 }
 
-                // Deactivate the loser city
                 let deactivate = query(
                     "MATCH (c:City {slug: $slug}) SET c.active = false",
                 )
@@ -1228,5 +1216,34 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
     }
 
     info!("Duplicate city cleanup complete");
+    Ok(())
+}
+
+/// Delete stories created by Leiden clustering that don't contain a Tension node.
+pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Cleaning up Leiden-created stories (no Tension in CONTAINS set)...");
+
+    let q = query(
+        "MATCH (s:Story)
+         WHERE NOT (s)-[:CONTAINS]->(:Tension)
+         DETACH DELETE s
+         RETURN count(s) AS deleted",
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted Leiden-created stories without Tension");
+                }
+            }
+        }
+        Err(e) => warn!("Leiden story cleanup failed (non-fatal): {e}"),
+    }
+
+    info!("Leiden story cleanup complete");
     Ok(())
 }

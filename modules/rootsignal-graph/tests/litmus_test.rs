@@ -1338,12 +1338,14 @@ async fn source_last_scraped_round_trip() {
     );
 }
 
-/// Helper: create a Tension with a specific embedding vector.
-async fn create_tension_with_embedding(
+/// Helper: create a Tension with a specific embedding vector at given coordinates.
+async fn create_tension_with_embedding_at(
     client: &GraphClient,
     id: Uuid,
     title: &str,
     embedding: &[f64],
+    lat: f64,
+    lng: f64,
 ) {
     let now = neo4j_dt(&Utc::now());
     let emb_str = format!(
@@ -1369,12 +1371,12 @@ async fn create_tension_with_embedding(
             source_url: 'https://example.com',
             extracted_at: datetime($now),
             last_confirmed_active: datetime($now),
-            location_name: 'Minneapolis',
+            location_name: '',
             severity: 'high',
             category: 'safety',
             what_would_help: 'more resources',
-            lat: 44.9778,
-            lng: -93.2650,
+            lat: {lat},
+            lng: {lng},
             embedding: {emb_str}
         }})"
     );
@@ -1390,6 +1392,16 @@ async fn create_tension_with_embedding(
         .run(q)
         .await
         .expect("Failed to create tension");
+}
+
+/// Helper: create a Tension with a specific embedding vector at Twin Cities coordinates.
+async fn create_tension_with_embedding(
+    client: &GraphClient,
+    id: Uuid,
+    title: &str,
+    embedding: &[f64],
+) {
+    create_tension_with_embedding_at(client, id, title, embedding, 44.9778, -93.2650).await;
 }
 
 #[tokio::test]

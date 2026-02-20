@@ -778,6 +778,21 @@ impl CachedReader {
         self.neo4j_reader.resource_gap_analysis().await
     }
 
+    /// Find tensions with < 2 respondents, not yet in any story, within bounds.
+    /// Delegates to Neo4j reader (not cached).
+    pub async fn unresponded_tensions_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        self.neo4j_reader
+            .unresponded_tensions_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await
+    }
+
     /// Tags for a single story, served from cache.
     pub async fn tags_for_story(&self, story_id: Uuid) -> Result<Vec<TagNode>, neo4rs::Error> {
         let snap = self.cache.load_full();

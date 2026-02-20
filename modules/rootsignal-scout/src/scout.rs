@@ -10,7 +10,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     CityNode, DiscoveryMethod, EvidenceNode, Node, NodeType, SourceNode, SourceType,
 };
-use rootsignal_graph::{Clusterer, GraphClient, GraphWriter};
+use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::{Embedder, TextEmbedder};
@@ -672,23 +672,16 @@ impl Scout {
         // Synthesis — clustering, response mapping, investigation, end-of-run discovery
         // ================================================================
 
-        // Clustering — build similarity edges, run Leiden, create/update stories
-        info!("Starting clustering...");
-        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
-
-        let clusterer = Clusterer::new(
-            self.graph_client.clone(),
-            &self.anthropic_api_key,
-            entity_mappings,
-        );
-
-        match clusterer.run().await {
-            Ok(cluster_stats) => {
-                info!("{cluster_stats}");
-            }
-            Err(e) => {
-                warn!(error = %e, "Clustering failed (non-fatal)");
-            }
+        // Build similarity edges (Leiden removed — StoryWeaver is the sole story creator)
+        info!("Building similarity edges...");
+        let similarity = SimilarityBuilder::new(self.graph_client.clone());
+        similarity.clear_edges().await.unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to clear similarity edges");
+            0
+        });
+        match similarity.build_edges().await {
+            Ok(edges) => info!(edges, "Similarity edges built"),
+            Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
         }
 
         self.check_cancelled()?;
