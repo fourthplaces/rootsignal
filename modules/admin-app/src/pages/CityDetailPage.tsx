@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_CITY, ADMIN_CITY_SOURCES, ADMIN_SCOUT_STATUS, SIGNALS_NEAR_GEO_JSON, STORIES_IN_BOUNDS } from "@/graphql/queries";
+import { ADMIN_REGION, ADMIN_REGION_SOURCES, ADMIN_SCOUT_STATUS, SIGNALS_NEAR_GEO_JSON, STORIES_IN_BOUNDS } from "@/graphql/queries";
 import { ADD_SOURCE, RUN_SCOUT, RESET_SCOUT_LOCK } from "@/graphql/mutations";
 import { CityMap } from "./MapPage";
 import type { FeatureCollection } from "geojson";
@@ -19,39 +19,39 @@ export function CityDetailPage() {
   const [tab, setTab] = useState<Tab>("stories");
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const { data: cityData, loading } = useQuery(ADMIN_CITY, { variables: { slug } });
-  const { data: sourcesData, refetch: refetchSources } = useQuery(ADMIN_CITY_SOURCES, {
-    variables: { citySlug: slug },
+  const { data: regionData, loading } = useQuery(ADMIN_REGION, { variables: { slug } });
+  const { data: sourcesData, refetch: refetchSources } = useQuery(ADMIN_REGION_SOURCES, {
+    variables: { regionSlug: slug },
     skip: tab !== "sources",
   });
   const { data: scoutData, refetch: refetchScout } = useQuery(ADMIN_SCOUT_STATUS, {
-    variables: { citySlug: slug },
+    variables: { regionSlug: slug },
   });
 
-  const city = cityData?.adminCity;
+  const region = regionData?.adminRegion;
 
   const { data: geoData } = useQuery(SIGNALS_NEAR_GEO_JSON, {
-    variables: city
-      ? { lat: city.centerLat, lng: city.centerLng, radiusKm: city.radiusKm }
+    variables: region
+      ? { lat: region.centerLat, lng: region.centerLng, radiusKm: region.radiusKm }
       : undefined,
-    skip: !city || tab !== "signals",
+    skip: !region || tab !== "signals",
   });
 
   const { data: storiesData } = useQuery(STORIES_IN_BOUNDS, {
-    variables: city
+    variables: region
       ? (() => {
-          const latDelta = city.radiusKm / 111.0;
-          const lngDelta = city.radiusKm / (111.0 * Math.cos((city.centerLat * Math.PI) / 180));
+          const latDelta = region.radiusKm / 111.0;
+          const lngDelta = region.radiusKm / (111.0 * Math.cos((region.centerLat * Math.PI) / 180));
           return {
-            minLat: city.centerLat - latDelta,
-            maxLat: city.centerLat + latDelta,
-            minLng: city.centerLng - lngDelta,
-            maxLng: city.centerLng + lngDelta,
+            minLat: region.centerLat - latDelta,
+            maxLat: region.centerLat + latDelta,
+            minLng: region.centerLng - lngDelta,
+            maxLng: region.centerLng + lngDelta,
             limit: 50,
           };
         })()
       : undefined,
-    skip: !city || tab !== "stories",
+    skip: !region || tab !== "stories",
   });
 
   const [addSource] = useMutation(ADD_SOURCE);
@@ -79,9 +79,9 @@ export function CityDetailPage() {
   }, [menuOpen]);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
-  if (!city) return <p className="text-muted-foreground">City not found</p>;
+  if (!region) return <p className="text-muted-foreground">Region not found</p>;
 
-  const sources = sourcesData?.adminCitySources ?? [];
+  const sources = sourcesData?.adminRegionSources ?? [];
   const stories = storiesData?.storiesInBounds ?? [];
 
   const signalFeatures: { id: string; title: string; type: string; lat: number; lng: number }[] = [];
@@ -101,13 +101,13 @@ export function CityDetailPage() {
   }
 
   const handleRunScout = async () => {
-    await runScout({ variables: { citySlug: slug } });
+    await runScout({ variables: { regionSlug: slug } });
     refetchScout();
     setMenuOpen(false);
   };
 
   const handleResetLock = async () => {
-    await resetScoutLock({ variables: { citySlug: slug } });
+    await resetScoutLock({ variables: { regionSlug: slug } });
     refetchScout();
     setMenuOpen(false);
   };
@@ -115,7 +115,7 @@ export function CityDetailPage() {
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
     await addSource({
-      variables: { citySlug: slug, url: sourceUrl, reason: sourceReason || undefined },
+      variables: { regionSlug: slug, url: sourceUrl, reason: sourceReason || undefined },
     });
     setSourceUrl("");
     setSourceReason("");
@@ -128,9 +128,9 @@ export function CityDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{city.name}</h1>
+          <h1 className="text-xl font-semibold">{region.name}</h1>
           <p className="text-sm text-muted-foreground">
-            {city.centerLat.toFixed(4)}, {city.centerLng.toFixed(4)} &middot; {city.radiusKm}km
+            {region.centerLat.toFixed(4)}, {region.centerLng.toFixed(4)} &middot; {region.radiusKm}km
             radius
           </p>
         </div>
@@ -261,7 +261,7 @@ export function CityDetailPage() {
         </div>
       )}
 
-      {tab === "map" && <CityMap city={city} />}
+      {tab === "map" && <CityMap city={region} />}
 
       {tab === "sources" && (
         <div>

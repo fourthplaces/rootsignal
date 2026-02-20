@@ -24,7 +24,7 @@ export const LOGOUT = gql`
   }
 `;
 
-export const CREATE_CITY = gql`
+export const CREATE_REGION = gql`
   mutation CreateCity($location: String!) {
     createCity(location: $location) {
       success
@@ -34,8 +34,8 @@ export const CREATE_CITY = gql`
 `;
 
 export const ADD_SOURCE = gql`
-  mutation AddSource($citySlug: String!, $url: String!, $reason: String) {
-    addSource(citySlug: $citySlug, url: $url, reason: $reason) {
+  mutation AddSource($regionSlug: String!, $url: String!, $reason: String) {
+    addSource(regionSlug: $regionSlug, url: $url, reason: $reason) {
       success
       sourceId
     }
@@ -43,8 +43,8 @@ export const ADD_SOURCE = gql`
 `;
 
 export const RUN_SCOUT = gql`
-  mutation RunScout($citySlug: String!) {
-    runScout(citySlug: $citySlug) {
+  mutation RunScout($regionSlug: String!) {
+    runScout(regionSlug: $regionSlug) {
       success
       message
     }
@@ -52,8 +52,8 @@ export const RUN_SCOUT = gql`
 `;
 
 export const STOP_SCOUT = gql`
-  mutation StopScout($citySlug: String!) {
-    stopScout(citySlug: $citySlug) {
+  mutation StopScout($regionSlug: String!) {
+    stopScout(regionSlug: $regionSlug) {
       success
       message
     }
@@ -61,8 +61,8 @@ export const STOP_SCOUT = gql`
 `;
 
 export const RESET_SCOUT_LOCK = gql`
-  mutation ResetScoutLock($citySlug: String!) {
-    resetScoutLock(citySlug: $citySlug) {
+  mutation ResetScoutLock($regionSlug: String!) {
+    resetScoutLock(regionSlug: $regionSlug) {
       success
       message
     }
@@ -94,8 +94,8 @@ export const MERGE_TAGS = gql`
 `;
 
 export const SUBMIT_SOURCE = gql`
-  mutation SubmitSource($url: String!, $description: String, $city: String) {
-    submitSource(url: $url, description: $description, city: $city) {
+  mutation SubmitSource($url: String!, $description: String, $region: String) {
+    submitSource(url: $url, description: $description, region: $region) {
       success
       sourceId
     }

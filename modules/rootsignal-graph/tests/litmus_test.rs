@@ -1275,11 +1275,10 @@ async fn source_last_scraped_round_trip() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "test-city:https://example.org".to_string(),
+        canonical_key: "https://example.org".to_string(),
         canonical_value: "https://example.org".to_string(),
         url: Some("https://example.org".to_string()),
         discovery_method: DiscoveryMethod::Curated,
-        city: "test-city".to_string(),
         created_at: Utc::now(),
         last_scraped: None,
         last_produced_signal: None,
@@ -1297,7 +1296,7 @@ async fn source_last_scraped_round_trip() {
     };
 
     writer
-        .upsert_source(&source)
+        .upsert_source(&source, "test-city")
         .await
         .expect("upsert_source failed");
 
@@ -3006,11 +3005,10 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "twincities:emergency housing Minneapolis".to_string(),
+        canonical_key: "emergency housing Minneapolis".to_string(),
         canonical_value: "emergency housing Minneapolis".to_string(),
         url: None,
         discovery_method: DiscoveryMethod::SignalExpansion,
-        city: "twincities".to_string(),
         created_at: Utc::now(),
         last_scraped: None,
         last_produced_signal: None,
@@ -3028,7 +3026,7 @@ async fn signal_expansion_source_created_with_correct_method() {
     };
 
     writer
-        .upsert_source(&source)
+        .upsert_source(&source, "twincities")
         .await
         .expect("upsert_source failed");
 

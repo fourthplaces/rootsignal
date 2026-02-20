@@ -16,8 +16,8 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<AdminLayout />}>
         <Route index element={<DashboardPage />} />
-        <Route path="cities" element={<CitiesPage />} />
-        <Route path="cities/:slug" element={<CityDetailPage />} />
+        <Route path="regions" element={<CitiesPage />} />
+        <Route path="regions/:slug" element={<CityDetailPage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />
         <Route path="stories" element={<StoriesPage />} />

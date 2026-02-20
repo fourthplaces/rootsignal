@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
+    RegionNode, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
     TensionNode,
 };
 use rootsignal_graph::{GraphWriter, TensionLinkerOutcome, TensionLinkerTarget};
@@ -292,7 +292,7 @@ pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
-    city: CityNode,
+    region: RegionNode,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -308,7 +308,7 @@ impl<'a> TensionLinker<'a> {
         scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        city: CityNode,
+        region: RegionNode,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
@@ -321,18 +321,18 @@ impl<'a> TensionLinker<'a> {
                 visited_urls: None,
             });
 
-        let lat_delta = city.radius_km / 111.0;
-        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+        let lat_delta = region.radius_km / 111.0;
+        let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
 
         Self {
             writer,
             claude,
             embedder,
-            min_lat: city.center_lat - lat_delta,
-            max_lat: city.center_lat + lat_delta,
-            min_lng: city.center_lng - lng_delta,
-            max_lng: city.center_lng + lng_delta,
-            city,
+            min_lat: region.center_lat - lat_delta,
+            max_lat: region.center_lat + lat_delta,
+            min_lng: region.center_lng - lng_delta,
+            max_lng: region.center_lng + lng_delta,
+            region,
             cancelled,
             run_id,
         }
@@ -469,7 +469,7 @@ impl<'a> TensionLinker<'a> {
         target: &TensionLinkerTarget,
         tension_landscape: &str,
     ) -> Result<SignalFinding> {
-        let system = investigation_system_prompt(&self.city.name, tension_landscape);
+        let system = investigation_system_prompt(&self.region.name, tension_landscape);
 
         let user = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}",
@@ -510,7 +510,7 @@ impl<'a> TensionLinker<'a> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        // Check for duplicate tension (city-scoped)
+        // Check for duplicate tension (region-scoped)
         let existing = self
             .writer
             .find_duplicate(
@@ -579,11 +579,11 @@ impl<'a> TensionLinker<'a> {
                 freshness_score: 1.0,
                 corroboration_count: 0,
                 location: Some(GeoPoint {
-                    lat: self.city.center_lat,
-                    lng: self.city.center_lng,
+                    lat: self.region.center_lat,
+                    lng: self.region.center_lng,
                     precision: GeoPrecision::City,
                 }),
-                location_name: Some(self.city.name.clone()),
+                location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 last_confirmed_active: now,
@@ -667,9 +667,9 @@ mod tests {
     }
 
     #[test]
-    fn tension_node_gets_city_center_coordinates() {
-        // Verify that a DiscoveredTension produces a TensionNode with city-center lat/lng.
-        let city = CityNode {
+    fn tension_node_gets_region_center_coordinates() {
+        // Verify that a DiscoveredTension produces a TensionNode with region-center lat/lng.
+        let region = RegionNode {
             id: Uuid::new_v4(),
             name: "Minneapolis".to_string(),
             slug: "minneapolis".to_string(),
@@ -713,11 +713,11 @@ mod tests {
                 freshness_score: 1.0,
                 corroboration_count: 0,
                 location: Some(GeoPoint {
-                    lat: city.center_lat,
-                    lng: city.center_lng,
+                    lat: region.center_lat,
+                    lng: region.center_lng,
                     precision: GeoPrecision::City,
                 }),
-                location_name: Some(city.name.clone()),
+                location_name: Some(region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 last_confirmed_active: now,
@@ -732,18 +732,18 @@ mod tests {
             what_would_help: Some(tension.what_would_help.clone()),
         };
 
-        // Key assertions: location is set to city center
+        // Key assertions: location is set to region center
         let loc = tension_node
             .meta
             .location
             .expect("Tension should have location");
         assert!(
             (loc.lat - 44.9778).abs() < 0.001,
-            "lat should be city center"
+            "lat should be region center"
         );
         assert!(
             (loc.lng - (-93.2650)).abs() < 0.001,
-            "lng should be city center"
+            "lng should be region center"
         );
         assert_eq!(loc.precision, GeoPrecision::City);
         assert_eq!(

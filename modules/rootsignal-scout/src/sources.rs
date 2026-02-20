@@ -1,7 +1,7 @@
 use rootsignal_common::canonical_value;
 
-/// Build a canonical key: `city_slug:canonical_value`.
-pub fn make_canonical_key(city_slug: &str, value: &str) -> String {
-    let cv = canonical_value(value);
-    format!("{}:{}", city_slug, cv)
+/// Build a canonical key from a source value.
+/// The key is the canonical_value itself — region-independent.
+pub fn make_canonical_key(value: &str) -> String {
+    canonical_value(value)
 }

@@ -972,11 +972,11 @@ impl GraphWriter {
     /// Count sources that are overdue for scraping.
     pub async fn count_due_sources(&self, city: &str) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN count(s) AS due"
-        ).param("city", city);
+        ).param("region", city);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1026,7 +1026,7 @@ impl GraphWriter {
 
         let q = query(
             "UNWIND $slugs AS slug
-             OPTIONAL MATCH (s:Source {city: slug, active: true})
+             OPTIONAL MATCH (r:City {slug: slug})-[:SCOUTS]->(s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN slug, count(s) AS due",
@@ -1528,7 +1528,7 @@ impl GraphWriter {
         for (slug, lat, lng, radius_km) in cities {
             // Source count by slug
             let sq = query(
-                "MATCH (src:Source {city: $city, active: true})
+                "MATCH (r:City {slug: $city})-[:SCOUTS]->(src:Source {active: true})
                  RETURN count(src) AS cnt",
             )
             .param("city", slug.as_str());
@@ -1566,9 +1566,10 @@ impl GraphWriter {
 
     // --- Source operations (emergent source discovery) ---
 
-    /// Create or update a Source node in the graph.
+    /// Create or update a Source node in the graph and link it to a region via `:SCOUTS`.
     /// Uses MERGE on canonical_key to be idempotent (safe for seeding curated sources every run).
-    pub async fn upsert_source(&self, source: &SourceNode) -> Result<(), neo4rs::Error> {
+    /// Sources are region-independent; the `:SCOUTS` relationship tracks which region discovered them.
+    pub async fn upsert_source(&self, source: &SourceNode, region_slug: &str) -> Result<(), neo4rs::Error> {
         let q = query(
             "MERGE (s:Source {canonical_key: $canonical_key})
              ON CREATE SET
@@ -1576,7 +1577,6 @@ impl GraphWriter {
                 s.canonical_value = $canonical_value,
                 s.url = $url,
                 s.discovery_method = $discovery_method,
-                s.city = $city,
                 s.created_at = datetime($created_at),
                 s.signals_produced = $signals_produced,
                 s.signals_corroborated = $signals_corroborated,
@@ -1590,14 +1590,16 @@ impl GraphWriter {
                 s.scrape_count = $scrape_count
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
-                s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
+                s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END
+             WITH s
+             MATCH (r:City {slug: $region_slug})
+             MERGE (r)-[:SCOUTS]->(s)"
         )
         .param("id", source.id.to_string())
         .param("canonical_key", source.canonical_key.as_str())
         .param("canonical_value", source.canonical_value.as_str())
         .param("url", source.url.clone().unwrap_or_default())
         .param("discovery_method", source.discovery_method.to_string())
-        .param("city", source.city.as_str())
         .param("created_at", format_datetime(&source.created_at))
         .param("signals_produced", source.signals_produced as i64)
         .param("signals_corroborated", source.signals_corroborated as i64)
@@ -1608,7 +1610,8 @@ impl GraphWriter {
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("quality_penalty", source.quality_penalty)
         .param("source_role", source.source_role.to_string())
-        .param("scrape_count", source.scrape_count as i64);
+        .param("scrape_count", source.scrape_count as i64)
+        .param("region_slug", region_slug);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1643,13 +1646,13 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Get all active sources for a city (by slug).
-    pub async fn get_active_sources(&self, city: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
+    /// Get all active sources for a region (by slug), via `:SCOUTS` relationship.
+    pub async fn get_active_sources(&self, region: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
-                    s.discovery_method AS discovery_method, s.city AS city,
+                    s.discovery_method AS discovery_method,
                     s.created_at AS created_at, s.last_scraped AS last_scraped,
                     s.last_produced_signal AS last_produced_signal,
                     s.signals_produced AS signals_produced,
@@ -1662,7 +1665,7 @@ impl GraphWriter {
                     s.source_role AS source_role,
                     s.scrape_count AS scrape_count",
         )
-        .param("city", city);
+        .param("region", region);
 
         let mut sources = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1700,7 +1703,6 @@ impl GraphWriter {
                 canonical_value: row.get("canonical_value").unwrap_or_default(),
                 url: if url.is_empty() { None } else { Some(url) },
                 discovery_method,
-                city: row.get("city").unwrap_or_default(),
                 created_at,
                 last_scraped,
                 last_produced_signal,
@@ -1813,14 +1815,14 @@ impl GraphWriter {
         max_empty_runs: u32,
     ) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true, city: $city})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated",
         )
-        .param("city", city)
+        .param("region", city)
         .param("max", max_empty_runs as i64);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -1839,7 +1841,7 @@ impl GraphWriter {
     /// Protects curated and human-submitted sources.
     pub async fn deactivate_dead_web_queries(&self, city: &str) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true, city: $city})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
                AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
@@ -1849,7 +1851,7 @@ impl GraphWriter {
              SET s.active = false
              RETURN count(s) AS deactivated",
         )
-        .param("city", city);
+        .param("region", city);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -1862,11 +1864,11 @@ impl GraphWriter {
     /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
     pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
              RETURN s.canonical_value AS query",
         )
-        .param("city", city);
+        .param("region", city);
 
         let mut queries = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1892,7 +1894,7 @@ impl GraphWriter {
         let q = query(
             "CALL db.index.vector.queryNodes('source_query_embedding', 5, $embedding)
              YIELD node, score
-             WHERE node.city = $city AND node.active = true
+             WHERE node.active = true AND EXISTS { MATCH (:City {slug: $region})-[:SCOUTS]->(node) }
                AND NOT (node.canonical_value STARTS WITH 'http://' OR node.canonical_value STARTS WITH 'https://')
                AND score >= $threshold
              RETURN node.canonical_key AS canonical_key, score
@@ -1900,7 +1902,7 @@ impl GraphWriter {
              LIMIT 1",
         )
         .param("embedding", embedding.to_vec())
-        .param("city", city)
+        .param("region", city)
         .param("threshold", threshold);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -2050,13 +2052,13 @@ impl GraphWriter {
     /// Get source-level stats for reporting.
     pub async fn get_source_stats(&self, city: &str) -> Result<SourceStats, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source)
              RETURN count(s) AS total,
                     count(CASE WHEN s.active THEN 1 END) AS active,
                     count(CASE WHEN s.discovery_method = 'curated' THEN 1 END) AS curated,
                     count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
         )
-        .param("city", city);
+        .param("region", city);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -2428,7 +2430,7 @@ impl GraphWriter {
     ) -> Result<(Vec<SourceBrief>, Vec<SourceBrief>), neo4rs::Error> {
         // Top 5 successful: active, signals_produced > 0, ordered by weight DESC
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND s.signals_produced > 0
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2437,7 +2439,7 @@ impl GraphWriter {
              ORDER BY s.weight DESC
              LIMIT 5",
         )
-        .param("city", city);
+        .param("region", city);
 
         let mut successes = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2461,7 +2463,7 @@ impl GraphWriter {
 
         // Bottom 5 failures: deactivated or 3+ consecutive empty runs
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source)
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND (s.active = false OR s.consecutive_empty_runs >= 3)
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2470,7 +2472,7 @@ impl GraphWriter {
              ORDER BY s.consecutive_empty_runs DESC
              LIMIT 5",
         )
-        .param("city", city);
+        .param("region", city);
 
         let mut failures = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -4283,6 +4285,28 @@ impl GraphWriter {
             .param("source", source_slug);
 
         self.client.graph.run(q3).await
+    }
+
+    // --- Region aliases (delegate to city-named functions during migration) ---
+
+    /// Alias for `upsert_city` during city→region migration.
+    pub async fn upsert_region(&self, city: &CityNode) -> Result<(), neo4rs::Error> {
+        self.upsert_city(city).await
+    }
+
+    /// Alias for `get_city` during city→region migration.
+    pub async fn get_region(&self, slug: &str) -> Result<Option<CityNode>, neo4rs::Error> {
+        self.get_city(slug).await
+    }
+
+    /// Alias for `list_cities` during city→region migration.
+    pub async fn list_regions(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
+        self.list_cities().await
+    }
+
+    /// Alias for `set_city_scout_completed` during city→region migration.
+    pub async fn set_region_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
+        self.set_city_scout_completed(slug).await
     }
 }
 

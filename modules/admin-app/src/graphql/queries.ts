@@ -39,8 +39,8 @@ export const ME = gql`
 `;
 
 export const ADMIN_DASHBOARD = gql`
-  query AdminDashboard($city: String!) {
-    adminDashboard(city: $city) {
+  query AdminDashboard($region: String!) {
+    adminDashboard(region: $region) {
       totalSignals
       totalStories
       totalActors
@@ -48,8 +48,8 @@ export const ADMIN_DASHBOARD = gql`
       activeSources
       totalTensions
       scoutStatuses {
-        cityName
-        citySlug
+        regionName
+        regionSlug
         lastScouted
         sourcesDue
         running
@@ -117,9 +117,9 @@ export const ADMIN_DASHBOARD = gql`
   }
 `;
 
-export const ADMIN_CITIES = gql`
-  query AdminCities {
-    adminCities {
+export const ADMIN_REGIONS = gql`
+  query AdminRegions {
+    adminRegions {
       slug
       name
       centerLat
@@ -133,9 +133,9 @@ export const ADMIN_CITIES = gql`
   }
 `;
 
-export const ADMIN_CITY = gql`
-  query AdminCity($slug: String!) {
-    adminCity(slug: $slug) {
+export const ADMIN_REGION = gql`
+  query AdminRegion($slug: String!) {
+    adminRegion(slug: $slug) {
       slug
       name
       centerLat
@@ -149,9 +149,9 @@ export const ADMIN_CITY = gql`
   }
 `;
 
-export const ADMIN_CITY_SOURCES = gql`
-  query AdminCitySources($citySlug: String!) {
-    adminCitySources(citySlug: $citySlug) {
+export const ADMIN_REGION_SOURCES = gql`
+  query AdminRegionSources($regionSlug: String!) {
+    adminRegionSources(regionSlug: $regionSlug) {
       id
       url
       canonicalValue
@@ -169,10 +169,10 @@ export const ADMIN_CITY_SOURCES = gql`
 `;
 
 export const ADMIN_SCOUT_STATUS = gql`
-  query AdminScoutStatus($citySlug: String!) {
-    adminScoutStatus(citySlug: $citySlug) {
-      cityName
-      citySlug
+  query AdminScoutStatus($regionSlug: String!) {
+    adminScoutStatus(regionSlug: $regionSlug) {
+      regionName
+      regionSlug
       lastScouted
       sourcesDue
       running

@@ -11,8 +11,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, Urgency,
+    AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
+    NodeMeta, NodeType, RegionNode, SensitivityLevel, SourceNode, SourceRole, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
@@ -268,8 +268,8 @@ pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
-    city: CityNode,
-    city_slug: String,
+    region: RegionNode,
+    region_slug: String,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -285,7 +285,7 @@ impl<'a> GatheringFinder<'a> {
         scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        city: CityNode,
+        region: RegionNode,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
@@ -298,19 +298,19 @@ impl<'a> GatheringFinder<'a> {
                 visited_urls: None,
             });
 
-        let lat_delta = city.radius_km / 111.0;
-        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
-        let city_slug = city.slug.clone();
+        let lat_delta = region.radius_km / 111.0;
+        let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
+        let region_slug = region.slug.clone();
         Self {
             writer,
             claude,
             embedder,
-            min_lat: city.center_lat - lat_delta,
-            max_lat: city.center_lat + lat_delta,
-            min_lng: city.center_lng - lng_delta,
-            max_lng: city.center_lng + lng_delta,
-            city,
-            city_slug,
+            min_lat: region.center_lat - lat_delta,
+            max_lat: region.center_lat + lat_delta,
+            min_lng: region.center_lng - lng_delta,
+            max_lng: region.center_lng + lng_delta,
+            region,
+            region_slug,
             cancelled,
             run_id,
         }
@@ -395,14 +395,14 @@ impl<'a> GatheringFinder<'a> {
             .writer
             .get_existing_gathering_signals(
                 target.tension_id,
-                self.city.center_lat,
-                self.city.center_lng,
-                self.city.radius_km,
+                self.region.center_lat,
+                self.region.center_lng,
+                self.region.radius_km,
             )
             .await
             .unwrap_or_default();
 
-        let system = investigation_system_prompt(&self.city.name);
+        let system = investigation_system_prompt(&self.region.name);
         let user = investigation_user_prompt(target, &existing);
 
         // Phase 1: Agentic investigation with web_search + read_page tools
@@ -594,9 +594,9 @@ impl<'a> GatheringFinder<'a> {
                     .writer
                     .find_or_create_place(
                         venue,
-                        &self.city_slug,
-                        self.city.center_lat,
-                        self.city.center_lng,
+                        &self.region_slug,
+                        self.region.center_lat,
+                        self.region.center_lng,
                     )
                     .await
                 {
@@ -615,7 +615,7 @@ impl<'a> GatheringFinder<'a> {
                 }
 
                 // Venue seeding: create future source for the venue
-                let venue_query = format!("{} {} community events", venue, self.city.name);
+                let venue_query = format!("{} {} community events", venue, self.region.name);
                 if let Err(e) = self.create_future_query(&venue_query, target, stats).await {
                     warn!(venue, error = %e, "Failed to create venue-seeded future source");
                 }
@@ -640,11 +640,11 @@ impl<'a> GatheringFinder<'a> {
             freshness_score: 1.0,
             corroboration_count: 0,
             location: Some(GeoPoint {
-                lat: self.city.center_lat,
-                lng: self.city.center_lng,
+                lat: self.region.center_lat,
+                lng: self.region.center_lng,
                 precision: GeoPrecision::City,
             }),
-            location_name: Some(self.city.name.clone()),
+            location_name: Some(self.region.name.clone()),
             source_url: gathering.url.clone(),
             extracted_at: now,
             last_confirmed_active: now,
@@ -713,16 +713,16 @@ impl<'a> GatheringFinder<'a> {
         explanation: &str,
         gathering_type: &str,
     ) -> Result<()> {
-        let lat_delta = self.city.radius_km / 111.0;
+        let lat_delta = self.region.radius_km / 111.0;
         let lng_delta =
-            self.city.radius_km / (111.0 * self.city.center_lat.to_radians().cos());
+            self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
         let active_tensions = self
             .writer
             .get_active_tensions(
-                self.city.center_lat - lat_delta,
-                self.city.center_lat + lat_delta,
-                self.city.center_lng - lng_delta,
-                self.city.center_lng + lng_delta,
+                self.region.center_lat - lat_delta,
+                self.region.center_lat + lat_delta,
+                self.region.center_lng - lng_delta,
+                self.region.center_lng + lng_delta,
             )
             .await?;
         if active_tensions.is_empty() {
@@ -773,7 +773,7 @@ impl<'a> GatheringFinder<'a> {
         stats: &mut GatheringFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&self.city_slug, &cv);
+        let ck = sources::make_canonical_key(&cv);
         let gap_context = format!(
             "Gathering finder: gathering discovery for \"{}\"",
             target.title,
@@ -785,7 +785,6 @@ impl<'a> GatheringFinder<'a> {
             canonical_value: cv,
             url: None,
             discovery_method: DiscoveryMethod::GapAnalysis,
-            city: self.city_slug.clone(),
             created_at: Utc::now(),
             last_scraped: None,
             last_produced_signal: None,
@@ -805,7 +804,7 @@ impl<'a> GatheringFinder<'a> {
             scrape_count: 0,
         };
 
-        self.writer.upsert_source(&source).await?;
+        self.writer.upsert_source(&source, &self.region_slug).await?;
         stats.future_sources_created += 1;
 
         info!(
@@ -949,8 +948,8 @@ mod tests {
     }
 
     #[test]
-    fn gathering_node_uses_city_center_coordinates() {
-        let city = CityNode {
+    fn gathering_node_uses_region_center_coordinates() {
+        let region = RegionNode {
             id: Uuid::new_v4(),
             name: "Minneapolis".to_string(),
             slug: "minneapolis".to_string(),
@@ -973,11 +972,11 @@ mod tests {
             freshness_score: 1.0,
             corroboration_count: 0,
             location: Some(GeoPoint {
-                lat: city.center_lat,
-                lng: city.center_lng,
+                lat: region.center_lat,
+                lng: region.center_lng,
                 precision: GeoPrecision::City,
             }),
-            location_name: Some(city.name.clone()),
+            location_name: Some(region.name.clone()),
             source_url: "https://example.com/singing".to_string(),
             extracted_at: now,
             last_confirmed_active: now,

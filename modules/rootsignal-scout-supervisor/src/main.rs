@@ -33,19 +33,19 @@ async fn main() -> Result<()> {
     // Run migrations (idempotent)
     migrate(&client).await?;
 
-    // Load city node
+    // Load region node
     let writer = GraphWriter::new(client.clone());
-    let city = writer.get_city(&config.city).await?.ok_or_else(|| {
+    let region = writer.get_region(&config.region).await?.ok_or_else(|| {
         anyhow::anyhow!(
-            "City '{}' not found in graph. Run scout first.",
-            config.city
+            "Region '{}' not found in graph. Run scout first.",
+            config.region
         )
     })?;
 
     info!(
-        slug = city.slug.as_str(),
-        name = city.name.as_str(),
-        "Loaded city"
+        slug = region.slug.as_str(),
+        name = region.name.as_str(),
+        "Loaded region"
     );
 
     // Build notification backend: Slack if configured, otherwise Noop
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     };
 
     // Create and run supervisor
-    let supervisor = Supervisor::new(client, city, config.anthropic_api_key.clone(), notifier);
+    let supervisor = Supervisor::new(client, region, config.anthropic_api_key.clone(), notifier);
     let stats = supervisor.run().await?;
 
     info!("Supervisor complete. {stats}");

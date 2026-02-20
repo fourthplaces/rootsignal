@@ -341,9 +341,9 @@ impl QueryRoot {
 
     // ========== Admin queries (AdminGuard) ==========
 
-    /// Dashboard data for a city.
+    /// Dashboard data for a region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_dashboard(&self, ctx: &Context<'_>, city: String) -> Result<AdminDashboardData> {
+    async fn admin_dashboard(&self, ctx: &Context<'_>, region: String) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
 
@@ -374,31 +374,31 @@ impl QueryRoot {
             reader.story_count_by_arc(),
             reader.story_count_by_category(),
             writer.get_unmet_tensions(20),
-            writer.get_discovery_performance(&city),
-            writer.get_extraction_yield(&city),
-            writer.get_gap_type_stats(&city),
-            writer.get_active_sources(&city),
-            writer.list_cities(),
+            writer.get_discovery_performance(&region),
+            writer.get_extraction_yield(&region),
+            writer.get_gap_type_stats(&region),
+            writer.get_active_sources(&region),
+            writer.list_regions(),
         );
 
         let sources = sources.unwrap_or_default();
         let (top_sources, bottom_sources) = discovery.unwrap_or_default();
-        let all_cities = all_cities.unwrap_or_default();
+        let all_regions = all_cities.unwrap_or_default();
 
-        // Build scout status for each city using batch queries (2 queries instead of 2N)
-        let city_slugs: Vec<String> = all_cities.iter().map(|c| c.slug.clone()).collect();
+        // Build scout status for each region using batch queries (2 queries instead of 2N)
+        let region_slugs: Vec<String> = all_regions.iter().map(|c| c.slug.clone()).collect();
         let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&city_slugs),
-            writer.batch_due_sources(&city_slugs),
+            writer.batch_scout_running(&region_slugs),
+            writer.batch_due_sources(&region_slugs),
         );
         let running_map = running_map.unwrap_or_default();
         let due_map = due_map.unwrap_or_default();
 
         let mut scout_statuses = Vec::new();
-        for c in &all_cities {
-            scout_statuses.push(CityScoutStatus {
-                city_name: c.name.clone(),
-                city_slug: c.slug.clone(),
+        for c in &all_regions {
+            scout_statuses.push(RegionScoutStatus {
+                region_name: c.name.clone(),
+                region_slug: c.slug.clone(),
                 last_scouted: c.last_scout_completed_at,
                 sources_due: *due_map.get(&c.slug).unwrap_or(&0),
                 running: *running_map.get(&c.slug).unwrap_or(&false),
@@ -521,55 +521,55 @@ impl QueryRoot {
         })
     }
 
-    /// List all cities with metadata.
+    /// List all regions with metadata.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_cities(&self, ctx: &Context<'_>) -> Result<Vec<AdminCity>> {
+    async fn admin_regions(&self, ctx: &Context<'_>) -> Result<Vec<AdminRegion>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let cities = writer.list_cities().await?;
+        let regions = writer.list_regions().await?;
 
-        let city_slugs: Vec<String> = cities.iter().map(|c| c.slug.clone()).collect();
+        let region_slugs: Vec<String> = regions.iter().map(|c| c.slug.clone()).collect();
         let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&city_slugs),
-            writer.batch_due_sources(&city_slugs),
+            writer.batch_scout_running(&region_slugs),
+            writer.batch_due_sources(&region_slugs),
         );
         let running_map = running_map.unwrap_or_default();
         let due_map = due_map.unwrap_or_default();
 
-        let results = cities
+        let results = regions
             .iter()
             .map(|c| {
                 let running = *running_map.get(&c.slug).unwrap_or(&false);
                 let due = *due_map.get(&c.slug).unwrap_or(&0);
-                AdminCity::from_city_node(c, running, due)
+                AdminRegion::from_region_node(c, running, due)
             })
             .collect();
         Ok(results)
     }
 
-    /// Get city detail.
+    /// Get region detail.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_city(&self, ctx: &Context<'_>, slug: String) -> Result<Option<AdminCity>> {
+    async fn admin_region(&self, ctx: &Context<'_>, slug: String) -> Result<Option<AdminRegion>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let city = writer.get_city(&slug).await?;
-        match city {
+        let region = writer.get_region(&slug).await?;
+        match region {
             Some(c) => {
                 let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
                 let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
-                Ok(Some(AdminCity::from_city_node(&c, running, due)))
+                Ok(Some(AdminRegion::from_region_node(&c, running, due)))
             }
             None => Ok(None),
         }
     }
 
-    /// List active sources for a city with schedule preview.
+    /// List active sources for a region with schedule preview.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_city_sources(
+    async fn admin_region_sources(
         &self,
         ctx: &Context<'_>,
-        city_slug: String,
+        region_slug: String,
     ) -> Result<Vec<AdminSource>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let sources = writer.get_active_sources(&city_slug).await?;
+        let sources = writer.get_active_sources(&region_slug).await?;
         Ok(sources
             .iter()
             .map(|s| {
@@ -596,22 +596,22 @@ impl QueryRoot {
             .collect())
     }
 
-    /// Scout status for a specific city.
+    /// Scout status for a specific region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_status(
         &self,
         ctx: &Context<'_>,
-        city_slug: String,
-    ) -> Result<CityScoutStatus> {
+        region_slug: String,
+    ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let city = writer.get_city(&city_slug).await?;
-        let running = writer.is_scout_running(&city_slug).await.unwrap_or(false);
-        let due = writer.count_due_sources(&city_slug).await.unwrap_or(0);
+        let region = writer.get_region(&region_slug).await?;
+        let running = writer.is_scout_running(&region_slug).await.unwrap_or(false);
+        let due = writer.count_due_sources(&region_slug).await.unwrap_or(0);
 
-        Ok(CityScoutStatus {
-            city_name: city.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            city_slug,
-            last_scouted: city.and_then(|c| c.last_scout_completed_at),
+        Ok(RegionScoutStatus {
+            region_name: region.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            region_slug,
+            last_scouted: region.and_then(|c| c.last_scout_completed_at),
             sources_due: due,
             running,
         })
@@ -634,7 +634,7 @@ pub struct AdminDashboardData {
     pub total_sources: u64,
     pub active_sources: u64,
     pub total_tensions: u64,
-    pub scout_statuses: Vec<CityScoutStatus>,
+    pub scout_statuses: Vec<RegionScoutStatus>,
     pub signal_volume_by_day: Vec<DayVolume>,
     pub count_by_type: Vec<TypeCount>,
     pub story_count_by_arc: Vec<LabelCount>,
@@ -649,9 +649,9 @@ pub struct AdminDashboardData {
 }
 
 #[derive(SimpleObject)]
-pub struct CityScoutStatus {
-    pub city_name: String,
-    pub city_slug: String,
+pub struct RegionScoutStatus {
+    pub region_name: String,
+    pub region_slug: String,
     pub last_scouted: Option<DateTime<Utc>>,
     pub sources_due: u32,
     pub running: bool,
@@ -713,7 +713,7 @@ pub struct AdminGapRow {
 }
 
 #[derive(SimpleObject)]
-pub struct AdminCity {
+pub struct AdminRegion {
     pub id: Uuid,
     pub slug: String,
     pub name: String,
@@ -727,8 +727,8 @@ pub struct AdminCity {
     pub sources_due: u32,
 }
 
-impl AdminCity {
-    fn from_city_node(c: &CityNode, running: bool, due: u32) -> Self {
+impl AdminRegion {
+    fn from_region_node(c: &CityNode, running: bool, due: u32) -> Self {
         Self {
             id: c.id,
             slug: c.slug.clone(),

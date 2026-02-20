@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    is_web_query, scraping_strategy, ActorNode, ActorType, CityNode, DiscoveryMethod, EvidenceNode,
+    is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode, DiscoveryMethod, EvidenceNode,
     GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy, SocialPlatform as CommonSocialPlatform,
     SourceNode, SourceRole,
 };
@@ -183,7 +183,7 @@ pub(crate) struct ScrapePhase<'a> {
     scraper: Arc<dyn PageScraper>,
     searcher: Arc<dyn WebSearcher>,
     social: &'a dyn SocialScraper,
-    city_node: &'a CityNode,
+    region: &'a RegionNode,
     run_id: String,
 }
 
@@ -195,7 +195,7 @@ impl<'a> ScrapePhase<'a> {
         scraper: Arc<dyn PageScraper>,
         searcher: Arc<dyn WebSearcher>,
         social: &'a dyn SocialScraper,
-        city_node: &'a CityNode,
+        region: &'a RegionNode,
         run_id: String,
     ) -> Self {
         Self {
@@ -205,7 +205,7 @@ impl<'a> ScrapePhase<'a> {
             scraper,
             searcher,
             social,
-            city_node,
+            region,
             run_id,
         }
     }
@@ -757,7 +757,7 @@ impl<'a> ScrapePhase<'a> {
         // Load existing sources for dedup across all platforms
         let existing_sources = self
             .writer
-            .get_active_sources(&self.city_node.slug)
+            .get_active_sources(&self.region.slug)
             .await
             .unwrap_or_default();
         let existing_canonical_values: HashSet<String> = existing_sources
@@ -900,7 +900,7 @@ impl<'a> ScrapePhase<'a> {
 
                 // Create a Source node with correct platform type
                 let cv = rootsignal_common::canonical_value(&source_url);
-                let ck = sources::make_canonical_key(&self.city_node.slug, &source_url);
+                let ck = sources::make_canonical_key(&source_url);
                 let gap_context = format!(
                     "Topic: {}",
                     topics.first().map(|t| t.as_str()).unwrap_or("unknown")
@@ -911,7 +911,6 @@ impl<'a> ScrapePhase<'a> {
                     canonical_value: cv,
                     url: Some(source_url.clone()),
                     discovery_method: DiscoveryMethod::HashtagDiscovery,
-                    city: self.city_node.slug.clone(),
                     created_at: Utc::now(),
                     last_scraped: Some(Utc::now()),
                     last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
@@ -930,7 +929,7 @@ impl<'a> ScrapePhase<'a> {
 
                 *ctx.source_signal_counts.entry(ck).or_default() += produced;
 
-                match self.writer.upsert_source(&source).await {
+                match self.writer.upsert_source(&source, &self.region.slug).await {
                     Ok(()) => {
                         new_accounts += 1;
                         info!(
@@ -1064,8 +1063,8 @@ impl<'a> ScrapePhase<'a> {
 
         // Strip fake city-center coordinates.
         // Safety net: if the LLM echoes the default city coords, remove them.
-        let center_lat = self.city_node.center_lat;
-        let center_lng = self.city_node.center_lng;
+        let center_lat = self.region.center_lat;
+        let center_lng = self.region.center_lng;
         for node in &mut nodes {
             let is_fake = node
                 .meta()
@@ -1089,10 +1088,10 @@ impl<'a> ScrapePhase<'a> {
         // 3. No coordinates, location_name matches a geo_term → accept
         // 4. No coordinates, no location_name match, source is city-local → accept with 0.8x confidence
         // 5. No coordinates, no match, source not city-local → reject
-        let geo_terms = &self.city_node.geo_terms;
-        let center_lat = self.city_node.center_lat;
-        let center_lng = self.city_node.center_lng;
-        let radius_km = self.city_node.radius_km;
+        let geo_terms = &self.region.geo_terms;
+        let center_lat = self.region.center_lat;
+        let center_lng = self.region.center_lng;
+        let radius_km = self.region.radius_km;
 
         // Determine if this source URL belongs to a city-local source
         let is_city_local = known_city_urls.contains(&url);
@@ -1390,19 +1389,19 @@ impl<'a> ScrapePhase<'a> {
             }
 
             // 3b: Check graph index (catches dupes from previous runs, city-scoped)
-            let lat_delta = self.city_node.radius_km / 111.0;
-            let lng_delta = self.city_node.radius_km
-                / (111.0 * self.city_node.center_lat.to_radians().cos());
+            let lat_delta = self.region.radius_km / 111.0;
+            let lng_delta = self.region.radius_km
+                / (111.0 * self.region.center_lat.to_radians().cos());
             match self
                 .writer
                 .find_duplicate(
                     &embedding,
                     node_type,
                     0.85,
-                    self.city_node.center_lat - lat_delta,
-                    self.city_node.center_lat + lat_delta,
-                    self.city_node.center_lng - lng_delta,
-                    self.city_node.center_lng + lng_delta,
+                    self.region.center_lat - lat_delta,
+                    self.region.center_lat + lat_delta,
+                    self.region.center_lng - lng_delta,
+                    self.region.center_lng + lng_delta,
                 )
                 .await
             {
@@ -1507,7 +1506,7 @@ impl<'a> ScrapePhase<'a> {
                                 entity_id: actor_name.to_lowercase().replace(' ', "-"),
                                 domains: vec![],
                                 social_urls: vec![],
-                                city: self.city_node.name.clone(),
+                                city: self.region.slug.clone(),
                                 description: String::new(),
                                 signal_count: 0,
                                 first_seen: Utc::now(),

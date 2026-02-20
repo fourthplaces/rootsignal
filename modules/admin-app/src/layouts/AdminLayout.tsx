@@ -6,7 +6,7 @@ import { LOGOUT } from "@/graphql/mutations";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
-  { to: "/cities", label: "Cities" },
+  { to: "/regions", label: "Regions" },
   { to: "/signals", label: "Signals" },
   { to: "/stories", label: "Stories" },
   { to: "/actors", label: "Actors" },

@@ -293,7 +293,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
 
     for site in &world.sites {
         let cv = rootsignal_common::canonical_value(&site.url);
-        let ck = sources::make_canonical_key(city_slug, &site.url);
+        let ck = sources::make_canonical_key(&site.url);
 
         let role = match site.kind.as_str() {
             "news" | "forum" | "reddit" => SourceRole::Tension,
@@ -309,7 +309,6 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
             canonical_value: cv,
             url: Some(site.url.clone()),
             discovery_method: DiscoveryMethod::Curated,
-            city: city_slug.to_string(),
             created_at: now,
             last_scraped: None,
             last_produced_signal: None,
@@ -327,7 +326,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
         };
 
         writer
-            .upsert_source(&source)
+            .upsert_source(&source, city_slug)
             .await
             .expect("Failed to upsert site source");
     }
@@ -345,7 +344,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
         };
 
         let cv = rootsignal_common::canonical_value(&url);
-        let ck = sources::make_canonical_key(city_slug, &url);
+        let ck = sources::make_canonical_key(&url);
 
         let source = SourceNode {
             id: uuid::Uuid::new_v4(),
@@ -353,7 +352,6 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
             canonical_value: cv,
             url: Some(url),
             discovery_method: DiscoveryMethod::Curated,
-            city: city_slug.to_string(),
             created_at: now,
             last_scraped: None,
             last_produced_signal: None,
@@ -371,7 +369,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
         };
 
         writer
-            .upsert_source(&source)
+            .upsert_source(&source, city_slug)
             .await
             .expect("Failed to upsert social source");
     }

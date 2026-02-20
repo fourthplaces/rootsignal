@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
         graph_client: client,
         config: config.clone(),
         twilio: twilio.map(|t| (*t).clone()),
-        city: config.city.clone(),
+        city: config.region.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
         scout_cancel: scout_cancel.clone(),
         jwt_service: jwt_service.clone(),

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_CITIES } from "@/graphql/queries";
-import { CREATE_CITY } from "@/graphql/mutations";
+import { ADMIN_REGIONS } from "@/graphql/queries";
+import { CREATE_REGION } from "@/graphql/mutations";
 
 export function CitiesPage() {
-  const { data, loading, refetch } = useQuery(ADMIN_CITIES);
-  const [createCity] = useMutation(CREATE_CITY);
+  const { data, loading, refetch } = useQuery(ADMIN_REGIONS);
+  const [createRegion] = useMutation(CREATE_REGION);
   const [showCreate, setShowCreate] = useState(false);
   const [location, setLocation] = useState("");
   const [creating, setCreating] = useState(false);
@@ -15,7 +15,7 @@ export function CitiesPage() {
     e.preventDefault();
     setCreating(true);
     try {
-      await createCity({ variables: { location } });
+      await createRegion({ variables: { location } });
       setLocation("");
       setShowCreate(false);
       refetch();
@@ -24,19 +24,19 @@ export function CitiesPage() {
     }
   };
 
-  if (loading) return <p className="text-muted-foreground">Loading cities...</p>;
+  if (loading) return <p className="text-muted-foreground">Loading regions...</p>;
 
-  const cities = data?.adminCities ?? [];
+  const regions = data?.adminRegions ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Cities</h1>
+        <h1 className="text-xl font-semibold">Regions</h1>
         <button
           onClick={() => setShowCreate(!showCreate)}
           className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
         >
-          Add City
+          Add Region
         </button>
       </div>
 
@@ -46,7 +46,7 @@ export function CitiesPage() {
             type="text"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            placeholder="City, State (e.g. Austin, TX)"
+            placeholder="Location (e.g. Austin, TX)"
             className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
             required
           />
@@ -61,8 +61,8 @@ export function CitiesPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {cities.map(
-          (city: {
+        {regions.map(
+          (region: {
             slug: string;
             name: string;
             active: boolean;
@@ -71,29 +71,29 @@ export function CitiesPage() {
             lastScoutCompletedAt: string | null;
           }) => (
             <Link
-              key={city.slug}
-              to={`/cities/${city.slug}`}
+              key={region.slug}
+              to={`/regions/${region.slug}`}
               className="block rounded-lg border border-border p-4 hover:border-foreground/20 transition-colors"
             >
               <div className="flex items-center justify-between mb-2">
-                <h2 className="font-medium">{city.name}</h2>
+                <h2 className="font-medium">{region.name}</h2>
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
-                    city.scoutRunning
+                    region.scoutRunning
                       ? "bg-green-900 text-green-300"
                       : "bg-secondary text-muted-foreground"
                   }`}
                 >
-                  {city.scoutRunning ? "Scout Running" : "Idle"}
+                  {region.scoutRunning ? "Scout Running" : "Idle"}
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                {city.sourcesDue} sources due
-                {city.lastScoutCompletedAt && (
+                {region.sourcesDue} sources due
+                {region.lastScoutCompletedAt && (
                   <>
                     {" "}
                     &middot; Last scouted{" "}
-                    {new Date(city.lastScoutCompletedAt).toLocaleDateString()}
+                    {new Date(region.lastScoutCompletedAt).toLocaleDateString()}
                   </>
                 )}
               </p>

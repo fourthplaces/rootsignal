@@ -3,7 +3,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{RegionNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 use crate::scraper::{RssFetcher, WebSearcher};
@@ -16,7 +16,7 @@ pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
     _searcher: &'a dyn WebSearcher,
     anthropic_api_key: String,
-    city_node: CityNode,
+    region: RegionNode,
 }
 
 impl<'a> Bootstrapper<'a> {
@@ -24,20 +24,20 @@ impl<'a> Bootstrapper<'a> {
         writer: &'a GraphWriter,
         searcher: &'a dyn WebSearcher,
         anthropic_api_key: &str,
-        city_node: CityNode,
+        region: RegionNode,
     ) -> Self {
         Self {
             writer,
             _searcher: searcher,
             anthropic_api_key: anthropic_api_key.to_string(),
-            city_node,
+            region,
         }
     }
 
     /// Run the cold start bootstrap. Returns number of sources discovered.
     pub async fn run(&self) -> Result<u32> {
         info!(
-            city = self.city_node.name.as_str(),
+            city = self.region.name.as_str(),
             "Starting cold start bootstrap..."
         );
 
@@ -50,14 +50,13 @@ impl<'a> Bootstrapper<'a> {
         let now = Utc::now();
         for query in &queries {
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_node.slug, &cv);
+            let ck = sources::make_canonical_key(&cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
                 discovery_method: DiscoveryMethod::ColdStart,
-                city: self.city_node.slug.clone(),
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -73,7 +72,7 @@ impl<'a> Bootstrapper<'a> {
                 source_role: SourceRole::default(),
                 scrape_count: 0,
             };
-            match self.writer.upsert_source(&source).await {
+            match self.writer.upsert_source(&source, &self.region.slug).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
             }
@@ -82,7 +81,7 @@ impl<'a> Bootstrapper<'a> {
         // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
         let platform_sources = self.generate_platform_sources().await;
         for source in &platform_sources {
-            match self.writer.upsert_source(source).await {
+            match self.writer.upsert_source(source, &self.region.slug).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => {
                     let label = source.url.as_deref().unwrap_or(&source.canonical_value);
@@ -97,7 +96,7 @@ impl<'a> Bootstrapper<'a> {
 
     /// Use Claude Haiku to generate 20-30 seed web search queries for the city.
     async fn generate_seed_queries(&self) -> Result<Vec<String>> {
-        let city = &self.city_node.name;
+        let city = &self.region.name;
 
         let prompt = format!(
             r#"Generate 25 search queries to discover community life in {city}. Focus on:
@@ -135,13 +134,13 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
     /// Eventbrite/VolunteerMatch/GoFundMe are query sources — they produce URLs, not content.
     /// Reddit subreddits are discovered via LLM rather than guessed from the city slug.
     async fn generate_platform_sources(&self) -> Vec<SourceNode> {
-        let slug = &self.city_node.slug;
-        let city_name = &self.city_node.name;
+        let _slug = &self.region.slug;
+        let city_name = &self.region.name;
         let city_name_encoded = city_name.replace(' ', "+");
         let now = Utc::now();
 
         let make_url = |url: &str, role: SourceRole| {
-            let ck = sources::make_canonical_key(slug, url);
+            let ck = sources::make_canonical_key(url);
             let cv = rootsignal_common::canonical_value(url);
             SourceNode {
                 id: Uuid::new_v4(),
@@ -149,7 +148,6 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 canonical_value: cv,
                 url: Some(url.to_string()),
                 discovery_method: DiscoveryMethod::ColdStart,
-                city: slug.clone(),
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -168,14 +166,13 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         };
 
         let make_query = |query: &str, role: SourceRole| {
-            let ck = sources::make_canonical_key(slug, query);
+            let ck = sources::make_canonical_key(query);
             SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck,
                 canonical_value: query.to_string(),
                 url: None,
                 discovery_method: DiscoveryMethod::ColdStart,
-                city: slug.clone(),
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -277,7 +274,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 
     /// Ask Claude for relevant subreddits for this city.
     async fn discover_subreddits(&self) -> Result<Vec<String>> {
-        let city = &self.city_node.name;
+        let city = &self.region.name;
 
         let prompt = format!(
             r#"What are the active Reddit subreddits relevant to community life in {city}?
@@ -315,7 +312,7 @@ Maximum 8 subreddits."#
     /// Ask Claude for local news outlets and their RSS feed URLs.
     /// Returns (outlet_name, feed_url) pairs.
     async fn discover_news_outlets(&self) -> Result<Vec<(String, String)>> {
-        let city = &self.city_node.name;
+        let city = &self.region.name;
 
         let prompt = format!(
             r#"What are the local news outlets for {city}? Include newspapers, alt-weeklies, TV station news sites, and hyperlocal blogs.
@@ -367,7 +364,7 @@ struct NewsOutlet {
 /// For each tension, creates targeted search queries to find organizations helping.
 pub async fn tension_seed_queries(
     writer: &GraphWriter,
-    city_node: &CityNode,
+    region: &RegionNode,
 ) -> Result<Vec<SourceNode>> {
     // Get existing tensions from the graph
     let tensions = writer.get_recent_tensions(10).await.unwrap_or_default();
@@ -376,7 +373,7 @@ pub async fn tension_seed_queries(
         return Ok(Vec::new());
     }
 
-    let city = &city_node.name;
+    let city = &region.name;
     let mut all_sources = Vec::new();
     let now = Utc::now();
 
@@ -385,14 +382,13 @@ pub async fn tension_seed_queries(
         let query = format!("organizations helping with {} in {}", help_text, city);
 
         let cv = query.clone();
-        let ck = sources::make_canonical_key(&city_node.slug, &cv);
+        let ck = sources::make_canonical_key(&cv);
         all_sources.push(SourceNode {
             id: Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
             url: None,
             discovery_method: DiscoveryMethod::TensionSeed,
-            city: city_node.slug.clone(),
             created_at: now,
             last_scraped: None,
             last_produced_signal: None,

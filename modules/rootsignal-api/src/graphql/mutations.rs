@@ -258,12 +258,12 @@ impl MutationRoot {
         })
     }
 
-    /// Add a source to a city.
+    /// Add a source to a region.
     #[graphql(guard = "AdminGuard")]
     async fn add_source(
         &self,
         ctx: &Context<'_>,
-        city_slug: String,
+        region_slug: String,
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
@@ -280,7 +280,7 @@ impl MutationRoot {
         }
 
         let cv = rootsignal_common::canonical_value(&url);
-        let canonical_key = format!("{}:{}", city_slug, cv);
+        let canonical_key = cv.clone();
         let source_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
@@ -290,7 +290,6 @@ impl MutationRoot {
             canonical_value: cv,
             url: Some(url.clone()),
             discovery_method: DiscoveryMethod::HumanSubmission,
-            city: city_slug.clone(),
             created_at: now,
             last_scraped: None,
             last_produced_signal: None,
@@ -308,11 +307,11 @@ impl MutationRoot {
         };
 
         writer
-            .upsert_source(&source)
+            .upsert_source(&source, &region_slug)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
-        info!(url, city = city_slug.as_str(), "Source added by admin");
+        info!(url, region = region_slug.as_str(), "Source added by admin");
 
         Ok(AddSourceResult {
             success: true,
@@ -320,9 +319,9 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a city. Returns immediately; scout runs in background.
+    /// Run scout for a region. Returns immediately; scout runs in background.
     #[graphql(guard = "AdminGuard")]
-    async fn run_scout(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
+    async fn run_scout(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
@@ -340,10 +339,10 @@ impl MutationRoot {
         }
 
         // Check if already running
-        if writer.is_scout_running(&city_slug).await.unwrap_or(false) {
+        if writer.is_scout_running(&region_slug).await.unwrap_or(false) {
             return Ok(ScoutResult {
                 success: false,
-                message: Some("Scout already running for this city".to_string()),
+                message: Some("Scout already running for this region".to_string()),
             });
         }
 
@@ -351,7 +350,7 @@ impl MutationRoot {
         spawn_scout_run(
             (**graph_client).clone(),
             (**config).clone(),
-            city_slug,
+            region_slug,
             cancel.0.clone(),
             cache_store.clone(),
         );
@@ -364,9 +363,9 @@ impl MutationRoot {
 
     /// Stop the currently running scout.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
+    async fn stop_scout(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
         let cancel = ctx.data_unchecked::<ScoutCancel>();
-        info!(city = city_slug.as_str(), "Scout stop requested");
+        info!(region = region_slug.as_str(), "Scout stop requested");
         cancel.0.store(true, Ordering::Relaxed);
         Ok(ScoutResult {
             success: true,
@@ -376,11 +375,11 @@ impl MutationRoot {
 
     /// Reset a stuck scout lock.
     #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_lock(&self, ctx: &Context<'_>, city_slug: String) -> Result<ScoutResult> {
+    async fn reset_scout_lock(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        info!(city = city_slug.as_str(), "Scout lock reset requested");
+        info!(region = region_slug.as_str(), "Scout lock reset requested");
         writer
-            .release_scout_lock(&city_slug)
+            .release_scout_lock(&region_slug)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to release lock: {e}")))?;
         Ok(ScoutResult {
@@ -395,7 +394,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         url: String,
         description: Option<String>,
-        city: Option<String>,
+        region: Option<String>,
     ) -> Result<SubmitSourceResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let config = ctx.data_unchecked::<Arc<Config>>();
@@ -420,9 +419,9 @@ impl MutationRoot {
             }
         }
 
-        let city = city.unwrap_or_else(|| config.city.clone());
+        let region = region.unwrap_or_else(|| config.region.clone());
         let cv = rootsignal_common::canonical_value(&url);
-        let canonical_key = format!("{}:{}", city, cv);
+        let canonical_key = cv.clone();
         let source_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
@@ -432,7 +431,6 @@ impl MutationRoot {
             canonical_value: cv,
             url: Some(url.clone()),
             discovery_method: DiscoveryMethod::HumanSubmission,
-            city: city.clone(),
             created_at: now,
             last_scraped: None,
             last_produced_signal: None,
@@ -450,7 +448,7 @@ impl MutationRoot {
         };
 
         writer
-            .upsert_source(&source)
+            .upsert_source(&source, &region)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -460,7 +458,7 @@ impl MutationRoot {
                 id: Uuid::new_v4(),
                 url: url.clone(),
                 reason: Some(reason),
-                city: city.clone(),
+                city: region.clone(),
                 submitted_at: now,
             };
             if let Err(e) = writer.upsert_submission(&submission, &canonical_key).await {
@@ -468,7 +466,7 @@ impl MutationRoot {
             }
         }
 
-        info!(url, city, "Human submission received via GraphQL");
+        info!(url, region, "Human submission received via GraphQL");
 
         Ok(SubmitSourceResult {
             success: true,
@@ -589,7 +587,7 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 fn spawn_scout_run(
     client: GraphClient,
     config: rootsignal_common::Config,
-    city_slug: String,
+    region_slug: String,
     cancel: Arc<std::sync::atomic::AtomicBool>,
     cache_store: Arc<CacheStore>,
 ) {
@@ -599,7 +597,7 @@ fn spawn_scout_run(
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
-            if let Err(e) = run_scout(&client, &config, &city_slug, cancel).await {
+            if let Err(e) = run_scout(&client, &config, &region_slug, cancel).await {
                 tracing::error!(error = %e, "Scout run failed");
             } else {
                 cache_store.reload(&client).await;
@@ -611,25 +609,25 @@ fn spawn_scout_run(
 async fn run_scout(
     client: &GraphClient,
     config: &rootsignal_common::Config,
-    city_slug: &str,
+    region_slug: &str,
     cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
     let writer = rootsignal_graph::GraphWriter::new(client.clone());
 
-    let city_node = writer
-        .get_city(city_slug)
+    let region = writer
+        .get_region(region_slug)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("City '{}' not found in graph", city_slug))?;
+        .ok_or_else(|| anyhow::anyhow!("Region '{}' not found in graph", region_slug))?;
 
-    info!(city = city_slug, "Scout run starting");
+    info!(region = region_slug, "Scout run starting");
 
-    // Save city geo bounds before moving city_node into Scout
-    let lat_delta = city_node.radius_km / 111.0;
-    let lng_delta = city_node.radius_km / (111.0 * city_node.center_lat.to_radians().cos());
-    let min_lat = city_node.center_lat - lat_delta;
-    let max_lat = city_node.center_lat + lat_delta;
-    let min_lng = city_node.center_lng - lng_delta;
-    let max_lng = city_node.center_lng + lng_delta;
+    // Save region geo bounds before moving region into Scout
+    let lat_delta = region.radius_km / 111.0;
+    let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
+    let min_lat = region.center_lat - lat_delta;
+    let max_lat = region.center_lat + lat_delta;
+    let min_lng = region.center_lng - lng_delta;
+    let max_lng = region.center_lng + lng_delta;
 
     let scout = Scout::new(
         client.clone(),
@@ -637,7 +635,7 @@ async fn run_scout(
         &config.voyage_api_key,
         &config.serper_api_key,
         &config.apify_api_key,
-        city_node,
+        region,
         config.daily_budget_cents,
         cancel,
     )?;
@@ -647,7 +645,7 @@ async fn run_scout(
 
     compute_cause_heat(client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
 
-    writer.set_city_scout_completed(city_slug).await?;
+    writer.set_region_scout_completed(region_slug).await?;
 
     Ok(())
 }
@@ -660,47 +658,47 @@ pub fn start_scout_interval(
     cache_store: Arc<CacheStore>,
 ) {
     use std::sync::atomic::AtomicBool;
-    info!(interval_hours, "Starting multi-city scout interval loop");
+    info!(interval_hours, "Starting multi-region scout interval loop");
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
             let writer = rootsignal_graph::GraphWriter::new(client.clone());
             loop {
-                let cities = match writer.list_cities().await {
+                let regions = match writer.list_regions().await {
                     Ok(c) => c.into_iter().filter(|c| c.active).collect::<Vec<_>>(),
                     Err(e) => {
-                        tracing::error!(error = %e, "Scout interval: failed to list cities");
+                        tracing::error!(error = %e, "Scout interval: failed to list regions");
                         Vec::new()
                     }
                 };
 
-                let num_cities = cities.len().max(1);
+                let num_regions = regions.len().max(1);
 
-                for city in &cities {
-                    match writer.is_scout_running(&city.slug).await {
+                for region in &regions {
+                    match writer.is_scout_running(&region.slug).await {
                         Ok(true) => {
-                            info!(city = city.slug.as_str(), "Scout interval: already running, skipping");
+                            info!(region = region.slug.as_str(), "Scout interval: already running, skipping");
                             continue;
                         }
                         Err(e) => {
-                            warn!(city = city.slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
+                            warn!(region = region.slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
                             continue;
                         }
                         Ok(false) => {}
                     }
 
-                    info!(city = city.slug.as_str(), "Scout interval: starting run");
+                    info!(region = region.slug.as_str(), "Scout interval: starting run");
                     let cancel = Arc::new(AtomicBool::new(false));
-                    if let Err(e) = run_scout(&client, &config, &city.slug, cancel).await {
-                        tracing::error!(city = city.slug.as_str(), error = %e, "Scout interval run failed");
+                    if let Err(e) = run_scout(&client, &config, &region.slug, cancel).await {
+                        tracing::error!(region = region.slug.as_str(), error = %e, "Scout interval run failed");
                     } else {
                         cache_store.reload(&client).await;
                     }
                     break;
                 }
 
-                let sleep_secs = ((interval_hours * 3600) / num_cities as u64).max(30 * 60);
+                let sleep_secs = ((interval_hours * 3600) / num_regions as u64).max(30 * 60);
                 info!(sleep_minutes = sleep_secs / 60, "Scout interval: sleeping until next run");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }

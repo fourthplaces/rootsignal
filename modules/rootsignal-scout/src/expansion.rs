@@ -26,19 +26,19 @@ const MAX_EXPANSION_QUERIES_PER_RUN: usize = 10;
 pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
     embedder: &'a dyn TextEmbedder,
-    city_slug: &'a str,
+    region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
         writer: &'a GraphWriter,
         embedder: &'a dyn TextEmbedder,
-        city_slug: &'a str,
+        region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
             embedder,
-            city_slug,
+            region_slug,
         }
     }
 
@@ -51,7 +51,7 @@ impl<'a> Expansion<'a> {
         // that are now linked to tensions via response mapping.
         match self
             .writer
-            .get_recently_linked_signals_with_queries(self.city_slug)
+            .get_recently_linked_signals_with_queries(self.region_slug)
             .await
         {
             Ok(deferred) => {
@@ -76,7 +76,7 @@ impl<'a> Expansion<'a> {
 
         let existing = self
             .writer
-            .get_active_web_queries(self.city_slug)
+            .get_active_web_queries(self.region_slug)
             .await
             .unwrap_or_default();
         let deduped: Vec<String> = ctx
@@ -99,7 +99,7 @@ impl<'a> Expansion<'a> {
             if let Ok(embedding) = self.embedder.embed(query_text).await {
                 match self
                     .writer
-                    .find_similar_query(&embedding, self.city_slug, 0.90)
+                    .find_similar_query(&embedding, self.region_slug, 0.90)
                     .await
                 {
                     Ok(Some((existing_ck, sim))) => {
@@ -120,14 +120,13 @@ impl<'a> Expansion<'a> {
             }
 
             let cv = query_text.clone();
-            let ck = sources::make_canonical_key(self.city_slug, &cv);
+            let ck = sources::make_canonical_key(&cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
                 discovery_method: DiscoveryMethod::SignalExpansion,
-                city: self.city_slug.to_string(),
                 created_at: now_expansion,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -148,7 +147,7 @@ impl<'a> Expansion<'a> {
                 source_role: rootsignal_common::SourceRole::Response,
                 scrape_count: 0,
             };
-            match self.writer.upsert_source(&source).await {
+            match self.writer.upsert_source(&source, self.region_slug).await {
                 Ok(_) => {
                     created += 1;
                     // Store embedding for future dedup

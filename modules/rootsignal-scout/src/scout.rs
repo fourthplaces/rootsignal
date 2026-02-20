@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    is_web_query, scraping_strategy, CityNode, DiscoveryMethod, ScrapingStrategy, SourceNode,
+    is_web_query, scraping_strategy, RegionNode, DiscoveryMethod, ScrapingStrategy, SourceNode,
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
@@ -112,7 +112,7 @@ pub struct Scout {
     searcher: Arc<dyn WebSearcher>,
     social: Box<dyn SocialScraper>,
     anthropic_api_key: String,
-    city_node: CityNode,
+    region: RegionNode,
     budget: BudgetTracker,
     cancelled: Arc<AtomicBool>,
 }
@@ -124,11 +124,11 @@ impl Scout {
         voyage_api_key: &str,
         serper_api_key: &str,
         apify_api_key: &str,
-        city_node: CityNode,
+        region: RegionNode,
         daily_budget_cents: u64,
         cancelled: Arc<AtomicBool>,
     ) -> Result<Self> {
-        info!(city = city_node.name.as_str(), "Initializing scout");
+        info!(region = region.name.as_str(), "Initializing scout");
         let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
             warn!("APIFY_API_KEY not set, skipping social media scraping");
             Box::new(NoopSocialScraper)
@@ -147,16 +147,16 @@ impl Scout {
             writer: GraphWriter::new(graph_client),
             extractor: Box::new(Extractor::new(
                 anthropic_api_key,
-                city_node.name.as_str(),
-                city_node.center_lat,
-                city_node.center_lng,
+                region.name.as_str(),
+                region.center_lat,
+                region.center_lng,
             )),
             embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
             scraper,
             searcher: Arc::new(SerperSearcher::new(serper_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            city_node,
+            region,
             budget: BudgetTracker::new(daily_budget_cents),
             cancelled,
         })
@@ -171,7 +171,7 @@ impl Scout {
         searcher: Arc<dyn WebSearcher>,
         social: Box<dyn SocialScraper>,
         anthropic_api_key: &str,
-        city_node: CityNode,
+        region: RegionNode,
     ) -> Self {
         Self {
             graph_client: graph_client.clone(),
@@ -182,7 +182,7 @@ impl Scout {
             searcher,
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            city_node,
+            region,
             budget: BudgetTracker::new(0), // Unlimited for tests
             cancelled: Arc::new(AtomicBool::new(false)),
         }
@@ -200,7 +200,7 @@ impl Scout {
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
         // Acquire per-city lock
-        let city_slug = &self.city_node.slug;
+        let city_slug = &self.region.slug;
         if !self
             .writer
             .acquire_scout_lock(city_slug)
@@ -245,7 +245,7 @@ impl Scout {
         // ================================================================
         // 2. Load sources + Schedule
         // ================================================================
-        let all_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
+        let all_sources = match self.writer.get_active_sources(&self.region.slug).await {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -316,7 +316,7 @@ impl Scout {
             self.scraper.clone(),
             self.searcher.clone(),
             &*self.social,
-            &self.city_node,
+            &self.region,
             run_id.clone(),
         );
 
@@ -353,8 +353,8 @@ impl Scout {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.city_node.slug,
-            &self.city_node.name,
+            &self.region.slug,
+            &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         )
@@ -372,7 +372,7 @@ impl Scout {
         info!("=== Phase B: Find Responses ===");
 
         // Reload sources to pick up fresh discovery sources from mid-run
-        let fresh_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
+        let fresh_sources = match self.writer.get_active_sources(&self.region.slug).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to reload sources for Phase B");
@@ -429,7 +429,7 @@ impl Scout {
         // ================================================================
         // 6. Source metrics + weight updates
         // ================================================================
-        let metrics = Metrics::new(&self.writer, &self.city_node.slug);
+        let metrics = Metrics::new(&self.writer, &self.region.slug);
         metrics.update(&all_sources, &ctx, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
@@ -481,9 +481,9 @@ impl Scout {
                     let response_mapper = rootsignal_graph::response::ResponseMapper::new(
                         self.graph_client.clone(),
                         &self.anthropic_api_key,
-                        self.city_node.center_lat,
-                        self.city_node.center_lng,
-                        self.city_node.radius_km,
+                        self.region.center_lat,
+                        self.region.center_lng,
+                        self.region.radius_km,
                     );
                     match response_mapper.map_responses().await {
                         Ok(rm_stats) => info!("{rm_stats}"),
@@ -502,7 +502,7 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
                         run_id.clone(),
                     );
@@ -521,7 +521,7 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
                         run_id.clone(),
                     );
@@ -540,7 +540,7 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
                         run_id.clone(),
                     );
@@ -557,7 +557,7 @@ impl Scout {
                         &self.writer,
                         &*self.searcher,
                         &self.anthropic_api_key,
-                        &self.city_node,
+                        &self.region,
                         self.cancelled.clone(),
                     );
                     let investigation_stats = investigator.run().await;
@@ -581,9 +581,9 @@ impl Scout {
         let weaver = rootsignal_graph::StoryWeaver::new(
             self.graph_client.clone(),
             &self.anthropic_api_key,
-            self.city_node.center_lat,
-            self.city_node.center_lng,
-            self.city_node.radius_km,
+            self.region.center_lat,
+            self.region.center_lng,
+            self.region.radius_km,
         );
         let has_weave_budget = self
             .budget
@@ -598,7 +598,7 @@ impl Scout {
         // ================================================================
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
-        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.city_node.slug);
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.slug);
         expansion.run(&mut ctx).await;
 
         self.check_cancelled()?;
@@ -608,8 +608,8 @@ impl Scout {
         // ================================================================
         let end_discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.city_node.slug,
-            &self.city_node.name,
+            &self.region.slug,
+            &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         )
