@@ -214,35 +214,6 @@ pub struct TikTokHashtag {
     pub name: Option<String>,
 }
 
-/// Input for the jupri/gofundme scraper actor.
-#[derive(Debug, Clone, Serialize)]
-pub struct GoFundMeScraperInput {
-    #[serde(rename = "searchTerms")]
-    pub search_terms: Vec<String>,
-    #[serde(rename = "maxItems")]
-    pub max_items: u32,
-}
-
-/// A single GoFundMe campaign from the Apify dataset.
-#[derive(Debug, Clone, Deserialize)]
-pub struct GoFundMeCampaign {
-    pub url: Option<String>,
-    pub title: Option<String>,
-    pub description: Option<String>,
-    #[serde(rename = "currentAmount")]
-    pub current_amount: Option<f64>,
-    #[serde(rename = "goalAmount")]
-    pub goal_amount: Option<f64>,
-    #[serde(rename = "donationsCount")]
-    pub donations_count: Option<i64>,
-    #[serde(rename = "createdAt")]
-    pub created_at: Option<String>,
-    pub category: Option<String>,
-    pub location: Option<String>,
-    #[serde(rename = "organizerName")]
-    pub organizer_name: Option<String>,
-}
-
 /// Input for the trudax/reddit-scraper actor.
 #[derive(Debug, Clone, Serialize)]
 pub struct RedditScraperInput {

@@ -350,14 +350,6 @@ impl SocialScraper for ScenarioSocialScraper {
         self.generate(&context, limit).await
     }
 
-    async fn search_gofundme(
-        &self,
-        keyword: &str,
-        _limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        let _ = keyword;
-        Ok(Vec::new())
-    }
 }
 
 // --- FixtureSocialScraper ---
@@ -395,13 +387,6 @@ impl SocialScraper for FixtureSocialScraper {
         Ok(self.posts.clone())
     }
 
-    async fn search_gofundme(
-        &self,
-        _keyword: &str,
-        _limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        Ok(Vec::new())
-    }
 }
 
 // --- FixtureExtractor ---

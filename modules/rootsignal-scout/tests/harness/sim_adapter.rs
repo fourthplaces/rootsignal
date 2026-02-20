@@ -111,11 +111,4 @@ impl SocialScraper for SimSocialAdapter {
         Ok(Vec::new())
     }
 
-    async fn search_gofundme(
-        &self,
-        _keyword: &str,
-        _limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        Ok(Vec::new())
-    }
 }
