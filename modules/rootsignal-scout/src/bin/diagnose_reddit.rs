@@ -570,8 +570,8 @@ fn trunc(s: &str, max: usize) -> String {
 
 fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     match node {
-        Node::Event(n) => Some(&mut n.meta),
-        Node::Give(n) => Some(&mut n.meta),
+        Node::Gathering(n) => Some(&mut n.meta),
+        Node::Aid(n) => Some(&mut n.meta),
         Node::Need(n) => Some(&mut n.meta),
         Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),

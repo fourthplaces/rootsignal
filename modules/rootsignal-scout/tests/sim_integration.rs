@@ -96,7 +96,7 @@ async fn run_scenario(
     if !city_urls.is_empty() {
         let clean_signals = query(
             "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
              AND ev.source_url IN $urls \
              DETACH DELETE n, ev",
         )

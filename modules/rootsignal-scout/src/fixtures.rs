@@ -20,7 +20,7 @@ use serde::Deserialize;
 use tracing::warn;
 use uuid::Uuid;
 
-use rootsignal_common::{EventNode, Node, NodeMeta, SensitivityLevel};
+use rootsignal_common::{GatheringNode, Node, NodeMeta, SensitivityLevel};
 
 use crate::embedder::TextEmbedder;
 use crate::extractor::SignalExtractor;
@@ -415,10 +415,10 @@ impl FixtureExtractor {
         Self { nodes }
     }
 
-    /// A single canned Event node for testing.
-    pub fn single_event() -> Self {
+    /// A single canned Gathering node for testing.
+    pub fn single_gathering() -> Self {
         let now = Utc::now();
-        let node = Node::Event(EventNode {
+        let node = Node::Gathering(GatheringNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: "Community Garden Volunteer Day".to_string(),

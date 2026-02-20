@@ -288,7 +288,7 @@ impl Clusterer {
     async fn count_connected_signals(&self) -> Result<u64, neo4rs::Error> {
         let q = query(
             "MATCH (n)-[:SIMILAR_TO]-()
-             WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension
+             WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
              RETURN count(DISTINCT n) AS cnt",
         );
 
@@ -317,7 +317,7 @@ impl Clusterer {
         g.run(query(
             "CALL gds.graph.project(
                 'signals',
-                ['Event', 'Give', 'Ask', 'Notice', 'Tension'],
+                ['Gathering', 'Aid', 'Need', 'Notice', 'Tension'],
                 {SIMILAR_TO: {properties: 'weight', orientation: 'UNDIRECTED'}}
             )",
         ))
@@ -457,7 +457,7 @@ Respond in this exact JSON format:
     ) -> Result<Vec<SignalMeta>, neo4rs::Error> {
         let mut results = Vec::new();
 
-        for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE n.id IN $ids
@@ -613,7 +613,7 @@ Respond in this exact JSON format:
             let source_diversity = (source_count as f64 / 5.0).min(1.0);
 
             // Triangulation: fraction of all 5 signal types present in this story.
-            // A story with all 5 types (Event, Give, Ask, Notice, Tension) = 1.0.
+            // A story with all 5 types (Gathering, Aid, Need, Notice, Tension) = 1.0.
             // A story with 1 type = 0.2. This is a graph observation, not a formula.
             let triangulation = (type_diversity as f64 / 5.0).min(1.0);
 

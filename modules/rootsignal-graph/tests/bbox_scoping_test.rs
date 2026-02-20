@@ -222,7 +222,7 @@ async fn test_no_off_geo_contamination_remains() {
     // Check for signals outside Twin Cities metro bbox
     let q = query(
         "MATCH (n)
-         WHERE (n:Event OR n:Give OR n:Need OR n:Tension OR n:Notice)
+         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Tension OR n:Notice)
            AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
          RETURN count(n) AS count",
     );
@@ -252,7 +252,7 @@ async fn test_no_off_geo_contamination_remains() {
     if off_geo_count > 0 {
         let examples = query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Need OR n:Tension OR n:Notice)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Tension OR n:Notice)
                AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
              RETURN labels(n)[0] AS label, n.title AS title, n.lat AS lat, n.lng AS lng
              LIMIT 5",
@@ -354,7 +354,7 @@ async fn test_city_signal_assessment() {
         println!("--- {} (center: {:.4}, {:.4}, radius: {:.0}km) ---", slug, lat, lng, radius);
 
         // Count signals by type
-        for label in &["Event", "Give", "Need", "Notice", "Tension"] {
+        for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE n.lat >= $min_lat AND n.lat <= $max_lat
@@ -448,7 +448,7 @@ async fn test_find_recent_signals_by_city() {
     println!("\n=== Recent signals (last 24h) by location ===\n");
 
     // Find all signals created recently, show their lat/lng
-    for label in &["Event", "Give", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at IS NOT NULL

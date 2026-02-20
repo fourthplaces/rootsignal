@@ -248,9 +248,9 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     for story in story_nodes {
         let mut signals = Vec::new();
         for nt in &[
-            NodeType::Event,
-            NodeType::Give,
-            NodeType::Ask,
+            NodeType::Gathering,
+            NodeType::Aid,
+            NodeType::Need,
             NodeType::Notice,
             NodeType::Tension,
         ] {
@@ -273,9 +273,9 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     // Fetch ungrouped signals (not in any story) within the bounding box
     let mut ungrouped = Vec::new();
     for nt in &[
-        NodeType::Event,
-        NodeType::Give,
-        NodeType::Ask,
+        NodeType::Gathering,
+        NodeType::Aid,
+        NodeType::Need,
         NodeType::Notice,
         NodeType::Tension,
     ] {

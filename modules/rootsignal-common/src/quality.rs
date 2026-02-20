@@ -36,12 +36,19 @@ pub const CONFIDENCE_DISPLAY_LIMITED: f32 = 0.4;
 /// Freshness threshold — signals not confirmed within this many days are hidden (unless ongoing)
 pub const FRESHNESS_MAX_DAYS: i64 = 30;
 
-/// Ask signals expire after this many days (fundraisers, volunteer calls, etc.)
-pub const ASK_EXPIRE_DAYS: i64 = 60;
+/// Need signals expire after this many days (fundraisers, volunteer calls, etc.)
+pub const NEED_EXPIRE_DAYS: i64 = 60;
 
 /// Notice signals expire after this many days (PSAs, advisories stay relevant longer)
 pub const NOTICE_EXPIRE_DAYS: i64 = 90;
 
-/// Grace period after an event ends before it's hidden (hours).
-/// Allows same-day events to remain visible until the day is over.
-pub const EVENT_PAST_GRACE_HOURS: i64 = 12;
+/// Grace period after a gathering ends before it's hidden (hours).
+/// Allows same-day gatherings to remain visible until the day is over.
+// GAP: 12h is too aggressive — one-time gatherings vanish immediately. Recurring gatherings
+// survive only because `is_recurring = true` bypasses the check entirely, but we don't
+// store recurrence rules (frequency, next_occurrence) so there's no way to compute
+// upcoming dates. Needs: (1) `recurrence_rule` + `next_occurrence` fields on GatheringNode,
+// (2) extractor prompt to populate them, (3) scout to recompute next_occurrence each run,
+// (4) expiry clause to use next_occurrence for recurring gatherings. For now, bumped to 7 days
+// so past one-time gatherings linger longer on the map.
+pub const GATHERING_PAST_GRACE_HOURS: i64 = 168; // 7 days

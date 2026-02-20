@@ -6,9 +6,9 @@ import type { Bounds } from "@/hooks/useDebouncedBounds";
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
 
 const TYPE_COLORS: Record<string, string> = {
-  Event: "#3b82f6",
-  Give: "#22c55e",
-  Ask: "#f97316",
+  Gathering: "#3b82f6",
+  Aid: "#22c55e",
+  Need: "#f97316",
   Notice: "#6b7280",
   Tension: "#ef4444",
 };
@@ -122,12 +122,12 @@ export function MapView({
           "circle-color": [
             "match",
             ["get", "type"],
-            "Event",
-            TYPE_COLORS.Event!,
-            "Give",
-            TYPE_COLORS.Give!,
-            "Ask",
-            TYPE_COLORS.Ask!,
+            "Gathering",
+            TYPE_COLORS.Gathering!,
+            "Aid",
+            TYPE_COLORS.Aid!,
+            "Need",
+            TYPE_COLORS.Need!,
             "Notice",
             TYPE_COLORS.Notice!,
             "Tension",
@@ -232,7 +232,7 @@ export function MapView({
           properties: {
             id: s.id,
             title: s.title,
-            type: s.__typename?.replace("Gql", "").replace("Signal", "") ?? "Event",
+            type: s.__typename?.replace("Gql", "").replace("Signal", "") ?? "Gathering",
           },
         })),
     });

@@ -171,7 +171,7 @@ pub fn judge_system() -> &'static str {
     r#"You are an impartial judge evaluating how well scout (a signal agent) processed web content.
 
 Scout's core job is the TENSION-RESPONSE CYCLE: find real problems (tensions) in community or
-ecological life, then find the gives/asks/events that address them.
+ecological life, then find the aids/asks/gatherings that address them.
 
 You will receive:
 1. A WORLD DESCRIPTION with ground-truth facts
@@ -182,13 +182,13 @@ Evaluate whether scout's output is accurate, complete, and appropriately confide
 
 EVALUATION PRIORITIES (weight these when assessing completeness):
 1. Tension-Response pairs: Did scout find tensions AND the responses addressing them? Missing a pair is Critical.
-2. Standalone responses: Did scout capture gives/asks/events even without an explicit tension? Missing these is Warning.
+2. Standalone responses: Did scout capture aids/asks/gatherings even without an explicit tension? Missing these is Warning.
 3. Context signals: Did scout capture relevant notices and advisories? Missing these is Info.
 4. Routine community activity (recurring services, social gatherings) is lowest priority — missing these is not an issue.
 
 SEVERITY DEFINITIONS:
 - Critical: Missed a tension-response pair present in ground truth. Or asserted something contradicted by ground truth. Or hallucinated signals.
-- Warning: Missed a standalone response (give/ask/event with implicit tension). Or captured the gist but missed nuance, assigned inappropriate confidence, or failed to link a response to its tension.
+- Warning: Missed a standalone response (aid/need/gathering with implicit tension). Or captured the gist but missed nuance, assigned inappropriate confidence, or failed to link a response to its tension.
 - Info: Stylistic or minor. Signal titles could be clearer, categories could be more specific, missed routine community activity.
 
 SCORING:
@@ -298,7 +298,7 @@ The world should have interesting properties that test the agent's ability to:
 - Distinguish current from stale information
 - Detect community activity from informal sources
 - Handle conflicting information
-- Recognize different signal types (events, resources, asks, tensions)
+- Recognize different signal types (gatherings, resources, asks, tensions)
 
 Return a complete World as JSON matching this schema:
 {

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::writer::GraphWriter;
 use crate::GraphClient;
 
-/// Maps responses (Give/Event) to active Tensions/Needs using embedding similarity + LLM verification.
+/// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper {
     client: GraphClient,
     writer: GraphWriter,
@@ -37,7 +37,7 @@ impl ResponseMapper {
         }
     }
 
-    /// For each active Tension/Need, find Give/Event signals that might respond to it.
+    /// For each active Tension/Need, find Aid/Gathering signals that might respond to it.
     /// Uses embedding similarity as a cheap filter, then LLM as a verifier.
     pub async fn map_responses(
         &self,
@@ -57,7 +57,7 @@ impl ResponseMapper {
         info!(tensions = tensions.len(), "Running response mapping");
 
         for (tension_id, tension_embedding) in &tensions {
-            // Vector search for similar Give/Event signals
+            // Vector search for similar Aid/Gathering signals
             let candidates = self.find_response_candidates(tension_embedding).await?;
             stats.candidates_found += candidates.len() as u32;
 
@@ -112,7 +112,7 @@ impl ResponseMapper {
         Ok(stats)
     }
 
-    /// Find Give/Event candidates that are similar to a tension's embedding.
+    /// Find Aid/Gathering candidates that are similar to a tension's embedding.
     async fn find_response_candidates(
         &self,
         tension_embedding: &[f64],
@@ -121,7 +121,7 @@ impl ResponseMapper {
 
         let mut candidates = Vec::new();
 
-        for index in &["give_embedding", "event_embedding", "need_embedding"] {
+        for index in &["aid_embedding", "gathering_embedding", "need_embedding"] {
             let q = query(&format!(
                 "CALL db.index.vector.queryNodes('{}', 20, $embedding)
                  YIELD node, score AS similarity
@@ -158,7 +158,7 @@ impl ResponseMapper {
     async fn get_signal_info(&self, id: Uuid) -> Result<Option<SignalInfo>, neo4rs::Error> {
         use neo4rs::query;
 
-        for label in &["Tension", "Need", "Give", "Event"] {
+        for label in &["Tension", "Need", "Aid", "Gathering"] {
             let q = query(&format!(
                 "MATCH (n:{label} {{id: $id}})
                  RETURN n.title AS title, n.summary AS summary"

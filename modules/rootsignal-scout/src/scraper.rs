@@ -673,7 +673,11 @@ impl SocialScraper for ApifyClient {
         limit: u32,
     ) -> Result<Vec<SocialPost>> {
         match platform {
-            SocialPlatform::Instagram => self.search_hashtags(topics, limit).await,
+            SocialPlatform::Instagram => {
+                let sanitized = sanitize_topics_to_hashtags(topics);
+                let refs: Vec<&str> = sanitized.iter().map(|s| s.as_str()).collect();
+                self.search_hashtags(&refs, limit).await
+            }
             SocialPlatform::Twitter => {
                 let posts = self.search_x_keywords(topics, limit).await?;
                 Ok(posts
@@ -711,5 +715,80 @@ impl SocialScraper for ApifyClient {
             // Facebook and Reddit don't support keyword search
             _ => Ok(Vec::new()),
         }
+    }
+}
+
+/// Convert multi-word topic strings into valid Instagram hashtags (camelCase,
+/// alphanumeric only). The Instagram hashtag API rejects values containing
+/// spaces, punctuation, or other special characters.
+fn sanitize_topics_to_hashtags(topics: &[&str]) -> Vec<String> {
+    topics
+        .iter()
+        .map(|t| {
+            t.split_whitespace()
+                .enumerate()
+                .map(|(i, w)| {
+                    let w: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+                    if i == 0 {
+                        w.to_lowercase()
+                    } else {
+                        let mut chars = w.chars();
+                        match chars.next() {
+                            Some(first) => {
+                                first.to_uppercase().to_string()
+                                    + &chars.as_str().to_lowercase()
+                            }
+                            None => String::new(),
+                        }
+                    }
+                })
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_multi_word_topics() {
+        let topics = &[
+            "Minneapolis immigration legal aid volunteer Minnesota",
+            "Minnesota teacher sanctuary movement",
+        ];
+        let result = sanitize_topics_to_hashtags(topics);
+        assert_eq!(
+            result,
+            vec![
+                "minneapolisImmigrationLegalAidVolunteerMinnesota",
+                "minnesotaTeacherSanctuaryMovement",
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_single_word_topic() {
+        let result = sanitize_topics_to_hashtags(&["MNimmigration"]);
+        assert_eq!(result, vec!["mnimmigration"]);
+    }
+
+    #[test]
+    fn sanitize_strips_special_chars() {
+        let result = sanitize_topics_to_hashtags(&["Minneapolis: ICE raids — 2026!"]);
+        assert_eq!(result, vec!["minneapolisIceRaids2026"]);
+    }
+
+    #[test]
+    fn sanitize_filters_empty() {
+        let result = sanitize_topics_to_hashtags(&["", "   ", "valid topic"]);
+        assert_eq!(result, vec!["validTopic"]);
+    }
+
+    #[test]
+    fn sanitize_already_valid_hashtag() {
+        let result = sanitize_topics_to_hashtags(&["minneapolisHousing"]);
+        assert_eq!(result, vec!["minneapolishousing"]);
     }
 }

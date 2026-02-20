@@ -125,8 +125,8 @@ impl DiscoveryBriefing {
                 ));
                 out.push_str(&format!("  What would help: {}\n", help));
                 out.push_str(&format!(
-                    "  Gives: {}, Events: {}, Asks: {}\n",
-                    rs.give_count, rs.event_count, rs.ask_count,
+                    "  Aids: {}, Gatherings: {}, Needs: {}\n",
+                    rs.aid_count, rs.gathering_count, rs.need_count,
                 ));
                 if !rs.sample_titles.is_empty() {
                     let titles = rs
@@ -164,19 +164,19 @@ impl DiscoveryBriefing {
         let sc = &self.signal_counts;
         out.push_str("## SIGNAL BALANCE\n");
         out.push_str(&format!(
-            "Events: {} | Gives: {} | Asks: {} | Notices: {} | Tensions: {}\n",
-            sc.events, sc.gives, sc.asks, sc.notices, sc.tensions,
+            "Gatherings: {} | Aids: {} | Needs: {} | Notices: {} | Tensions: {}\n",
+            sc.gatherings, sc.aids, sc.needs, sc.notices, sc.tensions,
         ));
         // Annotate significant imbalances
-        let total = sc.events + sc.gives + sc.asks + sc.notices + sc.tensions;
+        let total = sc.gatherings + sc.aids + sc.needs + sc.notices + sc.tensions;
         if total > 5 {
-            if sc.tensions > 0 && sc.gives < sc.tensions / 3 {
+            if sc.tensions > 0 && sc.aids < sc.tensions / 3 {
                 out.push_str(
-                    "→ Give signals significantly underrepresented relative to tensions.\n",
+                    "→ Aid signals significantly underrepresented relative to tensions.\n",
                 );
             }
-            if sc.asks > 0 && sc.gives < sc.asks / 2 {
-                out.push_str("→ Few Give signals to match the Ask signals.\n");
+            if sc.needs > 0 && sc.aids < sc.needs / 2 {
+                out.push_str("→ Few Aid signals to match the Need signals.\n");
             }
         }
         out.push('\n');
@@ -1125,13 +1125,13 @@ mod tests {
                     "Growing",
                     0.9,
                     8,
-                    "Tension+Ask+Notice",
+                    "Tension+Need+Notice",
                     4,
                 ),
             ],
             signal_counts: SignalTypeCounts {
-                events: 23,
-                gives: 8,
+                gatherings: 23,
+                aids: 8,
                 asks: 15,
                 notices: 12,
                 tensions: 31,
@@ -1207,7 +1207,7 @@ mod tests {
         assert!(prompt.contains("energy=0.7"), "Missing story energy");
 
         // Signal balance line
-        assert!(prompt.contains("Events: 23"), "Missing event count");
+        assert!(prompt.contains("Gatherings: 23"), "Missing gathering count");
         assert!(prompt.contains("Tensions: 31"), "Missing tension count");
 
         // Past results
@@ -1341,7 +1341,7 @@ mod tests {
             ],
             stories: vec![
                 make_story("S1", "Emerging", 0.5, 3, "Tension", 2),
-                make_story("S2", "Growing", 0.8, 6, "Ask", 3),
+                make_story("S2", "Growing", 0.8, 6, "Need", 3),
             ],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1501,8 +1501,8 @@ mod tests {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             signal_counts: SignalTypeCounts {
-                events: 10,
-                gives: 3,
+                gatherings: 10,
+                aids: 3,
                 asks: 12,
                 notices: 8,
                 tensions: 31,
@@ -1939,9 +1939,9 @@ mod tests {
                 "legal defense, emergency housing, mental health support".to_string(),
             ),
             cause_heat: 0.8,
-            give_count: 3,
-            event_count: 2,
-            ask_count: 1,
+            aid_count: 3,
+            gathering_count: 2,
+            need_count: 1,
             sample_titles: vec![
                 "ILCM Legal Clinic".to_string(),
                 "Know Your Rights Workshop".to_string(),
@@ -1959,7 +1959,7 @@ mod tests {
         );
         assert!(prompt.contains("heat: 0.8"), "Missing cause heat");
         assert!(
-            prompt.contains("Gives: 3, Events: 2, Asks: 1"),
+            prompt.contains("Aids: 3, Gatherings: 2, Needs: 1"),
             "Missing response counts"
         );
         assert!(prompt.contains("ILCM Legal Clinic"), "Missing sample title");

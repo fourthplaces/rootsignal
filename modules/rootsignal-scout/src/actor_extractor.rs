@@ -91,7 +91,7 @@ async fn run_actor_extraction_inner(
     // Find signals with no ACTED_IN edges pointing at them
     let q = query(
         "MATCH (n)
-         WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
            AND NOT ()-[:ACTED_IN]->(n)
          RETURN n.id AS id, n.title AS title, n.summary AS summary
          ORDER BY n.extracted_at DESC

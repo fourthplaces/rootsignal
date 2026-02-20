@@ -7,14 +7,14 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AskNode, EventNode, GeoPoint, GeoPrecision, GiveNode, Node, NodeMeta, NoticeNode,
+    AidNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta, NoticeNode,
     SensitivityLevel, Severity, TensionNode, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedSignal {
-    /// Signal type: "event", "give", "ask", or "notice"
+    /// Signal type: "gathering", "aid", "need", or "notice"
     pub signal_type: String,
     pub title: String,
     pub summary: String,
@@ -34,19 +34,19 @@ pub struct ExtractedSignal {
     pub ends_at: Option<String>,
     /// URL where the user can take action
     pub action_url: Option<String>,
-    /// Organizer name (for events)
+    /// Organizer name (for gatherings)
     pub organizer: Option<String>,
     /// Whether this is recurring
     pub is_recurring: Option<bool>,
-    /// Availability schedule (for Give signals)
+    /// Availability schedule (for Aid signals)
     pub availability: Option<String>,
     /// Whether this is an ongoing opportunity
     pub is_ongoing: Option<bool>,
-    /// Urgency level for Ask signals: "low", "medium", "high", "critical"
+    /// Urgency level for Need signals: "low", "medium", "high", "critical"
     pub urgency: Option<String>,
-    /// What is needed (for Ask signals)
+    /// What is needed (for Need signals)
     pub what_needed: Option<String>,
-    /// Goal description (for Ask signals)
+    /// Goal description (for Need signals)
     pub goal: Option<String>,
     /// Severity for Tension signals: "low", "medium", "high", "critical"
     pub severity: Option<String>,
@@ -272,7 +272,7 @@ impl Extractor {
             };
 
             let node = match signal.signal_type.as_str() {
-                "event" => {
+                "gathering" => {
                     let starts_at = signal
                         .starts_at
                         .as_deref()
@@ -284,7 +284,7 @@ impl Extractor {
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc));
 
-                    Node::Event(EventNode {
+                    Node::Gathering(GatheringNode {
                         meta,
                         starts_at,
                         ends_at,
@@ -293,20 +293,20 @@ impl Extractor {
                         is_recurring: signal.is_recurring.unwrap_or(false),
                     })
                 }
-                "give" => Node::Give(GiveNode {
+                "aid" => Node::Aid(AidNode {
                     meta,
                     action_url: signal.action_url.unwrap_or(effective_source_url),
                     availability: signal.availability,
                     is_ongoing: signal.is_ongoing.unwrap_or(true),
                 }),
-                "ask" => {
+                "need" => {
                     let urgency = match signal.urgency.as_deref() {
                         Some("high") => Urgency::High,
                         Some("critical") => Urgency::Critical,
                         Some("low") => Urgency::Low,
                         _ => Urgency::Medium,
                     };
-                    Node::Ask(AskNode {
+                    Node::Need(NeedNode {
                         meta,
                         urgency,
                         what_needed: signal.what_needed,
@@ -394,19 +394,23 @@ pub fn build_system_prompt(city_name: &str, _default_lat: f64, _default_lng: f64
     format!(
         r#"You are a signal extractor for {city_name}.
 
-Your job: find real problems and the people addressing them. The most valuable signal is a TENSION (something out of alignment in community or ecological life) paired with RESPONSES (the gives, asks, events, and notices that address it). A food shelf addressing a food desert, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these tension-response pairs are what gets people engaged in real-world problems.
+Your job: find real problems and the people addressing them. The most valuable signal is a TENSION (something out of alignment in community or ecological life) paired with RESPONSES (the gives, needs, events, and notices that address it). A food shelf addressing a food desert, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these tension-response pairs are what gets people engaged in real-world problems.
 
 ## Signal Types (ranked by value)
 
 **Highest — Tension + Response pairs:**
 - **Tension**: A community conflict, systemic problem, or ecological misalignment. Has severity and what would help. NOT the narrative itself — the underlying structural issue.
-- **Give**: A resource, service, or offering that addresses a need (food shelf, legal aid, habitat restoration). Has availability and contact info.
-- **Ask**: A call for help that mobilizes action (volunteer drives, donation needs, citizen science). Has what's needed and how to help.
-- **Event**: A gathering where people organize around a problem (town halls, cleanups, community meetings). Has start time and location.
+- **Aid**: A free resource, service, or program that people in need can access — food shelves,
+  legal clinics, shelter beds, mutual aid funds, habitat restoration programs. Must be free or
+  publicly available. A business offering paid services is NOT Aid. Has availability and contact info.
+- **Need**: Someone directly expressing what they need and how you can help — fundraisers, volunteer drives, donation requests, mutual aid calls, petitions. The content must come from or speak for the person/group who has the need. Must include: (1) a specific need, (2) a way to respond (donate link, signup, contact info). A journalist reporting that communities need help is a Tension, not a Need.
+- **Gathering**: People coming together in response to a community need or tension — town halls,
+  cleanups, vigils, mutual aid distributions, workshops, solidarity actions. Has time, location,
+  and who's organizing. A press conference or product launch is NOT a Gathering.
 
 **Also valuable — standalone responses with an implicit tension:**
-- A "feed people on Sundays" program implies food insecurity. Extract it as a Give even without an explicit tension on the page.
-- A river cleanup implies pollution. Extract it as an Event.
+- A "feed people on Sundays" program implies food insecurity. Extract it as an Aid even without an explicit tension on the page.
+- A river cleanup implies pollution. Extract it as a Gathering.
 
 **Lower priority — routine community activity:**
 - Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
@@ -419,12 +423,20 @@ If content doesn't map to one of these types, return an empty signals array.
 ## Extracting from News and Crisis Content
 When a page describes a crisis, conflict, or problem, extract BOTH the underlying tension AND the community responses:
 - The structural problem → Tension (always include what_would_help)
-- Legal aid hotlines, know-your-rights resources → Give
-- Community meetings, workshops, public hearings → Event
-- Volunteer calls, donation drives, petitions → Ask
+- Legal aid hotlines, know-your-rights resources → Aid
+- Community meetings, workshops, public hearings → Gathering
+- Volunteer calls, donation drives, petitions → Need
 - Official advisories, policy changes → Notice
 
 If a page describes only a problem with no actionable response, still extract the Tension (with what_would_help) — the system will seek responses separately.
+
+## News Articles vs. Needs
+A news article that reports on a crisis is NOT a Need, even if the situation is urgent.
+Need requires someone to be directly expressing their own need with a way to respond.
+If a news article simply reports on a problem, extract it as:
+- Tension (if it describes a systemic problem or conflict)
+- Notice (if it describes a policy change or official action)
+Do NOT classify news reportage as a Need based on the urgency of the topic alone.
 
 ## Sensitivity
 - **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks
@@ -474,13 +486,13 @@ Preserve organization phone numbers, emails, and addresses — these are public 
 
 ## Resource Capabilities
 
-For Ask, Event, and Give signals, extract the resource capabilities they require, prefer, or offer.
+For Need, Gathering, and Aid signals, extract the resource capabilities they require, prefer, or offer.
 This enables matching: "I have a car" finds all orgs needing drivers; "I need food" finds all orgs giving food.
 
 **Edge types:**
-- **requires**: Must have this capability to help (Ask/Event only)
-- **prefers**: Better if you have it, not required (Ask/Event only)
-- **offers**: This is what the signal provides (Give only)
+- **requires**: Must have this capability to help (Need/Gathering only)
+- **prefers**: Better if you have it, not required (Need/Gathering only)
+- **offers**: This is what the signal provides (Aid only)
 
 **Seed vocabulary** (use these slugs when they fit; otherwise propose a concise noun-phrase slug):
 `vehicle`, `bilingual-spanish`, `bilingual-somali`, `bilingual-hmong`, `legal-expertise`,
@@ -502,16 +514,16 @@ For signals with a clear community tension connection, provide up to 3
 implied_queries — searches that would discover RELATED community signals
 by expanding outward from this one.
 
-- An Ask for donations → search for the service that helps affected people directly
-- A Give serving a population → search for what else that population needs
-- An Event at a venue → search for other community events at that venue
+- A Need for donations → search for the service that helps affected people directly
+- An Aid serving a population → search for what else that population needs
+- A Gathering at a venue → search for other community events at that venue
 - A Tension → search for who's responding and where people are gathering
 - A Notice about policy → search for who's affected and how they're organizing
 
 Always include the city name or neighborhood. Target specific organizations,
 services, and events — not news articles.
 
-DO NOT provide implied_queries for routine community events (farmers markets,
+DO NOT provide implied_queries for routine community gatherings (farmers markets,
 worship services, recurring social gatherings) that have no tension connection.
 Return an empty array for these."#
     )
@@ -597,7 +609,7 @@ mod tests {
 
     #[test]
     fn missing_availability_is_none_not_placeholder() {
-        use rootsignal_common::{GiveNode, NodeMeta, SensitivityLevel};
+        use rootsignal_common::{AidNode, NodeMeta, SensitivityLevel};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Food pantry".to_string(),
@@ -617,18 +629,18 @@ mod tests {
             mentioned_actors: vec![],
             implied_queries: vec![],
         };
-        let give = GiveNode {
+        let aid = AidNode {
             meta,
             action_url: "https://example.com".to_string(),
             availability: None,
             is_ongoing: true,
         };
-        assert!(give.availability.is_none());
+        assert!(aid.availability.is_none());
     }
 
     #[test]
     fn missing_what_needed_is_none_not_placeholder() {
-        use rootsignal_common::{AskNode, NodeMeta, SensitivityLevel, Urgency};
+        use rootsignal_common::{NeedNode, NodeMeta, SensitivityLevel, Urgency};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Volunteers needed".to_string(),
@@ -648,14 +660,14 @@ mod tests {
             mentioned_actors: vec![],
             implied_queries: vec![],
         };
-        let ask = AskNode {
+        let need = NeedNode {
             meta,
             urgency: Urgency::Medium,
             what_needed: None,
             action_url: None,
             goal: None,
         };
-        assert!(ask.what_needed.is_none());
+        assert!(need.what_needed.is_none());
     }
 
     #[test]
@@ -688,7 +700,7 @@ mod tests {
     fn extracted_signal_json_missing_implied_queries() {
         let json = r#"{
             "signals": [{
-                "signal_type": "event",
+                "signal_type": "gathering",
                 "title": "Farmers market",
                 "summary": "Weekly farmers market",
                 "sensitivity": "general"
@@ -706,7 +718,7 @@ mod tests {
     fn extracted_signal_json_empty_implied_queries() {
         let json = r#"{
             "signals": [{
-                "signal_type": "give",
+                "signal_type": "aid",
                 "title": "Food shelf",
                 "summary": "Free groceries",
                 "sensitivity": "general",
@@ -743,7 +755,7 @@ mod tests {
         );
         assert!(
             prompt.contains("DO NOT provide implied_queries for routine"),
-            "system prompt should warn against routine event queries"
+            "system prompt should warn against routine gathering queries"
         );
     }
 

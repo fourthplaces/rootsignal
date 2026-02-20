@@ -37,7 +37,7 @@ fn city_node(
 use rootsignal_scout::scraper::SocialPost;
 
 // ---------------------------------------------------------------------------
-// Scenario 1: Event page → extracts Event signals
+// Scenario 1: Event page → extracts Gathering signals
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -69,7 +69,7 @@ async fn event_page_produces_event_signals() {
     );
     assert!(
         stats.by_type[0] >= 1,
-        "should extract at least one Event, got {}",
+        "should extract at least one Gathering, got {}",
         stats.by_type[0]
     );
     assert!(
@@ -80,7 +80,7 @@ async fn event_page_produces_event_signals() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 2: Give/resource page → extracts Give signals
+// Scenario 2: Aid/resource page → extracts Aid signals
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -105,11 +105,11 @@ async fn resource_page_produces_give_signals() {
         "should extract at least 1 signal, got {}",
         stats.signals_extracted
     );
-    // Food shelf could produce Give (the service) and/or Ask (volunteer needs)
-    let give_or_ask = stats.by_type[1] + stats.by_type[2]; // Give + Ask
+    // Food shelf could produce Aid (the service) and/or Need (volunteer needs)
+    let aid_or_need = stats.by_type[1] + stats.by_type[2]; // Aid + Need
     assert!(
-        give_or_ask >= 1,
-        "should extract Give and/or Ask signals, got give={} ask={}",
+        aid_or_need >= 1,
+        "should extract Aid and/or Need signals, got aid={} need={}",
         stats.by_type[1],
         stats.by_type[2]
     );
@@ -342,11 +342,11 @@ async fn portland_content_with_portland_profile() {
         "Portland content should extract signals, got {}",
         stats.signals_extracted
     );
-    // Bike repair clinics are Events and/or Gives
-    let event_or_give = stats.by_type[0] + stats.by_type[1];
+    // Bike repair clinics are Gatherings and/or Aids
+    let gathering_or_aid = stats.by_type[0] + stats.by_type[1];
     assert!(
-        event_or_give >= 1,
-        "should extract Event and/or Give, got event={} give={}",
+        gathering_or_aid >= 1,
+        "should extract Gathering and/or Aid, got gathering={} aid={}",
         stats.by_type[0],
         stats.by_type[1]
     );
@@ -394,7 +394,7 @@ async fn nyc_mutual_aid_extraction() {
         "NYC mutual aid should extract signals, got {}",
         stats.signals_extracted
     );
-    // Mutual aid pages typically produce Give (distributions), Ask (urgent needs), and Event (meal service)
+    // Mutual aid pages typically produce Aid (distributions), Need (urgent needs), and Gathering (meal service)
     let total_typed = stats.by_type.iter().sum::<u32>();
     assert!(
         total_typed >= 1,
@@ -437,20 +437,20 @@ async fn berlin_german_language_extraction() {
         "German-language content should extract signals, got {}",
         stats.signals_extracted,
     );
-    // Neighborhood council meeting is an Event
+    // Neighborhood council meeting is a Gathering
     assert!(
         stats.by_type[0] >= 1,
-        "should extract at least one Event, got {}",
+        "should extract at least one Gathering, got {}",
         stats.by_type[0]
     );
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 11: GoFundMe/crisis Ask — personal fundraiser with community needs
+// Scenario 11: GoFundMe/crisis Need — personal fundraiser with community needs
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn gofundme_produces_ask_signals() {
+async fn gofundme_produces_need_signals() {
     let Some(ctx) = TestContext::try_new().await else {
         eprintln!("Skipping: API keys not set");
         return;
@@ -471,12 +471,12 @@ async fn gofundme_produces_ask_signals() {
         "GoFundMe should extract at least 1 signal, got {}",
         stats.signals_extracted,
     );
-    // GoFundMe is primarily an Ask (help needed) but could also produce Give
+    // GoFundMe is primarily a Need (help needed) but could also produce Aid
     // (clothing drop-off, meal train) depending on LLM interpretation
-    let ask_or_give = stats.by_type[2] + stats.by_type[1]; // Ask + Give
+    let need_or_aid = stats.by_type[2] + stats.by_type[1]; // Need + Aid
     assert!(
-        ask_or_give >= 1,
-        "should extract Ask and/or Give signals from fundraiser; ask={} give={}",
+        need_or_aid >= 1,
+        "should extract Need and/or Aid signals from fundraiser; need={} aid={}",
         stats.by_type[2],
         stats.by_type[1],
     );
@@ -494,7 +494,7 @@ async fn community_discussion_extracts_responses() {
     };
 
     // Reddit thread about rent increases — contains actionable responses
-    // (tenant hotline = Give, organizing meeting = Event, policy info = Notice)
+    // (tenant hotline = Aid, organizing meeting = Gathering, policy info = Notice)
     let stats = ctx
         .scout()
         .with_web_content(include_str!("fixtures/reddit_housing_discussion.txt"))
@@ -506,17 +506,17 @@ async fn community_discussion_extracts_responses() {
         .await;
 
     // The LLM should extract the community RESPONSES, not the complaint itself.
-    // HOME Line hotline = Give, MHRC meeting = Event, tenant union = Give/Event
+    // HOME Line hotline = Aid, MHRC meeting = Gathering, tenant union = Aid/Gathering
     assert!(
         stats.signals_extracted >= 1,
         "community discussion should surface actionable responses, got {}",
         stats.signals_extracted,
     );
-    // We expect at least one of: Event (organizing meeting), Give (hotline/resources), or Notice (policy info)
+    // We expect at least one of: Gathering (organizing meeting), Aid (hotline/resources), or Notice (policy info)
     let actionable = stats.by_type[0] + stats.by_type[1] + stats.by_type[2] + stats.by_type[3];
     assert!(
         actionable >= 1,
-        "should extract actionable signals from discussion; event={} give={} ask={} notice={}",
+        "should extract actionable signals from discussion; gathering={} aid={} need={} notice={}",
         stats.by_type[0],
         stats.by_type[1],
         stats.by_type[2],
@@ -550,11 +550,11 @@ async fn government_advisory_produces_notice() {
         "PFAS advisory should extract signals, got {}",
         stats.signals_extracted,
     );
-    // Should produce Notice (advisory) and/or Event (community meeting)
-    let notice_or_event = stats.by_type[3] + stats.by_type[0]; // Notice + Event
+    // Should produce Notice (advisory) and/or Gathering (community meeting)
+    let notice_or_gathering = stats.by_type[3] + stats.by_type[0]; // Notice + Gathering
     assert!(
-        notice_or_event >= 1,
-        "should extract Notice and/or Event from government advisory; notice={} event={}",
+        notice_or_gathering >= 1,
+        "should extract Notice and/or Gathering from government advisory; notice={} gathering={}",
         stats.by_type[3],
         stats.by_type[0],
     );
@@ -597,8 +597,8 @@ async fn nyc_community_discussion_extracts_responses() {
         .run()
         .await;
 
-    // Discussion contains: community board meeting (Event), tenant union meetings (Event),
-    // 311 complaint process (Notice/Give), organizing info (Give)
+    // Discussion contains: community board meeting (Gathering), tenant union meetings (Gathering),
+    // 311 complaint process (Notice/Aid), organizing info (Aid)
     assert!(
         stats.signals_extracted >= 1,
         "NYC noise discussion should surface actionable responses, got {}",
@@ -833,7 +833,7 @@ async fn tension_signals_rank_higher_than_routine() {
         .run()
         .await;
 
-    // Query graph by confidence DESC — top signals should be Tension/Ask types
+    // Query graph by confidence DESC — top signals should be Tension/Need types
     let signals = harness::queries::signals_by_confidence(ctx.client()).await;
 
     assert!(
@@ -841,15 +841,15 @@ async fn tension_signals_rank_higher_than_routine() {
         "should have signals in graph after both runs",
     );
 
-    // Check that at least one of the top 3 signals is a Tension or Ask
+    // Check that at least one of the top 3 signals is a Tension or Need
     let top_n = signals.iter().take(3).collect::<Vec<_>>();
     let has_urgent = top_n
         .iter()
-        .any(|s| s.node_type == "Tension" || s.node_type == "Ask");
+        .any(|s| s.node_type == "Tension" || s.node_type == "Need");
 
     assert!(
         has_urgent,
-        "top 3 signals by confidence should include Tension or Ask; got: {:?}",
+        "top 3 signals by confidence should include Tension or Need; got: {:?}",
         top_n
             .iter()
             .map(|s| (&s.title, &s.node_type, s.confidence))

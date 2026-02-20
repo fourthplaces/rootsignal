@@ -1,7 +1,7 @@
 //! Evolver — autonomous prompt evolution via mutation and selection.
 //!
 //! Goal: improve scout's ability to complete the tension-response cycle —
-//! find tensions in the world, then find the asks/gives/events that address them.
+//! find tensions in the world, then find the needs/gives/events that address them.
 
 use std::future::Future;
 
@@ -241,9 +241,9 @@ The agent's core mission is the TENSION-RESPONSE CYCLE:
 1. Find TENSIONS — things out of alignment in community or ecological life
    (housing crisis, food desert, river pollution, declining habitat, safety concerns)
 2. Find RESPONSES that address those tensions:
-   - Give: resources, services, mutual aid (food shelves, legal aid, habitat restoration programs)
-   - Ask: calls for help that mobilize action (volunteer drives, donation needs, citizen science)
-   - Event: gatherings where people organize around tensions (town halls, cleanups, restoration days)
+   - Aid: resources, services, mutual aid (food shelves, legal aid, habitat restoration programs)
+   - Need: calls for help that mobilize action (volunteer drives, donation needs, citizen science)
+   - Gathering: gatherings where people organize around tensions (town halls, cleanups, restoration days)
    - Notice: official advisories or policy changes related to tensions
 
 A prompt is better if it extracts more tension-response pairs from the same content.
@@ -255,11 +255,11 @@ Return JSON array of mutations.";
             "## Current Prompt\n{current_prompt}\n\n\
              ## Test Failures\n{failures}\n\n\
              The failures above show scenarios where the agent missed tensions, missed responses \
-             to tensions (gives/asks/events that address a community problem), or extracted signals \
+             to tensions (aids/needs/gatherings that address a community problem), or extracted signals \
              that don't connect to real community needs.\n\n\
              Generate {count} targeted modifications that improve the agent's ability to:\n\
              - Recognize structural tensions in community content\n\
-             - Extract the specific resources, services, events, and asks that RESPOND to those tensions\n\
+             - Extract the specific resources, services, gatherings, and needs that RESPOND to those tensions\n\
              - Distinguish genuine community responses from noise, spam, or off-topic content\n\n\
              Each mutation must be a COMPLETE modified prompt (not a diff).\n\
              Keep {{city_name}} and {{today}} as template variables.\n\n\

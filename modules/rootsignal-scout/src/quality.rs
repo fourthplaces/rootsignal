@@ -29,13 +29,13 @@ pub fn score(node: &Node) -> ExtractionQuality {
     };
 
     let (has_action_url, has_timing) = match node {
-        Node::Event(e) => {
+        Node::Gathering(e) => {
             let has_real_url = !e.action_url.is_empty() && e.action_url != meta.source_url;
             let has_real_timing = e.starts_at.is_some();
             (has_real_url, has_real_timing)
         }
-        Node::Give(g) => (!g.action_url.is_empty(), g.is_ongoing),
-        Node::Ask(a) => (a.action_url.is_some(), false),
+        Node::Aid(g) => (!g.action_url.is_empty(), g.is_ongoing),
+        Node::Need(a) => (a.action_url.is_some(), false),
         Node::Notice(_) => (false, false),
         Node::Tension(_) => (false, false),
         Node::Evidence(_) => (false, false),
@@ -44,24 +44,24 @@ pub fn score(node: &Node) -> ExtractionQuality {
     let actionable = matches!(node, Node::Notice(_))
         || (has_action_url
             && (has_timing
-                || matches!(node, Node::Give(g) if g.is_ongoing)
-                || matches!(node, Node::Ask(_))));
+                || matches!(node, Node::Aid(g) if g.is_ongoing)
+                || matches!(node, Node::Need(_))));
 
     // Completeness: fraction of *applicable* optional fields populated.
     // Always-present fields (title, summary, signal_type) are prerequisites, not differentiators.
     // Denominator varies by node type so Notice/Tension aren't penalized for fields they can't have.
     let (optional_filled, optional_total) = match node {
-        Node::Event(_) => {
+        Node::Gathering(_) => {
             // location, action_url, timing
             let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
             (filled, 3u8)
         }
-        Node::Give(_) => {
+        Node::Aid(_) => {
             // location, action_url, is_ongoing
             let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
             (filled, 3)
         }
-        Node::Ask(_) => {
+        Node::Need(_) => {
             // location, action_url
             let filled = has_location as u8 + has_action_url as u8;
             (filled, 2)
@@ -103,7 +103,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rootsignal_common::{EventNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel};
+    use rootsignal_common::{GatheringNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel};
     use uuid::Uuid;
 
     fn test_meta() -> NodeMeta {
@@ -133,10 +133,10 @@ mod tests {
     }
 
     #[test]
-    fn event_with_real_date_scores_higher_than_without() {
+    fn gathering_with_real_date_scores_higher_than_without() {
         let meta = test_meta();
 
-        let with_date = Node::Event(EventNode {
+        let with_date = Node::Gathering(GatheringNode {
             meta: meta.clone(),
             starts_at: Some(Utc::now()),
             ends_at: None,
@@ -145,7 +145,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let without_date = Node::Event(EventNode {
+        let without_date = Node::Gathering(GatheringNode {
             meta: meta.clone(),
             starts_at: None,
             ends_at: None,
@@ -164,9 +164,9 @@ mod tests {
     }
 
     #[test]
-    fn event_with_date_is_actionable() {
+    fn gathering_with_date_is_actionable() {
         let meta = test_meta();
-        let event = Node::Event(EventNode {
+        let event = Node::Gathering(GatheringNode {
             meta,
             starts_at: Some(Utc::now()),
             ends_at: None,
@@ -180,12 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn bare_event_scores_low_confidence() {
-        // Bare Event: no optional fields filled (0/3), geo = Low (0.3)
+    fn bare_gathering_scores_low_confidence() {
+        // Bare Gathering: no optional fields filled (0/3), geo = Low (0.3)
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
         let mut meta = test_meta();
         meta.location = None;
-        let node = Node::Event(EventNode {
+        let node = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,
             ends_at: None,
@@ -196,17 +196,17 @@ mod tests {
         let q = score(&node);
         assert!(
             (q.confidence - 0.15).abs() < 0.01,
-            "Bare event confidence: {}",
+            "Bare gathering confidence: {}",
             q.confidence
         );
     }
 
     #[test]
-    fn complete_event_exact_geo_scores_max() {
-        // Complete Event: all 3 optional fields (3/3), geo = High (1.0)
+    fn complete_gathering_exact_geo_scores_max() {
+        // Complete Gathering: all 3 optional fields (3/3), geo = High (1.0)
         // confidence = 1.0 * 0.5 + 1.0 * 0.5 = 1.0
         let meta = test_meta(); // has exact geo location
-        let node = Node::Event(EventNode {
+        let node = Node::Gathering(GatheringNode {
             meta,
             starts_at: Some(Utc::now()),
             ends_at: None,
@@ -217,7 +217,7 @@ mod tests {
         let q = score(&node);
         assert!(
             (q.confidence - 1.0).abs() < 0.01,
-            "Complete event confidence: {}",
+            "Complete gathering confidence: {}",
             q.confidence
         );
     }
@@ -270,10 +270,10 @@ mod tests {
     }
 
     #[test]
-    fn event_without_date_or_url_is_not_actionable() {
+    fn gathering_without_date_or_url_is_not_actionable() {
         let mut meta = test_meta();
         meta.source_url = "https://example.com".to_string();
-        let event = Node::Event(EventNode {
+        let event = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,
             ends_at: None,

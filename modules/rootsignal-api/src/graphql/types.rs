@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, AskNode, EventNode, EvidenceNode, GiveNode, Node, NodeMeta, NoticeNode, StoryNode,
-    TensionNode,
+    ActorNode, AidNode, EvidenceNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
+    StoryNode, TensionNode,
 };
 use rootsignal_graph::PublicGraphReader;
 
@@ -21,9 +21,9 @@ use super::loaders::{ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignal
 
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SignalType {
-    Event,
-    Give,
-    Ask,
+    Gathering,
+    Aid,
+    Need,
     Notice,
     Tension,
 }
@@ -31,9 +31,9 @@ pub enum SignalType {
 impl From<rootsignal_common::NodeType> for SignalType {
     fn from(nt: rootsignal_common::NodeType) -> Self {
         match nt {
-            rootsignal_common::NodeType::Event => SignalType::Event,
-            rootsignal_common::NodeType::Give => SignalType::Give,
-            rootsignal_common::NodeType::Ask => SignalType::Ask,
+            rootsignal_common::NodeType::Gathering => SignalType::Gathering,
+            rootsignal_common::NodeType::Aid => SignalType::Aid,
+            rootsignal_common::NodeType::Need => SignalType::Need,
             rootsignal_common::NodeType::Notice => SignalType::Notice,
             rootsignal_common::NodeType::Tension => SignalType::Tension,
             rootsignal_common::NodeType::Evidence => SignalType::Notice, // shouldn't happen
@@ -44,9 +44,9 @@ impl From<rootsignal_common::NodeType> for SignalType {
 impl SignalType {
     pub fn to_node_type(self) -> rootsignal_common::NodeType {
         match self {
-            SignalType::Event => rootsignal_common::NodeType::Event,
-            SignalType::Give => rootsignal_common::NodeType::Give,
-            SignalType::Ask => rootsignal_common::NodeType::Ask,
+            SignalType::Gathering => rootsignal_common::NodeType::Gathering,
+            SignalType::Aid => rootsignal_common::NodeType::Aid,
+            SignalType::Need => rootsignal_common::NodeType::Need,
             SignalType::Notice => rootsignal_common::NodeType::Notice,
             SignalType::Tension => rootsignal_common::NodeType::Tension,
         }
@@ -196,9 +196,9 @@ impl GqlEvidence {
 
 #[derive(Union)]
 pub enum GqlSignal {
-    Event(GqlEventSignal),
-    Give(GqlGiveSignal),
-    Ask(GqlAskSignal),
+    Gathering(GqlGatheringSignal),
+    Aid(GqlAidSignal),
+    Need(GqlNeedSignal),
     Notice(GqlNoticeSignal),
     Tension(GqlTensionSignal),
 }
@@ -206,9 +206,9 @@ pub enum GqlSignal {
 impl From<Node> for GqlSignal {
     fn from(node: Node) -> Self {
         match node {
-            Node::Event(n) => GqlSignal::Event(GqlEventSignal(n)),
-            Node::Give(n) => GqlSignal::Give(GqlGiveSignal(n)),
-            Node::Ask(n) => GqlSignal::Ask(GqlAskSignal(n)),
+            Node::Gathering(n) => GqlSignal::Gathering(GqlGatheringSignal(n)),
+            Node::Aid(n) => GqlSignal::Aid(GqlAidSignal(n)),
+            Node::Need(n) => GqlSignal::Need(GqlNeedSignal(n)),
             Node::Notice(n) => GqlSignal::Notice(GqlNoticeSignal(n)),
             Node::Tension(n) => GqlSignal::Tension(GqlTensionSignal(n)),
             Node::Evidence(_) => unreachable!("Evidence nodes are not signals"),
@@ -284,18 +284,18 @@ macro_rules! signal_meta_resolvers {
     };
 }
 
-// --- EventSignal ---
+// --- GatheringSignal ---
 
-pub struct GqlEventSignal(pub EventNode);
+pub struct GqlGatheringSignal(pub GatheringNode);
 
-impl GqlEventSignal {
+impl GqlGatheringSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlEventSignal {
+impl GqlGatheringSignal {
     async fn id(&self) -> Uuid { self.meta().id }
     async fn title(&self) -> &str { &self.meta().title }
     async fn summary(&self) -> &str { &self.meta().summary }
@@ -338,18 +338,18 @@ impl GqlEventSignal {
     }
 }
 
-// --- GiveSignal ---
+// --- AidSignal ---
 
-pub struct GqlGiveSignal(pub GiveNode);
+pub struct GqlAidSignal(pub AidNode);
 
-impl GqlGiveSignal {
+impl GqlAidSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlGiveSignal {
+impl GqlAidSignal {
     async fn id(&self) -> Uuid { self.meta().id }
     async fn title(&self) -> &str { &self.meta().title }
     async fn summary(&self) -> &str { &self.meta().summary }
@@ -386,18 +386,18 @@ impl GqlGiveSignal {
     }
 }
 
-// --- AskSignal ---
+// --- NeedSignal ---
 
-pub struct GqlAskSignal(pub AskNode);
+pub struct GqlNeedSignal(pub NeedNode);
 
-impl GqlAskSignal {
+impl GqlNeedSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlAskSignal {
+impl GqlNeedSignal {
     async fn id(&self) -> Uuid { self.meta().id }
     async fn title(&self) -> &str { &self.meta().title }
     async fn summary(&self) -> &str { &self.meta().summary }

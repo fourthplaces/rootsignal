@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, NeedNode, Node,
+    AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
     NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
     TensionNode, Urgency,
 };
@@ -47,7 +47,7 @@ pub struct ResponseFinding {
 pub struct DiscoveredResponse {
     pub title: String,
     pub summary: String,
-    /// "give", "event", or "need"
+    /// "aid", "gathering", or "need"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -209,7 +209,7 @@ Based on your investigation, extract your findings as JSON.
 For each response you discovered:
 - title: short name of the response (org, program, campaign, event)
 - summary: 1-2 sentences about what it does
-- signal_type: \"give\" (resources offered), \"event\" (gatherings/actions), or \"need\" (someone expressing their need with a way to respond — NOT news coverage of problems)
+- signal_type: \"aid\" (free resources/services for people in need — NOT commercial offerings), \"gathering\" (people coming together — town halls, cleanups, vigils, solidarity actions), or \"need\" (someone expressing their need with a way to respond — NOT news coverage of problems)
 - url: the EXACT URL you read via read_page (do not reconstruct or guess)
 - diffusion_mechanism: how this response takes the air out of the tension (freeform — invent a category if needed)
 - explanation: why this diffuses rather than escalates
@@ -441,10 +441,10 @@ impl<'a> ResponseFinder<'a> {
         let embedding = self.embedder.embed(&embed_text).await?;
 
         let node_type = match response.signal_type.to_lowercase().as_str() {
-            "give" => NodeType::Give,
-            "event" => NodeType::Event,
+            "aid" => NodeType::Aid,
+            "gathering" => NodeType::Gathering,
             "need" => NodeType::Need,
-            _ => NodeType::Give, // Default to Give for unknown types
+            _ => NodeType::Aid, // Default to Aid for unknown types
         };
 
         // Check for duplicate (city-scoped)
@@ -618,13 +618,13 @@ impl<'a> ResponseFinder<'a> {
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
-            "event" => {
+            "gathering" => {
                 let starts_at = response.event_date.as_deref().and_then(|d| {
                     chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
                         .ok()
                         .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
                 });
-                Node::Event(EventNode {
+                Node::Gathering(GatheringNode {
                     meta,
                     starts_at,
                     ends_at: None,
@@ -640,7 +640,7 @@ impl<'a> ResponseFinder<'a> {
                 action_url: Some(response.url.clone()),
                 goal: None,
             }),
-            _ => Node::Give(GiveNode {
+            _ => Node::Aid(AidNode {
                 meta,
                 action_url: response.url.clone(),
                 availability: None,
@@ -888,7 +888,7 @@ mod tests {
             "responses": [{
                 "title": "Know Your Rights Workshop",
                 "summary": "Free legal workshops for immigrants",
-                "signal_type": "give",
+                "signal_type": "aid",
                 "url": "https://example.com/kyr",
                 "diffusion_mechanism": "legal education",
                 "explanation": "Dissolves fear through knowledge of rights",
@@ -910,7 +910,7 @@ mod tests {
         let finding: ResponseFinding = serde_json::from_str(json).unwrap();
         assert_eq!(finding.responses.len(), 1);
         assert_eq!(finding.responses[0].title, "Know Your Rights Workshop");
-        assert_eq!(finding.responses[0].signal_type, "give");
+        assert_eq!(finding.responses[0].signal_type, "aid");
         assert!((finding.responses[0].match_strength - 0.9).abs() < 0.001);
         assert_eq!(
             finding.responses[0].also_addresses,
@@ -1019,7 +1019,7 @@ mod tests {
             implied_queries: vec![],
         };
 
-        let node = Node::Give(GiveNode {
+        let node = Node::Aid(AidNode {
             meta,
             action_url: "https://example.com/kyr".to_string(),
             availability: None,

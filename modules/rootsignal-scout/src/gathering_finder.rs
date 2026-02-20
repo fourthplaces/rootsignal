@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, DiscoveryMethod, EventNode, GeoPoint, GeoPrecision, GiveNode, NeedNode, Node,
+    AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
     NodeMeta, NodeType, SensitivityLevel, SourceNode, SourceRole, SourceType, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
@@ -48,7 +48,7 @@ pub struct GravityFinding {
 pub struct DiscoveredGathering {
     pub title: String,
     pub summary: String,
-    /// "event", "give", or "need"
+    /// "gathering", "aid", or "need"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -190,13 +190,13 @@ no_gravity=true with your reasoning. This saves budget for tensions \
 that DO pull people together.
 
 SIGNAL TYPE SEMANTICS:
-- If the gathering is a physical or virtual EVENT: provide venue, event_date, \
+- If the gathering is a physical or virtual GATHERING: provide venue, event_date, \
 is_recurring, organizer.
-- If the gravity manifests as a Give (e.g., a solidarity fund) or Need \
+- If the gravity manifests as Aid (e.g., a solidarity fund) or Need \
 (e.g., a call to action): leave venue and event_date null. These are \
 gravity expressions that don't have a physical location or date.
 
-For each gathering, note: the URL, what type it is (event/give/need), \
+For each gathering, note: the URL, what type it is (gathering/aid/need), \
 the venue or location if known, whether it's recurring, the organizer if known, \
 and how it relates to the tension (what kind of gravity it represents)."
     )
@@ -244,7 +244,7 @@ If you found NO evidence of gatherings after your initial searches, set:
 Otherwise, for each gathering you discovered:
 - title: short name of the gathering
 - summary: 1-2 sentences about what happens there
-- signal_type: \"event\" (physical/virtual gatherings), \"give\" (solidarity funds, mutual aid), or \"need\" (direct expressions of need — e.g. GoFundMe campaigns, volunteer signups, petition drives)
+- signal_type: \"gathering\" (physical/virtual gatherings where people come together), \"aid\" (free resources like solidarity funds, mutual aid), or \"need\" (direct expressions of need — e.g. GoFundMe campaigns, volunteer signups, petition drives)
 - url: the EXACT URL you read via read_page (do not reconstruct or guess)
 - gathering_type: freeform category (e.g. \"vigil\", \"singing\", \"solidarity meal\", \"tenant meetup\", \"cleanup\")
 - venue: where people gather (church name, park, community center) — null if not applicable
@@ -502,9 +502,9 @@ impl<'a> GatheringFinder<'a> {
         let embedding = self.embedder.embed(&embed_text).await?;
 
         let node_type = match gathering.signal_type.to_lowercase().as_str() {
-            "event" => NodeType::Event,
+            "gathering" => NodeType::Gathering,
             "need" => NodeType::Need,
-            _ => NodeType::Give, // Default to Give for unknown types
+            _ => NodeType::Aid, // Default to Aid for unknown types
         };
 
         // Check for duplicate (city-scoped)
@@ -645,13 +645,13 @@ impl<'a> GatheringFinder<'a> {
         };
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
-            "event" => {
+            "gathering" => {
                 let starts_at = gathering.event_date.as_deref().and_then(|d| {
                     chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
                         .ok()
                         .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
                 });
-                Node::Event(EventNode {
+                Node::Gathering(GatheringNode {
                     meta,
                     starts_at,
                     ends_at: None,
@@ -667,7 +667,7 @@ impl<'a> GatheringFinder<'a> {
                 action_url: Some(gathering.url.clone()),
                 goal: None,
             }),
-            _ => Node::Give(GiveNode {
+            _ => Node::Aid(AidNode {
                 meta,
                 action_url: gathering.url.clone(),
                 availability: None,
@@ -850,7 +850,7 @@ mod tests {
             "gatherings": [{
                 "title": "Singing Rebellion at Lake Street Church",
                 "summary": "Weekly gathering where community sings together in solidarity",
-                "signal_type": "event",
+                "signal_type": "gathering",
                 "url": "https://example.com/singing",
                 "gathering_type": "singing",
                 "venue": "Lake Street Church",
@@ -870,7 +870,7 @@ mod tests {
             finding.gatherings[0].title,
             "Singing Rebellion at Lake Street Church"
         );
-        assert_eq!(finding.gatherings[0].signal_type, "event");
+        assert_eq!(finding.gatherings[0].signal_type, "gathering");
         assert_eq!(finding.gatherings[0].gathering_type, "singing");
         assert_eq!(
             finding.gatherings[0].venue.as_deref(),
@@ -978,7 +978,7 @@ mod tests {
             implied_queries: vec![],
         };
 
-        let node = Node::Event(EventNode {
+        let node = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,
             ends_at: None,

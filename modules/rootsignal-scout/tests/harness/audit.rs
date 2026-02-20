@@ -57,7 +57,7 @@ impl AuditConfig {
 
 /// At least `min` signals exist in the graph.
 pub async fn check_signal_count(client: &GraphClient, min: usize) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
+    let cypher = "MATCH (n) WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension \
                   RETURN count(n) AS cnt";
     let q = query(cypher);
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -78,7 +78,7 @@ pub async fn check_signal_count(client: &GraphClient, min: usize) -> CheckResult
 
 /// Distinct signal types (labels) >= min_types.
 pub async fn check_type_diversity(client: &GraphClient, min_types: usize) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
+    let cypher = "MATCH (n) WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension \
                   WITH labels(n)[0] AS lbl \
                   RETURN collect(DISTINCT lbl) AS types";
     let q = query(cypher);
@@ -101,7 +101,7 @@ pub async fn check_type_diversity(client: &GraphClient, min_types: usize) -> Che
 
 /// No email or SSN patterns in signal titles.
 pub async fn check_no_pii(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
+    let cypher = "MATCH (n) WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension \
                   RETURN n.title AS title";
     let q = query(cypher);
     let mut stream = client.inner().execute(q).await.expect("query failed");
@@ -135,7 +135,7 @@ pub async fn check_no_pii(client: &GraphClient) -> CheckResult {
 
 /// No signals with identical toLower(title) + type.
 pub async fn check_no_exact_duplicates(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension \
+    let cypher = "MATCH (n) WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension \
                   WITH toLower(n.title) AS title, labels(n)[0] AS type, count(*) AS c \
                   WHERE c > 1 RETURN title, type, c";
     let q = query(cypher);
@@ -170,7 +170,7 @@ pub async fn check_geo_accuracy(
     radius_km: f64,
     min_pct: f64,
 ) -> CheckResult {
-    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND n.lat IS NOT NULL AND n.lng IS NOT NULL \
                   RETURN n.lat AS lat, n.lng AS lng";
     let q = query(cypher);
@@ -207,7 +207,7 @@ pub async fn check_geo_accuracy(
 
 /// No signals without SOURCED_FROM→Evidence.
 pub async fn check_evidence_trails(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND NOT (n)-[:SOURCED_FROM]->(:Evidence) \
                   RETURN n.title AS title, labels(n)[0] AS type";
     let q = query(cypher);
@@ -239,7 +239,7 @@ pub async fn check_evidence_trails(client: &GraphClient) -> CheckResult {
 
 /// No single 0.01° lat/lng bucket has > max_bucket_pct of geolocated signals.
 pub async fn check_no_geo_clustering(client: &GraphClient, max_bucket_pct: f64) -> CheckResult {
-    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND n.lat IS NOT NULL AND n.lng IS NOT NULL \
                   WITH round(n.lat * 100) / 100 AS blat, round(n.lng * 100) / 100 AS blng, \
                   count(*) AS c \
@@ -248,7 +248,7 @@ pub async fn check_no_geo_clustering(client: &GraphClient, max_bucket_pct: f64) 
     let mut stream = client.inner().execute(q).await.expect("query failed");
 
     // Also need the total count
-    let total_cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let total_cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                         AND n.lat IS NOT NULL AND n.lng IS NOT NULL \
                         RETURN count(n) AS cnt";
     let tq = query(total_cypher);
@@ -344,7 +344,7 @@ pub async fn check_no_orphaned_evidence(client: &GraphClient) -> CheckResult {
 
 /// No signals with empty or null titles.
 pub async fn check_no_empty_signals(client: &GraphClient) -> CheckResult {
-    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND (n.title IS NULL OR trim(n.title) = '') \
                   RETURN labels(n)[0] AS type, n.id AS id";
     let q = query(cypher);
@@ -380,7 +380,7 @@ pub async fn check_no_fake_coordinates(
     center_lat: f64,
     center_lng: f64,
 ) -> CheckResult {
-    let cypher = "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+    let cypher = "MATCH (n) WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND n.lat IS NOT NULL AND n.lng IS NOT NULL \
                   RETURN n.title AS title, n.lat AS lat, n.lng AS lng";
     let q = query(cypher);

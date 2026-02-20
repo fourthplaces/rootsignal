@@ -103,7 +103,7 @@ impl Improver {
             serde_json::to_string_pretty(world).map_err(|e| anyhow!("serialize: {e}"))?;
 
         let system = "You generate evaluation criteria for scout, a signal agent whose core job \
-                      is finding tensions (real problems) and the responses (gives/asks/events) that \
+                      is finding tensions (real problems) and the responses (aids/asks/gatherings) that \
                       address them. Given a World scenario, return JSON with checks that scout should \
                       pass. Focus on tension-response completeness and what would expose the blind spot.";
 
@@ -136,7 +136,7 @@ impl Improver {
     async fn identify_blind_spots(&self, failures_json: &str) -> Result<AnalysisResponse> {
         let system = "You analyze test failures from scout, a signal agent whose core job is \
                       the TENSION-RESPONSE CYCLE: find tensions (problems in community or ecological \
-                      life) and the responses (gives/asks/events) that address them. \
+                      life) and the responses (aids/asks/gatherings) that address them. \
                       Blind spots fall into: missed tensions, missed responses to known tensions, \
                       broken tension-response linking, or hallucinated signals. Return structured JSON.";
 
@@ -145,7 +145,7 @@ impl Improver {
              {failures_json}\n\n\
              For each failure, identify which part of the tension-response cycle broke:\n\
              1. Did scout miss a TENSION (a real problem in the community)?\n\
-             2. Did it miss a RESPONSE (give/ask/event) that addresses a tension?\n\
+             2. Did it miss a RESPONSE (aid/need/gathering) that addresses a tension?\n\
              3. Did it fail to LINK a response to its underlying tension?\n\
              4. Did it hallucinate signals not grounded in the source material?\n\
              5. What adversarial scenario would stress-test this weakness?\n\

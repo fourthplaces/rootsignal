@@ -397,7 +397,7 @@ fn test_scout_interactive(ctx: &AppContext) -> Result<()> {
 
     let items = vec![
         "Run all 20 scenarios",
-        "Extraction (event, give, ask, notice, tension)",
+        "Extraction (gathering, aid, need, notice, tension)",
         "Dedup & corroboration",
         "Adversarial (spam, astroturf, coordinated)",
         "Multi-city (Portland, NYC, Berlin)",

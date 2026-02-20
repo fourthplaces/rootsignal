@@ -183,9 +183,9 @@ async fn triangulated_story_signals_rank_above_echo() {
     let tri_story_id = Uuid::new_v4();
     let tri_ids: Vec<(Uuid, &str)> = vec![
         (Uuid::new_v4(), "Tension"),
-        (Uuid::new_v4(), "Ask"),
-        (Uuid::new_v4(), "Give"),
-        (Uuid::new_v4(), "Event"),
+        (Uuid::new_v4(), "Need"),
+        (Uuid::new_v4(), "Aid"),
+        (Uuid::new_v4(), "Gathering"),
     ];
 
     for (i, (id, label)) in tri_ids.iter().enumerate() {
@@ -280,7 +280,7 @@ async fn find_nodes_near_prefers_triangulated() {
     let tri_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Event",
+        "Gathering",
         tri_id,
         "Triangulated signal near",
         "https://tri.org/page",
@@ -298,7 +298,7 @@ async fn find_nodes_near_prefers_triangulated() {
         3,
         3,
         0.8,
-        &[(tri_id, "Event")],
+        &[(tri_id, "Gathering")],
     )
     .await;
 
@@ -354,8 +354,8 @@ async fn story_status_reflects_triangulation() {
     let confirmed_id = Uuid::new_v4();
     let c_sigs: Vec<(Uuid, &str)> = vec![
         (Uuid::new_v4(), "Tension"),
-        (Uuid::new_v4(), "Give"),
-        (Uuid::new_v4(), "Event"),
+        (Uuid::new_v4(), "Aid"),
+        (Uuid::new_v4(), "Gathering"),
     ];
     for (id, label) in &c_sigs {
         create_signal(
@@ -383,13 +383,13 @@ async fn story_status_reflects_triangulation() {
 
     // Create an "emerging" story (type_diversity=1, 2 signals — below echo threshold)
     let emerging_id = Uuid::new_v4();
-    let e_sigs: Vec<(Uuid, &str)> = vec![(Uuid::new_v4(), "Ask"), (Uuid::new_v4(), "Ask")];
+    let e_sigs: Vec<(Uuid, &str)> = vec![(Uuid::new_v4(), "Need"), (Uuid::new_v4(), "Need")];
     for (id, label) in &e_sigs {
         create_signal(
             &client,
             label,
             *id,
-            "Emerging ask",
+            "Emerging need",
             "https://emerging.org",
             0.5,
             0.0,

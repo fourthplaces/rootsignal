@@ -143,7 +143,7 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error
 async fn fix_empty_signals(client: &GraphClient) -> Result<u64, neo4rs::Error> {
     let mut deleted = 0u64;
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.title IS NULL OR n.title = ''
@@ -175,7 +175,7 @@ async fn fix_fake_city_center_coords(
     let mut nulled = 0u64;
     let epsilon = 0.02;
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.lat IS NOT NULL AND n.lng IS NOT NULL

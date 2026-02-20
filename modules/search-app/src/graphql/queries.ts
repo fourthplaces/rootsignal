@@ -15,7 +15,7 @@ export const SIGNALS_IN_BOUNDS = gql`
       maxLng: $maxLng
       limit: $limit
     ) {
-      ... on GqlEventSignal {
+      ... on GqlGatheringSignal {
         id
         title
         summary
@@ -27,7 +27,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         startsAt
         organizer
       }
-      ... on GqlGiveSignal {
+      ... on GqlAidSignal {
         id
         title
         summary
@@ -38,7 +38,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         locationName
         availability
       }
-      ... on GqlAskSignal {
+      ... on GqlNeedSignal {
         id
         title
         summary
@@ -127,7 +127,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
     ) {
       score
       signal {
-        ... on GqlEventSignal {
+        ... on GqlGatheringSignal {
           id
           title
           summary
@@ -139,7 +139,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           startsAt
           organizer
         }
-        ... on GqlGiveSignal {
+        ... on GqlAidSignal {
           id
           title
           summary
@@ -150,7 +150,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           availability
         }
-        ... on GqlAskSignal {
+        ... on GqlNeedSignal {
           id
           title
           summary
@@ -248,7 +248,7 @@ export const STORY_DETAIL = gql`
 export const SIGNAL_DETAIL = gql`
   query SignalDetail($id: UUID!) {
     signal(id: $id) {
-      ... on GqlEventSignal {
+      ... on GqlGatheringSignal {
         id
         title
         summary
@@ -265,7 +265,7 @@ export const SIGNAL_DETAIL = gql`
         evidence { sourceUrl snippet relevance }
         story { id headline }
       }
-      ... on GqlGiveSignal {
+      ... on GqlAidSignal {
         id
         title
         summary
@@ -280,7 +280,7 @@ export const SIGNAL_DETAIL = gql`
         evidence { sourceUrl snippet relevance }
         story { id headline }
       }
-      ... on GqlAskSignal {
+      ... on GqlNeedSignal {
         id
         title
         summary

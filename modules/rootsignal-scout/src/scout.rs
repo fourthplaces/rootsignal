@@ -31,7 +31,7 @@ pub struct ScoutStats {
     pub signals_extracted: u32,
     pub signals_deduplicated: u32,
     pub signals_stored: u32,
-    pub by_type: [u32; 5], // Event, Give, Need, Notice, Tension
+    pub by_type: [u32; 5], // Gathering, Aid, Need, Notice, Tension
     pub fresh_7d: u32,
     pub fresh_30d: u32,
     pub fresh_90d: u32,
@@ -60,8 +60,8 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
         writeln!(f, "\nBy type:")?;
-        writeln!(f, "  Event:   {}", self.by_type[0])?;
-        writeln!(f, "  Give:    {}", self.by_type[1])?;
+        writeln!(f, "  Gathering: {}", self.by_type[0])?;
+        writeln!(f, "  Aid:       {}", self.by_type[1])?;
         writeln!(f, "  Need:    {}", self.by_type[2])?;
         writeln!(f, "  Notice:  {}", self.by_type[3])?;
         writeln!(f, "  Tension: {}", self.by_type[4])?;
@@ -292,9 +292,9 @@ impl Scout {
         info!("Reaping expired signals...");
         match self.writer.reap_expired().await {
             Ok(reap) => {
-                if reap.events + reap.needs + reap.stale > 0 {
+                if reap.gatherings + reap.needs + reap.stale > 0 {
                     info!(
-                        events = reap.events,
+                        gatherings = reap.gatherings,
                         needs = reap.needs,
                         stale = reap.stale,
                         "Expired signals removed"
@@ -2054,8 +2054,8 @@ impl Scout {
         for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
             let node_type = node.node_type();
             let type_idx = match node_type {
-                NodeType::Event => 0,
-                NodeType::Give => 1,
+                NodeType::Gathering => 0,
+                NodeType::Aid => 1,
                 NodeType::Need => 2,
                 NodeType::Notice => 3,
                 NodeType::Tension => 4,
@@ -2405,8 +2405,8 @@ fn sanitize_url(url: &str) -> String {
 
 fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
     match node {
-        Node::Event(n) => Some(&mut n.meta),
-        Node::Give(n) => Some(&mut n.meta),
+        Node::Gathering(n) => Some(&mut n.meta),
+        Node::Aid(n) => Some(&mut n.meta),
         Node::Need(n) => Some(&mut n.meta),
         Node::Notice(n) => Some(&mut n.meta),
         Node::Tension(n) => Some(&mut n.meta),

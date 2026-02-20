@@ -2,17 +2,17 @@ import { gql } from "@apollo/client";
 
 // Shared fields across all signal types (from signal_meta_resolvers macro)
 const SIGNAL_FIELDS = `
-  ... on GqlEventSignal {
+  ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt sourceDiversity causeHeat
     startsAt endsAt actionUrl organizer isRecurring
   }
-  ... on GqlGiveSignal {
+  ... on GqlAidSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt sourceDiversity causeHeat
     actionUrl availability isOngoing
   }
-  ... on GqlAskSignal {
+  ... on GqlNeedSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt sourceDiversity causeHeat
     urgency whatNeeded actionUrl goal
@@ -56,9 +56,9 @@ export const ADMIN_DASHBOARD = gql`
       }
       signalVolumeByDay {
         day
-        events
-        gives
-        asks
+        gatherings
+        aids
+        needs
         notices
         tensions
       }
@@ -203,17 +203,17 @@ export const SIGNAL_DETAIL = gql`
   query Signal($id: UUID!) {
     signal(id: $id) {
       ${SIGNAL_FIELDS}
-      ... on GqlEventSignal {
+      ... on GqlGatheringSignal {
         evidence { id sourceUrl snippet relevance }
         actors { id name actorType }
         story { id headline arc }
       }
-      ... on GqlGiveSignal {
+      ... on GqlAidSignal {
         evidence { id sourceUrl snippet relevance }
         actors { id name actorType }
         story { id headline arc }
       }
-      ... on GqlAskSignal {
+      ... on GqlNeedSignal {
         evidence { id sourceUrl snippet relevance }
         actors { id name actorType }
         story { id headline arc }

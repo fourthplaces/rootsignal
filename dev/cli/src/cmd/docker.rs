@@ -286,6 +286,7 @@ fn run_up(
         cmd.args(["--profile", "full"]);
     }
     cmd.arg("up");
+    cmd.arg("--build");
     if detach {
         cmd.arg("-d");
     }

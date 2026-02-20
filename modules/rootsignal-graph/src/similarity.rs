@@ -85,7 +85,7 @@ impl SimilarityBuilder {
     async fn fetch_all_embeddings(&self) -> Result<Vec<SignalEmbedding>, neo4rs::Error> {
         let mut signals = Vec::new();
 
-        for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+        for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label}) WHERE n.embedding IS NOT NULL \
                  RETURN n.id AS id, n.embedding AS embedding, n.confidence AS confidence"
@@ -139,8 +139,8 @@ impl SimilarityBuilder {
         // Use UNWIND + MERGE for idempotent edge creation
         let q = query(
             "UNWIND $edges AS edge
-             MATCH (a) WHERE a.id = edge.from AND (a:Event OR a:Give OR a:Ask OR a:Notice OR a:Tension)
-             MATCH (b) WHERE b.id = edge.to AND (b:Event OR b:Give OR b:Ask OR b:Notice OR b:Tension)
+             MATCH (a) WHERE a.id = edge.from AND (a:Gathering OR a:Aid OR a:Need OR a:Notice OR a:Tension)
+             MATCH (b) WHERE b.id = edge.to AND (b:Gathering OR b:Aid OR b:Need OR b:Notice OR b:Tension)
              MERGE (a)-[r:SIMILAR_TO]->(b)
              SET r.weight = edge.weight
              RETURN count(*) AS created"

@@ -3017,6 +3017,7 @@ dependencies = [
  "ai-client",
  "anyhow",
  "chrono",
+ "futures",
  "neo4rs",
  "rootsignal-common",
  "schemars 0.8.22",

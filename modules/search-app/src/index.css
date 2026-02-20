@@ -14,9 +14,9 @@
   --color-primary-foreground: #fafafa;
   --radius: 0.5rem;
 
-  --color-event: #3b82f6;
-  --color-give: #22c55e;
-  --color-ask: #f97316;
+  --color-gathering: #3b82f6;
+  --color-aid: #22c55e;
+  --color-need: #f97316;
   --color-notice: #6b7280;
   --color-tension: #ef4444;
 }

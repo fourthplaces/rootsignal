@@ -27,7 +27,7 @@ pub struct SignalGeoRow {
 pub async fn all_signals_with_geo(client: &GraphClient) -> Vec<SignalGeoRow> {
     let mut results = Vec::new();
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let cypher = format!(
             "MATCH (n:{label}) RETURN n.title AS title, n.lat AS lat, n.lng AS lng, \
              n.geo_precision AS geo_precision"
@@ -69,7 +69,7 @@ pub struct StoryRow {
 pub async fn all_signals(client: &GraphClient) -> Vec<SignalRow> {
     let mut results = Vec::new();
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let cypher = format!(
             "MATCH (n:{label}) RETURN n.id AS id, n.title AS title, '{label}' AS node_type, \
              n.confidence AS confidence, n.source_url AS source_url, \
@@ -112,7 +112,7 @@ pub async fn signals_by_confidence(client: &GraphClient) -> Vec<SignalRow> {
 pub async fn evidence_for_signal(client: &GraphClient, signal_id: Uuid) -> Vec<EvidenceRow> {
     let mut results = Vec::new();
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let cypher = format!(
             "MATCH (n:{label} {{id: $id}})-[:SOURCED_FROM]->(ev:Evidence) \
              RETURN ev.id AS id, ev.source_url AS source_url, \
@@ -251,7 +251,7 @@ pub struct RespondsToEdge {
 /// All RESPONDS_TO edges in the graph.
 pub async fn responds_to_edges(client: &GraphClient) -> Vec<RespondsToEdge> {
     let cypher = "MATCH (resp)-[rel:RESPONDS_TO]->(t:Tension) \
-                  WHERE resp:Give OR resp:Event OR resp:Ask \
+                  WHERE resp:Aid OR resp:Gathering OR resp:Need \
                   RETURN resp.id AS response_id, labels(resp)[0] AS response_type, \
                   resp.title AS response_title, t.id AS tension_id, t.title AS tension_title, \
                   rel.match_strength AS match_strength, \
@@ -285,7 +285,7 @@ async fn city_signal_ids(client: &GraphClient, city_slug: &str) -> std::collecti
     let cypher = "MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL \
                   WITH collect(s.url) AS urls \
                   MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
-                  WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension) \
+                  WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND ev.source_url IN urls \
                   RETURN DISTINCT n.id AS id";
     let q = query(cypher).param("slug", city_slug);

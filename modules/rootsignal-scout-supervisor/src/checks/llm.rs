@@ -89,10 +89,10 @@ async fn check_misclassification(
 ) -> Result<Option<ValidationIssue>> {
     let system =
         "You are a signal classifier. Given a signal's title, summary, and source evidence, \
-        determine if it is correctly classified. Signal types are: Event (time-bound gathering), \
-        Give (available resource/service), Ask (community need requesting help), \
+        determine if it is correctly classified. Signal types are: Gathering (time-bound gathering), \
+        Aid (available resource/service), Need (community need requesting help), \
         Notice (official advisory/policy), Tension (community conflict or systemic problem). \
-        Respond with ONLY one of: CORRECT or WRONG:<correct_type> (e.g., WRONG:Event)";
+        Respond with ONLY one of: CORRECT or WRONG:<correct_type> (e.g., WRONG:Gathering)";
 
     let user = format!(
         "Signal title: {}\nSignal summary: {}\n\n{}",

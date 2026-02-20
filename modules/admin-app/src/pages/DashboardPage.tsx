@@ -75,9 +75,9 @@ export function DashboardPage() {
             <XAxis dataKey="day" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
-            <Area type="monotone" dataKey="events" stackId="1" fill="#8b5cf6" stroke="#8b5cf6" />
-            <Area type="monotone" dataKey="gives" stackId="1" fill="#06b6d4" stroke="#06b6d4" />
-            <Area type="monotone" dataKey="asks" stackId="1" fill="#f59e0b" stroke="#f59e0b" />
+            <Area type="monotone" dataKey="gatherings" stackId="1" fill="#8b5cf6" stroke="#8b5cf6" />
+            <Area type="monotone" dataKey="aids" stackId="1" fill="#06b6d4" stroke="#06b6d4" />
+            <Area type="monotone" dataKey="needs" stackId="1" fill="#f59e0b" stroke="#f59e0b" />
             <Area type="monotone" dataKey="notices" stackId="1" fill="#10b981" stroke="#10b981" />
             <Area type="monotone" dataKey="tensions" stackId="1" fill="#ef4444" stroke="#ef4444" />
           </AreaChart>

@@ -59,9 +59,9 @@ pub enum Severity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
-    Event,
-    Give,
-    Ask,
+    Gathering,
+    Aid,
+    Need,
     Notice,
     Tension,
     Evidence,
@@ -70,9 +70,9 @@ pub enum NodeType {
 impl std::fmt::Display for NodeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NodeType::Event => write!(f, "Event"),
-            NodeType::Give => write!(f, "Give"),
-            NodeType::Ask => write!(f, "Ask"),
+            NodeType::Gathering => write!(f, "Gathering"),
+            NodeType::Aid => write!(f, "Aid"),
+            NodeType::Need => write!(f, "Need"),
             NodeType::Notice => write!(f, "Notice"),
             NodeType::Tension => write!(f, "Tension"),
             NodeType::Evidence => write!(f, "Evidence"),
@@ -186,7 +186,7 @@ pub struct ActorNode {
 // --- Response Mapping Types ---
 
 // RoleActionPlan removed: audience roles no longer drive action routing.
-// Use signal type (Ask/Give/Event) and geography for discovery instead.
+// Use signal type (Need/Aid/Gathering) and geography for discovery instead.
 
 // --- Node Metadata (shared across all signal types) ---
 
@@ -209,7 +209,7 @@ pub struct NodeMeta {
     /// Fraction of evidence from sources other than the signal's originating entity (0.0-1.0).
     pub external_ratio: f32,
     /// Cross-story cause heat: how much independent community attention exists in this signal's
-    /// semantic neighborhood (0.0–1.0). A food shelf Ask rises when the housing crisis is trending.
+    /// semantic neighborhood (0.0–1.0). A food shelf Need rises when the housing crisis is trending.
     pub cause_heat: f64,
     /// Implied search queries from this signal for expansion discovery.
     /// Only populated during extraction; cleared after expansion processing.
@@ -222,7 +222,7 @@ pub struct NodeMeta {
 // --- Signal Node Types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventNode {
+pub struct GatheringNode {
     pub meta: NodeMeta,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
@@ -232,7 +232,7 @@ pub struct EventNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiveNode {
+pub struct AidNode {
     pub meta: NodeMeta,
     pub action_url: String,
     pub availability: Option<String>,
@@ -240,7 +240,7 @@ pub struct GiveNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AskNode {
+pub struct NeedNode {
     pub meta: NodeMeta,
     pub urgency: Urgency,
     pub what_needed: Option<String>,
@@ -281,9 +281,9 @@ pub struct EvidenceNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "node_type")]
 pub enum Node {
-    Event(EventNode),
-    Give(GiveNode),
-    Ask(AskNode),
+    Gathering(GatheringNode),
+    Aid(AidNode),
+    Need(NeedNode),
     Notice(NoticeNode),
     Tension(TensionNode),
     Evidence(EvidenceNode),
@@ -292,9 +292,9 @@ pub enum Node {
 impl Node {
     pub fn node_type(&self) -> NodeType {
         match self {
-            Node::Event(_) => NodeType::Event,
-            Node::Give(_) => NodeType::Give,
-            Node::Ask(_) => NodeType::Ask,
+            Node::Gathering(_) => NodeType::Gathering,
+            Node::Aid(_) => NodeType::Aid,
+            Node::Need(_) => NodeType::Need,
             Node::Notice(_) => NodeType::Notice,
             Node::Tension(_) => NodeType::Tension,
             Node::Evidence(_) => NodeType::Evidence,
@@ -303,9 +303,9 @@ impl Node {
 
     pub fn id(&self) -> Uuid {
         match self {
-            Node::Event(n) => n.meta.id,
-            Node::Give(n) => n.meta.id,
-            Node::Ask(n) => n.meta.id,
+            Node::Gathering(n) => n.meta.id,
+            Node::Aid(n) => n.meta.id,
+            Node::Need(n) => n.meta.id,
             Node::Notice(n) => n.meta.id,
             Node::Tension(n) => n.meta.id,
             Node::Evidence(n) => n.id,
@@ -314,9 +314,9 @@ impl Node {
 
     pub fn meta(&self) -> Option<&NodeMeta> {
         match self {
-            Node::Event(n) => Some(&n.meta),
-            Node::Give(n) => Some(&n.meta),
-            Node::Ask(n) => Some(&n.meta),
+            Node::Gathering(n) => Some(&n.meta),
+            Node::Aid(n) => Some(&n.meta),
+            Node::Need(n) => Some(&n.meta),
             Node::Notice(n) => Some(&n.meta),
             Node::Tension(n) => Some(&n.meta),
             Node::Evidence(_) => None,
@@ -325,9 +325,9 @@ impl Node {
 
     pub fn title(&self) -> &str {
         match self {
-            Node::Event(n) => &n.meta.title,
-            Node::Give(n) => &n.meta.title,
-            Node::Ask(n) => &n.meta.title,
+            Node::Gathering(n) => &n.meta.title,
+            Node::Aid(n) => &n.meta.title,
+            Node::Need(n) => &n.meta.title,
             Node::Notice(n) => &n.meta.title,
             Node::Tension(n) => &n.meta.title,
             Node::Evidence(n) => &n.source_url,
@@ -727,7 +727,7 @@ pub enum EdgeType {
     SourcedFrom,
     /// Story -> Signal (membership)
     Contains,
-    /// Give/Event/Ask -> Tension (feedback loop). Properties: match_strength, explanation
+    /// Aid/Gathering/Need -> Tension (feedback loop). Properties: match_strength, explanation
     RespondsTo,
     /// Actor -> Signal (participation). Properties: role
     ActedIn,
@@ -737,15 +737,15 @@ pub enum EdgeType {
     SimilarTo,
     /// Submission -> Source (human submission)
     SubmittedFor,
-    /// Give/Event/Ask -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
+    /// Aid/Gathering/Need -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,
-    /// Ask/Event -> Resource (must have this capability to help). Properties: confidence, quantity, notes
+    /// Need/Gathering -> Resource (must have this capability to help). Properties: confidence, quantity, notes
     Requires,
-    /// Ask/Event -> Resource (better if you have it, not required). Properties: confidence
+    /// Need/Gathering -> Resource (better if you have it, not required). Properties: confidence
     Prefers,
-    /// Give -> Resource (this is what we provide). Properties: confidence, capacity
+    /// Aid -> Resource (this is what we provide). Properties: confidence, capacity
     Offers,
 }
 

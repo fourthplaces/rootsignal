@@ -431,7 +431,7 @@ impl StoryWeaver {
                 signal_meta.iter().map(|s| s.node_type.as_str()).collect();
             if type_set.len() >= 2 {
                 let has_tension = type_set.contains("tension");
-                let has_response = type_set.contains("give") || type_set.contains("event");
+                let has_response = type_set.contains("aid") || type_set.contains("gathering");
                 if has_tension && has_response {
                     context_parts.push(
                         "This story includes both the underlying problem AND community responses. \
@@ -502,8 +502,8 @@ impl StoryWeaver {
             "UNWIND $ids AS sid
              MATCH (n {id: sid})
              WITH CASE
-                 WHEN n:Event THEN 'event'
-                 WHEN n:Give THEN 'give'
+                 WHEN n:Gathering THEN 'gathering'
+                 WHEN n:Aid THEN 'aid'
                  WHEN n:Need THEN 'need'
                  WHEN n:Notice THEN 'notice'
                  WHEN n:Tension THEN 'tension'
@@ -527,8 +527,8 @@ impl StoryWeaver {
              WITH s, count(n) AS sig_count,
                   collect(DISTINCT n.source_url) AS urls,
                   count(DISTINCT CASE
-                      WHEN n:Event THEN 'event'
-                      WHEN n:Give THEN 'give'
+                      WHEN n:Gathering THEN 'gathering'
+                      WHEN n:Aid THEN 'aid'
                       WHEN n:Need THEN 'need'
                       WHEN n:Notice THEN 'notice'
                       WHEN n:Tension THEN 'tension'
@@ -604,7 +604,7 @@ impl StoryWeaver {
     ) -> Result<Vec<SignalMeta>, neo4rs::Error> {
         let mut results = Vec::new();
 
-        for label in &["Event", "Give", "Need", "Notice", "Tension"] {
+        for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE n.id IN $ids
@@ -740,13 +740,13 @@ mod tests {
 
     #[test]
     fn editorial_context_built_for_multi_perspective_stories() {
-        let type_set: HashSet<&str> = ["tension", "give", "event"].iter().copied().collect();
+        let type_set: HashSet<&str> = ["tension", "aid", "gathering"].iter().copied().collect();
 
         let mut context_parts: Vec<String> = Vec::new();
 
         if type_set.len() >= 2 {
             let has_tension = type_set.contains("tension");
-            let has_response = type_set.contains("give") || type_set.contains("event");
+            let has_response = type_set.contains("aid") || type_set.contains("gathering");
             if has_tension && has_response {
                 context_parts.push(
                     "This story includes both the underlying problem AND community responses."

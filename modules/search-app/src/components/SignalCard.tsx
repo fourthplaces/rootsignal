@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
 
 const TYPE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  GqlEventSignal: { bg: "bg-event/10", text: "text-event", label: "Event" },
-  GqlGiveSignal: { bg: "bg-give/10", text: "text-give", label: "Give" },
-  GqlAskSignal: { bg: "bg-ask/10", text: "text-ask", label: "Ask" },
+  GqlGatheringSignal: { bg: "bg-gathering/10", text: "text-gathering", label: "Gathering" },
+  GqlAidSignal: { bg: "bg-aid/10", text: "text-aid", label: "Aid" },
+  GqlNeedSignal: { bg: "bg-need/10", text: "text-need", label: "Need" },
   GqlNoticeSignal: { bg: "bg-notice/10", text: "text-notice", label: "Notice" },
   GqlTensionSignal: { bg: "bg-tension/10", text: "text-tension", label: "Tension" },
 };

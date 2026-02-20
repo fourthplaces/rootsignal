@@ -57,7 +57,7 @@ async fn triage_misclassification(
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let mut suspects = Vec::new();
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at >= datetime($from) AND n.extracted_at <= datetime($to)
@@ -176,7 +176,7 @@ async fn triage_incoherent_stories(
     Ok(suspects)
 }
 
-/// RESPONDS_TO edges where the Give/Event has low confidence or the Tension is in a different story.
+/// RESPONDS_TO edges where the Aid/Gathering has low confidence or the Tension is in a different story.
 async fn triage_bad_responds_to(
     client: &GraphClient,
     from_ts: &str,

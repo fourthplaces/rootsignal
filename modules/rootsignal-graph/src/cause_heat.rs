@@ -14,7 +14,7 @@ struct SignalEmbed {
 /// Compute cause_heat for all signals in the graph.
 ///
 /// Cause heat measures how much independent community attention exists in a
-/// signal's semantic neighborhood. A food shelf Ask near a hot housing cluster
+/// signal's semantic neighborhood. A food shelf Need near a hot housing cluster
 /// gets boosted — not because it posted a lot, but because the *cause* it serves
 /// has genuine multi-source attention.
 ///
@@ -22,7 +22,7 @@ struct SignalEmbed {
 /// 1. Load all signals with embeddings and source_diversity
 /// 2. Compute all-pairs cosine similarity in memory
 /// 3. For each signal, sum (similarity × neighbor.source_diversity) for Tension
-///    neighbors above threshold. Only Tensions radiate heat — Events, Gives, Asks,
+///    neighbors above threshold. Only Tensions radiate heat — Gatherings, Gives, Needs,
 ///    and Notices absorb heat from nearby Tensions but do not generate it.
 /// 4. Normalize to 0.0–1.0
 /// 5. Write back to graph
@@ -34,7 +34,7 @@ pub async fn compute_cause_heat(client: &GraphClient, threshold: f64) -> Result<
     // 1. Load all signals with embeddings
     let mut signals: Vec<SignalEmbed> = Vec::new();
 
-    for label in &["Event", "Give", "Ask", "Notice", "Tension"] {
+    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.embedding IS NOT NULL
@@ -159,10 +159,10 @@ mod tests {
         v.iter().map(|x| x * x).sum::<f64>().sqrt()
     }
 
-    fn event(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
+    fn gathering(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
-            label: "Event".to_string(),
+            label: "Gathering".to_string(),
             embedding,
             source_diversity: diversity,
         }
@@ -177,10 +177,10 @@ mod tests {
         }
     }
 
-    fn give(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
+    fn aid(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
-            label: "Give".to_string(),
+            label: "Aid".to_string(),
             embedding,
             source_diversity: diversity,
         }
@@ -229,7 +229,7 @@ mod tests {
     }
 
     // --- compute_heats tests ---
-    // Only Tensions radiate heat. Events/Gives/Asks/Notices absorb heat
+    // Only Tensions radiate heat. Gatherings/Aids/Needs/Notices absorb heat
     // from nearby Tensions but never generate it.
 
     #[test]
@@ -239,8 +239,8 @@ mod tests {
     }
 
     #[test]
-    fn single_event_gets_zero_heat() {
-        let signals = vec![event("a", vec![1.0, 0.0, 0.0], 5)];
+    fn single_gathering_gets_zero_heat() {
+        let signals = vec![gathering("a", vec![1.0, 0.0, 0.0], 5)];
         let heats = compute_heats(&signals, 0.7);
         assert_eq!(heats[0], 0.0);
     }
@@ -254,17 +254,17 @@ mod tests {
     }
 
     #[test]
-    fn event_near_tension_gets_heat() {
-        // An Event semantically near a Tension absorbs heat from it.
+    fn gathering_near_tension_gets_heat() {
+        // An Gathering semantically near a Tension absorbs heat from it.
         let signals = vec![
-            event("protest", vec![1.0, 0.0, 0.0], 1),
+            gathering("protest", vec![1.0, 0.0, 0.0], 1),
             tension("ice_raids", vec![0.99, 0.1, 0.0], 5),
         ];
         let heats = compute_heats(&signals, 0.7);
 
         assert!(
             heats[0] > 0.5,
-            "Event near tension should get heat, got {}",
+            "Gathering near tension should get heat, got {}",
             heats[0]
         );
         // Tension also gets heat from... no other tensions → zero
@@ -273,19 +273,19 @@ mod tests {
     }
 
     #[test]
-    fn events_do_not_boost_each_other() {
-        // 64 identical Events with no Tension nearby → all get zero heat.
+    fn gatherings_do_not_boost_each_other() {
+        // 64 identical Gatherings with no Tension nearby → all get zero heat.
         // This is the Eventbrite blob scenario.
         let mut signals = Vec::new();
         for i in 0..64 {
-            signals.push(event(&format!("meetup{i}"), vec![1.0, 0.0, 0.0], 3));
+            signals.push(gathering(&format!("meetup{i}"), vec![1.0, 0.0, 0.0], 3));
         }
         let heats = compute_heats(&signals, 0.7);
 
         for (i, h) in heats.iter().enumerate() {
             assert_eq!(
                 *h, 0.0,
-                "Event {i} should have zero heat without nearby tension"
+                "Gathering {i} should have zero heat without nearby tension"
             );
         }
     }
@@ -319,13 +319,13 @@ mod tests {
     }
 
     #[test]
-    fn give_near_tension_gets_heat_events_dont() {
-        // A Give ("know your rights workshop") near a Tension gets heat.
-        // An Event ("networking happy hour") far from any Tension gets nothing.
+    fn aid_near_tension_gets_heat_gatherings_dont() {
+        // An Aid ("know your rights workshop") near a Tension gets heat.
+        // A Gathering ("networking happy hour") far from any Tension gets nothing.
         let signals = vec![
-            give("workshop", vec![1.0, 0.0, 0.0], 1),
+            aid("workshop", vec![1.0, 0.0, 0.0], 1),
             tension("ice_raids", vec![0.98, 0.1, 0.0], 5),
-            event("happy_hour", vec![0.0, 1.0, 0.0], 3),
+            gathering("happy_hour", vec![0.0, 1.0, 0.0], 3),
         ];
         let heats = compute_heats(&signals, 0.7);
 
@@ -344,8 +344,8 @@ mod tests {
     #[test]
     fn heats_are_normalized_zero_to_one() {
         let signals = vec![
-            event("a", vec![1.0, 0.0], 1),
-            event("b", vec![1.0, 0.1], 1),
+            gathering("a", vec![1.0, 0.0], 1),
+            gathering("b", vec![1.0, 0.1], 1),
             tension("t", vec![1.0, 0.2], 8),
         ];
         let heats = compute_heats(&signals, 0.5);
@@ -359,27 +359,27 @@ mod tests {
 
     #[test]
     fn threshold_filters_weak_similarity_to_tension() {
-        // An Event and a Tension are somewhat similar but below a strict threshold
+        // A Gathering and a Tension are somewhat similar but below a strict threshold
         let signals = vec![
-            event("a", vec![1.0, 0.5], 5),
+            gathering("a", vec![1.0, 0.5], 5),
             tension("t", vec![0.5, 1.0], 5),
         ];
         // cos(a,t) ≈ 0.8 — below 0.9 threshold
         let heats = compute_heats(&signals, 0.9);
         assert_eq!(heats[0], 0.0);
 
-        // Same signals with lower threshold — Event should get heat
+        // Same signals with lower threshold — Gathering should get heat
         let heats = compute_heats(&signals, 0.7);
         assert!(heats[0] > 0.0);
     }
 
     #[test]
-    fn event_blob_near_tension_all_get_heat() {
+    fn gathering_blob_near_tension_all_get_heat() {
         // 64 Eventbrite events near a single Tension all absorb its heat.
         // But they don't boost each other — only the Tension radiates.
         let mut signals = Vec::new();
         for i in 0..64 {
-            signals.push(event(&format!("meetup{i}"), vec![1.0, 0.0, 0.0], 1));
+            signals.push(gathering(&format!("meetup{i}"), vec![1.0, 0.0, 0.0], 1));
         }
         signals.push(tension("housing_crisis", vec![0.95, 0.2, 0.0], 8));
         let heats = compute_heats(&signals, 0.7);
@@ -391,7 +391,7 @@ mod tests {
         assert!(min > 0.0, "All events near tension should get heat");
         assert!(
             (max - min) < 0.1,
-            "Events equidistant from tension should get similar heat"
+            "Gatherings equidistant from tension should get similar heat"
         );
 
         // The tension itself gets zero (no other tensions nearby)
@@ -400,14 +400,14 @@ mod tests {
 
     #[test]
     fn food_shelf_boosted_by_housing_tensions() {
-        // A food shelf Give near housing Tensions gets heat.
-        // An unrelated park Event gets nothing.
+        // A food shelf Aid near housing Tensions gets heat.
+        // An unrelated park Gathering gets nothing.
         let signals = vec![
-            give("food_shelf", vec![0.85, 0.55, 0.0], 1),
+            aid("food_shelf", vec![0.85, 0.55, 0.0], 1),
             tension("housing_crisis", vec![0.8, 0.6, 0.0], 8),
             tension("rent_burden", vec![0.75, 0.65, 0.0], 6),
             tension("eviction_wave", vec![0.82, 0.58, 0.0], 4),
-            event("park_event", vec![0.0, 0.0, 1.0], 3),
+            gathering("park_event", vec![0.0, 0.0, 1.0], 3),
         ];
         let heats = compute_heats(&signals, 0.7);
 
@@ -418,26 +418,26 @@ mod tests {
         );
         assert!(
             heats[4] < 0.01,
-            "Park event far from any tension gets nothing, got {}",
+            "Park gathering far from any tension gets nothing, got {}",
             heats[4]
         );
     }
 
     #[test]
     fn diverse_tension_radiates_more_heat() {
-        // Two events equidistant from two tensions with different diversity.
-        // The event near the high-diversity tension should get more heat.
+        // Two gatherings equidistant from two tensions with different diversity.
+        // The gathering near the high-diversity tension should get more heat.
         let signals = vec![
-            event("a", vec![1.0, 0.0, 0.0], 1),
+            gathering("a", vec![1.0, 0.0, 0.0], 1),
             tension("well_sourced", vec![0.99, 0.1, 0.0], 10),
-            event("b", vec![0.0, 1.0, 0.0], 1),
+            gathering("b", vec![0.0, 1.0, 0.0], 1),
             tension("single_source", vec![0.1, 0.99, 0.0], 1),
         ];
         let heats = compute_heats(&signals, 0.7);
 
         assert!(
             heats[0] > heats[2],
-            "Event near diverse tension ({}) should outrank event near single-source tension ({})",
+            "Gathering near diverse tension ({}) should outrank gathering near single-source tension ({})",
             heats[0],
             heats[2]
         );
@@ -448,9 +448,9 @@ mod tests {
         // Three near-identical youth violence tensions corroborate each other,
         // getting heat they didn't earn from independent sources.
         // After merging to one (with combined diversity), those self-corroboration
-        // heat values disappear, and only the Give absorbs heat.
+        // heat values disappear, and only the Aid absorbs heat.
         let signals_with_dupes = vec![
-            give("naz_tutoring", vec![0.9, 0.4, 0.0], 1),
+            aid("naz_tutoring", vec![0.9, 0.4, 0.0], 1),
             tension("youth_violence_1", vec![0.88, 0.47, 0.0], 1),
             tension("youth_violence_2", vec![0.87, 0.48, 0.0], 1),
             tension("youth_violence_3", vec![0.89, 0.46, 0.0], 1),
@@ -473,7 +473,7 @@ mod tests {
 
         // After merging: one tension, no self-corroboration
         let signals_merged = vec![
-            give("naz_tutoring", vec![0.9, 0.4, 0.0], 1),
+            aid("naz_tutoring", vec![0.9, 0.4, 0.0], 1),
             tension("youth_violence", vec![0.88, 0.47, 0.0], 3),
         ];
         let heats_merged = compute_heats(&signals_merged, 0.7);
@@ -483,8 +483,8 @@ mod tests {
             heats_merged[1], 0.0,
             "Merged tension should have zero heat (no corroboration)"
         );
-        // The Give still gets heat from the single tension
-        assert_eq!(heats_merged[0], 1.0, "Give gets all the heat after merge");
+        // The Aid still gets heat from the single tension
+        assert_eq!(heats_merged[0], 1.0, "Aid gets all the heat after merge");
     }
 
     #[test]
@@ -493,17 +493,17 @@ mod tests {
         // tension (from curiosity loop) gives the tension itself heat.
         let signals_alone = vec![
             tension("housing_crisis", vec![1.0, 0.0, 0.0], 3),
-            give("home_line", vec![0.95, 0.2, 0.0], 1),
+            aid("home_line", vec![0.95, 0.2, 0.0], 1),
         ];
         let heats_alone = compute_heats(&signals_alone, 0.7);
         assert_eq!(heats_alone[0], 0.0, "Lone tension should have zero heat");
-        assert!(heats_alone[1] > 0.0, "Give near tension should get heat");
+        assert!(heats_alone[1] > 0.0, "Aid near tension should get heat");
 
         // Add a corroborating tension from the curiosity loop
         let signals_corroborated = vec![
             tension("housing_crisis", vec![1.0, 0.0, 0.0], 3),
             tension("rent_burden", vec![0.95, 0.15, 0.0], 2),
-            give("home_line", vec![0.95, 0.2, 0.0], 1),
+            aid("home_line", vec![0.95, 0.2, 0.0], 1),
         ];
         let heats_corroborated = compute_heats(&signals_corroborated, 0.7);
         // Now housing tension gets heat from rent_burden
@@ -530,7 +530,7 @@ mod tests {
         // Verify: query top cause_heat signals
         let q = neo4rs::query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND n.cause_heat > 0
              RETURN n.title AS title, n.cause_heat AS heat,
                     n.source_diversity AS div, labels(n) AS labels
@@ -559,7 +559,7 @@ mod tests {
         // Also check that zero-heat signals exist (not everything should be hot)
         let q = neo4rs::query(
             "MATCH (n)
-             WHERE (n:Event OR n:Give OR n:Ask OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND (n.cause_heat IS NULL OR n.cause_heat = 0)
              RETURN count(n) AS cnt",
         );
