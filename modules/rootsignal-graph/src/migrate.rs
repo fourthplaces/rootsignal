@@ -949,7 +949,10 @@ pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs:
     // Step 4: Archive orphaned stories (lost all non-tension signals)
     let archive_orphans = query(
         "MATCH (s:Story)
-         WHERE NOT (s)-[:CONTAINS]->(:Event OR :Give OR :Ask OR :Notice)
+         WHERE NOT (s)-[:CONTAINS]->(:Event)
+           AND NOT (s)-[:CONTAINS]->(:Give)
+           AND NOT (s)-[:CONTAINS]->(:Ask)
+           AND NOT (s)-[:CONTAINS]->(:Notice)
          SET s.arc = 'archived'
          RETURN count(s) AS archived",
     );
