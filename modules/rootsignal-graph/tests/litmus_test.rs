@@ -151,7 +151,6 @@ async fn create_actor_and_link(
             actor_type: 'org',
             domains: [],
             social_urls: [],
-            city: 'twincities',
             description: 'Test actor',
             signal_count: 1,
             first_seen: datetime($now),

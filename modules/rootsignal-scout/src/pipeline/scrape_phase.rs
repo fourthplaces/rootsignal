@@ -1506,14 +1506,13 @@ impl<'a> ScrapePhase<'a> {
                                 entity_id: actor_name.to_lowercase().replace(' ', "-"),
                                 domains: vec![],
                                 social_urls: vec![],
-                                city: self.region.slug.clone(),
                                 description: String::new(),
                                 signal_count: 0,
                                 first_seen: Utc::now(),
                                 last_active: Utc::now(),
                                 typical_roles: vec![],
                             };
-                            if let Err(e) = self.writer.upsert_actor(&actor).await {
+                            if let Err(e) = self.writer.upsert_actor(&actor, &self.region.slug).await {
                                 warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
                                 continue;
                             }

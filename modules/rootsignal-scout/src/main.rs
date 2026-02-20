@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     backfill_source_diversity(&client, &[]).await?;
 
     // Save region geo bounds before moving region into Scout
-    let region_name = region.name.clone();
+    let region_slug = region.slug.clone();
     let lat_delta = region.radius_km / 111.0;
     let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
     let min_lat = region.center_lat - lat_delta;
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
         &writer_ref,
         &client,
         &config.anthropic_api_key,
-        &region_name,
+        &region_slug,
         min_lat,
         max_lat,
         min_lng,

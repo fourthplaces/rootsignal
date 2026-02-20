@@ -290,14 +290,13 @@ export const STORY_DETAIL = gql`
 `;
 
 export const ACTORS = gql`
-  query Actors($city: String!, $limit: Int) {
-    actors(city: $city, limit: $limit) {
+  query Actors($region: String!, $limit: Int) {
+    actors(region: $region, limit: $limit) {
       id
       name
       actorType
       description
       signalCount
-      city
     }
   }
 `;

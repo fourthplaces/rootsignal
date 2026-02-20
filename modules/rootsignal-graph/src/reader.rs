@@ -609,20 +609,19 @@ impl PublicGraphReader {
 
     // --- Actor queries ---
 
-    /// List actors active in a city.
+    /// List actors active in a region.
     pub async fn actors_active_in_area(
         &self,
-        city: &str,
+        region_slug: &str,
         limit: u32,
     ) -> Result<Vec<rootsignal_common::ActorNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor)
-             WHERE a.city = $city
+            "MATCH (r:City {slug: $region_slug})-[:DISCOVERED]->(a:Actor)
              RETURN a
              ORDER BY a.last_active DESC
              LIMIT $limit",
         )
-        .param("city", city)
+        .param("region_slug", region_slug)
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
@@ -2216,7 +2215,6 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
     let entity_id: String = n.get("entity_id").unwrap_or_default();
     let domains: Vec<String> = n.get("domains").unwrap_or_default();
     let social_urls: Vec<String> = n.get("social_urls").unwrap_or_default();
-    let city: String = n.get("city").unwrap_or_default();
     let description: String = n.get("description").unwrap_or_default();
     let signal_count: i64 = n.get("signal_count").unwrap_or(0);
     let first_seen = parse_story_datetime(&n, "first_seen");
@@ -2230,7 +2228,6 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         entity_id,
         domains,
         social_urls,
-        city,
         description,
         signal_count: signal_count as u32,
         first_seen,

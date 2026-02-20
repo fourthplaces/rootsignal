@@ -707,9 +707,6 @@ impl GqlActor {
     async fn social_urls(&self) -> &[String] {
         &self.0.social_urls
     }
-    async fn city(&self) -> &str {
-        &self.0.city
-    }
     async fn description(&self) -> &str {
         &self.0.description
     }

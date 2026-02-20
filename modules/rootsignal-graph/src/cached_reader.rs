@@ -447,17 +447,21 @@ impl CachedReader {
 
     pub async fn actors_active_in_area(
         &self,
-        city: &str,
+        region_slug: &str,
         limit: u32,
     ) -> Result<Vec<ActorNode>, neo4rs::Error> {
         let snap = self.cache.load_full();
 
         let mut results: Vec<ActorNode> = snap
-            .actors
-            .iter()
-            .filter(|a| a.city == city)
-            .cloned()
-            .collect();
+            .actors_by_region
+            .get(region_slug)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&idx| snap.actors[idx].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         results.sort_by(|a, b| b.last_active.cmp(&a.last_active));
         results.truncate(limit as usize);

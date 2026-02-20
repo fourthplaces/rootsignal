@@ -2076,7 +2076,12 @@ impl GraphWriter {
     // --- Actor operations ---
 
     /// Create or update an Actor node. MERGE on entity_id for idempotency.
-    pub async fn upsert_actor(&self, actor: &ActorNode) -> Result<(), neo4rs::Error> {
+    /// Links the actor to the given region via a `:DISCOVERED` relationship.
+    pub async fn upsert_actor(
+        &self,
+        actor: &ActorNode,
+        region_slug: &str,
+    ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MERGE (a:Actor {entity_id: $entity_id})
              ON CREATE SET
@@ -2085,7 +2090,6 @@ impl GraphWriter {
                 a.actor_type = $actor_type,
                 a.domains = $domains,
                 a.social_urls = $social_urls,
-                a.city = $city,
                 a.description = $description,
                 a.signal_count = $signal_count,
                 a.first_seen = datetime($first_seen),
@@ -2094,7 +2098,10 @@ impl GraphWriter {
              ON MATCH SET
                 a.name = $name,
                 a.last_active = datetime($last_active),
-                a.signal_count = a.signal_count + 1",
+                a.signal_count = a.signal_count + 1
+             WITH a
+             MATCH (r:City {slug: $region_slug})
+             MERGE (r)-[:DISCOVERED]->(a)",
         )
         .param("id", actor.id.to_string())
         .param("entity_id", actor.entity_id.as_str())
@@ -2102,12 +2109,12 @@ impl GraphWriter {
         .param("actor_type", actor.actor_type.to_string())
         .param("domains", actor.domains.clone())
         .param("social_urls", actor.social_urls.clone())
-        .param("city", actor.city.as_str())
         .param("description", actor.description.as_str())
         .param("signal_count", actor.signal_count as i64)
         .param("first_seen", format_datetime(&actor.first_seen))
         .param("last_active", format_datetime(&actor.last_active))
-        .param("typical_roles", actor.typical_roles.clone());
+        .param("typical_roles", actor.typical_roles.clone())
+        .param("region_slug", region_slug);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -2261,10 +2268,10 @@ impl GraphWriter {
     /// Get actors with their domains, social URLs, and dominant signal role for source discovery.
     pub async fn get_actors_with_domains(
         &self,
-        city: &str,
+        region_slug: &str,
     ) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor {city: $city})
+            "MATCH (r:City {slug: $region_slug})-[:DISCOVERED]->(a:Actor)
              WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
@@ -2277,7 +2284,7 @@ impl GraphWriter {
                       ELSE 'mixed'
                     END AS dominant_role",
         )
-        .param("city", city);
+        .param("region_slug", region_slug);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;

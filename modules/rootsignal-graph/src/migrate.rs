@@ -291,7 +291,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     let actor_indexes = [
         "CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)",
-        "CREATE INDEX actor_city IF NOT EXISTS FOR (a:Actor) ON (a.city)",
+        // actor_city index removed — actors are linked to regions via :DISCOVERED relationship
     ];
 
     for idx in &actor_indexes {
@@ -519,7 +519,116 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         Err(e) => warn!("Drop source_type index failed (non-fatal): {e}"),
     }
 
+    // --- Region decoupling: move Source.city and Actor.city to relationships ---
+    migrate_region_relationships(client).await?;
+
     info!("Schema migration complete");
+    Ok(())
+}
+
+/// Migrate Source.city → :SCOUTS relationship and Actor.city → :DISCOVERED relationship.
+/// Strips city prefix from Source.canonical_key. Idempotent.
+async fn migrate_region_relationships(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    // Step 1: Create SCOUTS relationships from Source.city property
+    let scouts_q = query(
+        "MATCH (s:Source)
+         WHERE s.city IS NOT NULL
+         WITH s
+         MATCH (c:City {slug: s.city})
+         MERGE (c)-[:SCOUTS]->(s)
+         RETURN count(s) AS linked",
+    );
+    match g.execute(scouts_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let linked: i64 = row.get("linked").unwrap_or(0);
+                if linked > 0 {
+                    info!(linked, "Created :SCOUTS relationships from Source.city");
+                }
+            }
+        }
+        Err(e) => warn!("SCOUTS relationship migration failed: {e}"),
+    }
+
+    // Step 2: Create DISCOVERED relationships from Actor.city property
+    let discovered_q = query(
+        "MATCH (a:Actor)
+         WHERE a.city IS NOT NULL
+         WITH a
+         MATCH (c:City {slug: a.city})
+         MERGE (c)-[:DISCOVERED]->(a)
+         RETURN count(a) AS linked",
+    );
+    match g.execute(discovered_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let linked: i64 = row.get("linked").unwrap_or(0);
+                if linked > 0 {
+                    info!(linked, "Created :DISCOVERED relationships from Actor.city");
+                }
+            }
+        }
+        Err(e) => warn!("DISCOVERED relationship migration failed: {e}"),
+    }
+
+    // Step 3: Strip city prefix from Source.canonical_key (e.g. "twincities:example.com" → "example.com")
+    let strip_q = query(
+        "MATCH (s:Source)
+         WHERE s.canonical_key CONTAINS ':'
+           AND NOT s.canonical_key STARTS WITH 'http'
+         WITH s, substring(s.canonical_key, size(split(s.canonical_key, ':')[0]) + 1) AS new_key
+         SET s.canonical_key = new_key
+         RETURN count(s) AS updated",
+    );
+    match g.execute(strip_q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Stripped city prefix from Source.canonical_key");
+                }
+            }
+        }
+        Err(e) => warn!("canonical_key prefix strip failed: {e}"),
+    }
+
+    // Step 4: Remove city property from Sources and Actors
+    let remove_source_city = query(
+        "MATCH (s:Source) WHERE s.city IS NOT NULL
+         REMOVE s.city
+         RETURN count(s) AS cleaned",
+    );
+    match g.execute(remove_source_city).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let cleaned: i64 = row.get("cleaned").unwrap_or(0);
+                if cleaned > 0 {
+                    info!(cleaned, "Removed Source.city property");
+                }
+            }
+        }
+        Err(e) => warn!("Source.city removal failed: {e}"),
+    }
+
+    let remove_actor_city = query(
+        "MATCH (a:Actor) WHERE a.city IS NOT NULL
+         REMOVE a.city
+         RETURN count(a) AS cleaned",
+    );
+    match g.execute(remove_actor_city).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let cleaned: i64 = row.get("cleaned").unwrap_or(0);
+                if cleaned > 0 {
+                    info!(cleaned, "Removed Actor.city property");
+                }
+            }
+        }
+        Err(e) => warn!("Actor.city removal failed: {e}"),
+    }
+
     Ok(())
 }
 
@@ -1194,9 +1303,9 @@ pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo
              OR toLower(b.name) CONTAINS toLower(a.name)
            )
          WITH a, b
-         OPTIONAL MATCH (sa:Source {active: true}) WHERE sa.city = a.slug
+         OPTIONAL MATCH (a)-[:SCOUTS]->(sa:Source {active: true})
          WITH a, b, count(sa) AS a_sources
-         OPTIONAL MATCH (sb:Source {active: true}) WHERE sb.city = b.slug
+         OPTIONAL MATCH (b)-[:SCOUTS]->(sb:Source {active: true})
          WITH a, b, a_sources, count(sb) AS b_sources
          WITH CASE WHEN a_sources >= b_sources THEN a ELSE b END AS keeper,
               CASE WHEN a_sources >= b_sources THEN b ELSE a END AS loser

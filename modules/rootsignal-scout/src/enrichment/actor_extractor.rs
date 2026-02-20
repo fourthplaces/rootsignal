@@ -69,13 +69,13 @@ pub async fn run_actor_extraction(
     writer: &GraphWriter,
     client: &GraphClient,
     anthropic_api_key: &str,
-    city: &str,
+    region_slug: &str,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
 ) -> ActorExtractorStats {
-    match run_actor_extraction_inner(writer, client, anthropic_api_key, city, min_lat, max_lat, min_lng, max_lng).await {
+    match run_actor_extraction_inner(writer, client, anthropic_api_key, region_slug, min_lat, max_lat, min_lng, max_lng).await {
         Ok(stats) => stats,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
@@ -88,7 +88,7 @@ async fn run_actor_extraction_inner(
     writer: &GraphWriter,
     client: &GraphClient,
     anthropic_api_key: &str,
-    city: &str,
+    region_slug: &str,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -194,14 +194,13 @@ async fn run_actor_extraction_inner(
                         entity_id: extracted.name.to_lowercase().replace(' ', "-"),
                         domains: vec![],
                         social_urls: vec![],
-                        city: city.to_string(),
                         description: String::new(),
                         signal_count: 0,
                         first_seen: Utc::now(),
                         last_active: Utc::now(),
                         typical_roles: vec![],
                     };
-                    if let Err(e) = writer.upsert_actor(&actor).await {
+                    if let Err(e) = writer.upsert_actor(&actor, region_slug).await {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");
                         continue;
                     }

@@ -175,7 +175,6 @@ pub struct ActorNode {
     pub entity_id: String,
     pub domains: Vec<String>,
     pub social_urls: Vec<String>,
-    pub city: String,
     pub description: String,
     pub signal_count: u32,
     pub first_seen: DateTime<Utc>,

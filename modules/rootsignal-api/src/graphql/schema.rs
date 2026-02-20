@@ -319,16 +319,16 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// List actors in a city.
+    /// List actors in a region.
     async fn actors(
         &self,
         ctx: &Context<'_>,
-        city: String,
+        region: String,
         limit: Option<u32>,
     ) -> Result<Vec<GqlActor>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
-        let actors = reader.actors_active_in_area(&city, limit).await?;
+        let actors = reader.actors_active_in_area(&region, limit).await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 
