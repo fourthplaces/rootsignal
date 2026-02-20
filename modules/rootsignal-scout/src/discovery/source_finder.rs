@@ -633,7 +633,7 @@ impl<'a> SourceFinder<'a> {
         let claude = match &self.claude {
             Some(c) => c,
             None => {
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -645,7 +645,7 @@ impl<'a> SourceFinder<'a> {
                 .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
         {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
-            self.discover_from_gaps_mechanical(stats).await;
+            self.discover_from_gaps_mechanical(stats, social_topics).await;
             return;
         }
 
@@ -654,7 +654,7 @@ impl<'a> SourceFinder<'a> {
             Ok(b) => b,
             Err(e) => {
                 warn!(error = %e, "Failed to build discovery briefing, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -662,7 +662,7 @@ impl<'a> SourceFinder<'a> {
         // Cold-start check
         if briefing.is_cold_start() {
             info!("Cold start detected (< 3 tensions, 0 stories), using mechanical discovery");
-            self.discover_from_gaps_mechanical(stats).await;
+            self.discover_from_gaps_mechanical(stats, social_topics).await;
             return;
         }
 
@@ -675,7 +675,7 @@ impl<'a> SourceFinder<'a> {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -684,7 +684,7 @@ impl<'a> SourceFinder<'a> {
         self.budget.spend(OperationCost::CLAUDE_HAIKU_DISCOVERY);
 
         // Extract social topics from plan (for topic discovery pipeline)
-        const MAX_SOCIAL_TOPICS: usize = 5;
+        const MAX_SOCIAL_TOPICS: usize = 8;
         for st in plan.social_topics.iter().take(MAX_SOCIAL_TOPICS) {
             info!(
                 topic = st.topic.as_str(),
@@ -894,7 +894,11 @@ impl<'a> SourceFinder<'a> {
     ///
     /// Sorts tensions by engagement score (corroboration + source_diversity + cause_heat)
     /// so high-engagement tensions fill early query slots — but all tensions are eligible.
-    async fn discover_from_gaps_mechanical(&self, stats: &mut SourceFinderStats) {
+    async fn discover_from_gaps_mechanical(
+        &self,
+        stats: &mut SourceFinderStats,
+        social_topics: &mut Vec<String>,
+    ) {
         // Get tensions with engagement data, sorted by engagement within unmet-first grouping
         let mut tensions = match self.writer.get_unmet_tensions(20).await {
             Ok(t) => t,
@@ -996,6 +1000,13 @@ impl<'a> SourceFinder<'a> {
                 }
                 Err(e) => warn!(error = %e, "Failed to create gap analysis source"),
             }
+        }
+
+        // Generate social topics from the same tensions — mechanical fallback parity
+        const MAX_MECHANICAL_SOCIAL_TOPICS: usize = 3;
+        for t in tensions.iter().take(MAX_MECHANICAL_SOCIAL_TOPICS) {
+            let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
+            social_topics.push(format!("{} {}", help_text, self.region_name));
         }
     }
 }

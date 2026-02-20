@@ -311,6 +311,62 @@ impl ApifyClient {
         Ok(posts)
     }
 
+    /// Search Reddit by keywords. Uses the same trudax/reddit-scraper actor
+    /// with Reddit search URLs as startUrls.
+    pub async fn search_reddit_keywords(
+        &self,
+        keywords: &[&str],
+        limit: u32,
+    ) -> Result<Vec<RedditPost>> {
+        tracing::info!(?keywords, limit, "Starting Reddit keyword search");
+
+        let start_urls: Vec<StartUrl> = keywords
+            .iter()
+            .map(|k| StartUrl {
+                url: format!(
+                    "https://www.reddit.com/search/?q={}&sort=new",
+                    k.replace(' ', "+")
+                ),
+            })
+            .collect();
+
+        let input = RedditScraperInput {
+            start_urls,
+            max_items: limit,
+            sort: "new".to_string(),
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, REDDIT_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Reddit keyword search started, polling");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        let posts: Vec<RedditPost> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = posts.len(), "Fetched Reddit posts from keyword search");
+
+        Ok(posts)
+    }
+
     /// Scrape Reddit subreddit posts end-to-end: start run, poll, fetch results.
     pub async fn scrape_reddit_posts(
         &self,

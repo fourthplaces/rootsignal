@@ -16,9 +16,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode, DiscoveryMethod, EvidenceNode,
-    GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy, SocialPlatform as CommonSocialPlatform,
-    SourceNode, SourceRole,
+    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode,
+    DiscoveryMethod, EvidenceNode, GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy,
+    SocialPlatform as CommonSocialPlatform, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -45,6 +45,7 @@ pub(crate) struct RunContext {
     pub url_to_canonical_key: HashMap<String, String>,
     pub source_signal_counts: HashMap<String, u32>,
     pub expansion_queries: Vec<String>,
+    pub social_expansion_topics: Vec<String>,
     pub stats: ScoutStats,
     pub query_api_errors: HashSet<String>,
 }
@@ -64,6 +65,7 @@ impl RunContext {
             url_to_canonical_key,
             source_signal_counts: HashMap::new(),
             expansion_queries: Vec::new(),
+            social_expansion_topics: Vec::new(),
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
         }
@@ -746,9 +748,9 @@ impl<'a> ScrapePhase<'a> {
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
     /// across Instagram, X/Twitter, TikTok, and GoFundMe.
     pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext) {
-        const MAX_SOCIAL_SEARCHES: usize = 3;
-        const MAX_NEW_ACCOUNTS: usize = 5;
-        const POSTS_PER_SEARCH: u32 = 20;
+        const MAX_SOCIAL_SEARCHES: usize = 6;
+        const MAX_NEW_ACCOUNTS: usize = 10;
+        const POSTS_PER_SEARCH: u32 = 30;
         const MAX_SITE_SEARCH_TOPICS: usize = 2;
         const SITE_SEARCH_RESULTS: usize = 5;
 
@@ -783,6 +785,7 @@ impl<'a> ScrapePhase<'a> {
             SocialPlatform::Instagram,
             SocialPlatform::Twitter,
             SocialPlatform::TikTok,
+            SocialPlatform::Reddit,
         ];
 
         for platform in &platforms {
@@ -794,6 +797,7 @@ impl<'a> ScrapePhase<'a> {
                 SocialPlatform::Instagram => "instagram",
                 SocialPlatform::Twitter => "x",
                 SocialPlatform::TikTok => "tiktok",
+                SocialPlatform::Reddit => "reddit",
                 _ => continue,
             };
 
@@ -848,6 +852,9 @@ impl<'a> ScrapePhase<'a> {
                     SocialPlatform::Twitter => format!("https://x.com/{username}"),
                     SocialPlatform::TikTok => {
                         format!("https://www.tiktok.com/@{username}")
+                    }
+                    SocialPlatform::Reddit => {
+                        format!("https://www.reddit.com/user/{username}/")
                     }
                     _ => continue,
                 };
@@ -1258,6 +1265,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer
                         .create_evidence(&evidence, *existing_id)
@@ -1284,6 +1292,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer
                         .create_evidence(&evidence, *existing_id)
@@ -1395,6 +1404,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer.create_evidence(&evidence, cached_id).await?;
 
@@ -1420,6 +1430,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer.create_evidence(&evidence, cached_id).await?;
 
@@ -1468,6 +1479,7 @@ impl<'a> ScrapePhase<'a> {
                             snippet: node.meta().map(|m| m.summary.clone()),
                             relevance: None,
                             evidence_confidence: None,
+                            channel_type: Some(channel_type(&url)),
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1498,6 +1510,7 @@ impl<'a> ScrapePhase<'a> {
                             snippet: node.meta().map(|m| m.summary.clone()),
                             relevance: None,
                             evidence_confidence: None,
+                            channel_type: Some(channel_type(&url)),
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1530,6 +1543,7 @@ impl<'a> ScrapePhase<'a> {
                 snippet: node.meta().map(|m| m.summary.clone()),
                 relevance: None,
                 evidence_confidence: None,
+                channel_type: Some(channel_type(&url)),
             };
             self.writer.create_evidence(&evidence, node_id).await?;
 

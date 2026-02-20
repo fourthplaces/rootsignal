@@ -16,7 +16,7 @@ pub struct OperationCost;
 impl OperationCost {
     pub const SEARCH_QUERY: u64 = 1;
     pub const CHROME_SCRAPE: u64 = 1; // ~0.5 but round up
-    pub const APIFY_SOCIAL: u64 = 2;
+    pub const APIFY_SOCIAL: u64 = 1;
     pub const CLAUDE_HAIKU_EXTRACTION: u64 = 1; // ~0.2 but round up
     pub const VOYAGE_EMBEDDING: u64 = 1; // ~0.01 per batch, round up
     pub const CLAUDE_HAIKU_SYNTHESIS: u64 = 1; // ~0.5 per story

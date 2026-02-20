@@ -43,6 +43,7 @@ pub struct ScoutStats {
     pub expansion_queries_collected: u32,
     pub expansion_sources_created: u32,
     pub expansion_deferred_expanded: u32,
+    pub expansion_social_topics_queued: u32,
 }
 
 impl std::fmt::Display for ScoutStats {
@@ -98,6 +99,13 @@ impl std::fmt::Display for ScoutStats {
                 "  Deferred expanded: {}",
                 self.expansion_deferred_expanded
             )?;
+            if self.expansion_social_topics_queued > 0 {
+                writeln!(
+                    f,
+                    "  Social topics:     {}",
+                    self.expansion_social_topics_queued
+                )?;
+            }
         }
         Ok(())
     }
@@ -422,8 +430,11 @@ impl Scout {
         self.check_cancelled()?;
 
         // Topic discovery — search social media to find new accounts
+        // Merge expansion-derived social topics with LLM-generated topics
+        let mut all_social_topics = social_topics;
+        all_social_topics.extend(ctx.social_expansion_topics.drain(..));
         phase
-            .discover_from_topics(&social_topics, &mut ctx)
+            .discover_from_topics(&all_social_topics, &mut ctx)
             .await;
 
         // ================================================================
@@ -613,9 +624,13 @@ impl Scout {
             &self.budget,
         )
         .with_embedder(&*self.embedder);
-        let (end_discovery_stats, _end_social_topics) = end_discoverer.run().await;
+        let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
+        }
+        if !end_social_topics.is_empty() {
+            info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
+            phase.discover_from_topics(&end_social_topics, &mut ctx).await;
         }
 
         // Log final budget status

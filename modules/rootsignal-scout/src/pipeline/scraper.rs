@@ -816,10 +816,46 @@ impl SocialScraper for ApifyClient {
                     })
                     .collect())
             }
-            // Facebook and Reddit don't support keyword search
+            SocialPlatform::Reddit => {
+                let posts = self.search_reddit_keywords(topics, limit).await?;
+                Ok(posts
+                    .into_iter()
+                    .filter_map(|p| {
+                        if p.data_type.as_deref() != Some("post") {
+                            return None;
+                        }
+                        let title = p.title.unwrap_or_default();
+                        let body = p.body.unwrap_or_default();
+                        let content = format!("{}\n\n{}", title, body).trim().to_string();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(SocialPost {
+                            content,
+                            author: p.url.as_deref().and_then(extract_reddit_username),
+                            url: p.url,
+                        })
+                    })
+                    .collect())
+            }
+            // Facebook doesn't support keyword search
             _ => Ok(Vec::new()),
         }
     }
+}
+
+/// Extract a Reddit username from a URL like "https://www.reddit.com/user/NAME/..."
+fn extract_reddit_username(url: &str) -> Option<String> {
+    let parts: Vec<&str> = url.split('/').collect();
+    for (i, part) in parts.iter().enumerate() {
+        if (*part == "user" || *part == "u") && i + 1 < parts.len() {
+            let name = parts[i + 1];
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Convert multi-word topic strings into valid Instagram hashtags (camelCase,

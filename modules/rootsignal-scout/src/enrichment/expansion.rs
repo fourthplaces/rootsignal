@@ -20,6 +20,7 @@ use crate::sources;
 
 const DEDUP_JACCARD_THRESHOLD: f64 = 0.6;
 const MAX_EXPANSION_QUERIES_PER_RUN: usize = 10;
+const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 
 // --- Expansion stage ---
 
@@ -163,11 +164,21 @@ impl<'a> Expansion<'a> {
             }
         }
         ctx.stats.expansion_sources_created = created;
+
+        // Social expansion: route deduped queries as social topics too.
+        // This creates the social flywheel — expansion from social-sourced
+        // tensions stays in the social channel instead of always going web.
+        let social_count = deduped.len().min(MAX_EXPANSION_SOCIAL_TOPICS);
+        ctx.social_expansion_topics
+            .extend(deduped[..social_count].iter().cloned());
+        ctx.stats.expansion_social_topics_queued = social_count as u32;
+
         info!(
             collected = ctx.expansion_queries.len(),
             created,
             deferred = ctx.stats.expansion_deferred_expanded,
             embedding_dupes = expansion_dupes_skipped,
+            social_topics = social_count,
             "Signal expansion complete"
         );
     }
