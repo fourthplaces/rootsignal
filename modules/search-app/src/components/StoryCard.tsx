@@ -47,23 +47,6 @@ export function StoryCard({ story, score, topMatchingSignalTitle, isSelected, on
       <h3 className="text-sm font-medium text-foreground line-clamp-2">
         {story.headline as string}
       </h3>
-      {Array.isArray(story.tags) && story.tags.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {(story.tags as Array<{ slug: string; name: string }>).slice(0, 3).map((tag) => (
-            <span
-              key={tag.slug}
-              role={onTagClick ? "button" : undefined}
-              onClick={onTagClick ? (e) => { e.stopPropagation(); onTagClick(tag.slug); } : undefined}
-              className={cn(
-                "text-xs bg-muted px-1.5 py-0.5 rounded",
-                onTagClick && "cursor-pointer hover:bg-muted/80 hover:ring-1 hover:ring-muted-foreground",
-              )}
-            >
-              {tag.name}
-            </span>
-          ))}
-        </div>
-      )}
       {typeof story.lede === "string" && story.lede && (
         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
           {story.lede}
@@ -83,6 +66,23 @@ export function StoryCard({ story, score, topMatchingSignalTitle, isSelected, on
         <p className="mt-1 text-xs text-primary/70 line-clamp-1">
           Matched: {topMatchingSignalTitle}
         </p>
+      )}
+      {Array.isArray(story.tags) && story.tags.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {(story.tags as Array<{ slug: string; name: string }>).slice(0, 3).map((tag) => (
+            <span
+              key={tag.slug}
+              role={onTagClick ? "button" : undefined}
+              onClick={onTagClick ? (e) => { e.stopPropagation(); onTagClick(tag.slug); } : undefined}
+              className={cn(
+                "text-xs bg-muted px-1.5 py-0.5 rounded",
+                onTagClick && "cursor-pointer hover:bg-muted/80 hover:ring-1 hover:ring-muted-foreground",
+              )}
+            >
+              {tag.name}
+            </span>
+          ))}
+        </div>
       )}
     </button>
   );
