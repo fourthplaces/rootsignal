@@ -42,13 +42,31 @@ impl ValidationIssue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssueType {
     Misclassification,
     IncoherentStory,
     BadRespondsTo,
     NearDuplicate,
     LowConfidenceHighVisibility,
+    /// Catch-all for LLM rejection reasons. Normalized to lowercase_with_underscores.
+    Other(String),
+}
+
+impl IssueType {
+    /// Parse an LLM rejection reason string into an IssueType.
+    /// Known categories map to named variants; everything else becomes Other.
+    pub fn from_llm_str(s: &str) -> Self {
+        let normalized = s.trim().to_lowercase().replace(' ', "_");
+        match normalized.as_str() {
+            "misclassification" => Self::Misclassification,
+            "incoherent_story" => Self::IncoherentStory,
+            "bad_responds_to" => Self::BadRespondsTo,
+            "near_duplicate" => Self::NearDuplicate,
+            "low_confidence_high_visibility" => Self::LowConfidenceHighVisibility,
+            _ => Self::Other(normalized),
+        }
+    }
 }
 
 impl fmt::Display for IssueType {
@@ -59,6 +77,7 @@ impl fmt::Display for IssueType {
             Self::BadRespondsTo => write!(f, "bad_responds_to"),
             Self::NearDuplicate => write!(f, "near_duplicate"),
             Self::LowConfidenceHighVisibility => write!(f, "low_confidence_high_visibility"),
+            Self::Other(s) => write!(f, "{s}"),
         }
     }
 }
@@ -101,9 +120,11 @@ impl fmt::Display for IssueStatus {
 #[derive(Debug, Default)]
 pub struct SupervisorStats {
     pub auto_fix: AutoFixStats,
-    pub signals_checked: u64,
-    pub stories_checked: u64,
+    pub signals_reviewed: u64,
+    pub signals_passed: u64,
+    pub signals_rejected: u64,
     pub issues_created: u64,
+    pub github_issue_created: bool,
     pub sources_penalized: u64,
     pub sources_reset: u64,
     pub echoes_flagged: u64,
@@ -113,8 +134,9 @@ impl fmt::Display for SupervisorStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "signals_checked={} stories_checked={} issues_created={} sources_penalized={} sources_reset={} echoes_flagged={} {}",
-            self.signals_checked, self.stories_checked, self.issues_created,
+            "signals_reviewed={} passed={} rejected={} issues_created={} github_issue={} sources_penalized={} sources_reset={} echoes_flagged={} {}",
+            self.signals_reviewed, self.signals_passed, self.signals_rejected,
+            self.issues_created, self.github_issue_created,
             self.sources_penalized, self.sources_reset, self.echoes_flagged, self.auto_fix,
         )
     }

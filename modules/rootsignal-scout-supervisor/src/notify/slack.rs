@@ -128,8 +128,8 @@ impl NotifyBackend for SlackWebhook {
         }
 
         lines.push(format!(
-            "_Checked {} signals, {} stories_",
-            stats.signals_checked, stats.stories_checked
+            "_Reviewed {} signals (passed={}, rejected={})_",
+            stats.signals_reviewed, stats.signals_passed, stats.signals_rejected
         ));
 
         let payload = json!({

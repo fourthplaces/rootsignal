@@ -298,6 +298,7 @@ pub struct TensionLinker<'a> {
     min_lng: f64,
     max_lng: f64,
     cancelled: Arc<AtomicBool>,
+    run_id: String,
 }
 
 impl<'a> TensionLinker<'a> {
@@ -309,6 +310,7 @@ impl<'a> TensionLinker<'a> {
         anthropic_api_key: &str,
         city: CityNode,
         cancelled: Arc<AtomicBool>,
+        run_id: String,
     ) -> Self {
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
@@ -332,6 +334,7 @@ impl<'a> TensionLinker<'a> {
             max_lng: city.center_lng + lng_delta,
             city,
             cancelled,
+            run_id,
         }
     }
 
@@ -600,7 +603,7 @@ impl<'a> TensionLinker<'a> {
 
         let tension_id = self
             .writer
-            .create_node(&Node::Tension(tension_node), &embedding)
+            .create_node(&Node::Tension(tension_node), &embedding, "tension_linker", &self.run_id)
             .await?;
 
         info!(

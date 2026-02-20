@@ -88,8 +88,7 @@ impl Supervisor {
 
         // Phase 2: Heuristic triage (cheap graph queries, no LLM)
         let suspects = triage::triage_suspects(&self.client, &from, &to).await?;
-        stats.signals_checked = suspects.iter().filter(|s| s.label != "Story").count() as u64;
-        stats.stories_checked = suspects.iter().filter(|s| s.label == "Story").count() as u64;
+        stats.signals_reviewed = suspects.iter().filter(|s| s.label != "Story").count() as u64;
 
         // Phase 3: LLM flag checks on suspects (budget-capped)
         let budget = BudgetTracker::new(self.max_llm_checks);
