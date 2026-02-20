@@ -2,8 +2,8 @@ import { Routes, Route, Navigate } from "react-router";
 import { AdminLayout } from "@/layouts/AdminLayout";
 import { LoginPage } from "@/pages/LoginPage";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { CitiesPage } from "@/pages/CitiesPage";
-import { CityDetailPage } from "@/pages/CityDetailPage";
+import { RegionsPage } from "@/pages/RegionsPage";
+import { RegionDetailPage } from "@/pages/RegionDetailPage";
 import { SignalsPage } from "@/pages/SignalsPage";
 import { SignalDetailPage } from "@/pages/SignalDetailPage";
 import { StoriesPage } from "@/pages/StoriesPage";
@@ -16,8 +16,8 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<AdminLayout />}>
         <Route index element={<DashboardPage />} />
-        <Route path="regions" element={<CitiesPage />} />
-        <Route path="regions/:slug" element={<CityDetailPage />} />
+        <Route path="regions" element={<RegionsPage />} />
+        <Route path="regions/:slug" element={<RegionDetailPage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />
         <Route path="stories" element={<StoriesPage />} />

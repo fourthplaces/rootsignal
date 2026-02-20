@@ -78,6 +78,16 @@ struct SubmitSourceResult {
     source_id: Option<String>,
 }
 
+#[derive(SimpleObject)]
+struct ResetRegionResult {
+    success: bool,
+    message: Option<String>,
+    deleted_signals: u64,
+    deleted_stories: u64,
+    deleted_actors: u64,
+    deleted_sources: u64,
+}
+
 /// Test phone number — only available in debug builds.
 #[cfg(debug_assertions)]
 const TEST_PHONE: Option<&str> = Some("+1234567890");
@@ -385,6 +395,38 @@ impl MutationRoot {
         Ok(ScoutResult {
             success: true,
             message: Some("Lock released".to_string()),
+        })
+    }
+
+    /// Reset all derived data for a region (signals, stories, actors, sources, locks).
+    /// The next scout run will bootstrap from scratch.
+    #[graphql(guard = "AdminGuard")]
+    async fn reset_region(
+        &self,
+        ctx: &Context<'_>,
+        region_slug: String,
+    ) -> Result<ResetRegionResult> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
+        info!(region = region_slug.as_str(), "Region reset requested");
+
+        let stats = writer
+            .reset_region(&region_slug)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Region reset failed: {e}")))?;
+
+        cache_store.reload(&ctx.data_unchecked::<Arc<GraphClient>>()).await;
+
+        Ok(ResetRegionResult {
+            success: true,
+            message: Some(format!(
+                "Reset complete: {} signals, {} stories, {} actors, {} sources deleted",
+                stats.deleted_signals, stats.deleted_stories, stats.deleted_actors, stats.deleted_sources
+            )),
+            deleted_signals: stats.deleted_signals,
+            deleted_stories: stats.deleted_stories,
+            deleted_actors: stats.deleted_actors,
+            deleted_sources: stats.deleted_sources,
         })
     }
 

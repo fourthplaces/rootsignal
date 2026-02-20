@@ -69,6 +69,19 @@ export const RESET_SCOUT_LOCK = gql`
   }
 `;
 
+export const RESET_REGION = gql`
+  mutation ResetRegion($regionSlug: String!) {
+    resetRegion(regionSlug: $regionSlug) {
+      success
+      message
+      deletedSignals
+      deletedStories
+      deletedActors
+      deletedSources
+    }
+  }
+`;
+
 export const TAG_STORY = gql`
   mutation TagStory($storyId: UUID!, $tagSlug: String!) {
     tagStory(storyId: $storyId, tagSlug: $tagSlug) {

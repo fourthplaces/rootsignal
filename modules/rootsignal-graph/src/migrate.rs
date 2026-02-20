@@ -594,9 +594,11 @@ async fn migrate_region_relationships(client: &GraphClient) -> Result<(), neo4rs
         Err(e) => warn!("canonical_key prefix strip failed: {e}"),
     }
 
-    // Step 4: Remove city property from Sources and Actors
+    // Step 4: Remove city property ONLY from nodes that have a relationship (safe guard).
+    // Sources with :SCOUTS relationship
     let remove_source_city = query(
-        "MATCH (s:Source) WHERE s.city IS NOT NULL
+        "MATCH (:City)-[:SCOUTS]->(s:Source)
+         WHERE s.city IS NOT NULL
          REMOVE s.city
          RETURN count(s) AS cleaned",
     );
@@ -605,15 +607,17 @@ async fn migrate_region_relationships(client: &GraphClient) -> Result<(), neo4rs
             if let Some(row) = stream.next().await? {
                 let cleaned: i64 = row.get("cleaned").unwrap_or(0);
                 if cleaned > 0 {
-                    info!(cleaned, "Removed Source.city property");
+                    info!(cleaned, "Removed Source.city property (with :SCOUTS relationship)");
                 }
             }
         }
         Err(e) => warn!("Source.city removal failed: {e}"),
     }
 
+    // Actors with :DISCOVERED relationship
     let remove_actor_city = query(
-        "MATCH (a:Actor) WHERE a.city IS NOT NULL
+        "MATCH (:City)-[:DISCOVERED]->(a:Actor)
+         WHERE a.city IS NOT NULL
          REMOVE a.city
          RETURN count(a) AS cleaned",
     );
@@ -622,11 +626,46 @@ async fn migrate_region_relationships(client: &GraphClient) -> Result<(), neo4rs
             if let Some(row) = stream.next().await? {
                 let cleaned: i64 = row.get("cleaned").unwrap_or(0);
                 if cleaned > 0 {
-                    info!(cleaned, "Removed Actor.city property");
+                    info!(cleaned, "Removed Actor.city property (with :DISCOVERED relationship)");
                 }
             }
         }
         Err(e) => warn!("Actor.city removal failed: {e}"),
+    }
+
+    // Warn about orphans: nodes with city property but no relationship
+    let orphan_sources = query(
+        "MATCH (s:Source)
+         WHERE s.city IS NOT NULL AND NOT (:City)-[:SCOUTS]->(s)
+         RETURN count(s) AS orphaned",
+    );
+    match g.execute(orphan_sources).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let orphaned: i64 = row.get("orphaned").unwrap_or(0);
+                if orphaned > 0 {
+                    warn!(orphaned, "Sources have city property but no :SCOUTS relationship — city property preserved");
+                }
+            }
+        }
+        Err(e) => warn!("Orphan source check failed: {e}"),
+    }
+
+    let orphan_actors = query(
+        "MATCH (a:Actor)
+         WHERE a.city IS NOT NULL AND NOT (:City)-[:DISCOVERED]->(a)
+         RETURN count(a) AS orphaned",
+    );
+    match g.execute(orphan_actors).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let orphaned: i64 = row.get("orphaned").unwrap_or(0);
+                if orphaned > 0 {
+                    warn!(orphaned, "Actors have city property but no :DISCOVERED relationship — city property preserved");
+                }
+            }
+        }
+        Err(e) => warn!("Orphan actor check failed: {e}"),
     }
 
     Ok(())

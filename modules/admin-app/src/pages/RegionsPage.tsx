@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGIONS } from "@/graphql/queries";
 import { CREATE_REGION } from "@/graphql/mutations";
 
-export function CitiesPage() {
+export function RegionsPage() {
   const { data, loading, refetch } = useQuery(ADMIN_REGIONS);
   const [createRegion] = useMutation(CREATE_REGION);
   const [showCreate, setShowCreate] = useState(false);

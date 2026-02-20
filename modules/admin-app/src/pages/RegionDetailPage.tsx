@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION, ADMIN_REGION_SOURCES, ADMIN_SCOUT_STATUS, SIGNALS_NEAR_GEO_JSON, STORIES_IN_BOUNDS } from "@/graphql/queries";
-import { ADD_SOURCE, RUN_SCOUT, RESET_SCOUT_LOCK } from "@/graphql/mutations";
-import { CityMap } from "./MapPage";
+import { ADD_SOURCE, RUN_SCOUT, RESET_SCOUT_LOCK, RESET_REGION } from "@/graphql/mutations";
+import { RegionMap } from "./MapPage";
 import type { FeatureCollection } from "geojson";
 
 type Tab = "stories" | "signals" | "map" | "sources";
@@ -14,7 +14,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "sources", label: "Sources" },
 ];
 
-export function CityDetailPage() {
+export function RegionDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [tab, setTab] = useState<Tab>("stories");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,6 +57,7 @@ export function CityDetailPage() {
   const [addSource] = useMutation(ADD_SOURCE);
   const [runScout] = useMutation(RUN_SCOUT);
   const [resetScoutLock] = useMutation(RESET_SCOUT_LOCK);
+  const [resetRegion] = useMutation(RESET_REGION);
 
   const [showAddSource, setShowAddSource] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -112,6 +113,19 @@ export function CityDetailPage() {
     setMenuOpen(false);
   };
 
+  const handleResetRegion = async () => {
+    if (!window.confirm("This will delete ALL signals, stories, actors, and sources for this region. The next scout run will bootstrap from scratch.\n\nAre you sure?")) {
+      return;
+    }
+    const { data } = await resetRegion({ variables: { regionSlug: slug } });
+    if (data?.resetRegion?.success) {
+      alert(data.resetRegion.message);
+    }
+    refetchScout();
+    refetchSources();
+    setMenuOpen(false);
+  };
+
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
     await addSource({
@@ -157,6 +171,12 @@ export function CityDetailPage() {
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
                 Reset Lock
+              </button>
+              <button
+                onClick={handleResetRegion}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-accent text-red-500"
+              >
+                Reset Region
               </button>
             </div>
           )}
@@ -261,7 +281,7 @@ export function CityDetailPage() {
         </div>
       )}
 
-      {tab === "map" && <CityMap city={region} />}
+      {tab === "map" && <RegionMap region={region} />}
 
       {tab === "sources" && (
         <div>

@@ -1463,10 +1463,10 @@ impl GraphWriter {
         }
     }
 
-    /// List all cities, ordered by name.
+    /// List all active cities, ordered by name.
     pub async fn list_cities(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (c:City)
+            "MATCH (c:City {active: true})
              RETURN c.id AS id, c.name AS name, c.slug AS slug,
                     c.center_lat AS center_lat, c.center_lng AS center_lng,
                     c.radius_km AS radius_km, c.geo_terms AS geo_terms,
@@ -4376,10 +4376,10 @@ impl GraphWriter {
         }
 
         // Also delete geo-bounded signals (signals that fall within region bbox but may have different source_url)
-        let region = self.get_city(slug).await?;
-        if let Some(city) = &region {
-            let lat_delta = city.radius_km / 111.0;
-            let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+        let region_node = self.get_region(slug).await?;
+        if let Some(region) = &region_node {
+            let lat_delta = region.radius_km / 111.0;
+            let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
             let delete_geo_signals = query(
                 "MATCH (sig)
                  WHERE (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
@@ -4392,10 +4392,10 @@ impl GraphWriter {
                  RETURN count(sig) AS deleted",
             )
             .param("slug", slug)
-            .param("min_lat", city.center_lat - lat_delta)
-            .param("max_lat", city.center_lat + lat_delta)
-            .param("min_lng", city.center_lng - lng_delta)
-            .param("max_lng", city.center_lng + lng_delta);
+            .param("min_lat", region.center_lat - lat_delta)
+            .param("max_lat", region.center_lat + lat_delta)
+            .param("min_lng", region.center_lng - lng_delta)
+            .param("max_lng", region.center_lng + lng_delta);
             match g.execute(delete_geo_signals).await {
                 Ok(mut stream) => {
                     if let Some(row) = stream.next().await? {
