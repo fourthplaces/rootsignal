@@ -372,6 +372,133 @@ pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Ve
     links
 }
 
+// --- RSS/Atom feed fetcher ---
+
+/// A single item extracted from an RSS/Atom feed.
+#[derive(Debug, Clone)]
+pub struct FeedItem {
+    pub url: String,
+    pub title: Option<String>,
+    pub pub_date: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Lightweight feed fetcher using reqwest + feed-rs.
+/// Does not use Chrome/Browserless — RSS is plain XML.
+pub struct RssFetcher {
+    client: reqwest::Client,
+}
+
+const RSS_MAX_ITEMS: usize = 10;
+const RSS_MAX_AGE_DAYS: i64 = 30;
+
+impl RssFetcher {
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .expect("Failed to build RSS HTTP client");
+        Self { client }
+    }
+
+    /// Fetch and parse an RSS/Atom/JSON feed, returning the most recent items.
+    pub async fn fetch_items(&self, feed_url: &str) -> Result<Vec<FeedItem>> {
+        let resp = self
+            .client
+            .get(feed_url)
+            .header("User-Agent", "rootsignal-scout/0.1")
+            .send()
+            .await
+            .context("RSS feed fetch failed")?;
+
+        let bytes = resp.bytes().await.context("Failed to read RSS feed body")?;
+        let feed = feed_rs::parser::parse(&bytes[..]).context("Failed to parse RSS/Atom feed")?;
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(RSS_MAX_AGE_DAYS);
+
+        let mut items: Vec<FeedItem> = feed
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                // Require a link
+                let url = entry
+                    .links
+                    .first()
+                    .map(|l| l.href.clone())
+                    .or_else(|| entry.id.starts_with("http").then(|| entry.id.clone()))?;
+
+                let pub_date = entry
+                    .published
+                    .or(entry.updated)
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                // Filter out items older than cutoff (but keep items with no date)
+                if let Some(date) = pub_date {
+                    if date < cutoff {
+                        return None;
+                    }
+                }
+
+                Some(FeedItem {
+                    url,
+                    title: entry.title.map(|t| t.content),
+                    pub_date,
+                })
+            })
+            .collect();
+
+        // Sort by date descending (items without dates go last)
+        items.sort_by(|a, b| b.pub_date.cmp(&a.pub_date));
+        items.truncate(RSS_MAX_ITEMS);
+
+        info!(feed_url, items = items.len(), "Parsed RSS/Atom feed");
+        Ok(items)
+    }
+
+    /// Discover RSS/Atom feed URLs from a webpage's HTML by looking for
+    /// `<link rel="alternate" type="application/rss+xml">` or `application/atom+xml` tags.
+    pub fn discover_feed_urls(html: &str, base_url: &str) -> Vec<String> {
+        let mut feeds = Vec::new();
+        // Simple regex-based extraction — avoids pulling in a full HTML parser
+        let pattern = regex::Regex::new(
+            r#"<link[^>]+type\s*=\s*["']application/(rss\+xml|atom\+xml)["'][^>]*>"#,
+        )
+        .expect("Invalid RSS link regex");
+
+        let href_pattern =
+            regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("Invalid href regex");
+
+        for cap in pattern.captures_iter(html) {
+            let tag = cap.get(0).map(|m| m.as_str()).unwrap_or("");
+            if let Some(href_cap) = href_pattern.captures(tag) {
+                if let Some(href) = href_cap.get(1) {
+                    let href_str = href.as_str();
+                    // Resolve relative URLs
+                    let full_url = if href_str.starts_with("http") {
+                        href_str.to_string()
+                    } else if href_str.starts_with('/') {
+                        // Combine with base domain
+                        if let Ok(base) = url::Url::parse(base_url) {
+                            format!(
+                                "{}://{}{}",
+                                base.scheme(),
+                                base.host_str().unwrap_or(""),
+                                href_str
+                            )
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    };
+                    feeds.push(full_url);
+                }
+            }
+        }
+
+        feeds
+    }
+}
+
 // --- Social media types ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,12 +544,6 @@ pub trait SocialScraper: Send + Sync {
         topics: &[&str],
         limit: u32,
     ) -> Result<Vec<SocialPost>>;
-    /// Search GoFundMe campaigns by keyword. Returns campaign data for signal extraction.
-    async fn search_gofundme(
-        &self,
-        keyword: &str,
-        limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>>;
 }
 
 /// No-op social scraper for when no API key is configured.
@@ -447,13 +568,6 @@ impl SocialScraper for NoopSocialScraper {
         Ok(Vec::new())
     }
 
-    async fn search_gofundme(
-        &self,
-        _keyword: &str,
-        _limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        Ok(Vec::new())
-    }
 }
 
 // --- Serper (Google Search) ---
@@ -654,16 +768,6 @@ impl SocialScraper for ApifyClient {
                 url: Some(p.post_url),
             })
             .collect())
-    }
-
-    async fn search_gofundme(
-        &self,
-        keyword: &str,
-        limit: u32,
-    ) -> Result<Vec<apify_client::GoFundMeCampaign>> {
-        self.scrape_gofundme(keyword, limit)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn search_topics(

@@ -55,7 +55,7 @@ pub fn canonical_value_from_url(source_type: SourceType, url_or_value: &str) -> 
                 .trim_start_matches('@')
                 .to_string()
         }
-        // Web, Facebook, WebQuery, GoFundMeQuery, EventbriteQuery, VolunteerMatchQuery, Bluesky: use as-is
+        // Web, Facebook, WebQuery, EventbriteQuery, VolunteerMatchQuery, Bluesky, Rss: use as-is
         _ => url_or_value.to_string(),
     }
 }

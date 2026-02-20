@@ -32,6 +32,7 @@ reqwest = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
 spider_transformations = { workspace = true }
+feed-rs = { workspace = true }
 url = "2"
 tempfile = "3"
 rand = "0.9"

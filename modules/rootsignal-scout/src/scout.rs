@@ -17,8 +17,8 @@ use crate::embedder::{Embedder, TextEmbedder};
 use crate::extractor::{Extractor, ResourceTag, SignalExtractor};
 use crate::quality;
 use crate::scraper::{
-    self, NoopSocialScraper, PageScraper, SerperSearcher, SocialAccount, SocialPlatform,
-    SocialPost, SocialScraper, WebSearcher,
+    self, NoopSocialScraper, PageScraper, RssFetcher, SerperSearcher, SocialAccount,
+    SocialPlatform, SocialPost, SocialScraper, WebSearcher,
 };
 use crate::sources;
 
@@ -1102,6 +1102,37 @@ impl Scout {
             }
         }
 
+        // RSS feeds — fetch feed XML, extract article URLs
+        let rss_sources: Vec<&&SourceNode> = sources
+            .iter()
+            .filter(|s| s.source_type == SourceType::Rss)
+            .collect();
+        if !rss_sources.is_empty() {
+            info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
+            let fetcher = RssFetcher::new();
+            for source in &rss_sources {
+                if let Some(ref feed_url) = source.url {
+                    match fetcher.fetch_items(feed_url).await {
+                        Ok(items) => {
+                            // Ensure the RSS source gets a source_signal_counts entry
+                            source_signal_counts
+                                .entry(source.canonical_key.clone())
+                                .or_default();
+                            for item in items {
+                                url_to_canonical_key
+                                    .entry(item.url.clone())
+                                    .or_insert_with(|| source.canonical_key.clone());
+                                phase_urls.push(item.url);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(feed_url = feed_url.as_str(), error = %e, "RSS feed fetch failed");
+                        }
+                    }
+                }
+            }
+        }
+
         // Deduplicate
         phase_urls.sort();
         phase_urls.dedup();
@@ -1488,10 +1519,10 @@ impl Scout {
         use crate::scraper::SocialPlatform;
 
         const MAX_SOCIAL_SEARCHES: usize = 3;
-        const MAX_GOFUNDME_SEARCHES: usize = 2;
         const MAX_NEW_ACCOUNTS: usize = 5;
         const POSTS_PER_SEARCH: u32 = 20;
-        const CAMPAIGNS_PER_SEARCH: u32 = 10;
+        const MAX_SITE_SEARCH_TOPICS: usize = 2;
+        const SITE_SEARCH_RESULTS: usize = 5;
 
         if topics.is_empty() {
             return;
@@ -1690,75 +1721,75 @@ impl Scout {
             }
         }
 
-        // GoFundMe: search campaigns → extract signals (no auto-follow)
-        let gofundme_topics: Vec<&str> = topics
+        // Site-scoped search: find WebQuery sources with `site:` prefix,
+        // search Serper for each topic, scrape + extract results.
+        let site_sources: Vec<&SourceNode> = existing_sources
             .iter()
-            .take(MAX_GOFUNDME_SEARCHES)
-            .map(|t| t.as_str())
+            .filter(|s| {
+                s.source_type == SourceType::WebQuery
+                    && s.canonical_value.starts_with("site:")
+            })
             .collect();
-        for topic in &gofundme_topics {
-            let campaigns = match self
-                .social
-                .search_gofundme(topic, CAMPAIGNS_PER_SEARCH)
-                .await
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!(topic, error = %e, "GoFundMe discovery failed");
-                    continue;
-                }
-            };
 
-            if campaigns.is_empty() {
-                continue;
-            }
-
-            info!(topic, count = campaigns.len(), "GoFundMe campaigns found");
-
-            for campaign in &campaigns {
-                let title = campaign.title.as_deref().unwrap_or("Untitled campaign");
-                let desc = campaign.description.as_deref().unwrap_or("");
-                let location = campaign.location.as_deref().unwrap_or("");
-                let organizer = campaign.organizer_name.as_deref().unwrap_or("");
-                let amount = campaign.current_amount.unwrap_or(0.0);
-                let goal = campaign.goal_amount.unwrap_or(0.0);
-
-                let content = format!(
-                    "GoFundMe Campaign: {title}\nOrganizer: {organizer}\nLocation: {location}\n\
-                     Raised: ${amount:.0} of ${goal:.0} goal\n\n{desc}"
-                );
-
-                let source_url = campaign
-                    .url
-                    .as_deref()
-                    .unwrap_or("https://www.gofundme.com");
-
-                let result = match self.extractor.extract(&content, source_url).await {
+        for source in &site_sources {
+            let site_prefix = &source.canonical_value; // e.g. "site:gofundme.com/f/ Minneapolis"
+            for topic in topics.iter().take(MAX_SITE_SEARCH_TOPICS) {
+                let query = format!("{} {}", site_prefix, topic);
+                let results = match self.searcher.search(&query, SITE_SEARCH_RESULTS).await {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(title, error = %e, "GoFundMe extraction failed");
+                        warn!(query, error = %e, "Site-scoped search failed");
                         continue;
                     }
                 };
 
-                if result.nodes.is_empty() {
+                if results.is_empty() {
                     continue;
                 }
 
-                if let Err(e) = self
-                    .store_signals(
-                        source_url,
-                        &content,
-                        result.nodes,
-                        result.resource_tags,
-                        result.signal_tags,
-                        stats,
-                        embed_cache,
-                        known_city_urls,
-                    )
-                    .await
-                {
-                    warn!(title, error = %e, "Failed to store GoFundMe signals");
+                info!(query, count = results.len(), "Site-scoped search results");
+
+                for result in &results {
+                    if known_city_urls.contains(&result.url) {
+                        continue;
+                    }
+
+                    let content = match self.scraper.scrape(&result.url).await {
+                        Ok(c) if !c.is_empty() => c,
+                        Ok(_) => continue,
+                        Err(e) => {
+                            warn!(url = result.url, error = %e, "Site-scoped scrape failed");
+                            continue;
+                        }
+                    };
+
+                    let extracted = match self.extractor.extract(&content, &result.url).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!(url = result.url, error = %e, "Site-scoped extraction failed");
+                            continue;
+                        }
+                    };
+
+                    if extracted.nodes.is_empty() {
+                        continue;
+                    }
+
+                    if let Err(e) = self
+                        .store_signals(
+                            &result.url,
+                            &content,
+                            extracted.nodes,
+                            extracted.resource_tags,
+                            extracted.signal_tags,
+                            stats,
+                            embed_cache,
+                            known_city_urls,
+                        )
+                        .await
+                    {
+                        warn!(url = result.url, error = %e, "Failed to store site-scoped signals");
+                    }
                 }
             }
         }

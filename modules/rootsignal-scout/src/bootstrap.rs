@@ -6,7 +6,7 @@ use uuid::Uuid;
 use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole, SourceType};
 use rootsignal_graph::GraphWriter;
 
-use crate::scraper::WebSearcher;
+use crate::scraper::{RssFetcher, WebSearcher};
 use crate::sources;
 
 /// Handles cold-start bootstrapping for a brand-new city.
@@ -194,12 +194,10 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
                 ),
                 SourceRole::Response,
             ),
+            // Site-scoped search: Serper will query `site:gofundme.com/f/ {city} {topic}`
             make(
-                SourceType::GoFundMeQuery,
-                &format!(
-                    "https://www.gofundme.com/discover/search?q={}&location={}",
-                    slug, city_name_encoded
-                ),
+                SourceType::WebQuery,
+                &format!("site:gofundme.com/f/ {}", city_name),
                 SourceRole::Response,
             ),
         ];
@@ -221,6 +219,38 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
             }
             Err(e) => {
                 warn!(error = %e, "Failed to discover subreddits, skipping Reddit sources");
+            }
+        }
+
+        // RSS — discover local news outlet feeds via LLM
+        match self.discover_news_outlets().await {
+            Ok(outlets) => {
+                info!(
+                    count = outlets.len(),
+                    "Discovered news outlets for {}", city_name
+                );
+                let fetcher = RssFetcher::new();
+                for (name, feed_url) in outlets {
+                    // Validate the feed URL is reachable by attempting a fetch
+                    match fetcher.fetch_items(&feed_url).await {
+                        Ok(_) => {
+                            let mut source = make(
+                                SourceType::Rss,
+                                &feed_url,
+                                SourceRole::Mixed,
+                            );
+                            source.canonical_value = name.clone();
+                            source.gap_context = Some(format!("Outlet: {name}"));
+                            sources.push(source);
+                        }
+                        Err(e) => {
+                            warn!(outlet = name.as_str(), feed_url = feed_url.as_str(), error = %e, "RSS feed unreachable, skipping");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to discover news outlets, skipping RSS sources");
             }
         }
 
@@ -263,6 +293,56 @@ Maximum 8 subreddits."#
 
         Ok(subreddits)
     }
+
+    /// Ask Claude for local news outlets and their RSS feed URLs.
+    /// Returns (outlet_name, feed_url) pairs.
+    async fn discover_news_outlets(&self) -> Result<Vec<(String, String)>> {
+        let city = &self.city_node.name;
+
+        let prompt = format!(
+            r#"What are the local news outlets for {city}? Include newspapers, alt-weeklies, TV station news sites, and hyperlocal blogs.
+
+Do NOT include national wire services (AP, Reuters, NPR national, CNN, Fox News).
+Only include outlets that primarily cover {city} and its surrounding area.
+
+For each outlet, provide the name and RSS/Atom feed URL if you know it.
+Return as JSON array: [{{"name": "Outlet Name", "feed_url": "https://..."}}]
+If you don't know the feed URL, use the homepage URL and append "/feed" as a guess.
+Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
+        );
+
+        let claude =
+            ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
+
+        let response = claude.complete(&prompt).await?;
+
+        // Parse JSON response — strip markdown code fences if present
+        let json_str = response
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
+        let outlets: Vec<NewsOutlet> = serde_json::from_str(json_str)
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to parse news outlet JSON, trying line-by-line fallback");
+                Vec::new()
+            });
+
+        Ok(outlets
+            .into_iter()
+            .filter(|o| !o.name.is_empty() && !o.feed_url.is_empty())
+            .map(|o| (o.name, o.feed_url))
+            .take(8)
+            .collect())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct NewsOutlet {
+    name: String,
+    feed_url: String,
 }
 
 /// Generate tension-seeded follow-up queries from existing tensions.

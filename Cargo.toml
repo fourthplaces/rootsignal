@@ -59,6 +59,9 @@ tower = "0.5"
 # Web scraping
 spider_transformations = "2"
 
+# RSS/Atom feed parsing
+feed-rs = "2"
+
 # Regex (PII detection)
 regex = "1"
 
