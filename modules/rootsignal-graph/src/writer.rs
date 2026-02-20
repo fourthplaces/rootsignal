@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use neo4rs::query;
 use tracing::{info, warn};
@@ -2047,6 +2049,31 @@ impl GraphWriter {
 
         let mut stream = self.client.graph.execute(q).await?;
         Ok(stream.next().await?.is_some())
+    }
+
+    /// Return the subset of `urls` that match a blocked source pattern.
+    pub async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>, neo4rs::Error> {
+        if urls.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let q = query(
+            "MATCH (b:BlockedSource)
+             WITH collect(b.url_pattern) AS patterns
+             UNWIND $urls AS url
+             WITH url, patterns
+             WHERE any(p IN patterns WHERE url CONTAINS p OR p = url)
+             RETURN url",
+        )
+        .param("urls", urls.to_vec());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        let mut blocked = HashSet::new();
+        while let Some(row) = stream.next().await? {
+            if let Ok(url) = row.get::<String>("url") {
+                blocked.insert(url);
+            }
+        }
+        Ok(blocked)
     }
 
     /// Get source-level stats for reporting.
@@ -4315,6 +4342,166 @@ impl GraphWriter {
     pub async fn set_region_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
         self.set_city_scout_completed(slug).await
     }
+
+    /// Delete all derived data for a region so the next scout run bootstraps from scratch.
+    /// Useful for testing, bad scout runs, prompt changes, or migration recovery.
+    pub async fn reset_region(&self, slug: &str) -> Result<ResetRegionStats, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut stats = ResetRegionStats::default();
+
+        info!(region = slug, "Resetting region: deleting all derived data");
+
+        // 1. Delete signals + evidence sourced from this region's sources
+        let delete_signals = query(
+            "MATCH (c:City {slug: $slug})-[:SCOUTS]->(src:Source)
+             WITH collect(src.url) AS source_urls
+             UNWIND source_urls AS url
+             MATCH (sig)
+             WHERE (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+               AND sig.source_url = url
+             OPTIONAL MATCH (sig)-[:SOURCED_FROM]->(ev:Evidence)
+             DETACH DELETE ev
+             WITH sig
+             DETACH DELETE sig
+             RETURN count(sig) AS deleted",
+        )
+        .param("slug", slug);
+        match g.execute(delete_signals).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    stats.deleted_signals = row.get("deleted").unwrap_or(0) as u64;
+                }
+            }
+            Err(e) => warn!(region = slug, "Reset: signal deletion failed: {e}"),
+        }
+
+        // Also delete geo-bounded signals (signals that fall within region bbox but may have different source_url)
+        let region = self.get_city(slug).await?;
+        if let Some(city) = &region {
+            let lat_delta = city.radius_km / 111.0;
+            let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+            let delete_geo_signals = query(
+                "MATCH (sig)
+                 WHERE (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+                   AND sig.lat >= $min_lat AND sig.lat <= $max_lat
+                   AND sig.lng >= $min_lng AND sig.lng <= $max_lng
+                 OPTIONAL MATCH (sig)-[:SOURCED_FROM]->(ev:Evidence)
+                 DETACH DELETE ev
+                 WITH sig
+                 DETACH DELETE sig
+                 RETURN count(sig) AS deleted",
+            )
+            .param("slug", slug)
+            .param("min_lat", city.center_lat - lat_delta)
+            .param("max_lat", city.center_lat + lat_delta)
+            .param("min_lng", city.center_lng - lng_delta)
+            .param("max_lng", city.center_lng + lng_delta);
+            match g.execute(delete_geo_signals).await {
+                Ok(mut stream) => {
+                    if let Some(row) = stream.next().await? {
+                        let geo_deleted: u64 = row.get("deleted").unwrap_or(0) as u64;
+                        stats.deleted_signals += geo_deleted;
+                    }
+                }
+                Err(e) => warn!(region = slug, "Reset: geo-signal deletion failed: {e}"),
+            }
+        }
+
+        // 2. Delete orphaned stories (no remaining :CONTAINS edges)
+        let delete_stories = query(
+            "MATCH (s:Story)
+             WHERE NOT (s)-[:CONTAINS]->()
+             DETACH DELETE s
+             RETURN count(s) AS deleted",
+        );
+        match g.execute(delete_stories).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    stats.deleted_stories = row.get("deleted").unwrap_or(0) as u64;
+                }
+            }
+            Err(e) => warn!(region = slug, "Reset: story deletion failed: {e}"),
+        }
+
+        // 3. Delete actors discovered by this region
+        let delete_actors = query(
+            "MATCH (c:City {slug: $slug})-[:DISCOVERED]->(a:Actor)
+             DETACH DELETE a
+             RETURN count(a) AS deleted",
+        )
+        .param("slug", slug);
+        match g.execute(delete_actors).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    stats.deleted_actors = row.get("deleted").unwrap_or(0) as u64;
+                }
+            }
+            Err(e) => warn!(region = slug, "Reset: actor deletion failed: {e}"),
+        }
+
+        // 4. Delete sources scouted by this region
+        let delete_sources = query(
+            "MATCH (c:City {slug: $slug})-[:SCOUTS]->(s:Source)
+             DETACH DELETE s
+             RETURN count(s) AS deleted",
+        )
+        .param("slug", slug);
+        match g.execute(delete_sources).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    stats.deleted_sources = row.get("deleted").unwrap_or(0) as u64;
+                }
+            }
+            Err(e) => warn!(region = slug, "Reset: source deletion failed: {e}"),
+        }
+
+        // 5. Delete scout lock
+        let delete_lock = query("MATCH (lock:ScoutLock {city: $slug}) DELETE lock")
+            .param("slug", slug);
+        match g.run(delete_lock).await {
+            Ok(_) => {}
+            Err(e) => warn!(region = slug, "Reset: lock deletion failed: {e}"),
+        }
+
+        // 6. Delete submissions
+        let delete_submissions = query(
+            "MATCH (sub:Submission {city: $slug})
+             DELETE sub
+             RETURN count(sub) AS deleted",
+        )
+        .param("slug", slug);
+        match g.execute(delete_submissions).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let deleted: i64 = row.get("deleted").unwrap_or(0);
+                    if deleted > 0 {
+                        info!(region = slug, deleted, "Deleted submissions");
+                    }
+                }
+            }
+            Err(e) => warn!(region = slug, "Reset: submission deletion failed: {e}"),
+        }
+
+        info!(
+            region = slug,
+            signals = stats.deleted_signals,
+            stories = stats.deleted_stories,
+            actors = stats.deleted_actors,
+            sources = stats.deleted_sources,
+            "Region reset complete"
+        );
+
+        Ok(stats)
+    }
+}
+
+/// Stats from a region reset operation.
+#[derive(Debug, Default)]
+pub struct ResetRegionStats {
+    pub deleted_signals: u64,
+    pub deleted_stories: u64,
+    pub deleted_actors: u64,
+    pub deleted_sources: u64,
 }
 
 /// Stats from resource consolidation batch job.

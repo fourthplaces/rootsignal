@@ -441,22 +441,9 @@ impl Scout {
         // 7. Synthesis — similarity edges + parallel finders
         // ================================================================
 
-        // Build similarity edges (Leiden removed — StoryWeaver is the sole story creator)
-        info!("Building similarity edges...");
-        let similarity = SimilarityBuilder::new(self.graph_client.clone());
-        similarity.clear_edges().await.unwrap_or_else(|e| {
-            warn!(error = %e, "Failed to clear similarity edges");
-            0
-        });
-        match similarity.build_edges().await {
-            Ok(edges) => info!(edges, "Similarity edges built"),
-            Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
-        }
-
-        self.check_cancelled()?;
-
-        // Parallel synthesis — run independent finders concurrently.
-        info!("Starting parallel synthesis (response mapping, tension linker, response finder, gathering finder, investigation)...");
+        // Parallel synthesis — similarity edges + finders run concurrently.
+        // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
+        info!("Starting parallel synthesis (similarity edges, response mapping, tension linker, response finder, gathering finder, investigation)...");
 
         let run_response_mapping = self
             .budget
@@ -474,7 +461,19 @@ impl Scout {
             OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
         );
 
-        let (rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+        let (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+            async {
+                info!("Building similarity edges...");
+                let similarity = SimilarityBuilder::new(self.graph_client.clone());
+                similarity.clear_edges().await.unwrap_or_else(|e| {
+                    warn!(error = %e, "Failed to clear similarity edges");
+                    0
+                });
+                match similarity.build_edges().await {
+                    Ok(edges) => info!(edges, "Similarity edges built"),
+                    Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
+                }
+            },
             async {
                 if run_response_mapping {
                     info!("Starting response mapping...");
@@ -568,7 +567,7 @@ impl Scout {
             },
         );
 
-        let _ = (rm_result, tl_result, rf_result, gf_result, inv_result);
+        let _ = (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result);
 
         info!("Parallel synthesis complete");
 

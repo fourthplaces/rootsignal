@@ -355,15 +355,21 @@ impl<'a> ScrapePhase<'a> {
         phase_urls.sort();
         phase_urls.dedup();
 
-        // Filter blocked URLs
-        let mut allowed_urls = Vec::with_capacity(phase_urls.len());
-        for url in &phase_urls {
-            match self.writer.is_blocked(url).await {
-                Ok(true) => info!(url, "Skipping blocked URL"),
-                _ => allowed_urls.push(url.clone()),
+        // Filter blocked URLs (single batch query instead of N sequential checks)
+        let blocked = self
+            .writer
+            .blocked_urls(&phase_urls)
+            .await
+            .unwrap_or_default();
+        if !blocked.is_empty() {
+            for url in &blocked {
+                info!(url, "Skipping blocked URL");
             }
         }
-        let phase_urls = allowed_urls;
+        let phase_urls: Vec<String> = phase_urls
+            .into_iter()
+            .filter(|u| !blocked.contains(u))
+            .collect();
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         if phase_urls.is_empty() {
@@ -417,7 +423,7 @@ impl<'a> ScrapePhase<'a> {
                 }
             }
         }))
-        .buffer_unordered(3)
+        .buffer_unordered(6)
         .collect()
         .await;
 
@@ -1317,6 +1323,40 @@ impl<'a> ScrapePhase<'a> {
             }
         };
 
+        // Pre-compute resource tag embeddings in a single batch API call
+        let mut res_embed_texts: Vec<String> = Vec::new();
+        let mut res_embed_keys: Vec<(Uuid, usize)> = Vec::new(); // (meta_id, tag_index)
+        for node in &nodes {
+            if let Some(meta) = node.meta() {
+                if let Some(tags) = resource_map.get(&meta.id) {
+                    for (i, tag) in tags.iter().enumerate() {
+                        if tag.confidence >= 0.3 {
+                            res_embed_texts.push(format!(
+                                "{}: {}",
+                                tag.slug,
+                                tag.context.as_deref().unwrap_or("")
+                            ));
+                            res_embed_keys.push((meta.id, i));
+                        }
+                    }
+                }
+            }
+        }
+        let res_embeddings: HashMap<(Uuid, usize), Vec<f32>> = if !res_embed_texts.is_empty() {
+            match self.embedder.embed_batch(res_embed_texts).await {
+                Ok(embeds) => res_embed_keys
+                    .into_iter()
+                    .zip(embeds)
+                    .collect(),
+                Err(e) => {
+                    warn!(error = %e, "Resource tag batch embedding failed (non-fatal)");
+                    HashMap::new()
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
         // --- Layer 3: Vector dedup (in-memory cache + graph) with URL-aware threshold ---
 
         for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
@@ -1536,16 +1576,11 @@ impl<'a> ScrapePhase<'a> {
             // Wire resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
             if let Some(meta) = node.meta() {
                 if let Some(tags) = resource_map.get(&meta.id) {
-                    for tag in tags.iter().filter(|t| t.confidence >= 0.3) {
+                    for (i, tag) in tags.iter().enumerate().filter(|(_, t)| t.confidence >= 0.3) {
                         let slug = rootsignal_common::slugify(&tag.slug);
-                        let embed_text =
-                            format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
-                        let res_embedding = match self.embedder.embed(&embed_text).await {
-                            Ok(e) => e,
-                            Err(e) => {
-                                warn!(error = %e, slug = slug.as_str(), "Resource embedding failed (non-fatal)");
-                                continue;
-                            }
+                        let res_embedding = match res_embeddings.get(&(meta.id, i)) {
+                            Some(e) => e.clone(),
+                            None => continue, // Embedding failed in batch, skip
                         };
                         let resource_id = match self
                             .writer
