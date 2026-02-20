@@ -3985,6 +3985,29 @@ impl GraphWriter {
         Ok(stats)
     }
 
+    /// Aggregate tags from a story's constituent signals.
+    /// Tags appearing on 2+ signals bubble up to the story.
+    /// Respects SUPPRESSED_TAG edges (admin-removed tags won't reappear).
+    pub async fn aggregate_story_tags(
+        &self,
+        story_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+
+        let q = query(
+            "MATCH (s:Story {id: $sid})-[:CONTAINS]->(sig)-[:TAGGED]->(t:Tag)
+             WITH s, t, count(sig) AS freq
+             WHERE freq >= 2
+               AND NOT (s)-[:SUPPRESSED_TAG]->(t)
+             MERGE (s)-[r:TAGGED]->(t)
+               ON CREATE SET r.assigned_at = datetime($now)",
+        )
+        .param("sid", story_id.to_string())
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
+
     /// Find-or-create Tag nodes by slug and wire TAGGED edges from a signal.
     /// Uses a single UNWIND query for the batch to minimise round-trips.
     pub async fn batch_tag_signals(

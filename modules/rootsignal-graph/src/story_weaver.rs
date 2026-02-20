@@ -186,6 +186,8 @@ impl StoryWeaver {
                         .await?;
                     stats.signals_linked += 1;
                 }
+                // Aggregate signal tags → story tags
+                self.writer.aggregate_story_tags(story_id).await?;
                 // Flag for re-synthesis
                 self.set_synthesis_pending(story_id).await?;
                 stats.stories_absorbed += 1;
@@ -273,6 +275,9 @@ impl StoryWeaver {
                 stats.signals_linked += 1;
             }
 
+            // Aggregate signal tags → story tags
+            self.writer.aggregate_story_tags(story_id).await?;
+
             // Flag synthesis_pending and needs_refinement
             self.set_synthesis_pending(story_id).await?;
             if needs_refinement {
@@ -313,6 +318,9 @@ impl StoryWeaver {
 
             // Refresh metadata
             self.refresh_story_metadata(growth.story_id).await?;
+
+            // Re-aggregate signal tags → story tags
+            self.writer.aggregate_story_tags(growth.story_id).await?;
 
             // Check for resurgence: was the story fading before this new activity?
             self.check_resurgence(growth.story_id).await?;
