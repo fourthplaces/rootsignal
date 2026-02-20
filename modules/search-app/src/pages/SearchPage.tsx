@@ -8,8 +8,10 @@ import { StoryCard } from "@/components/StoryCard";
 import { SignalDetail } from "@/components/SignalDetail";
 import { StoryDetail } from "@/components/StoryDetail";
 import { EmptyState } from "@/components/EmptyState";
+import { BottomSheet, type Snap } from "@/components/BottomSheet";
 import { useDebouncedBounds, type Bounds } from "@/hooks/useDebouncedBounds";
 import { useUrlState, type Tab } from "@/hooks/useUrlState";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   SIGNALS_IN_BOUNDS,
   STORIES_IN_BOUNDS,
@@ -35,6 +37,8 @@ export function SearchPage() {
   const [selectedId, setSelectedId] = useState<string | null>(url.id);
   const [selectedType, setSelectedType] = useState<"signal" | "story">("signal");
   const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number } | null>(null);
+  const [sheetSnap, setSheetSnap] = useState<Snap>("half");
+  const isDesktop = useMediaQuery("(min-width: 768px)");
 
   const parsed = useMemo(() => parseQuery(rawQuery), [rawQuery]);
   const hasTextQuery = parsed.text.length > 0;
@@ -186,6 +190,7 @@ export function SearchPage() {
       const id = signal.id as string;
       setSelectedId(id);
       setSelectedType("signal");
+      setSheetSnap("full");
       url.updateUrl({ id }, { replace: true });
 
       const loc = signal.location as { lat: number; lng: number } | null;
@@ -201,6 +206,7 @@ export function SearchPage() {
       const id = story.id as string;
       setSelectedId(id);
       setSelectedType("story");
+      setSheetSnap("full");
       url.updateUrl({ id }, { replace: true });
 
       const lat = story.centroidLat as number | undefined;
@@ -216,6 +222,7 @@ export function SearchPage() {
     (id: string, lng: number, lat: number) => {
       setSelectedId(id);
       setSelectedType(tab === "stories" ? "story" : "signal");
+      setSheetSnap("full");
       setFlyToTarget({ lng, lat });
       url.updateUrl({ id }, { replace: true });
     },
@@ -224,6 +231,7 @@ export function SearchPage() {
 
   const handleBack = useCallback(() => {
     setSelectedId(null);
+    setSheetSnap("half");
     url.updateUrl({ id: undefined }, { replace: true });
   }, [url]);
 
@@ -252,75 +260,95 @@ export function SearchPage() {
     url.lng != null && url.lat != null ? [url.lng, url.lat] : undefined;
   const initialZoom = url.z ?? undefined;
 
-  return (
-    <div className="flex h-screen">
-      {/* Left Pane */}
-      <aside className="flex w-[400px] min-w-[400px] flex-col border-r border-border">
-        <div className="p-3 border-b border-border">
-          <SearchInput
-            initialValue={rawQuery}
-            onSearch={handleSearch}
-            loading={loading}
-          />
-        </div>
+  const handleSearchFocus = useCallback(() => {
+    if (!isDesktop && sheetSnap === "peek") {
+      setSheetSnap("half");
+    }
+  }, [isDesktop, sheetSnap]);
 
-        <TabBar
-          activeTab={tab}
-          onTabChange={handleTabChange}
-          signalCount={tab === "signals" ? signals.length : undefined}
-          storyCount={tab === "stories" ? stories.length : undefined}
+  const sidebarContent = (
+    <>
+      <div className="p-3 border-b border-border">
+        <SearchInput
+          initialValue={rawQuery}
+          onSearch={handleSearch}
+          loading={loading}
+          onFocus={handleSearchFocus}
         />
+      </div>
 
-        {/* Content area: detail or list */}
-        <div className="flex-1 overflow-y-auto">
-          {selectedId ? (
-            selectedType === "signal" ? (
-              <SignalDetail signalId={selectedId} onBack={handleBack} />
-            ) : (
-              <StoryDetail storyId={selectedId} onBack={handleBack} />
-            )
-          ) : tab === "signals" ? (
-            signals.length === 0 && !loading ? (
-              <EmptyState hasQuery={hasTextQuery || hasTypeFilter} />
-            ) : (
-              signals.map((signal: Record<string, unknown>) => (
-                <SignalCard
-                  key={signal.id as string}
-                  signal={signal}
-                  score={
-                    hasTextQuery ? (signal._score as number | undefined) : undefined
-                  }
-                  isSelected={selectedId === signal.id}
-                  onClick={() => handleSignalSelect(signal)}
-                  onTypeClick={handleTypeClick}
-                />
-              ))
-            )
-          ) : stories.length === 0 && !loading ? (
-            <EmptyState hasQuery={hasTextQuery || hasTypeFilter || hasTagFilter} />
+      <TabBar
+        activeTab={tab}
+        onTabChange={handleTabChange}
+        signalCount={tab === "signals" ? signals.length : undefined}
+        storyCount={tab === "stories" ? stories.length : undefined}
+      />
+
+      {/* Content area: detail or list */}
+      <div className="flex-1 overflow-y-auto">
+        {selectedId ? (
+          selectedType === "signal" ? (
+            <SignalDetail signalId={selectedId} onBack={handleBack} />
           ) : (
-            stories.map((story: Record<string, unknown>) => (
-              <StoryCard
-                key={story.id as string}
-                story={story}
+            <StoryDetail storyId={selectedId} onBack={handleBack} />
+          )
+        ) : tab === "signals" ? (
+          signals.length === 0 && !loading ? (
+            <EmptyState hasQuery={hasTextQuery || hasTypeFilter} />
+          ) : (
+            signals.map((signal: Record<string, unknown>) => (
+              <SignalCard
+                key={signal.id as string}
+                signal={signal}
                 score={
-                  hasTextQuery ? (story._score as number | undefined) : undefined
+                  hasTextQuery ? (signal._score as number | undefined) : undefined
                 }
-                topMatchingSignalTitle={
-                  hasTextQuery
-                    ? (story._topMatch as string | undefined)
-                    : undefined
-                }
-                isSelected={selectedId === story.id}
-                onClick={() => handleStorySelect(story)}
-                onTagClick={handleTagClick}
+                isSelected={selectedId === signal.id}
+                onClick={() => handleSignalSelect(signal)}
+                onTypeClick={handleTypeClick}
               />
             ))
-          )}
-        </div>
+          )
+        ) : stories.length === 0 && !loading ? (
+          <EmptyState hasQuery={hasTextQuery || hasTypeFilter || hasTagFilter} />
+        ) : (
+          stories.map((story: Record<string, unknown>) => (
+            <StoryCard
+              key={story.id as string}
+              story={story}
+              score={
+                hasTextQuery ? (story._score as number | undefined) : undefined
+              }
+              topMatchingSignalTitle={
+                hasTextQuery
+                  ? (story._topMatch as string | undefined)
+                  : undefined
+              }
+              isSelected={selectedId === story.id}
+              onClick={() => handleStorySelect(story)}
+              onTagClick={handleTagClick}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex h-screen">
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-[400px] min-w-[400px] flex-col border-r border-border">
+        {sidebarContent}
       </aside>
 
-      {/* Right Pane: Map */}
+      {/* Mobile bottom sheet */}
+      {!isDesktop && (
+        <BottomSheet snap={sheetSnap} onSnapChange={setSheetSnap}>
+          {sidebarContent}
+        </BottomSheet>
+      )}
+
+      {/* Map */}
       <main className="flex-1">
         <MapView
           signals={mapSignals}

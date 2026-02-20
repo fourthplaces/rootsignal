@@ -43,9 +43,10 @@ interface SearchInputProps {
   initialValue: string;
   onSearch: (query: string) => void;
   loading?: boolean;
+  onFocus?: () => void;
 }
 
-export function SearchInput({ initialValue, onSearch, loading }: SearchInputProps) {
+export function SearchInput({ initialValue, onSearch, loading, onFocus }: SearchInputProps) {
   const [value, setValue] = useState(initialValue);
 
   const handleSubmit = useCallback(
@@ -67,6 +68,7 @@ export function SearchInput({ initialValue, onSearch, loading }: SearchInputProp
         type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        onFocus={onFocus}
         placeholder="Search signals and stories..."
         className="w-full rounded-lg border border-border bg-background px-4 py-2.5 pr-20 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
       />

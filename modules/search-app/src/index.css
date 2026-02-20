@@ -26,3 +26,7 @@ body {
   color: var(--color-foreground);
   overflow: hidden;
 }
+
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+}
