@@ -252,6 +252,7 @@ pub struct ResponseFinder<'a> {
     min_lng: f64,
     max_lng: f64,
     cancelled: Arc<AtomicBool>,
+    run_id: String,
 }
 
 impl<'a> ResponseFinder<'a> {
@@ -263,6 +264,7 @@ impl<'a> ResponseFinder<'a> {
         anthropic_api_key: &str,
         city: CityNode,
         cancelled: Arc<AtomicBool>,
+        run_id: String,
     ) -> Self {
         let lat_delta = city.radius_km / 111.0;
         let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
@@ -280,6 +282,7 @@ impl<'a> ResponseFinder<'a> {
             city,
             city_slug,
             cancelled,
+            run_id,
         }
     }
 
@@ -696,7 +699,7 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.writer.create_node(&node, &embedding).await?;
+        let node_id = self.writer.create_node(&node, &embedding, "response_finder", &self.run_id).await?;
 
         info!(
             node_id = %node_id,
@@ -843,7 +846,7 @@ impl<'a> ResponseFinder<'a> {
 
         let tension_id = self
             .writer
-            .create_node(&Node::Tension(tension_node), &embedding)
+            .create_node(&Node::Tension(tension_node), &embedding, "response_finder", &self.run_id)
             .await?;
 
         info!(

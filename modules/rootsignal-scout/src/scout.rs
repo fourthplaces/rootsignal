@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use rootsignal_common::{
     CityNode, DiscoveryMethod, SourceNode, SourceType,
@@ -220,6 +221,9 @@ impl Scout {
     }
 
     async fn run_inner(&self) -> Result<ScoutStats> {
+        let run_id = Uuid::new_v4().to_string();
+        info!(run_id = run_id.as_str(), "Scout run started");
+
         // ================================================================
         // 1. Reap expired signals
         // ================================================================
@@ -313,6 +317,7 @@ impl Scout {
             self.searcher.clone(),
             &*self.social,
             &self.city_node,
+            run_id.clone(),
         );
 
         // ================================================================
@@ -511,6 +516,7 @@ impl Scout {
                         &self.anthropic_api_key,
                         self.city_node.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let tl_stats = tension_linker.run().await;
                     info!("{tl_stats}");
@@ -529,6 +535,7 @@ impl Scout {
                         &self.anthropic_api_key,
                         self.city_node.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let rf_stats = response_finder.run().await;
                     info!("{rf_stats}");
@@ -547,6 +554,7 @@ impl Scout {
                         &self.anthropic_api_key,
                         self.city_node.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let gf_stats = gathering_finder.run().await;
                     info!("{gf_stats}");

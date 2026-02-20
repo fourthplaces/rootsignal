@@ -275,6 +275,7 @@ pub struct GatheringFinder<'a> {
     min_lng: f64,
     max_lng: f64,
     cancelled: Arc<AtomicBool>,
+    run_id: String,
 }
 
 impl<'a> GatheringFinder<'a> {
@@ -286,6 +287,7 @@ impl<'a> GatheringFinder<'a> {
         anthropic_api_key: &str,
         city: CityNode,
         cancelled: Arc<AtomicBool>,
+        run_id: String,
     ) -> Self {
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
@@ -310,6 +312,7 @@ impl<'a> GatheringFinder<'a> {
             city,
             city_slug,
             cancelled,
+            run_id,
         }
     }
 
@@ -686,7 +689,7 @@ impl<'a> GatheringFinder<'a> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.writer.create_node(&node, &embedding).await?;
+        let node_id = self.writer.create_node(&node, &embedding, "gathering_finder", &self.run_id).await?;
 
         info!(
             node_id = %node_id,

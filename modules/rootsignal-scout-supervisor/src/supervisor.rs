@@ -4,16 +4,12 @@ use tracing::{info, warn};
 use rootsignal_common::CityNode;
 use rootsignal_graph::GraphClient;
 
-use crate::budget::BudgetTracker;
-use crate::checks::{auto_fix, echo, llm, triage};
+use crate::checks::{auto_fix, batch_review, echo, report, triage};
 use crate::feedback::source_penalty;
 use crate::issues::IssueStore;
 use crate::notify::backend::NotifyBackend;
 use crate::state::SupervisorState;
 use crate::types::SupervisorStats;
-
-/// Default max LLM checks per run.
-const DEFAULT_MAX_LLM_CHECKS: u64 = 50;
 
 /// The scout supervisor: validates the graph and feeds back into scout behavior.
 pub struct Supervisor {
@@ -23,7 +19,6 @@ pub struct Supervisor {
     city: CityNode,
     anthropic_api_key: String,
     notifier: Box<dyn NotifyBackend>,
-    max_llm_checks: u64,
 }
 
 impl Supervisor {
@@ -42,7 +37,6 @@ impl Supervisor {
             city,
             anthropic_api_key,
             notifier,
-            max_llm_checks: DEFAULT_MAX_LLM_CHECKS,
         }
     }
 
@@ -86,46 +80,60 @@ impl Supervisor {
             auto_fix::run_auto_fixes(&self.client, self.city.center_lat, self.city.center_lng)
                 .await?;
 
-        // Phase 2: Heuristic triage (cheap graph queries, no LLM)
+        // Phase 2: Heuristic triage (cheap graph queries — pre-enrichment for batch review)
         let suspects = triage::triage_suspects(&self.client, &from, &to).await?;
-        stats.signals_checked = suspects.iter().filter(|s| s.label != "Story").count() as u64;
-        stats.stories_checked = suspects.iter().filter(|s| s.label == "Story").count() as u64;
 
-        // Phase 3: LLM flag checks on suspects (budget-capped)
-        let budget = BudgetTracker::new(self.max_llm_checks);
-        let mut llm_issues =
-            llm::check_suspects(suspects, &self.anthropic_api_key, &self.city.slug, &budget).await;
+        // Phase 3: Batch review gate (replaces old per-suspect LLM checks)
+        match batch_review::review_batch(
+            &self.client,
+            &self.anthropic_api_key,
+            &self.city,
+            &suspects,
+        )
+        .await
+        {
+            Ok(output) => {
+                stats.signals_reviewed = output.signals_reviewed;
+                stats.signals_passed = output.signals_passed;
+                stats.signals_rejected = output.signals_rejected;
 
-        // Set city on all issues (LLM module doesn't have city context)
-        for issue in &mut llm_issues {
-            issue.city = self.city.slug.clone();
-        }
-
-        // Phase 4: Persist issues and send notifications
-        for issue in &llm_issues {
-            match self.issues.create_if_new(issue).await {
-                Ok(true) => {
-                    stats.issues_created += 1;
-                    if let Err(e) = self.notifier.send(issue).await {
-                        warn!(error = %e, issue_type = %issue.issue_type, "Failed to send notification");
+                // Persist validation issues
+                for issue in &output.issues {
+                    match self.issues.create_if_new(issue).await {
+                        Ok(true) => {
+                            stats.issues_created += 1;
+                            if let Err(e) = self.notifier.send(issue).await {
+                                warn!(error = %e, issue_type = %issue.issue_type, "Failed to send notification");
+                            }
+                        }
+                        Ok(false) => {} // Duplicate
+                        Err(e) => warn!(error = %e, "Failed to persist ValidationIssue"),
                     }
                 }
-                Ok(false) => {
-                    // Duplicate — already open, skip notification
+
+                // Feedback loop: save report + create GitHub issue if rejections exist
+                if output.signals_rejected > 0 {
+                    match report::save_report(&self.city.slug, &output) {
+                        Ok(report_path) => {
+                            match report::create_github_issue(&self.city.slug, &output, &report_path) {
+                                Ok(Some(_url)) => {
+                                    stats.github_issue_created = true;
+                                }
+                                Ok(None) => {} // No analysis or gh unavailable
+                                Err(e) => warn!(error = %e, "Failed to create GitHub issue"),
+                            }
+                        }
+                        Err(e) => warn!(error = %e, "Failed to save supervisor report"),
+                    }
                 }
-                Err(e) => {
-                    warn!(error = %e, "Failed to persist ValidationIssue");
-                }
+            }
+            Err(e) => {
+                // Non-fatal: signals stay staged, reviewed on next run
+                warn!(error = %e, "Batch review failed, signals remain staged");
             }
         }
 
-        info!(
-            llm_budget_used = budget.used(),
-            llm_budget_remaining = budget.remaining(),
-            "LLM budget summary"
-        );
-
-        // Phase 5: Feedback — apply quality penalties to sources with open issues
+        // Phase 4: Feedback — apply quality penalties to sources with open issues
         if !self.state.is_scout_running().await? {
             match source_penalty::apply_source_penalties(&self.client).await {
                 Ok(penalty_stats) => {
@@ -147,7 +155,7 @@ impl Supervisor {
             info!("Scout is running, deferring feedback writes to next run");
         }
 
-        // Phase 6: Echo detection — score stories for single-source flooding
+        // Phase 5: Echo detection — score stories for single-source flooding
         match echo::detect_echoes(&self.client, 0.7).await {
             Ok(echo_stats) => {
                 stats.echoes_flagged = echo_stats.echoes_flagged;

@@ -23,13 +23,23 @@ impl GraphWriter {
     }
 
     /// Create a typed node in the graph. Returns the node's UUID.
-    pub async fn create_node(&self, node: &Node, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    ///
+    /// `created_by` identifies which scout module produced this signal (e.g. "scraper",
+    /// "tension_linker", "response_finder", "gathering_finder").
+    /// `scout_run_id` is the UUID for this scout run, used for provenance tracking.
+    pub async fn create_node(
+        &self,
+        node: &Node,
+        embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
+    ) -> Result<Uuid, neo4rs::Error> {
         match node {
-            Node::Gathering(n) => self.create_gathering(n, embedding).await,
-            Node::Aid(n) => self.create_aid(n, embedding).await,
-            Node::Need(n) => self.create_need(n, embedding).await,
-            Node::Notice(n) => self.create_notice(n, embedding).await,
-            Node::Tension(n) => self.create_tension(n, embedding).await,
+            Node::Gathering(n) => self.create_gathering(n, embedding, created_by, scout_run_id).await,
+            Node::Aid(n) => self.create_aid(n, embedding, created_by, scout_run_id).await,
+            Node::Need(n) => self.create_need(n, embedding, created_by, scout_run_id).await,
+            Node::Notice(n) => self.create_notice(n, embedding, created_by, scout_run_id).await,
+            Node::Tension(n) => self.create_tension(n, embedding, created_by, scout_run_id).await,
             Node::Evidence(_) => {
                 return Err(neo4rs::Error::UnsupportedVersion(
                     "Evidence nodes should use create_evidence() directly".to_string(),
@@ -38,7 +48,7 @@ impl GraphWriter {
         }
     }
 
-    async fn create_gathering(&self, n: &GatheringNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_gathering(&self, n: &GatheringNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (e:Gathering {
                 id: $id,
@@ -63,7 +73,10 @@ impl GraphWriter {
                 implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN e.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -99,7 +112,9 @@ impl GraphWriter {
         .param("organizer", n.organizer.clone().unwrap_or_default())
         .param("is_recurring", n.is_recurring)
         .param("implied_queries", n.meta.implied_queries.clone())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -108,7 +123,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_aid(&self, n: &AidNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_aid(&self, n: &AidNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (g:Aid {
                 id: $id,
@@ -131,7 +146,10 @@ impl GraphWriter {
                 implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN g.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -155,7 +173,9 @@ impl GraphWriter {
         .param("availability", n.availability.as_deref().unwrap_or(""))
         .param("is_ongoing", n.is_ongoing)
         .param("implied_queries", n.meta.implied_queries.clone())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -164,7 +184,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_need(&self, n: &NeedNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_need(&self, n: &NeedNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (n:Need {
                 id: $id,
@@ -187,7 +207,10 @@ impl GraphWriter {
                 goal: $goal,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN n.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -213,7 +236,9 @@ impl GraphWriter {
         .param("what_needed", n.what_needed.as_deref().unwrap_or(""))
         .param("action_url", n.action_url.clone().unwrap_or_default())
         .param("goal", n.goal.clone().unwrap_or_default())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -226,6 +251,8 @@ impl GraphWriter {
         &self,
         n: &NoticeNode,
         embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
     ) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (nc:Notice {
@@ -249,7 +276,10 @@ impl GraphWriter {
                 source_authority: $source_authority,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN nc.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -283,7 +313,9 @@ impl GraphWriter {
             "source_authority",
             n.source_authority.clone().unwrap_or_default(),
         )
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -296,6 +328,8 @@ impl GraphWriter {
         &self,
         n: &TensionNode,
         embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
     ) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (t:Tension {
@@ -318,7 +352,10 @@ impl GraphWriter {
                 what_would_help: $what_would_help,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN t.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -346,7 +383,9 @@ impl GraphWriter {
             "what_would_help",
             n.what_would_help.as_deref().unwrap_or(""),
         )
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -1059,7 +1098,8 @@ impl GraphWriter {
                 event_count: $event_count,
                 drawn_to_count: $drawn_to_count,
                 gap_score: $gap_score,
-                gap_velocity: $gap_velocity
+                gap_velocity: $gap_velocity,
+                review_status: 'staged'
             })",
         )
         .param("id", story.id.to_string())

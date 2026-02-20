@@ -480,6 +480,36 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Story metric indexes created");
 
+    // --- extracted_at indexes for supervisor time-window queries ---
+    let extracted_at_indexes = [
+        "CREATE INDEX gathering_extracted_at IF NOT EXISTS FOR (n:Gathering) ON (n.extracted_at)",
+        "CREATE INDEX aid_extracted_at IF NOT EXISTS FOR (n:Aid) ON (n.extracted_at)",
+        "CREATE INDEX need_extracted_at IF NOT EXISTS FOR (n:Need) ON (n.extracted_at)",
+        "CREATE INDEX notice_extracted_at IF NOT EXISTS FOR (n:Notice) ON (n.extracted_at)",
+        "CREATE INDEX tension_extracted_at IF NOT EXISTS FOR (n:Tension) ON (n.extracted_at)",
+    ];
+    for idx in &extracted_at_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Signal extracted_at indexes created");
+
+    // --- review_status indexes for quality gate (staged/live/rejected) ---
+    let review_status_indexes = [
+        "CREATE INDEX gathering_review_status IF NOT EXISTS FOR (n:Gathering) ON (n.review_status)",
+        "CREATE INDEX aid_review_status IF NOT EXISTS FOR (n:Aid) ON (n.review_status)",
+        "CREATE INDEX need_review_status IF NOT EXISTS FOR (n:Need) ON (n.review_status)",
+        "CREATE INDEX notice_review_status IF NOT EXISTS FOR (n:Notice) ON (n.review_status)",
+        "CREATE INDEX tension_review_status IF NOT EXISTS FOR (n:Tension) ON (n.review_status)",
+        "CREATE INDEX story_review_status IF NOT EXISTS FOR (n:Story) ON (n.review_status)",
+    ];
+    for idx in &review_status_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Review status indexes created");
+
+    // --- Backfill existing signals and stories as 'live' (already visible to users) ---
+    backfill_review_status(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -1245,5 +1275,34 @@ pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::
     }
 
     info!("Leiden story cleanup complete");
+    Ok(())
+}
+
+/// Backfill existing signals and stories with review_status = 'live'.
+/// Only sets the field on nodes where it is not already set (idempotent).
+async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling review_status on existing signals and stories...");
+
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.review_status IS NULL SET n.review_status = 'live' RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Backfilled review_status = 'live'");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "review_status backfill failed (non-fatal): {e}"),
+        }
+    }
+
+    info!("Review status backfill complete");
     Ok(())
 }

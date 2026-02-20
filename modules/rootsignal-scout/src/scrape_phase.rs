@@ -183,6 +183,7 @@ pub(crate) struct ScrapePhase<'a> {
     searcher: Arc<dyn WebSearcher>,
     social: &'a dyn SocialScraper,
     city_node: &'a CityNode,
+    run_id: String,
 }
 
 impl<'a> ScrapePhase<'a> {
@@ -194,6 +195,7 @@ impl<'a> ScrapePhase<'a> {
         searcher: Arc<dyn WebSearcher>,
         social: &'a dyn SocialScraper,
         city_node: &'a CityNode,
+        run_id: String,
     ) -> Self {
         Self {
             writer,
@@ -203,6 +205,7 @@ impl<'a> ScrapePhase<'a> {
             searcher,
             social,
             city_node,
+            run_id,
         }
     }
 
@@ -1460,7 +1463,7 @@ impl<'a> ScrapePhase<'a> {
             }
 
             // Create new node
-            let node_id = self.writer.create_node(&node, &embedding).await?;
+            let node_id = self.writer.create_node(&node, &embedding, "scraper", &self.run_id).await?;
 
             // Add to in-memory cache so subsequent batches can find it immediately
             ctx.embed_cache

@@ -57,7 +57,8 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     WHERE n.lat <> 0.0
+                     WHERE n.review_status = 'live'
+                       AND n.lat <> 0.0
                        AND n.lat >= $min_lat AND n.lat <= $max_lat
                        AND n.lng >= $min_lng AND n.lng <= $max_lng
                        AND n.confidence >= $min_confidence
@@ -160,7 +161,8 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     WHERE n.confidence >= $min_confidence
+                     WHERE n.review_status = 'live'
+                       AND n.confidence >= $min_confidence
                        {expiry}
                      RETURN n, labels(n)[0] AS node_label, coalesce(s.type_diversity, 0) AS story_triangulation
                      ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
@@ -219,8 +221,8 @@ impl PublicGraphReader {
         status_filter: Option<&str>,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let cypher = match status_filter {
-            Some(_) => "MATCH (s:Story) WHERE s.status = $status RETURN s ORDER BY s.energy DESC LIMIT $limit",
-            None => "MATCH (s:Story) RETURN s ORDER BY s.energy DESC LIMIT $limit",
+            Some(_) => "MATCH (s:Story) WHERE s.review_status = 'live' AND s.status = $status RETURN s ORDER BY s.energy DESC LIMIT $limit",
+            None => "MATCH (s:Story) WHERE s.review_status = 'live' RETURN s ORDER BY s.energy DESC LIMIT $limit",
         };
 
         let mut q = query(cypher).param("limit", limit as i64);
@@ -566,7 +568,7 @@ impl PublicGraphReader {
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Story) WHERE s.category = $category
+            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.category = $category
              RETURN s ORDER BY s.energy DESC LIMIT $limit",
         )
         .param("category", category)
@@ -589,7 +591,7 @@ impl PublicGraphReader {
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Story) WHERE s.arc = $arc
+            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.arc = $arc
              RETURN s ORDER BY s.energy DESC LIMIT $limit",
         )
         .param("arc", arc)
@@ -655,6 +657,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {id: $id})-[:ACTED_IN]->(n)<-[:CONTAINS]-(s:Story)
+             WHERE s.review_status = 'live'
              RETURN DISTINCT s
              ORDER BY s.energy DESC
              LIMIT $limit",
@@ -818,7 +821,8 @@ impl PublicGraphReader {
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.centroid_lat IS NOT NULL
+             WHERE s.review_status = 'live'
+               AND s.centroid_lat IS NOT NULL
                AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
                AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
                AND (s.arc IS NULL OR s.arc <> 'archived')
@@ -854,7 +858,8 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
-             WHERE t.lat IS NOT NULL
+             WHERE t.review_status = 'live'
+               AND t.lat IS NOT NULL
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND NOT (t)<-[:CONTAINS]-(:Story)
@@ -917,6 +922,7 @@ impl PublicGraphReader {
                         "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
+                           AND node.review_status = 'live'
                            AND node.lat <> 0.0
                            AND node.lat >= $min_lat AND node.lat <= $max_lat
                            AND node.lng >= $min_lng AND node.lng <= $max_lng
@@ -998,11 +1004,13 @@ impl PublicGraphReader {
                 "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                  YIELD node, score
                  WHERE score >= $min_score
+                   AND node.review_status = 'live'
                    AND node.lat <> 0.0
                    AND node.lat >= $min_lat AND node.lat <= $max_lat
                    AND node.lng >= $min_lng AND node.lng <= $max_lng
                  WITH node, score
                  MATCH (s:Story)-[:CONTAINS]->(node)
+                 WHERE s.review_status = 'live'
                  RETURN s.id AS story_id, score, node.title AS signal_title";
 
             let q = query(cypher)
@@ -1039,7 +1047,7 @@ impl PublicGraphReader {
         let story_ids: Vec<String> = story_scores.keys().map(|id| id.to_string()).collect();
         let q = query(
             "MATCH (s:Story)
-             WHERE s.id IN $ids
+             WHERE s.review_status = 'live' AND s.id IN $ids
              RETURN s",
         )
         .param("ids", story_ids);
@@ -1189,7 +1197,8 @@ impl PublicGraphReader {
     pub async fn story_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.last_updated >= datetime() - duration('P30D')
+             WHERE s.review_status = 'live'
+               AND s.last_updated >= datetime() - duration('P30D')
              RETURN coalesce(s.arc, 'unknown') AS arc, count(s) AS cnt
              ORDER BY cnt DESC",
         );
@@ -1208,7 +1217,8 @@ impl PublicGraphReader {
     pub async fn story_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.last_updated >= datetime() - duration('P30D')
+             WHERE s.review_status = 'live'
+               AND s.last_updated >= datetime() - duration('P30D')
              RETURN coalesce(s.category, 'uncategorized') AS category, count(s) AS cnt
              ORDER BY cnt DESC",
         );
@@ -1225,7 +1235,7 @@ impl PublicGraphReader {
 
     /// Total story count.
     pub async fn story_count(&self) -> Result<u64, neo4rs::Error> {
-        let q = query("MATCH (s:Story) RETURN count(s) AS cnt");
+        let q = query("MATCH (s:Story) WHERE s.review_status = 'live' RETURN count(s) AS cnt");
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
@@ -1249,7 +1259,7 @@ impl PublicGraphReader {
 
     /// Get a single story by ID (without signals).
     pub async fn get_story_by_id(&self, id: Uuid) -> Result<Option<StoryNode>, neo4rs::Error> {
-        let q = query("MATCH (s:Story {id: $id}) RETURN s").param("id", id.to_string());
+        let q = query("MATCH (s:Story {id: $id}) WHERE s.review_status = 'live' RETURN s").param("id", id.to_string());
         let mut stream = self.client.graph.execute(q).await?;
         match stream.next().await? {
             Some(row) => Ok(row_to_story(&row)),
@@ -1334,7 +1344,7 @@ impl PublicGraphReader {
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         let cypher = "MATCH (s:Story)-[:CONTAINS]->(n)
-             WHERE n.id IN $ids
+             WHERE s.review_status = 'live' AND n.id IN $ids
              RETURN n.id AS signal_id, s";
 
         let q = query(cypher).param("ids", id_strs);
