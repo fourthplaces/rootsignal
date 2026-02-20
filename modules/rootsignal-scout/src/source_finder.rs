@@ -1132,7 +1132,7 @@ mod tests {
             signal_counts: SignalTypeCounts {
                 gatherings: 23,
                 aids: 8,
-                asks: 15,
+                needs: 15,
                 notices: 12,
                 tensions: 31,
             },
@@ -1503,7 +1503,7 @@ mod tests {
             signal_counts: SignalTypeCounts {
                 gatherings: 10,
                 aids: 3,
-                asks: 12,
+                needs: 12,
                 notices: 8,
                 tensions: 31,
             },
@@ -1517,7 +1517,7 @@ mod tests {
         };
         let prompt = briefing.format_prompt();
         assert!(
-            prompt.contains("Give signals significantly underrepresented"),
+            prompt.contains("Aid signals significantly underrepresented"),
             "Missing imbalance annotation. Prompt:\n{prompt}"
         );
     }
