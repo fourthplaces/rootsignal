@@ -725,6 +725,9 @@ impl Scout {
                     let response_mapper = rootsignal_graph::response::ResponseMapper::new(
                         self.graph_client.clone(),
                         &self.anthropic_api_key,
+                        self.city_node.center_lat,
+                        self.city_node.center_lng,
+                        self.city_node.radius_km,
                     );
                     match response_mapper.map_responses().await {
                         Ok(rm_stats) => info!("{rm_stats}"),
@@ -821,8 +824,13 @@ impl Scout {
         // Runs after the parallel group because it reads RESPONDS_TO and
         // DRAWN_TO edges that the finders create.
         info!("Starting story weaving...");
-        let weaver =
-            rootsignal_graph::StoryWeaver::new(self.graph_client.clone(), &self.anthropic_api_key);
+        let weaver = rootsignal_graph::StoryWeaver::new(
+            self.graph_client.clone(),
+            &self.anthropic_api_key,
+            self.city_node.center_lat,
+            self.city_node.center_lng,
+            self.city_node.radius_km,
+        );
         let has_weave_budget = self
             .budget
             .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);

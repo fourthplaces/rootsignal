@@ -338,6 +338,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Deactivate orphaned web query sources ---
     deactivate_orphaned_web_queries(client).await?;
 
+    // --- Clean up off-geography signals and cross-geo edges ---
+    cleanup_off_geo_signals(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
@@ -869,5 +872,100 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
     }
 
     info!("Orphaned web query deactivation complete");
+    Ok(())
+}
+
+/// Delete off-geography signals that contaminate Twin Cities data.
+/// Uses a generous bbox (~43.0-46.5 lat, -95.5 to -91.0 lng) covering the metro area.
+/// Also removes cross-geography RESPONDS_TO/DRAWN_TO edges and archives orphaned stories.
+/// Idempotent — WHERE clauses match nothing after cleanup.
+pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Cleaning up off-geography signals...");
+
+    // Step 1: Delete off-geo non-tension signals
+    let delete_signals = query(
+        "MATCH (n)
+         WHERE (n:Event OR n:Give OR n:Ask OR n:Notice)
+           AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
+         DETACH DELETE n
+         RETURN count(n) AS deleted",
+    );
+
+    match g.execute(delete_signals).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted off-geo signals (Event/Give/Ask/Notice)");
+                }
+            }
+        }
+        Err(e) => warn!("Off-geo signal cleanup failed (non-fatal): {e}"),
+    }
+
+    // Step 2: Delete off-geo tensions that are NOT in stories
+    let delete_tensions = query(
+        "MATCH (n:Tension)
+         WHERE (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
+           AND NOT (n)<-[:CONTAINS]-(:Story)
+         DETACH DELETE n
+         RETURN count(n) AS deleted",
+    );
+
+    match g.execute(delete_tensions).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted off-geo tensions (not in stories)");
+                }
+            }
+        }
+        Err(e) => warn!("Off-geo tension cleanup failed (non-fatal): {e}"),
+    }
+
+    // Step 3: Delete cross-geography edges (signal and tension >1 degree apart)
+    let delete_cross_geo_edges = query(
+        "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+         WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
+         DELETE r
+         RETURN count(r) AS deleted",
+    );
+
+    match g.execute(delete_cross_geo_edges).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let deleted: i64 = row.get("deleted").unwrap_or(0);
+                if deleted > 0 {
+                    info!(deleted, "Deleted cross-geography edges");
+                }
+            }
+        }
+        Err(e) => warn!("Cross-geo edge cleanup failed (non-fatal): {e}"),
+    }
+
+    // Step 4: Archive orphaned stories (lost all non-tension signals)
+    let archive_orphans = query(
+        "MATCH (s:Story)
+         WHERE NOT (s)-[:CONTAINS]->(:Event OR :Give OR :Ask OR :Notice)
+         SET s.arc = 'archived'
+         RETURN count(s) AS archived",
+    );
+
+    match g.execute(archive_orphans).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let archived: i64 = row.get("archived").unwrap_or(0);
+                if archived > 0 {
+                    info!(archived, "Archived orphaned stories");
+                }
+            }
+        }
+        Err(e) => warn!("Orphaned story archival failed (non-fatal): {e}"),
+    }
+
+    info!("Off-geography cleanup complete");
     Ok(())
 }

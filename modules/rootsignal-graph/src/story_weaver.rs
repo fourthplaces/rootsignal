@@ -43,6 +43,10 @@ pub struct StoryWeaver {
     client: GraphClient,
     writer: GraphWriter,
     anthropic_api_key: String,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
 }
 
 /// Stats from a StoryWeaver run.
@@ -73,11 +77,23 @@ impl std::fmt::Display for StoryWeaverStats {
 }
 
 impl StoryWeaver {
-    pub fn new(client: GraphClient, anthropic_api_key: &str) -> Self {
+    pub fn new(
+        client: GraphClient,
+        anthropic_api_key: &str,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+    ) -> Self {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         Self {
             writer: GraphWriter::new(client.clone()),
             client,
             anthropic_api_key: anthropic_api_key.to_string(),
+            min_lat: center_lat - lat_delta,
+            max_lat: center_lat + lat_delta,
+            min_lng: center_lng - lng_delta,
+            max_lng: center_lng + lng_delta,
         }
     }
 
@@ -118,7 +134,10 @@ impl StoryWeaver {
 
     /// Phase A: Materialize — create Story nodes from tension hubs with 2+ respondents.
     async fn phase_materialize(&self, stats: &mut StoryWeaverStats) -> Result<(), neo4rs::Error> {
-        let hubs = self.writer.find_tension_hubs(10).await?;
+        let hubs = self
+            .writer
+            .find_tension_hubs(10, self.min_lat, self.max_lat, self.min_lng, self.max_lng)
+            .await?;
         if hubs.is_empty() {
             return Ok(());
         }
@@ -274,7 +293,10 @@ impl StoryWeaver {
 
     /// Phase B: Grow — add new respondent signals to existing stories.
     async fn phase_grow(&self, stats: &mut StoryWeaverStats) -> Result<(), neo4rs::Error> {
-        let growths = self.writer.find_story_growth(20).await?;
+        let growths = self
+            .writer
+            .find_story_growth(20, self.min_lat, self.max_lat, self.min_lng, self.max_lng)
+            .await?;
         if growths.is_empty() {
             return Ok(());
         }

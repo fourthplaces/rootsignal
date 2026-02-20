@@ -2351,12 +2351,24 @@ impl GraphWriter {
     }
 
     /// Get active tensions for response mapping.
-    pub async fn get_active_tensions(&self) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
+    pub async fn get_active_tensions(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
              RETURN t.id AS id, t.embedding AS embedding",
-        );
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2631,10 +2643,19 @@ impl GraphWriter {
 
     /// Find tension hubs ready to materialize as stories: tensions with 2+ responding
     /// signals that aren't already contained in any Story.
-    pub async fn find_tension_hubs(&self, limit: u32) -> Result<Vec<TensionHub>, neo4rs::Error> {
+    pub async fn find_tension_hubs(
+        &self,
+        limit: u32,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<TensionHub>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (t)<-[:CONTAINS]-(:Story)
+               AND sig.lat >= $min_lat AND sig.lat <= $max_lat
+               AND sig.lng >= $min_lng AND sig.lng <= $max_lng
              WITH t, collect({
                  sig_id: sig.id,
                  source_url: sig.source_url,
@@ -2650,7 +2671,11 @@ impl GraphWriter {
              ORDER BY size(respondents) DESC
              LIMIT $limit",
         )
-        .param("limit", limit as i64);
+        .param("limit", limit as i64)
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut hubs = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2698,11 +2723,20 @@ impl GraphWriter {
     }
 
     /// Find existing stories that have new responding signals not yet linked via CONTAINS.
-    pub async fn find_story_growth(&self, limit: u32) -> Result<Vec<StoryGrowth>, neo4rs::Error> {
+    pub async fn find_story_growth(
+        &self,
+        limit: u32,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<StoryGrowth>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)<-[:CONTAINS]-(story:Story)
              MATCH (t)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (story)-[:CONTAINS]->(sig)
+               AND sig.lat >= $min_lat AND sig.lat <= $max_lat
+               AND sig.lng >= $min_lng AND sig.lng <= $max_lng
              WITH story, t, collect({
                  sig_id: sig.id,
                  source_url: sig.source_url,
@@ -2715,7 +2749,11 @@ impl GraphWriter {
              RETURN story.id AS story_id, t.id AS tension_id, new_respondents
              LIMIT $limit",
         )
-        .param("limit", limit as i64);
+        .param("limit", limit as i64)
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;

@@ -684,7 +684,18 @@ impl<'a> GatheringFinder<'a> {
         explanation: &str,
         gathering_type: &str,
     ) -> Result<()> {
-        let active_tensions = self.writer.get_active_tensions().await?;
+        let lat_delta = self.city.radius_km / 111.0;
+        let lng_delta =
+            self.city.radius_km / (111.0 * self.city.center_lat.to_radians().cos());
+        let active_tensions = self
+            .writer
+            .get_active_tensions(
+                self.city.center_lat - lat_delta,
+                self.city.center_lat + lat_delta,
+                self.city.center_lng - lng_delta,
+                self.city.center_lng + lng_delta,
+            )
+            .await?;
         if active_tensions.is_empty() {
             return Ok(());
         }

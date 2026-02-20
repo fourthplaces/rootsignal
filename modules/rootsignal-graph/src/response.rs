@@ -10,14 +10,30 @@ pub struct ResponseMapper {
     client: GraphClient,
     writer: GraphWriter,
     anthropic_api_key: String,
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
 }
 
 impl ResponseMapper {
-    pub fn new(client: GraphClient, anthropic_api_key: &str) -> Self {
+    pub fn new(
+        client: GraphClient,
+        anthropic_api_key: &str,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+    ) -> Self {
+        let lat_delta = radius_km / 111.0;
+        let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         Self {
             writer: GraphWriter::new(client.clone()),
             client,
             anthropic_api_key: anthropic_api_key.to_string(),
+            min_lat: center_lat - lat_delta,
+            max_lat: center_lat + lat_delta,
+            min_lng: center_lng - lng_delta,
+            max_lng: center_lng + lng_delta,
         }
     }
 
@@ -29,7 +45,10 @@ impl ResponseMapper {
         let mut stats = ResponseMappingStats::default();
 
         // Get active tensions with embeddings
-        let tensions = self.writer.get_active_tensions().await?;
+        let tensions = self
+            .writer
+            .get_active_tensions(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
+            .await?;
         if tensions.is_empty() {
             info!("No active tensions for response mapping");
             return Ok(stats);
@@ -104,13 +123,21 @@ impl ResponseMapper {
 
         for index in &["give_embedding", "event_embedding", "ask_embedding"] {
             let q = query(&format!(
-                "CALL db.index.vector.queryNodes('{}', 5, $embedding)
+                "CALL db.index.vector.queryNodes('{}', 20, $embedding)
                  YIELD node, score AS similarity
                  WHERE similarity >= 0.4
-                 RETURN node.id AS id, similarity",
+                   AND node.lat >= $min_lat AND node.lat <= $max_lat
+                   AND node.lng >= $min_lng AND node.lng <= $max_lng
+                 RETURN node.id AS id, similarity
+                 ORDER BY similarity DESC
+                 LIMIT 5",
                 index
             ))
-            .param("embedding", tension_embedding.to_vec());
+            .param("embedding", tension_embedding.to_vec())
+            .param("min_lat", self.min_lat)
+            .param("max_lat", self.max_lat)
+            .param("min_lng", self.min_lng)
+            .param("max_lng", self.max_lng);
 
             let mut stream = self.client.graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
