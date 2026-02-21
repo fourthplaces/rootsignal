@@ -306,21 +306,16 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     .await?;
     info!("Edge indexes created");
 
-    // --- City node constraints and indexes ---
-    let city_constraints = [
-        "CREATE CONSTRAINT city_id_unique IF NOT EXISTS FOR (c:City) REQUIRE c.id IS UNIQUE",
-        "CREATE CONSTRAINT city_slug_unique IF NOT EXISTS FOR (c:City) REQUIRE c.slug IS UNIQUE",
+    // --- ScoutTask node constraints and indexes ---
+    let scout_task_schema = [
+        "CREATE CONSTRAINT scouttask_id IF NOT EXISTS FOR (t:ScoutTask) REQUIRE t.id IS UNIQUE",
+        "CREATE INDEX scouttask_status IF NOT EXISTS FOR (t:ScoutTask) ON (t.status)",
+        "CREATE INDEX scouttask_priority IF NOT EXISTS FOR (t:ScoutTask) ON (t.priority)",
     ];
-
-    for c in &city_constraints {
-        g.run(query(c)).await?;
+    for s in &scout_task_schema {
+        g.run(query(s)).await?;
     }
-
-    g.run(query(
-        "CREATE INDEX city_active IF NOT EXISTS FOR (c:City) ON (c.active)",
-    ))
-    .await?;
-    info!("City constraints and indexes created");
+    info!("ScoutTask constraints and indexes created");
 
     // --- Source node constraints and indexes ---
     let source_constraints = [
@@ -461,11 +456,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Deactivate orphaned web query sources ---
     deactivate_orphaned_web_queries(client).await?;
 
-    // --- Clean up off-geography signals and cross-geo edges ---
-    cleanup_off_geo_signals(client).await?;
-
-    // --- Deactivate duplicate city nodes ---
-    deactivate_duplicate_cities(client).await?;
+    // NOTE: cleanup_off_geo_signals and deactivate_duplicate_cities removed
+    // as part of RegionNode deletion (demand-driven scout swarm).
 
     // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
     cleanup_leiden_stories(client).await?;
@@ -519,8 +511,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         Err(e) => warn!("Drop source_type index failed (non-fatal): {e}"),
     }
 
-    // --- Region decoupling: move Source.city and Actor.city to relationships ---
-    migrate_region_relationships(client).await?;
+    // NOTE: migrate_region_relationships removed as part of RegionNode deletion.
 
     // --- Channel diversity backfill and indexes ---
     backfill_channel_diversity(client).await?;
@@ -574,150 +565,6 @@ async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::
     Ok(())
 }
 
-/// Migrate Source.city → :SCOUTS relationship and Actor.city → :DISCOVERED relationship.
-/// Strips city prefix from Source.canonical_key. Idempotent.
-async fn migrate_region_relationships(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
-
-    // Step 1: Create SCOUTS relationships from Source.city property
-    let scouts_q = query(
-        "MATCH (s:Source)
-         WHERE s.city IS NOT NULL
-         WITH s
-         MATCH (c:City {slug: s.city})
-         MERGE (c)-[:SCOUTS]->(s)
-         RETURN count(s) AS linked",
-    );
-    match g.execute(scouts_q).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let linked: i64 = row.get("linked").unwrap_or(0);
-                if linked > 0 {
-                    info!(linked, "Created :SCOUTS relationships from Source.city");
-                }
-            }
-        }
-        Err(e) => warn!("SCOUTS relationship migration failed: {e}"),
-    }
-
-    // Step 2: Create DISCOVERED relationships from Actor.city property
-    let discovered_q = query(
-        "MATCH (a:Actor)
-         WHERE a.city IS NOT NULL
-         WITH a
-         MATCH (c:City {slug: a.city})
-         MERGE (c)-[:DISCOVERED]->(a)
-         RETURN count(a) AS linked",
-    );
-    match g.execute(discovered_q).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let linked: i64 = row.get("linked").unwrap_or(0);
-                if linked > 0 {
-                    info!(linked, "Created :DISCOVERED relationships from Actor.city");
-                }
-            }
-        }
-        Err(e) => warn!("DISCOVERED relationship migration failed: {e}"),
-    }
-
-    // Step 3: Strip city prefix from Source.canonical_key (e.g. "twincities:example.com" → "example.com")
-    let strip_q = query(
-        "MATCH (s:Source)
-         WHERE s.canonical_key CONTAINS ':'
-           AND NOT s.canonical_key STARTS WITH 'http'
-         WITH s, substring(s.canonical_key, size(split(s.canonical_key, ':')[0]) + 1) AS new_key
-         SET s.canonical_key = new_key
-         RETURN count(s) AS updated",
-    );
-    match g.execute(strip_q).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let updated: i64 = row.get("updated").unwrap_or(0);
-                if updated > 0 {
-                    info!(updated, "Stripped city prefix from Source.canonical_key");
-                }
-            }
-        }
-        Err(e) => warn!("canonical_key prefix strip failed: {e}"),
-    }
-
-    // Step 4: Remove city property ONLY from nodes that have a relationship (safe guard).
-    // Sources with :SCOUTS relationship
-    let remove_source_city = query(
-        "MATCH (:City)-[:SCOUTS]->(s:Source)
-         WHERE s.city IS NOT NULL
-         REMOVE s.city
-         RETURN count(s) AS cleaned",
-    );
-    match g.execute(remove_source_city).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let cleaned: i64 = row.get("cleaned").unwrap_or(0);
-                if cleaned > 0 {
-                    info!(cleaned, "Removed Source.city property (with :SCOUTS relationship)");
-                }
-            }
-        }
-        Err(e) => warn!("Source.city removal failed: {e}"),
-    }
-
-    // Actors with :DISCOVERED relationship
-    let remove_actor_city = query(
-        "MATCH (:City)-[:DISCOVERED]->(a:Actor)
-         WHERE a.city IS NOT NULL
-         REMOVE a.city
-         RETURN count(a) AS cleaned",
-    );
-    match g.execute(remove_actor_city).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let cleaned: i64 = row.get("cleaned").unwrap_or(0);
-                if cleaned > 0 {
-                    info!(cleaned, "Removed Actor.city property (with :DISCOVERED relationship)");
-                }
-            }
-        }
-        Err(e) => warn!("Actor.city removal failed: {e}"),
-    }
-
-    // Warn about orphans: nodes with city property but no relationship
-    let orphan_sources = query(
-        "MATCH (s:Source)
-         WHERE s.city IS NOT NULL AND NOT (:City)-[:SCOUTS]->(s)
-         RETURN count(s) AS orphaned",
-    );
-    match g.execute(orphan_sources).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let orphaned: i64 = row.get("orphaned").unwrap_or(0);
-                if orphaned > 0 {
-                    warn!(orphaned, "Sources have city property but no :SCOUTS relationship — city property preserved");
-                }
-            }
-        }
-        Err(e) => warn!("Orphan source check failed: {e}"),
-    }
-
-    let orphan_actors = query(
-        "MATCH (a:Actor)
-         WHERE a.city IS NOT NULL AND NOT (:City)-[:DISCOVERED]->(a)
-         RETURN count(a) AS orphaned",
-    );
-    match g.execute(orphan_actors).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let orphaned: i64 = row.get("orphaned").unwrap_or(0);
-                if orphaned > 0 {
-                    warn!(orphaned, "Actors have city property but no :DISCOVERED relationship — city property preserved");
-                }
-            }
-        }
-        Err(e) => warn!("Orphan actor check failed: {e}"),
-    }
-
-    Ok(())
-}
 
 /// Reclassify Source nodes that were stored as "web" but are actually query sources
 /// (Eventbrite, VolunteerMatch, GoFundMe listing pages). Updates both source_type
@@ -1249,210 +1096,7 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
     Ok(())
 }
 
-/// Delete off-geography signals that contaminate Twin Cities data.
-pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
 
-    info!("Cleaning up off-geography signals...");
-
-    let delete_signals = query(
-        "MATCH (n)
-         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice)
-           AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
-         DETACH DELETE n
-         RETURN count(n) AS deleted",
-    );
-
-    match g.execute(delete_signals).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted off-geo signals (Gathering/Aid/Need/Notice)");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo signal cleanup failed (non-fatal): {e}"),
-    }
-
-    let unlink_tensions = query(
-        "MATCH (s:Story)-[r:CONTAINS]->(t:Tension)
-         WHERE t.lat < 43.0 OR t.lat > 46.5 OR t.lng < -95.5 OR t.lng > -91.0
-         DELETE r
-         RETURN count(r) AS unlinked",
-    );
-
-    match g.execute(unlink_tensions).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let unlinked: i64 = row.get("unlinked").unwrap_or(0);
-                if unlinked > 0 {
-                    info!(unlinked, "Unlinked off-geo tensions from stories");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo tension unlinking failed (non-fatal): {e}"),
-    }
-
-    let delete_tensions = query(
-        "MATCH (n:Tension)
-         WHERE n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0
-         DETACH DELETE n
-         RETURN count(n) AS deleted",
-    );
-
-    match g.execute(delete_tensions).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted off-geo tensions");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo tension cleanup failed (non-fatal): {e}"),
-    }
-
-    let delete_cross_geo_edges = query(
-        "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
-         WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
-         DELETE r
-         RETURN count(r) AS deleted",
-    );
-
-    match g.execute(delete_cross_geo_edges).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted cross-geography edges");
-                }
-            }
-        }
-        Err(e) => warn!("Cross-geo edge cleanup failed (non-fatal): {e}"),
-    }
-
-    let archive_orphans = query(
-        "MATCH (s:Story)
-         WHERE NOT (s)-[:CONTAINS]->(:Gathering)
-           AND NOT (s)-[:CONTAINS]->(:Aid)
-           AND NOT (s)-[:CONTAINS]->(:Need)
-           AND NOT (s)-[:CONTAINS]->(:Notice)
-         SET s.arc = 'archived'
-         RETURN count(s) AS archived",
-    );
-
-    match g.execute(archive_orphans).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let archived: i64 = row.get("archived").unwrap_or(0);
-                if archived > 0 {
-                    info!(archived, "Archived orphaned stories");
-                }
-            }
-        }
-        Err(e) => warn!("Orphaned story archival failed (non-fatal): {e}"),
-    }
-
-    info!("Off-geography cleanup complete");
-    Ok(())
-}
-
-/// Deactivate duplicate City nodes and reassign their sources to the canonical city.
-pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
-
-    info!("Deactivating duplicate city nodes...");
-
-    let reactivate = query(
-        "MATCH (c:City {active: false})
-         SET c.active = true
-         RETURN count(c) AS reactivated",
-    );
-    match g.execute(reactivate).await {
-        Ok(mut stream) => {
-            if let Ok(Some(row)) = stream.next().await {
-                let reactivated: i64 = row.get("reactivated").unwrap_or(0);
-                if reactivated > 0 {
-                    info!(reactivated, "Re-activated cities for dedup evaluation");
-                }
-            }
-        }
-        Err(e) => warn!("City reactivation failed (non-fatal): {e}"),
-    }
-
-    let q = query(
-        "MATCH (a:City {active: true}), (b:City {active: true})
-         WHERE a.slug < b.slug
-           AND (
-             (abs(a.center_lat - b.center_lat) < 0.05 AND abs(a.center_lng - b.center_lng) < 0.05)
-             OR toLower(a.name) CONTAINS toLower(b.name)
-             OR toLower(b.name) CONTAINS toLower(a.name)
-           )
-         WITH a, b
-         OPTIONAL MATCH (a)-[:SCOUTS]->(sa:Source {active: true})
-         WITH a, b, count(sa) AS a_sources
-         OPTIONAL MATCH (b)-[:SCOUTS]->(sb:Source {active: true})
-         WITH a, b, a_sources, count(sb) AS b_sources
-         WITH CASE WHEN a_sources >= b_sources THEN a ELSE b END AS keeper,
-              CASE WHEN a_sources >= b_sources THEN b ELSE a END AS loser
-         RETURN keeper.slug AS keeper_slug, loser.slug AS loser_slug",
-    );
-
-    match g.execute(q).await {
-        Ok(mut stream) => {
-            let mut pairs = Vec::new();
-            while let Ok(Some(row)) = stream.next().await {
-                let keeper: String = row.get("keeper_slug").unwrap_or_default();
-                let loser: String = row.get("loser_slug").unwrap_or_default();
-                if !keeper.is_empty() && !loser.is_empty() {
-                    pairs.push((keeper, loser));
-                }
-            }
-
-            for (keeper, loser) in &pairs {
-                let reassign = query(
-                    "MATCH (s:Source) WHERE s.city = $loser
-                     SET s.city = $keeper
-                     RETURN count(s) AS reassigned",
-                )
-                .param("loser", loser.as_str())
-                .param("keeper", keeper.as_str());
-
-                match g.execute(reassign).await {
-                    Ok(mut s) => {
-                        if let Ok(Some(row)) = s.next().await {
-                            let reassigned: i64 = row.get("reassigned").unwrap_or(0);
-                            if reassigned > 0 {
-                                info!(
-                                    reassigned,
-                                    from = loser.as_str(),
-                                    to = keeper.as_str(),
-                                    "Reassigned sources to canonical city"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => warn!(loser, keeper, "Source reassignment failed (non-fatal): {e}"),
-                }
-
-                let deactivate = query(
-                    "MATCH (c:City {slug: $slug}) SET c.active = false",
-                )
-                .param("slug", loser.as_str());
-
-                match g.run(deactivate).await {
-                    Ok(_) => info!(slug = loser.as_str(), "Deactivated duplicate city"),
-                    Err(e) => warn!(slug = loser.as_str(), "City deactivation failed (non-fatal): {e}"),
-                }
-            }
-        }
-        Err(e) => warn!("Duplicate city detection failed (non-fatal): {e}"),
-    }
-
-    info!("Duplicate city cleanup complete");
-    Ok(())
-}
 
 /// Delete stories created by Leiden clustering that don't contain a Tension node.
 pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::Error> {
