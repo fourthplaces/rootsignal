@@ -9,21 +9,21 @@ pub mod sim_adapter;
 
 use std::sync::Arc;
 
+use rootsignal_archive::FetchBackend;
 use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::{self, Extractor};
 use rootsignal_scout::fixtures::{
-    CorpusSearcher, FixtureScraper, FixtureSearcher, FixtureSocialScraper, LayeredSearcher,
-    ScenarioSearcher, ScenarioSocialScraper,
+    CorpusSearcher, LayeredSearcher, MockArchive, ScenarioSearcher, ScenarioSocialScraper,
 };
 use rootsignal_scout::scout::{Scout, ScoutStats};
-use rootsignal_scout::scraper::{SearchResult, SocialPost, SocialScraper, WebSearcher};
+use rootsignal_scout::scraper::{SearchResult, SocialPost, WebSearcher, SocialScraper};
 use rootsignal_scout::sources;
 use simweb::{SimulatedWeb, World};
 
-use sim_adapter::{SimPageAdapter, SimSearchAdapter, SimSocialAdapter};
+use sim_adapter::SimArchive;
 
 /// Default test city node (Twin Cities).
 fn default_city_node() -> CityNode {
@@ -105,13 +105,12 @@ impl TestContext {
         genome: &simweb::ScoutGenome,
     ) -> Scout {
         let prompt = genome.render_extractor_prompt(&city_node.name);
-        Scout::with_deps(
+        let archive: Arc<dyn FetchBackend> = Arc::new(SimArchive::new(sim));
+        Scout::new_for_test(
             self.client.clone(),
             Box::new(Extractor::with_system_prompt(&self.anthropic_key, prompt)),
             Box::new(Embedder::new(&self.voyage_key)),
-            Arc::new(SimPageAdapter::new(sim.clone())),
-            Arc::new(SimSearchAdapter::new(sim.clone())),
-            Arc::new(SimSocialAdapter::new(sim)),
+            archive,
             &self.anthropic_key,
             city_node,
         )
@@ -119,7 +118,8 @@ impl TestContext {
 
     /// Create a Scout wired to a SimulatedWeb for fuzzy integration tests.
     pub fn sim_scout(&self, sim: Arc<SimulatedWeb>, city_node: CityNode) -> Scout {
-        Scout::with_deps(
+        let archive: Arc<dyn FetchBackend> = Arc::new(SimArchive::new(sim));
+        Scout::new_for_test(
             self.client.clone(),
             Box::new(Extractor::new(
                 &self.anthropic_key,
@@ -128,9 +128,7 @@ impl TestContext {
                 city_node.center_lng,
             )),
             Box::new(Embedder::new(&self.voyage_key)),
-            Arc::new(SimPageAdapter::new(sim.clone())),
-            Arc::new(SimSearchAdapter::new(sim.clone())),
-            Arc::new(SimSocialAdapter::new(sim)),
+            archive,
             &self.anthropic_key,
             city_node,
         )
@@ -141,7 +139,8 @@ impl TestContext {
         ScoutBuilder {
             ctx: self,
             city_node: default_city_node(),
-            web_content: String::new(),
+            archive_override: None,
+            pages: std::collections::HashMap::new(),
             search_results: Vec::new(),
             social_posts: Vec::new(),
             searcher_override: None,
@@ -154,9 +153,10 @@ impl TestContext {
 pub struct ScoutBuilder<'a> {
     ctx: &'a TestContext,
     city_node: CityNode,
-    web_content: String,
-    search_results: Vec<SearchResult>,
-    social_posts: Vec<SocialPost>,
+    archive_override: Option<Arc<dyn FetchBackend>>,
+    pages: std::collections::HashMap<String, String>,
+    search_results: Vec<rootsignal_common::SearchResult>,
+    social_posts: Vec<rootsignal_common::SocialPost>,
     searcher_override: Option<Box<dyn WebSearcher>>,
     social_override: Option<Arc<dyn SocialScraper>>,
 }
@@ -168,34 +168,39 @@ impl<'a> ScoutBuilder<'a> {
     }
 
     pub fn with_web_content(mut self, content: &str) -> Self {
-        self.web_content = content.to_string();
+        // Store as a default page for any URL
+        self.pages.insert("*".to_string(), content.to_string());
         self
     }
 
     pub fn with_search_results(mut self, results: Vec<SearchResult>) -> Self {
-        self.search_results = results;
+        self.search_results = results.into_iter().map(|r| rootsignal_common::SearchResult {
+            url: r.url,
+            title: r.title,
+            snippet: r.snippet,
+        }).collect();
         self
     }
 
     pub fn with_social_posts(mut self, posts: Vec<SocialPost>) -> Self {
-        self.social_posts = posts;
+        self.social_posts = posts.into_iter().map(|p| rootsignal_common::SocialPost {
+            content: p.content,
+            author: p.author,
+            url: p.url,
+        }).collect();
         self
     }
 
-    // --- Searcher strategy overrides ---
-
-    /// Use a pre-built CorpusSearcher.
-    pub fn with_corpus(mut self, corpus: CorpusSearcher) -> Self {
-        self.searcher_override = Some(Box::new(corpus));
+    /// Override with a custom FetchBackend (e.g. SimArchive).
+    pub fn with_archive(mut self, archive: Arc<dyn FetchBackend>) -> Self {
+        self.archive_override = Some(archive);
         self
     }
 
     /// Use a ScenarioSearcher with default system prompt.
     pub fn with_scenario(mut self, scenario: &str) -> Self {
-        self.searcher_override = Some(Box::new(ScenarioSearcher::new(
-            &self.ctx.anthropic_key,
-            scenario,
-        )));
+        let searcher = ScenarioSearcher::new(&self.ctx.anthropic_key, scenario);
+        self.searcher_override = Some(Box::new(searcher));
         self
     }
 
@@ -212,8 +217,6 @@ impl<'a> ScoutBuilder<'a> {
         self
     }
 
-    // --- Social strategy overrides ---
-
     /// Use a pre-built ScenarioSocialScraper.
     pub fn with_social_scenario(mut self, scraper: ScenarioSocialScraper) -> Self {
         self.social_override = Some(Arc::new(scraper));
@@ -224,17 +227,49 @@ impl<'a> ScoutBuilder<'a> {
     pub async fn run(self) -> ScoutStats {
         let city_node = self.city_node;
 
-        let searcher: Arc<dyn WebSearcher> = match self.searcher_override {
-            Some(s) => Arc::from(s),
-            None => Arc::new(FixtureSearcher::new(self.search_results)),
+        let default_content = self.pages.get("*").cloned().unwrap_or_default();
+
+        let archive: Arc<dyn FetchBackend> = match self.archive_override {
+            Some(a) => a,
+            None if self.searcher_override.is_some() || self.social_override.is_some() => {
+                // Legacy mode: wrap old-style fixtures in FixtureArchive
+                use rootsignal_scout::fixtures::{FixtureSearcher, FixtureSocialScraper};
+                let searcher: Box<dyn WebSearcher> = match self.searcher_override {
+                    Some(s) => s,
+                    None => Box::new(FixtureSearcher::new(self.search_results.iter().map(|r| SearchResult {
+                        url: r.url.clone(),
+                        title: r.title.clone(),
+                        snippet: r.snippet.clone(),
+                    }).collect())),
+                };
+                let social: Arc<dyn SocialScraper> = match self.social_override {
+                    Some(s) => s,
+                    None => Arc::new(FixtureSocialScraper::new(self.social_posts.iter().map(|p| SocialPost {
+                        content: p.content.clone(),
+                        author: p.author.clone(),
+                        url: p.url.clone(),
+                    }).collect())),
+                };
+                Arc::new(FixtureArchive {
+                    searcher,
+                    page_content: default_content,
+                    social,
+                })
+            }
+            None => {
+                // Build a MockArchive from the configured data
+                let pages = if !default_content.is_empty() {
+                    let mut map = self.pages.clone();
+                    map.remove("*");
+                    map
+                } else {
+                    self.pages
+                };
+                Arc::new(MockArchive::new(pages, self.search_results, self.social_posts))
+            }
         };
 
-        let social: Arc<dyn SocialScraper> = match self.social_override {
-            Some(s) => s,
-            None => Arc::new(FixtureSocialScraper::new(self.social_posts)),
-        };
-
-        let scout = Scout::with_deps(
+        let scout = Scout::new_for_test(
             self.ctx.client.clone(),
             Box::new(Extractor::new(
                 &self.ctx.anthropic_key,
@@ -243,14 +278,93 @@ impl<'a> ScoutBuilder<'a> {
                 city_node.center_lng,
             )),
             Box::new(Embedder::new(&self.ctx.voyage_key)),
-            Arc::new(FixtureScraper::new(&self.web_content)),
-            searcher,
-            social,
+            archive,
             &self.ctx.anthropic_key,
             city_node,
         );
 
         scout.run().await.expect("Scout run failed")
+    }
+}
+
+// --- FixtureArchive: wraps old-style test fixtures into FetchBackend ---
+
+/// Adapts legacy fixture types (WebSearcher, PageScraper, SocialScraper) into
+/// a single FetchBackend for backwards compatibility in integration tests.
+struct FixtureArchive {
+    searcher: Box<dyn WebSearcher>,
+    page_content: String,
+    social: Arc<dyn SocialScraper>,
+}
+
+#[async_trait::async_trait]
+impl FetchBackend for FixtureArchive {
+    async fn fetch_content(&self, target: &str) -> rootsignal_archive::Result<rootsignal_archive::FetchedContent> {
+        let now = chrono::Utc::now();
+
+        // Social targets
+        if target.starts_with("social:") || target.contains("reddit.com/r/") || target.contains("instagram.com") || target.contains("x.com/") || target.contains("tiktok.com") || target.contains("bluesky.social") {
+            // Build a dummy account for the social scraper
+            let account = rootsignal_scout::scraper::SocialAccount {
+                platform: rootsignal_scout::scraper::SocialPlatform::Reddit,
+                identifier: target.to_string(),
+            };
+            let posts = self.social.search_posts(&account, 20).await
+                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
+            let common_posts: Vec<rootsignal_common::SocialPost> = posts.into_iter().map(|p| rootsignal_common::SocialPost {
+                content: p.content,
+                author: p.author,
+                url: p.url,
+            }).collect();
+            let text = common_posts.iter().map(|p| p.content.as_str()).collect::<Vec<_>>().join("\n");
+            return Ok(rootsignal_archive::FetchedContent {
+                target: target.to_string(),
+                content: rootsignal_archive::Content::SocialPosts(common_posts),
+                content_hash: format!("fixture-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text,
+            });
+        }
+
+        // Non-URL → search query
+        if !target.starts_with("http") {
+            let results = self.searcher.search(target, 10).await
+                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
+            let common_results: Vec<rootsignal_common::SearchResult> = results.into_iter().map(|r| rootsignal_common::SearchResult {
+                url: r.url,
+                title: r.title,
+                snippet: r.snippet,
+            }).collect();
+            let text = common_results.iter().map(|r| format!("{}: {}", r.title, r.snippet)).collect::<Vec<_>>().join("\n");
+            return Ok(rootsignal_archive::FetchedContent {
+                target: target.to_string(),
+                content: rootsignal_archive::Content::SearchResults(common_results),
+                content_hash: format!("fixture-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text,
+            });
+        }
+
+        // URL → return page content
+        Ok(rootsignal_archive::FetchedContent {
+            target: target.to_string(),
+            content: rootsignal_archive::Content::Page(rootsignal_common::ScrapedPage {
+                url: target.to_string(),
+                markdown: self.page_content.clone(),
+                raw_html: format!("<html><body>{}</body></html>", self.page_content),
+                content_hash: format!("fixture-{}", target),
+            }),
+            content_hash: format!("fixture-{}", target),
+            fetched_at: now,
+            duration_ms: 0,
+            text: self.page_content.clone(),
+        })
+    }
+
+    async fn resolve_semantics(&self, _content: &rootsignal_archive::FetchedContent) -> rootsignal_archive::Result<rootsignal_common::ContentSemantics> {
+        Err(rootsignal_archive::ArchiveError::Other(anyhow::anyhow!("FixtureArchive does not support semantics")))
     }
 }
 

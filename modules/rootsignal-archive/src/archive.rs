@@ -1,11 +1,14 @@
+use std::fmt;
 use std::time::Instant;
 
+use ai_client::Claude;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tracing::warn;
 use uuid::Uuid;
 
-use rootsignal_common::SocialPlatform;
+use rootsignal_common::{ContentSemantics, SocialPlatform, CONTENT_SEMANTICS_VERSION};
 
 use crate::error::{ArchiveError, Result};
 use crate::fetchers::feed::RssFetcher;
@@ -13,6 +16,7 @@ use crate::fetchers::page::{BrowserlessFetcher, ChromeFetcher};
 use crate::fetchers::search::SerperFetcher;
 use crate::fetchers::social::SocialFetcher;
 use crate::router::{detect_content_kind, detect_target, ContentKind, TargetKind};
+use crate::semantics;
 use crate::store::{ArchiveStore, InsertInteraction};
 
 /// Default search result limit for web queries.
@@ -22,15 +26,101 @@ const DEFAULT_SOCIAL_LIMIT: u32 = 10;
 /// Default post limit for Reddit (tends to have more relevant content).
 const DEFAULT_REDDIT_LIMIT: u32 = 20;
 
-/// Response from any archive fetch operation.
-#[derive(Debug, Clone)]
-pub struct FetchResponse {
+// ---------------------------------------------------------------------------
+// FetchBackend trait + FetchedContent + FetchRequest
+// ---------------------------------------------------------------------------
+
+/// Trait for fetching and processing web content.
+///
+/// Production uses `Archive`; tests can implement this with mock data.
+/// The default `fetch()` method returns a `FetchRequest` handle — call
+/// `.text()`, `.content()`, or `.semantics()` to execute.
+#[async_trait]
+pub trait FetchBackend: Send + Sync {
+    /// Fetch content and return intermediate result for further processing.
+    async fn fetch_content(&self, target: &str) -> Result<FetchedContent>;
+
+    /// Resolve semantics for already-fetched content.
+    async fn resolve_semantics(&self, content: &FetchedContent) -> Result<ContentSemantics>;
+
+}
+
+/// Extension trait that adds `.fetch(target)` to any `FetchBackend`.
+///
+/// This exists because a default method on `FetchBackend` would require
+/// `Self: Sized` for the `&Self → &dyn FetchBackend` coercion, making it
+/// uncallable through trait objects.
+pub trait FetchBackendExt {
+    fn fetch(&self, target: &str) -> FetchRequest<'_>;
+}
+
+// Blanket impl for all Sized implementors (Archive, MockArchive, etc.)
+impl<T: FetchBackend> FetchBackendExt for T {
+    fn fetch(&self, target: &str) -> FetchRequest<'_> {
+        FetchRequest::new(self, target)
+    }
+}
+
+// Explicit impl for trait objects (`dyn FetchBackend`)
+impl FetchBackendExt for dyn FetchBackend {
+    fn fetch(&self, target: &str) -> FetchRequest<'_> {
+        FetchRequest::new(self, target)
+    }
+}
+
+// Also cover `dyn FetchBackend + Send + Sync` (used via Arc<dyn FetchBackend>)
+impl FetchBackendExt for dyn FetchBackend + Send + Sync {
+    fn fetch(&self, target: &str) -> FetchRequest<'_> {
+        FetchRequest::new(self, target)
+    }
+}
+
+/// Intermediate result from a fetch.
+pub struct FetchedContent {
     pub target: String,
     pub content: Content,
     pub content_hash: String,
     pub fetched_at: DateTime<Utc>,
     pub duration_ms: u32,
+    pub text: String,
 }
+
+/// Handle to a pending fetch. No work until a terminal method is called.
+pub struct FetchRequest<'a> {
+    backend: &'a (dyn FetchBackend + 'a),
+    target: String,
+}
+
+impl<'a> FetchRequest<'a> {
+    pub fn new(backend: &'a (dyn FetchBackend + 'a), target: &str) -> Self {
+        Self {
+            backend,
+            target: target.to_string(),
+        }
+    }
+
+    /// Fetch content, return text representation.
+    pub async fn text(self) -> Result<String> {
+        let fetched = self.backend.fetch_content(&self.target).await?;
+        Ok(fetched.text)
+    }
+
+    /// Fetch content, extract semantics (cached by content_hash).
+    pub async fn semantics(self) -> Result<ContentSemantics> {
+        let fetched = self.backend.fetch_content(&self.target).await?;
+        self.backend.resolve_semantics(&fetched).await
+    }
+
+    /// Fetch content, return the typed Content enum.
+    pub async fn content(self) -> Result<Content> {
+        let fetched = self.backend.fetch_content(&self.target).await?;
+        Ok(fetched.content)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Content enum
+// ---------------------------------------------------------------------------
 
 /// The detected content type and its parsed data.
 #[derive(Debug, Clone)]
@@ -43,11 +133,54 @@ pub enum Content {
     Raw(String),
 }
 
+// ---------------------------------------------------------------------------
+// SocialSearch — convenience builder for social search URLs
+// ---------------------------------------------------------------------------
+
+/// Convenience type for constructing social search URLs.
+/// Pass `social_search.to_string()` to `archive.fetch()`.
+pub struct SocialSearch {
+    pub platform: SocialPlatform,
+    pub topics: Vec<String>,
+    pub limit: u32,
+}
+
+impl fmt::Display for SocialSearch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let q = self.topics.join("+");
+        match self.platform {
+            SocialPlatform::Instagram => {
+                write!(f, "https://www.instagram.com/explore/tags/{}?limit={}", q, self.limit)
+            }
+            SocialPlatform::Reddit => {
+                write!(f, "https://www.reddit.com/search/?q={}&limit={}", q, self.limit)
+            }
+            SocialPlatform::Twitter => {
+                write!(f, "https://x.com/search?q={}&limit={}", q, self.limit)
+            }
+            SocialPlatform::TikTok => {
+                write!(f, "https://www.tiktok.com/search?q={}&limit={}", q, self.limit)
+            }
+            SocialPlatform::Facebook => {
+                write!(f, "https://www.facebook.com/search/posts/?q={}&limit={}", q, self.limit)
+            }
+            SocialPlatform::Bluesky => {
+                write!(f, "https://bsky.app/search?q={}&limit={}", q, self.limit)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ArchiveConfig + Archive struct
+// ---------------------------------------------------------------------------
+
 /// Configuration for which concrete fetchers to use.
 pub struct ArchiveConfig {
     pub page_backend: PageBackend,
     pub serper_api_key: String,
     pub apify_api_key: Option<String>,
+    pub anthropic_api_key: Option<String>,
 }
 
 pub enum PageBackend {
@@ -59,6 +192,7 @@ pub enum PageBackend {
 /// Every request fetches fresh, every response is recorded to Postgres.
 pub struct Archive {
     store: ArchiveStore,
+    claude: Option<Claude>,
     page_fetcher: PageFetcherKind,
     search_fetcher: SerperFetcher,
     social_fetcher: Option<SocialFetcher>,
@@ -94,8 +228,15 @@ impl Archive {
             SocialFetcher::new(apify_client::ApifyClient::new(key))
         });
 
+        let claude = config
+            .anthropic_api_key
+            .as_deref()
+            .filter(|k| !k.is_empty())
+            .map(|key| Claude::new(key, "claude-haiku-4-5-20251001"));
+
         Self {
             store: ArchiveStore::new(pool),
+            claude,
             page_fetcher,
             search_fetcher: SerperFetcher::new(&config.serper_api_key),
             social_fetcher,
@@ -115,8 +256,14 @@ impl Archive {
     }
 
     /// The primary entry point. Pass a URL or query string.
-    /// The archive detects what it is, fetches it, records it, returns typed content.
-    pub async fn fetch(&self, target: &str) -> Result<FetchResponse> {
+    /// Returns a handle — call `.text()`, `.semantics()`, or `.content()` to execute.
+    pub fn fetch(&self, target: &str) -> FetchRequest<'_> {
+        FetchRequest::new(self, target)
+    }
+
+    // --- Internal fetch methods (used by FetchBackend impl) ---
+
+    async fn do_fetch(&self, target: &str) -> Result<FetchedContent> {
         let start = Instant::now();
         let target_raw = target.to_string();
 
@@ -132,89 +279,11 @@ impl Archive {
                 };
                 self.fetch_social_profile(&platform, &identifier, &target_raw, limit, start).await
             }
+            TargetKind::SocialSearch { platform, topics, limit } => {
+                self.fetch_social_topics(&platform, &topics, limit, &target_raw, start).await
+            }
             TargetKind::Url(url) => {
                 self.fetch_url(&url, &target_raw, start).await
-            }
-        }
-    }
-
-    /// Social topic/hashtag search — requires structured input that can't be
-    /// encoded as a single URL or query string.
-    pub async fn search_social(
-        &self,
-        platform: &SocialPlatform,
-        topics: &[&str],
-        limit: u32,
-    ) -> Result<FetchResponse> {
-        let start = Instant::now();
-        let target_raw = format!("social_topics:{}:{}", platform_str(platform), topics.join(","));
-
-        let social = self.social_fetcher.as_ref().ok_or_else(|| {
-            ArchiveError::FetchFailed("No Apify API key configured".to_string())
-        })?;
-
-        let result = social.search_topics(platform, topics, limit).await;
-        let duration_ms = start.elapsed().as_millis() as u32;
-        let fetched_at = Utc::now();
-
-        match result {
-            Ok(posts) => {
-                let json = serde_json::to_value(&posts).unwrap_or_default();
-                let hash = rootsignal_common::content_hash(&json.to_string()).to_string();
-
-                self.store.insert(InsertInteraction {
-                    run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
-                    kind: "social".to_string(),
-                    target: target_raw.clone(),
-                    target_raw: target_raw.clone(),
-                    fetcher: "apify".to_string(),
-                    raw_html: None,
-                    markdown: None,
-                    response_json: Some(json),
-                    raw_bytes: None,
-                    content_hash: hash.clone(),
-                    duration_ms: duration_ms as i32,
-                    error: None,
-                    metadata: Some(serde_json::json!({
-                        "platform": platform_str(platform),
-                        "topics": topics,
-                        "limit": limit,
-                        "search_type": "topics",
-                    })),
-                }).await;
-
-                Ok(FetchResponse {
-                    target: target_raw,
-                    content: Content::SocialPosts(posts),
-                    content_hash: hash,
-                    fetched_at,
-                    duration_ms,
-                })
-            }
-            Err(e) => {
-                self.store.insert(InsertInteraction {
-                    run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
-                    kind: "social".to_string(),
-                    target: target_raw.clone(),
-                    target_raw: target_raw.clone(),
-                    fetcher: "apify".to_string(),
-                    raw_html: None,
-                    markdown: None,
-                    response_json: None,
-                    raw_bytes: None,
-                    content_hash: String::new(),
-                    duration_ms: duration_ms as i32,
-                    error: Some(e.to_string()),
-                    metadata: Some(serde_json::json!({
-                        "platform": platform_str(platform),
-                        "topics": topics,
-                        "search_type": "topics",
-                    })),
-                }).await;
-
-                Err(ArchiveError::FetchFailed(e.to_string()))
             }
         }
     }
@@ -225,7 +294,7 @@ impl Archive {
         target_raw: &str,
         max_results: usize,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         let result = self.search_fetcher.search(query, max_results).await;
         let duration_ms = start.elapsed().as_millis() as u32;
         let fetched_at = Utc::now();
@@ -250,14 +319,18 @@ impl Archive {
                     duration_ms: duration_ms as i32,
                     error: None,
                     metadata: None,
+                    semantics: None,
                 }).await;
 
-                Ok(FetchResponse {
+                let content = Content::SearchResults(results);
+                let text = semantics::extractable_text(&content, target_raw);
+                Ok(FetchedContent {
                     target: target_raw.to_string(),
-                    content: Content::SearchResults(results),
+                    content,
                     content_hash: hash,
                     fetched_at,
                     duration_ms,
+                    text,
                 })
             }
             Err(e) => {
@@ -274,7 +347,7 @@ impl Archive {
         target_raw: &str,
         limit: u32,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         let social = self.social_fetcher.as_ref().ok_or_else(|| {
             ArchiveError::FetchFailed("No Apify API key configured".to_string())
         })?;
@@ -308,18 +381,85 @@ impl Archive {
                         "identifier": identifier,
                         "limit": limit,
                     })),
+                    semantics: None,
                 }).await;
 
-                Ok(FetchResponse {
+                let content = Content::SocialPosts(posts);
+                let text = semantics::extractable_text(&content, target_raw);
+                Ok(FetchedContent {
                     target: target_raw.to_string(),
-                    content: Content::SocialPosts(posts),
+                    content,
                     content_hash: hash,
                     fetched_at,
                     duration_ms,
+                    text,
                 })
             }
             Err(e) => {
                 self.record_error("social", &target_normalized, target_raw, "apify", &e, duration_ms).await;
+                Err(ArchiveError::FetchFailed(e.to_string()))
+            }
+        }
+    }
+
+    async fn fetch_social_topics(
+        &self,
+        platform: &SocialPlatform,
+        topics: &[String],
+        limit: u32,
+        target_raw: &str,
+        start: Instant,
+    ) -> Result<FetchedContent> {
+        let social = self.social_fetcher.as_ref().ok_or_else(|| {
+            ArchiveError::FetchFailed("No Apify API key configured".to_string())
+        })?;
+
+        let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
+        let result = social.search_topics(platform, &topic_refs, limit).await;
+        let duration_ms = start.elapsed().as_millis() as u32;
+        let fetched_at = Utc::now();
+
+        match result {
+            Ok(posts) => {
+                let json = serde_json::to_value(&posts).unwrap_or_default();
+                let hash = rootsignal_common::content_hash(&json.to_string()).to_string();
+
+                self.store.insert(InsertInteraction {
+                    run_id: self.run_id,
+                    city_slug: self.city_slug.clone(),
+                    kind: "social".to_string(),
+                    target: target_raw.to_string(),
+                    target_raw: target_raw.to_string(),
+                    fetcher: "apify".to_string(),
+                    raw_html: None,
+                    markdown: None,
+                    response_json: Some(json),
+                    raw_bytes: None,
+                    content_hash: hash.clone(),
+                    duration_ms: duration_ms as i32,
+                    error: None,
+                    metadata: Some(serde_json::json!({
+                        "platform": platform_str(platform),
+                        "topics": topics,
+                        "limit": limit,
+                        "search_type": "topics",
+                    })),
+                    semantics: None,
+                }).await;
+
+                let content = Content::SocialPosts(posts);
+                let text = semantics::extractable_text(&content, target_raw);
+                Ok(FetchedContent {
+                    target: target_raw.to_string(),
+                    content,
+                    content_hash: hash,
+                    fetched_at,
+                    duration_ms,
+                    text,
+                })
+            }
+            Err(e) => {
+                self.record_error("social", target_raw, target_raw, "apify", &e, duration_ms).await;
                 Err(ArchiveError::FetchFailed(e.to_string()))
             }
         }
@@ -330,7 +470,7 @@ impl Archive {
         url: &str,
         target_raw: &str,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         // HEAD request to determine content type
         let head_result = self.http_client
             .head(url)
@@ -361,7 +501,7 @@ impl Archive {
         url: &str,
         target_raw: &str,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         let fetcher_name = match &self.page_fetcher {
             PageFetcherKind::Chrome(_) => "chrome",
             PageFetcherKind::Browserless(_) => "browserless",
@@ -394,14 +534,18 @@ impl Archive {
                     duration_ms: duration_ms as i32,
                     error: None,
                     metadata: None,
+                    semantics: None,
                 }).await;
 
-                Ok(FetchResponse {
+                let content = Content::Page(page);
+                let text = semantics::extractable_text(&content, target_raw);
+                Ok(FetchedContent {
                     target: target_raw.to_string(),
-                    content: Content::Page(page),
+                    content,
                     content_hash: hash,
                     fetched_at,
                     duration_ms,
+                    text,
                 })
             }
             Err(e) => {
@@ -416,7 +560,7 @@ impl Archive {
         url: &str,
         target_raw: &str,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         let result = self.feed_fetcher.fetch_items(url).await;
         let duration_ms = start.elapsed().as_millis() as u32;
         let fetched_at = Utc::now();
@@ -441,14 +585,18 @@ impl Archive {
                     duration_ms: duration_ms as i32,
                     error: None,
                     metadata: None,
+                    semantics: None,
                 }).await;
 
-                Ok(FetchResponse {
+                let content = Content::Feed(items);
+                let text = semantics::extractable_text(&content, target_raw);
+                Ok(FetchedContent {
                     target: target_raw.to_string(),
-                    content: Content::Feed(items),
+                    content,
                     content_hash: hash,
                     fetched_at,
                     duration_ms,
+                    text,
                 })
             }
             Err(e) => {
@@ -463,7 +611,7 @@ impl Archive {
         url: &str,
         target_raw: &str,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         // Download raw bytes. PDF text extraction is a known gap — store raw bytes for now.
         let resp = self.http_client.get(url)
             .header("User-Agent", "rootsignal-archive/0.1")
@@ -497,14 +645,18 @@ impl Archive {
             duration_ms: duration_ms as i32,
             error: None,
             metadata: None,
+            semantics: None,
         }).await;
 
-        Ok(FetchResponse {
+        let content = Content::Pdf(pdf);
+        let text = semantics::extractable_text(&content, target_raw);
+        Ok(FetchedContent {
             target: target_raw.to_string(),
-            content: Content::Pdf(pdf),
+            content,
             content_hash: hash,
             fetched_at,
             duration_ms,
+            text,
         })
     }
 
@@ -513,7 +665,7 @@ impl Archive {
         url: &str,
         target_raw: &str,
         start: Instant,
-    ) -> Result<FetchResponse> {
+    ) -> Result<FetchedContent> {
         let resp = self.http_client.get(url)
             .header("User-Agent", "rootsignal-archive/0.1")
             .send()
@@ -542,14 +694,18 @@ impl Archive {
             duration_ms: duration_ms as i32,
             error: None,
             metadata: Some(serde_json::json!({ "body_preview": &body[..body.len().min(500)] })),
+            semantics: None,
         }).await;
 
-        Ok(FetchResponse {
+        let content = Content::Raw(body);
+        let text = semantics::extractable_text(&content, target_raw);
+        Ok(FetchedContent {
             target: target_raw.to_string(),
-            content: Content::Raw(body),
+            content,
             content_hash: hash,
             fetched_at,
             duration_ms,
+            text,
         })
     }
 
@@ -578,9 +734,63 @@ impl Archive {
             duration_ms: duration_ms as i32,
             error: Some(error.to_string()),
             metadata: None,
+            semantics: None,
         }).await;
     }
 }
+
+// ---------------------------------------------------------------------------
+// FetchBackend for Archive
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl FetchBackend for Archive {
+    async fn fetch_content(&self, target: &str) -> Result<FetchedContent> {
+        self.do_fetch(target).await
+    }
+
+    async fn resolve_semantics(&self, content: &FetchedContent) -> Result<ContentSemantics> {
+        // 1. Check DB cache by content_hash
+        if let Ok(Some(cached_json)) =
+            self.store.semantics_by_content_hash(&content.content_hash).await
+        {
+            if let Ok(sem) = serde_json::from_value::<ContentSemantics>(cached_json) {
+                if sem.version >= CONTENT_SEMANTICS_VERSION {
+                    return Ok(sem);
+                }
+            }
+        }
+
+        // 2. Require Claude
+        let claude = self.claude.as_ref().ok_or_else(|| {
+            ArchiveError::FetchFailed("Claude not configured — cannot extract semantics".to_string())
+        })?;
+
+        // 3. Check minimum text length
+        if content.text.len() < semantics::MIN_EXTRACT_CHARS {
+            return Err(ArchiveError::FetchFailed(
+                "Content too short for semantics extraction".to_string(),
+            ));
+        }
+
+        // 4. LLM extraction
+        let content_kind = semantics::content_kind_label(&content.content);
+        let sem = semantics::extract_semantics(claude, &content.text, &content.target, content_kind)
+            .await
+            .map_err(|e| ArchiveError::FetchFailed(format!("Semantics extraction failed: {e}")))?;
+
+        // 5. Persist to DB
+        if let Ok(json) = serde_json::to_value(&sem) {
+            self.store.update_semantics(&content.content_hash, &json).await;
+        }
+
+        Ok(sem)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn platform_str(platform: &SocialPlatform) -> &'static str {
     match platform {

@@ -28,11 +28,10 @@ use crate::extractor::{ResourceTag, SignalExtractor};
 use crate::quality;
 use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
-use rootsignal_archive::Archive;
+use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
 use crate::scraper::{
-    self, PageScraper, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
-    WebSearcher,
+    self, SocialAccount, SocialPlatform, SocialPost,
 };
 use crate::sources;
 use crate::util::{content_hash, sanitize_url};
@@ -175,10 +174,7 @@ pub(crate) struct ScrapePhase<'a> {
     writer: &'a GraphWriter,
     extractor: &'a dyn SignalExtractor,
     embedder: &'a dyn TextEmbedder,
-    scraper: Arc<dyn PageScraper>,
-    searcher: Arc<dyn WebSearcher>,
-    social: &'a dyn SocialScraper,
-    archive: Option<Arc<Archive>>,
+    archive: Arc<dyn FetchBackend>,
     region: &'a RegionNode,
     run_id: String,
 }
@@ -188,10 +184,7 @@ impl<'a> ScrapePhase<'a> {
         writer: &'a GraphWriter,
         extractor: &'a dyn SignalExtractor,
         embedder: &'a dyn TextEmbedder,
-        scraper: Arc<dyn PageScraper>,
-        searcher: Arc<dyn WebSearcher>,
-        social: &'a dyn SocialScraper,
-        archive: Option<Arc<Archive>>,
+        archive: Arc<dyn FetchBackend>,
         region: &'a RegionNode,
         run_id: String,
     ) -> Self {
@@ -199,9 +192,6 @@ impl<'a> ScrapePhase<'a> {
             writer,
             extractor,
             embedder,
-            scraper,
-            searcher,
-            social,
             archive,
             region,
             run_id,
@@ -244,15 +234,15 @@ impl<'a> ScrapePhase<'a> {
                 queries = api_queries.len(),
                 "Resolving web search queries..."
             );
+            let archive = &self.archive;
             let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
                 let query_str = source.canonical_value.clone();
                 let canonical_key = source.canonical_key.clone();
-                let searcher = &self.searcher;
                 async move {
                     (
                         canonical_key,
                         query_str.clone(),
-                        searcher.search(&query_str, 5).await,
+                        archive.fetch(&query_str).content().await,
                     )
                 }
             }))
@@ -262,29 +252,31 @@ impl<'a> ScrapePhase<'a> {
 
             for (canonical_key, query_str, result) in search_results {
                 match result {
-                    Ok(results) => {
+                    Ok(Content::SearchResults(results)) => {
                         run_log.log(EventKind::SearchQuery {
                             query: query_str.clone(),
                             provider: "serper".to_string(),
                             result_count: results.len() as u32,
                             canonical_key: canonical_key.clone(),
                         });
-                        // Map each resolved URL back to the query's canonical_key
-                        // so scrape results get attributed to the originating query.
                         for r in &results {
                             let clean = sanitize_url(&r.url);
                             ctx.url_to_canonical_key
                                 .entry(clean)
                                 .or_insert_with(|| canonical_key.clone());
                         }
-                        // Ensure the query source gets a source_signal_counts entry
-                        // even if all its URLs end up deduped/empty (records a scrape).
                         ctx.source_signal_counts
                             .entry(canonical_key.clone())
                             .or_default();
                         for r in results {
                             phase_urls.push(r.url);
                         }
+                    }
+                    Ok(_) => {
+                        // Non-search content returned — no URLs to resolve
+                        ctx.source_signal_counts
+                            .entry(canonical_key)
+                            .or_default();
                     }
                     Err(e) => {
                         warn!(query_str, error = %e, "Web search failed");
@@ -305,14 +297,24 @@ impl<'a> ScrapePhase<'a> {
                 _ => None,
             };
             if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
-                match self.scraper.scrape_raw(url).await {
-                    Ok(html) if !html.is_empty() => {
+                let raw_result = self.archive.fetch(url).content().await;
+                let html = match raw_result {
+                    Ok(Content::Page(page)) => Some(page.raw_html),
+                    Ok(Content::Raw(text)) => Some(text),
+                    Ok(_) => None,
+                    Err(e) => {
+                        warn!(url = url.as_str(), error = %e, "Query scrape failed");
+                        None
+                    }
+                };
+                match html {
+                    Some(html) if !html.is_empty() => {
                         let links = scraper::extract_links_by_pattern(&html, url, pattern);
                         info!(url = url.as_str(), links = links.len(), "Query resolved");
                         phase_urls.extend(links);
                     }
-                    Ok(_) => warn!(url = url.as_str(), "Empty HTML from query source"),
-                    Err(e) => warn!(url = url.as_str(), error = %e, "Query scrape failed"),
+                    Some(_) => warn!(url = url.as_str(), "Empty HTML from query source"),
+                    None => {} // error already logged above
                 }
             }
         }
@@ -333,19 +335,15 @@ impl<'a> ScrapePhase<'a> {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    let feed_result = if let Some(ref archive) = self.archive {
-                        archive.fetch(feed_url).await
-                            .map(|resp| match resp.content {
-                                rootsignal_archive::Content::Feed(items) => items
-                                    .into_iter()
-                                    .map(|i| crate::scraper::FeedItem { url: i.url, title: i.title, pub_date: i.pub_date })
-                                    .collect(),
-                                _ => Vec::new(),
-                            })
-                            .map_err(|e| anyhow::anyhow!("{e}"))
-                    } else {
-                        crate::scraper::RssFetcher::new().fetch_items(feed_url).await
-                    };
+                    let feed_result = self.archive.fetch(feed_url).content().await
+                        .map(|content| match content {
+                            Content::Feed(items) => items
+                                .into_iter()
+                                .map(|i| crate::scraper::FeedItem { url: i.url, title: i.title, pub_date: i.pub_date })
+                                .collect(),
+                            _ => Vec::new(),
+                        })
+                        .map_err(|e| anyhow::anyhow!("{e}"));
                     match feed_result {
                         Ok(items) => {
                             run_log.log(EventKind::ScrapeFeed {
@@ -397,7 +395,7 @@ impl<'a> ScrapePhase<'a> {
         }
 
         // Scrape + extract in parallel
-        let scraper = &self.scraper;
+        let archive_ref = &self.archive;
         let writer = &self.writer;
         let extractor = &self.extractor;
         let pipeline_results: Vec<_> = stream::iter(phase_urls.iter().map(|url| {
@@ -405,7 +403,7 @@ impl<'a> ScrapePhase<'a> {
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let content = match scraper.scrape(&url).await {
+                let content = match archive_ref.fetch(&url).text().await {
                     Ok(c) if !c.is_empty() => c,
                     Ok(_) => return (clean_url, ScrapeOutcome::Failed),
                     Err(e) => {
@@ -651,8 +649,16 @@ impl<'a> ScrapePhase<'a> {
             let limit: u32 = if is_reddit { 20 } else { 10 };
 
             futures.push(Box::pin(async move {
-                let posts = match self.social.search_posts(account, limit).await {
-                    Ok(p) => p,
+                let posts = match self.archive.fetch(&account.identifier).content().await {
+                    Ok(Content::SocialPosts(common_posts)) => common_posts
+                        .into_iter()
+                        .map(|p| SocialPost {
+                            content: p.content,
+                            author: p.author,
+                            url: p.url,
+                        })
+                        .collect::<Vec<_>>(),
+                    Ok(_) => Vec::new(),
                     Err(e) => {
                         warn!(source_url, error = %e, "Social media scrape failed");
                         return None;
@@ -858,15 +864,31 @@ impl<'a> ScrapePhase<'a> {
                 _ => continue,
             };
 
-            let discovered_posts = match self
-                .social
-                .search_topics(platform, &topic_strs, POSTS_PER_SEARCH)
-                .await
-            {
-                Ok(posts) => posts,
+            let common_platform = match platform {
+                SocialPlatform::Instagram => rootsignal_common::SocialPlatform::Instagram,
+                SocialPlatform::Twitter => rootsignal_common::SocialPlatform::Twitter,
+                SocialPlatform::TikTok => rootsignal_common::SocialPlatform::TikTok,
+                SocialPlatform::Reddit => rootsignal_common::SocialPlatform::Reddit,
+                _ => continue,
+            };
+            let social_search = rootsignal_archive::SocialSearch {
+                platform: common_platform,
+                topics: topic_strs.iter().map(|s| s.to_string()).collect(),
+                limit: POSTS_PER_SEARCH,
+            };
+            let discovered_posts = match self.archive.fetch(&social_search.to_string()).content().await {
+                Ok(Content::SocialPosts(posts)) => posts
+                    .into_iter()
+                    .map(|p| SocialPost {
+                        content: p.content,
+                        author: p.author,
+                        url: p.url,
+                    })
+                    .collect::<Vec<_>>(),
+                Ok(_) => Vec::new(),
                 Err(e) => {
                     warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");
-                    continue; // Platform failure doesn't block others
+                    continue;
                 }
             };
 
@@ -1037,8 +1059,9 @@ impl<'a> ScrapePhase<'a> {
             let site_prefix = &source.canonical_value; // e.g. "site:gofundme.com/f/ Minneapolis"
             for topic in topics.iter().take(MAX_SITE_SEARCH_TOPICS) {
                 let query = format!("{} {}", site_prefix, topic);
-                let results = match self.searcher.search(&query, SITE_SEARCH_RESULTS).await {
-                    Ok(r) => r,
+                let results = match self.archive.fetch(&query).content().await {
+                    Ok(Content::SearchResults(r)) => r,
+                    Ok(_) => continue,
                     Err(e) => {
                         warn!(query, error = %e, "Site-scoped search failed");
                         continue;
@@ -1056,11 +1079,11 @@ impl<'a> ScrapePhase<'a> {
                         continue;
                     }
 
-                    let content = match self.scraper.scrape(&result.url).await {
+                    let content = match self.archive.fetch(&result.url).text().await {
                         Ok(c) if !c.is_empty() => c,
                         Ok(_) => continue,
                         Err(e) => {
-                            warn!(url = result.url, error = %e, "Site-scoped scrape failed");
+                            warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
                             continue;
                         }
                     };

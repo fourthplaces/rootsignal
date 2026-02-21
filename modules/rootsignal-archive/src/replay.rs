@@ -1,10 +1,12 @@
+use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use rootsignal_common::SocialPlatform;
+use rootsignal_common::ContentSemantics;
 
-use crate::archive::{Content, FetchResponse};
+use crate::archive::{Content, FetchBackend, FetchedContent, FetchRequest};
 use crate::error::{ArchiveError, Result};
+use crate::semantics;
 use crate::store::{ArchiveStore, StoredInteraction};
 
 /// Replays archived content from Postgres. No network access.
@@ -31,10 +33,13 @@ impl Replay {
         }
     }
 
-    /// Same signature as Archive::fetch. Reads from Postgres only.
-    pub async fn fetch(&self, target: &str) -> Result<FetchResponse> {
-        let target = target.trim();
+    /// Same signature as Archive::fetch. Returns a handle — no work until a terminal method is called.
+    pub fn fetch(&self, target: &str) -> FetchRequest<'_> {
+        FetchRequest::new(self, target)
+    }
 
+    /// Look up a stored interaction by target.
+    async fn lookup(&self, target: &str) -> Result<StoredInteraction> {
         let interaction = if let Some(run_id) = self.run_id {
             self.store.by_run_and_target(run_id, target).await?
         } else {
@@ -48,41 +53,54 @@ impl Replay {
             return Err(ArchiveError::FetchFailed(err.clone()));
         }
 
-        interaction_to_response(interaction)
-    }
-
-    /// Same signature as Archive::search_social. Reads from Postgres only.
-    pub async fn search_social(
-        &self,
-        platform: &SocialPlatform,
-        _topics: &[&str],
-        _limit: u32,
-    ) -> Result<FetchResponse> {
-        let platform_name = platform_str(platform);
-
-        let interaction = if let Some(run_id) = self.run_id {
-            self.store.social_topics_by_run(run_id, platform_name).await?
-        } else {
-            // For latest mode, construct the target key and look up by target
-            let target = format!("social_topics:{}", platform_name);
-            self.store.latest_by_target(&target).await?
-        };
-
-        let interaction = interaction.ok_or_else(|| {
-            ArchiveError::NotFound(format!("social_topics:{}", platform_name))
-        })?;
-
-        if let Some(ref err) = interaction.error {
-            return Err(ArchiveError::FetchFailed(err.clone()));
-        }
-
-        interaction_to_response(interaction)
+        Ok(interaction)
     }
 }
 
-/// Reconstruct a FetchResponse from a stored interaction.
-fn interaction_to_response(i: StoredInteraction) -> Result<FetchResponse> {
-    let content = match i.kind.as_str() {
+#[async_trait]
+impl FetchBackend for Replay {
+    async fn fetch_content(&self, target: &str) -> Result<FetchedContent> {
+        let target = target.trim();
+        let interaction = self.lookup(target).await?;
+        let target_raw = interaction.target_raw.clone();
+        let content_hash = interaction.content_hash.clone();
+        let fetched_at = interaction.fetched_at;
+        let duration_ms = interaction.duration_ms as u32;
+
+        let content = interaction_to_content(interaction);
+        let text = semantics::extractable_text(&content, &target_raw);
+
+        Ok(FetchedContent {
+            target: target_raw,
+            content,
+            content_hash,
+            fetched_at,
+            duration_ms,
+            text,
+        })
+    }
+
+    async fn resolve_semantics(&self, content: &FetchedContent) -> Result<ContentSemantics> {
+        // Look up cached semantics from the store by content_hash
+        let cached = self
+            .store
+            .semantics_by_content_hash(&content.content_hash)
+            .await?;
+
+        match cached {
+            Some(json) => serde_json::from_value::<ContentSemantics>(json)
+                .map_err(|e| ArchiveError::FetchFailed(format!("Invalid cached semantics: {e}"))),
+            None => Err(ArchiveError::NotFound(format!(
+                "No cached semantics for content_hash={}",
+                content.content_hash
+            ))),
+        }
+    }
+}
+
+/// Reconstruct Content from a stored interaction.
+fn interaction_to_content(i: StoredInteraction) -> Content {
+    match i.kind.as_str() {
         "page" => {
             Content::Page(rootsignal_common::ScrapedPage {
                 url: i.target.clone(),
@@ -121,25 +139,6 @@ fn interaction_to_response(i: StoredInteraction) -> Result<FetchResponse> {
             let body = i.raw_html.unwrap_or_default();
             Content::Raw(body)
         }
-    };
-
-    Ok(FetchResponse {
-        target: i.target_raw,
-        content,
-        content_hash: i.content_hash,
-        fetched_at: i.fetched_at,
-        duration_ms: i.duration_ms as u32,
-    })
-}
-
-fn platform_str(platform: &SocialPlatform) -> &'static str {
-    match platform {
-        SocialPlatform::Instagram => "instagram",
-        SocialPlatform::Facebook => "facebook",
-        SocialPlatform::Reddit => "reddit",
-        SocialPlatform::Twitter => "twitter",
-        SocialPlatform::TikTok => "tiktok",
-        SocialPlatform::Bluesky => "bluesky",
     }
 }
 
@@ -166,6 +165,7 @@ mod tests {
             duration_ms: 100,
             error: None,
             metadata: None,
+            semantics: None,
         }
     }
 
@@ -175,8 +175,8 @@ mod tests {
         i.raw_html = Some("<h1>Hello</h1>".to_string());
         i.markdown = Some("# Hello".to_string());
 
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::Page(page) => {
                 assert_eq!(page.raw_html, "<h1>Hello</h1>");
                 assert_eq!(page.markdown, "# Hello");
@@ -195,8 +195,8 @@ mod tests {
         let mut i = make_interaction("search");
         i.response_json = Some(serde_json::to_value(&results).unwrap());
 
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::SearchResults(r) => {
                 assert_eq!(r.len(), 1);
                 assert_eq!(r[0].title, "Example");
@@ -215,8 +215,8 @@ mod tests {
         let mut i = make_interaction("social");
         i.response_json = Some(serde_json::to_value(&posts).unwrap());
 
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::SocialPosts(p) => {
                 assert_eq!(p.len(), 1);
                 assert_eq!(p[0].content, "Hello from insta");
@@ -235,8 +235,8 @@ mod tests {
         let mut i = make_interaction("feed");
         i.response_json = Some(serde_json::to_value(&items).unwrap());
 
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::Feed(f) => {
                 assert_eq!(f.len(), 1);
                 assert_eq!(f[0].url, "https://example.com/article");
@@ -250,39 +250,21 @@ mod tests {
         let mut i = make_interaction("something_new");
         i.raw_html = Some("raw body text".to_string());
 
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::Raw(text) => assert_eq!(text, "raw body text"),
             other => panic!("Expected Content::Raw, got {:?}", other),
         }
     }
 
     #[test]
-    fn error_interaction_preserved() {
-        let mut i = make_interaction("page");
-        i.error = Some("connection timed out".to_string());
-
-        // interaction_to_response doesn't check error — that's Replay::fetch's job.
-        // Just verify it doesn't panic.
-        let resp = interaction_to_response(i).unwrap();
-        assert!(matches!(resp.content, Content::Page(_)));
-    }
-
-    #[test]
     fn missing_json_returns_empty_collections() {
         // Search with no response_json should return empty vec, not error
         let i = make_interaction("search");
-        let resp = interaction_to_response(i).unwrap();
-        match resp.content {
+        let content = interaction_to_content(i);
+        match content {
             Content::SearchResults(r) => assert!(r.is_empty()),
             other => panic!("Expected empty Content::SearchResults, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn content_hash_preserved() {
-        let i = make_interaction("page");
-        let resp = interaction_to_response(i).unwrap();
-        assert_eq!(resp.content_hash, "abc123");
     }
 }

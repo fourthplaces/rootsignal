@@ -17,9 +17,10 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
+use rootsignal_archive::FetchBackend;
+
 use crate::embedder::TextEmbedder;
 use crate::extractor::ResourceTag;
-use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
 use crate::tension_linker::{ReadPageTool, WebSearchTool};
 
@@ -241,8 +242,7 @@ Return valid JSON matching the ResponseFinding schema.";
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
     anthropic_api_key: String,
-    searcher: Arc<dyn WebSearcher>,
-    scraper: Arc<dyn PageScraper>,
+    archive: Arc<dyn FetchBackend>,
     embedder: &'a dyn TextEmbedder,
     region: RegionNode,
     _region_slug: String,
@@ -257,8 +257,7 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: Arc<dyn WebSearcher>,
-        scraper: Arc<dyn PageScraper>,
+        archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         region: RegionNode,
@@ -271,8 +270,7 @@ impl<'a> ResponseFinder<'a> {
         Self {
             writer,
             anthropic_api_key: anthropic_api_key.to_string(),
-            searcher,
-            scraper,
+            archive,
             embedder,
             min_lat: region.center_lat - lat_delta,
             max_lat: region.center_lat + lat_delta,
@@ -290,10 +288,10 @@ impl<'a> ResponseFinder<'a> {
         let visited = Arc::new(Mutex::new(HashSet::new()));
         let claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: self.searcher.clone(),
+                archive: self.archive.clone(),
             })
             .tool(ReadPageTool {
-                scraper: self.scraper.clone(),
+                archive: self.archive.clone(),
                 visited_urls: Some(visited.clone()),
             });
         (claude, visited)

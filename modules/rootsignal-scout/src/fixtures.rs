@@ -12,6 +12,8 @@
 //! - `FixtureSocialScraper` — static posts
 //! - `ScenarioSocialScraper` — LLM-generated social content
 
+use std::collections::HashMap;
+
 use ai_client::claude::Claude;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -20,6 +22,7 @@ use serde::Deserialize;
 use tracing::warn;
 use uuid::Uuid;
 
+use rootsignal_archive::{Content, FetchBackend, FetchedContent};
 use rootsignal_common::{GatheringNode, Node, NodeMeta, SensitivityLevel};
 
 use crate::embedder::TextEmbedder;
@@ -506,5 +509,103 @@ impl PageScraper for FixtureScraper {
 
     fn name(&self) -> &str {
         "fixture"
+    }
+}
+
+// --- MockArchive ---
+
+/// Mock implementation of `FetchBackend` for tests.
+/// Routes targets to canned data based on URL patterns.
+pub struct MockArchive {
+    /// url → markdown text
+    pub pages: HashMap<String, String>,
+    /// search results returned for any query
+    pub search_results: Vec<rootsignal_common::SearchResult>,
+    /// social posts returned for any social fetch
+    pub social_posts: Vec<rootsignal_common::SocialPost>,
+}
+
+impl MockArchive {
+    pub fn new(
+        pages: HashMap<String, String>,
+        search_results: Vec<rootsignal_common::SearchResult>,
+        social_posts: Vec<rootsignal_common::SocialPost>,
+    ) -> Self {
+        Self {
+            pages,
+            search_results,
+            social_posts,
+        }
+    }
+
+    /// Empty mock — all fetches return empty/default.
+    pub fn empty() -> Self {
+        Self {
+            pages: HashMap::new(),
+            search_results: Vec::new(),
+            social_posts: Vec::new(),
+        }
+    }
+
+    /// Single-page mock for simple tests.
+    pub fn with_page(url: &str, content: &str) -> Self {
+        let mut pages = HashMap::new();
+        pages.insert(url.to_string(), content.to_string());
+        Self {
+            pages,
+            search_results: Vec::new(),
+            social_posts: Vec::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl FetchBackend for MockArchive {
+    async fn fetch_content(&self, target: &str) -> rootsignal_archive::Result<FetchedContent> {
+        let now = Utc::now();
+
+        // If target looks like a social identifier or social search
+        if target.starts_with("social:") || target.contains("bluesky.social") || target.contains("instagram.com") || target.contains("tiktok.com") || target.contains("x.com/") || target.contains("reddit.com/r/") {
+            return Ok(FetchedContent {
+                target: target.to_string(),
+                content: Content::SocialPosts(self.social_posts.clone()),
+                content_hash: format!("mock-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text: self.social_posts.iter().map(|p| p.content.as_str()).collect::<Vec<_>>().join("\n"),
+            });
+        }
+
+        // If target doesn't look like a URL, treat as search query
+        if !target.starts_with("http") {
+            return Ok(FetchedContent {
+                target: target.to_string(),
+                content: Content::SearchResults(self.search_results.clone()),
+                content_hash: format!("mock-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text: self.search_results.iter().map(|r| format!("{}: {}", r.title, r.snippet)).collect::<Vec<_>>().join("\n"),
+            });
+        }
+
+        // URL-based: look up in pages map
+        let text = self.pages.get(target).cloned().unwrap_or_default();
+        Ok(FetchedContent {
+            target: target.to_string(),
+            content: Content::Page(rootsignal_common::ScrapedPage {
+                url: target.to_string(),
+                markdown: text.clone(),
+                raw_html: format!("<html><body>{}</body></html>", text),
+                content_hash: format!("mock-{}", target),
+            }),
+            content_hash: format!("mock-{}", target),
+            fetched_at: now,
+            duration_ms: 0,
+            text,
+        })
+    }
+
+    async fn resolve_semantics(&self, _content: &FetchedContent) -> rootsignal_archive::Result<rootsignal_common::ContentSemantics> {
+        Err(rootsignal_archive::ArchiveError::Other(anyhow::anyhow!("MockArchive does not support semantics")))
     }
 }

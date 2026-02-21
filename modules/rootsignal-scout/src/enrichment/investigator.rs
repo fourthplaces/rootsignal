@@ -12,7 +12,7 @@ use uuid::Uuid;
 use rootsignal_common::{RegionNode, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
-use crate::scraper::WebSearcher;
+use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 10;
 const MAX_SIGNALS_INVESTIGATED: usize = 5;
@@ -20,7 +20,7 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
-    searcher: &'a dyn WebSearcher,
+    archive: Arc<dyn FetchBackend>,
     claude: Claude,
     region: String,
     min_lat: f64,
@@ -114,7 +114,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: &'a dyn WebSearcher,
+        archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
         region: &RegionNode,
         cancelled: Arc<AtomicBool>,
@@ -123,7 +123,7 @@ impl<'a> Investigator<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
             writer,
-            searcher,
+            archive,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             region: region.name.clone(),
             min_lat: region.center_lat - lat_delta,
@@ -261,16 +261,21 @@ impl<'a> Investigator<'a> {
             }
             stats.search_queries_used += 1;
 
-            match self.searcher.search(query, 5).await {
-                Ok(results) => {
+            match self.archive.fetch(query).content().await {
+                Ok(Content::SearchResults(results)) => {
                     // Filter out same-domain results
                     for r in results {
                         let result_domain = extract_domain(&r.url);
                         if result_domain != source_domain {
-                            all_results.push(r);
+                            all_results.push(crate::scraper::SearchResult {
+                                url: r.url,
+                                title: r.title,
+                                snippet: r.snippet,
+                            });
                         }
                     }
                 }
+                Ok(_) => {}
                 Err(e) => {
                     warn!(query, error = %e, "Investigation search failed");
                 }

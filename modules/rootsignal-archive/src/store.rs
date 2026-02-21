@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 
+#[derive(Clone)]
 pub(crate) struct ArchiveStore {
     pool: PgPool,
 }
@@ -30,6 +31,7 @@ pub(crate) struct StoredInteraction {
     pub duration_ms: i32,
     pub error: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    pub semantics: Option<serde_json::Value>,
 }
 
 /// Parameters for inserting a new web interaction.
@@ -48,6 +50,7 @@ pub(crate) struct InsertInteraction {
     pub duration_ms: i32,
     pub error: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    pub semantics: Option<serde_json::Value>,
 }
 
 impl ArchiveStore {
@@ -72,8 +75,8 @@ impl ArchiveStore {
             INSERT INTO web_interactions
                 (run_id, city_slug, kind, target, target_raw, fetcher,
                  raw_html, markdown, response_json, raw_bytes,
-                 content_hash, duration_ms, error, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                 content_hash, duration_ms, error, metadata, semantics)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING id
             "#,
         )
@@ -91,6 +94,7 @@ impl ArchiveStore {
         .bind(i.duration_ms)
         .bind(&i.error)
         .bind(&i.metadata)
+        .bind(&i.semantics)
         .fetch_one(&self.pool)
         .await;
 
@@ -241,5 +245,53 @@ impl ArchiveStore {
         .await?;
 
         Ok(row)
+    }
+
+    /// Find cached semantics by content hash (dedup lookup).
+    pub(crate) async fn semantics_by_content_hash(
+        &self,
+        content_hash: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query_scalar::<_, serde_json::Value>(
+            r#"
+            SELECT semantics FROM web_interactions
+            WHERE content_hash = $1 AND semantics IS NOT NULL
+            ORDER BY fetched_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(content_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// Update semantics on the most recent row matching a content hash.
+    pub(crate) async fn update_semantics(
+        &self,
+        content_hash: &str,
+        semantics: &serde_json::Value,
+    ) {
+        let result = sqlx::query(
+            r#"
+            UPDATE web_interactions
+            SET semantics = $1
+            WHERE id = (
+                SELECT id FROM web_interactions
+                WHERE content_hash = $2
+                ORDER BY fetched_at DESC
+                LIMIT 1
+            )
+            "#,
+        )
+        .bind(semantics)
+        .bind(content_hash)
+        .execute(&self.pool)
+        .await;
+
+        if let Err(e) = result {
+            warn!(content_hash, error = %e, "Failed to update semantics");
+        }
     }
 }

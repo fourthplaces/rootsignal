@@ -8,9 +8,8 @@ use uuid::Uuid;
 use rootsignal_common::{RegionNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::Archive;
+use rootsignal_archive::{FetchBackend, FetchBackendExt};
 
-use crate::scraper::WebSearcher;
 use crate::sources;
 
 /// Handles cold-start bootstrapping for a brand-new city.
@@ -18,8 +17,7 @@ use crate::sources;
 /// performs a news sweep, and creates initial Source nodes.
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
-    _searcher: &'a dyn WebSearcher,
-    archive: Option<Arc<Archive>>,
+    archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
     region: RegionNode,
 }
@@ -27,22 +25,16 @@ pub struct Bootstrapper<'a> {
 impl<'a> Bootstrapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: &'a dyn WebSearcher,
+        archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
         region: RegionNode,
     ) -> Self {
         Self {
             writer,
-            _searcher: searcher,
-            archive: None,
+            archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
         }
-    }
-
-    pub fn with_archive(mut self, archive: Arc<Archive>) -> Self {
-        self.archive = Some(archive);
-        self
     }
 
     /// Run the cold start bootstrap. Returns number of sources discovered.
@@ -320,11 +312,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
                 );
                 for (name, feed_url) in outlets {
                     // Validate the feed URL is reachable by attempting a fetch
-                    let reachable = if let Some(ref archive) = self.archive {
-                        archive.fetch(&feed_url).await.is_ok()
-                    } else {
-                        crate::scraper::RssFetcher::new().fetch_items(&feed_url).await.is_ok()
-                    };
+                    let reachable = self.archive.fetch(&feed_url).text().await.is_ok();
                     if reachable {
                         let mut source = make_url(
                             &feed_url,

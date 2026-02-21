@@ -19,8 +19,9 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphWriter, TensionLinkerOutcome, TensionLinkerTarget};
 
+use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
+
 use crate::embedder::TextEmbedder;
-use crate::scraper::{PageScraper, WebSearcher};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
@@ -32,7 +33,7 @@ const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 // =============================================================================
 
 pub(crate) struct WebSearchTool {
-    pub(crate) searcher: Arc<dyn WebSearcher>,
+    pub(crate) archive: Arc<dyn FetchBackend>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,27 +90,29 @@ impl Tool for WebSearchTool {
     }
 
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
-        let results = self
-            .searcher
-            .search(&args.query, 5)
+        let content = self.archive.fetch(&args.query)
+            .content()
             .await
             .map_err(|e| ToolError(format!("Search failed: {e}")))?;
 
-        Ok(WebSearchOutput {
-            results: results
-                .into_iter()
-                .map(|r| WebSearchResultItem {
-                    url: r.url,
-                    title: r.title,
-                    snippet: r.snippet,
-                })
-                .collect(),
-        })
+        match content {
+            Content::SearchResults(results) => Ok(WebSearchOutput {
+                results: results
+                    .into_iter()
+                    .map(|r| WebSearchResultItem {
+                        url: r.url,
+                        title: r.title,
+                        snippet: r.snippet,
+                    })
+                    .collect(),
+            }),
+            _ => Ok(WebSearchOutput { results: Vec::new() }),
+        }
     }
 }
 
 pub(crate) struct ReadPageTool {
-    pub(crate) scraper: Arc<dyn PageScraper>,
+    pub(crate) archive: Arc<dyn FetchBackend>,
     /// When set, records every URL successfully read for post-hoc validation.
     pub(crate) visited_urls: Option<Arc<Mutex<HashSet<String>>>>,
 }
@@ -146,9 +149,8 @@ impl Tool for ReadPageTool {
     }
 
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
-        let content = self
-            .scraper
-            .scrape(&args.url)
+        let content = self.archive.fetch(&args.url)
+            .text()
             .await
             .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
 
@@ -304,8 +306,7 @@ pub struct TensionLinker<'a> {
 impl<'a> TensionLinker<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: Arc<dyn WebSearcher>,
-        scraper: Arc<dyn PageScraper>,
+        archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         region: RegionNode,
@@ -314,10 +315,10 @@ impl<'a> TensionLinker<'a> {
     ) -> Self {
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: searcher.clone(),
+                archive: archive.clone(),
             })
             .tool(ReadPageTool {
-                scraper: scraper.clone(),
+                archive: archive.clone(),
                 visited_urls: None,
             });
 

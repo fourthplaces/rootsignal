@@ -16,8 +16,9 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
+use rootsignal_archive::FetchBackend;
+
 use crate::embedder::TextEmbedder;
-use crate::scraper::{PageScraper, WebSearcher};
 use crate::sources;
 use crate::tension_linker::{ReadPageTool, WebSearchTool};
 
@@ -281,8 +282,7 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        searcher: Arc<dyn WebSearcher>,
-        scraper: Arc<dyn PageScraper>,
+        archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         region: RegionNode,
@@ -291,10 +291,10 @@ impl<'a> GatheringFinder<'a> {
     ) -> Self {
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
-                searcher: searcher.clone(),
+                archive: archive.clone(),
             })
             .tool(ReadPageTool {
-                scraper: scraper.clone(),
+                archive: archive.clone(),
                 visited_urls: None,
             });
 
