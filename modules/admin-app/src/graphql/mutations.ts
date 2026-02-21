@@ -24,18 +24,9 @@ export const LOGOUT = gql`
   }
 `;
 
-export const CREATE_REGION = gql`
-  mutation CreateCity($location: String!) {
-    createCity(location: $location) {
-      success
-      slug
-    }
-  }
-`;
-
 export const ADD_SOURCE = gql`
-  mutation AddSource($regionSlug: String!, $url: String!, $reason: String) {
-    addSource(regionSlug: $regionSlug, url: $url, reason: $reason) {
+  mutation AddSource($url: String!, $reason: String) {
+    addSource(url: $url, reason: $reason) {
       success
       sourceId
     }
@@ -43,8 +34,8 @@ export const ADD_SOURCE = gql`
 `;
 
 export const RUN_SCOUT = gql`
-  mutation RunScout($regionSlug: String!) {
-    runScout(regionSlug: $regionSlug) {
+  mutation RunScout($query: String!) {
+    runScout(query: $query) {
       success
       message
     }
@@ -52,8 +43,8 @@ export const RUN_SCOUT = gql`
 `;
 
 export const STOP_SCOUT = gql`
-  mutation StopScout($regionSlug: String!) {
-    stopScout(regionSlug: $regionSlug) {
+  mutation StopScout {
+    stopScout {
       success
       message
     }
@@ -61,24 +52,37 @@ export const STOP_SCOUT = gql`
 `;
 
 export const RESET_SCOUT_LOCK = gql`
-  mutation ResetScoutLock($regionSlug: String!) {
-    resetScoutLock(regionSlug: $regionSlug) {
+  mutation ResetScoutLock($query: String!) {
+    resetScoutLock(query: $query) {
       success
       message
     }
   }
 `;
 
-export const RESET_REGION = gql`
-  mutation ResetRegion($regionSlug: String!) {
-    resetRegion(regionSlug: $regionSlug) {
-      success
-      message
-      deletedSignals
-      deletedStories
-      deletedActors
-      deletedSources
-    }
+export const CREATE_SCOUT_TASK = gql`
+  mutation CreateScoutTask(
+    $centerLat: Float!
+    $centerLng: Float!
+    $radiusKm: Float!
+    $context: String!
+    $geoTerms: [String!]
+    $priority: Float
+  ) {
+    createScoutTask(
+      centerLat: $centerLat
+      centerLng: $centerLng
+      radiusKm: $radiusKm
+      context: $context
+      geoTerms: $geoTerms
+      priority: $priority
+    )
+  }
+`;
+
+export const CANCEL_SCOUT_TASK = gql`
+  mutation CancelScoutTask($id: String!) {
+    cancelScoutTask(id: $id)
   }
 `;
 

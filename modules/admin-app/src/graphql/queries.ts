@@ -117,38 +117,6 @@ export const ADMIN_DASHBOARD = gql`
   }
 `;
 
-export const ADMIN_REGIONS = gql`
-  query AdminRegions {
-    adminRegions {
-      slug
-      name
-      centerLat
-      centerLng
-      radiusKm
-      active
-      lastScoutCompletedAt
-      scoutRunning
-      sourcesDue
-    }
-  }
-`;
-
-export const ADMIN_REGION = gql`
-  query AdminRegion($slug: String!) {
-    adminRegion(slug: $slug) {
-      slug
-      name
-      centerLat
-      centerLng
-      radiusKm
-      active
-      lastScoutCompletedAt
-      scoutRunning
-      sourcesDue
-    }
-  }
-`;
-
 export const ADMIN_REGION_SOURCES = gql`
   query AdminRegionSources($regionSlug: String!) {
     adminRegionSources(regionSlug: $regionSlug) {
@@ -168,14 +136,20 @@ export const ADMIN_REGION_SOURCES = gql`
   }
 `;
 
-export const ADMIN_SCOUT_STATUS = gql`
-  query AdminScoutStatus($regionSlug: String!) {
-    adminScoutStatus(regionSlug: $regionSlug) {
-      regionName
-      regionSlug
-      lastScouted
-      sourcesDue
-      running
+export const ADMIN_SCOUT_TASKS = gql`
+  query AdminScoutTasks($status: String, $limit: Int) {
+    adminScoutTasks(status: $status, limit: $limit) {
+      id
+      centerLat
+      centerLng
+      radiusKm
+      context
+      geoTerms
+      priority
+      source
+      status
+      createdAt
+      completedAt
     }
   }
 `;

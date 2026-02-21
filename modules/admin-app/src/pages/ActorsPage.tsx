@@ -1,11 +1,8 @@
-import { useState } from "react";
 import { useQuery } from "@apollo/client";
-import { ACTORS, ADMIN_REGIONS } from "@/graphql/queries";
+import { ACTORS } from "@/graphql/queries";
 
 export function ActorsPage() {
-  const { data: regionsData } = useQuery(ADMIN_REGIONS);
-  const regions = regionsData?.adminRegions ?? [];
-  const [region, setRegion] = useState("twincities");
+  const region = "twincities";
 
   const { data, loading } = useQuery(ACTORS, {
     variables: { region, limit: 100 },
@@ -17,17 +14,6 @@ export function ActorsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Actors</h1>
-        <select
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          {regions.map((r: { slug: string; name: string }) => (
-            <option key={r.slug} value={r.slug}>
-              {r.name}
-            </option>
-          ))}
-        </select>
       </div>
 
       {loading ? (

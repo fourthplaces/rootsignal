@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery } from "@apollo/client";
 import { ADMIN_DASHBOARD } from "@/graphql/queries";
 import {
@@ -18,7 +17,7 @@ import {
 const COLORS = ["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ef4444", "#ec4899"];
 
 export function DashboardPage() {
-  const [region, setRegion] = useState("twincities");
+  const region = "twincities";
   const { data, loading } = useQuery(ADMIN_DASHBOARD, {
     variables: { region },
   });
@@ -32,17 +31,6 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Dashboard</h1>
-        <select
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          {d.scoutStatuses.map((s: { regionSlug: string; regionName: string }) => (
-            <option key={s.regionSlug} value={s.regionSlug}>
-              {s.regionName}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Stat cards */}

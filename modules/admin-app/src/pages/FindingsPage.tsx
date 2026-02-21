@@ -3,7 +3,6 @@ import { useQuery, useMutation } from "@apollo/client";
 import {
   SUPERVISOR_FINDINGS,
   SUPERVISOR_SUMMARY,
-  ADMIN_REGIONS,
 } from "@/graphql/queries";
 import { DISMISS_FINDING } from "@/graphql/mutations";
 
@@ -35,7 +34,7 @@ type Summary = {
 };
 
 export function FindingsPage() {
-  const [region, setRegion] = useState("twincities");
+  const region = "twincities";
   const [statusFilter, setStatusFilter] = useState<string | undefined>(
     undefined,
   );
@@ -43,8 +42,6 @@ export function FindingsPage() {
     undefined,
   );
   const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
-
-  const { data: regionsData } = useQuery(ADMIN_REGIONS);
 
   const { data: summaryData, refetch: refetchSummary } = useQuery(
     SUPERVISOR_SUMMARY,
@@ -94,19 +91,6 @@ export function FindingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Findings</h1>
-        <select
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          {regionsData?.adminRegions?.map(
-            (r: { slug: string; name: string }) => (
-              <option key={r.slug} value={r.slug}>
-                {r.name}
-              </option>
-            ),
-          )}
-        </select>
       </div>
 
       {/* Summary cards */}

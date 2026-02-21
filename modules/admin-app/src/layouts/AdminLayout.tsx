@@ -6,12 +6,11 @@ import { LOGOUT } from "@/graphql/mutations";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
-  { to: "/regions", label: "Regions" },
+  { to: "/scout", label: "Scout" },
   { to: "/signals", label: "Signals" },
   { to: "/stories", label: "Stories" },
   { to: "/actors", label: "Actors" },
   { to: "/findings", label: "Findings" },
-  { to: "/scout-runs", label: "Scout Runs" },
 ];
 
 export function AdminLayout() {
