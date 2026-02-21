@@ -432,6 +432,8 @@ pub enum ScoutTaskSource {
     Manual,
     /// Created by signal clustering (feedback loop)
     Beacon,
+    /// Created by Driver A (user search demand aggregation)
+    DriverA,
     /// Created by Driver B (global news scanning)
     DriverB,
 }
@@ -441,6 +443,7 @@ impl std::fmt::Display for ScoutTaskSource {
         match self {
             Self::Manual => write!(f, "manual"),
             Self::Beacon => write!(f, "beacon"),
+            Self::DriverA => write!(f, "driver_a"),
             Self::DriverB => write!(f, "driver_b"),
         }
     }
@@ -452,6 +455,7 @@ impl std::str::FromStr for ScoutTaskSource {
         match s {
             "manual" => Ok(Self::Manual),
             "beacon" => Ok(Self::Beacon),
+            "driver_a" => Ok(Self::DriverA),
             "driver_b" => Ok(Self::DriverB),
             other => Err(format!("unknown ScoutTaskSource: {other}")),
         }
@@ -518,6 +522,20 @@ impl From<&ScoutTask> for ScoutScope {
             geo_terms: task.geo_terms.clone(),
         }
     }
+}
+
+// --- Demand Signal (raw user search telemetry for Driver A) ---
+
+/// A raw demand signal recorded from a user search.
+/// Aggregated into ScoutTasks by the interval loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DemandSignal {
+    pub id: Uuid,
+    pub query: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub created_at: DateTime<Utc>,
 }
 
 // --- Place Node (fourth places — venues that attract gatherings) ---

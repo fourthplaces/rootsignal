@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    Config, DiscoveryMethod, ScoutScope, SourceNode, SourceRole, SubmissionNode,
+    Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole, SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -81,6 +81,7 @@ const TEST_PHONE: Option<&str> = None;
 
 const AUTH_RATE_LIMIT_PER_HOUR: usize = 10;
 const SUBMIT_RATE_LIMIT_PER_HOUR: usize = 10;
+const DEMAND_RATE_LIMIT_PER_HOUR: usize = 10;
 
 #[Object]
 impl MutationRoot {
@@ -241,9 +242,9 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a region. Returns immediately; scout runs in background.
+    /// Run scout for a location query. Geocodes on backend, returns immediately; scout runs in background.
     #[graphql(guard = "AdminGuard")]
-    async fn run_scout(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
+    async fn run_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
@@ -260,34 +261,50 @@ impl MutationRoot {
             });
         }
 
+        // Geocode the query
+        let (lat, lng, display_name) = geocode_location(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+
+        let slug = rootsignal_common::slugify(&query);
+
         // Check if already running
-        if writer.is_scout_running(&region_slug).await.unwrap_or(false) {
+        if writer.is_scout_running(&slug).await.unwrap_or(false) {
             return Ok(ScoutResult {
                 success: false,
                 message: Some("Scout already running for this region".to_string()),
             });
         }
 
+        let scope = ScoutScope {
+            center_lat: lat,
+            center_lng: lng,
+            radius_km: 30.0,
+            name: display_name.clone(),
+            geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        };
+
         let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
         spawn_scout_run(
             (**graph_client).clone(),
             (**config).clone(),
-            region_slug,
+            slug,
+            scope,
             cancel.0.clone(),
             cache_store.clone(),
         );
 
         Ok(ScoutResult {
             success: true,
-            message: Some("Scout started".to_string()),
+            message: Some(format!("Scout started for {display_name}")),
         })
     }
 
     /// Stop the currently running scout.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
+    async fn stop_scout(&self, ctx: &Context<'_>) -> Result<ScoutResult> {
         let cancel = ctx.data_unchecked::<ScoutCancel>();
-        info!(region = region_slug.as_str(), "Scout stop requested");
+        info!("Scout stop requested");
         cancel.0.store(true, Ordering::Relaxed);
         Ok(ScoutResult {
             success: true,
@@ -297,11 +314,12 @@ impl MutationRoot {
 
     /// Reset a stuck scout lock.
     #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_lock(&self, ctx: &Context<'_>, region_slug: String) -> Result<ScoutResult> {
+    async fn reset_scout_lock(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        info!(region = region_slug.as_str(), "Scout lock reset requested");
+        let slug = rootsignal_common::slugify(&query);
+        info!(slug = slug.as_str(), "Scout lock reset requested");
         writer
-            .release_scout_lock(&region_slug)
+            .release_scout_lock(&slug)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to release lock: {e}")))?;
         Ok(ScoutResult {
@@ -500,6 +518,90 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Failed to cancel scout task: {e}")))?;
         Ok(cancelled)
     }
+
+    /// Record a demand signal from a user search (public, rate-limited).
+    async fn record_demand(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+    ) -> Result<bool> {
+        rate_limit_check(ctx, DEMAND_RATE_LIMIT_PER_HOUR)?;
+
+        // Validate inputs
+        let query = query.trim().to_string();
+        if query.is_empty() || query.len() > 200 {
+            return Err("Query must be 1-200 characters".into());
+        }
+        if !(-90.0..=90.0).contains(&center_lat) {
+            return Err("center_lat must be between -90 and 90".into());
+        }
+        if !(-180.0..=180.0).contains(&center_lng) {
+            return Err("center_lng must be between -180 and 180".into());
+        }
+        if !(1.0..=500.0).contains(&radius_km) {
+            return Err("radius_km must be between 1 and 500".into());
+        }
+
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let signal = DemandSignal {
+            id: Uuid::new_v4(),
+            query: query.clone(),
+            center_lat,
+            center_lng,
+            radius_km,
+            created_at: chrono::Utc::now(),
+        };
+
+        writer
+            .upsert_demand_signal(&signal)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to record demand: {e}")))?;
+
+        info!(query = query.as_str(), "Demand signal recorded");
+        Ok(true)
+    }
+
+    /// Manually trigger a news scan (admin only).
+    #[graphql(guard = "AdminGuard")]
+    async fn run_news_scan(&self, ctx: &Context<'_>) -> Result<ScoutResult> {
+        let config = ctx.data_unchecked::<Arc<Config>>();
+        let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+
+        if config.anthropic_api_key.is_empty() || config.serper_api_key.is_empty() {
+            return Ok(ScoutResult {
+                success: false,
+                message: Some("API keys not configured".to_string()),
+            });
+        }
+
+        let client = (**graph_client).clone();
+        let config_clone = (**config).clone();
+
+        tokio::spawn(async move {
+            let writer = rootsignal_graph::GraphWriter::new(client.clone());
+            match rootsignal_scout::news_scanner::NewsScanner::new(
+                &config_clone.anthropic_api_key,
+                &config_clone.voyage_api_key,
+                &config_clone.serper_api_key,
+                writer,
+                config_clone.daily_budget_cents,
+            ) {
+                Ok(scanner) => match scanner.scan().await {
+                    Ok(locations) => info!(count = locations.len(), "News scan complete"),
+                    Err(e) => warn!(error = %e, "News scan failed"),
+                },
+                Err(e) => warn!(error = %e, "Failed to create news scanner"),
+            }
+        });
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some("News scan started in background".to_string()),
+        })
+    }
 }
 
 fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {
@@ -566,6 +668,7 @@ fn spawn_scout_run(
     client: GraphClient,
     config: rootsignal_common::Config,
     region_slug: String,
+    scope: ScoutScope,
     cancel: Arc<std::sync::atomic::AtomicBool>,
     cache_store: Arc<CacheStore>,
 ) {
@@ -575,10 +678,10 @@ fn spawn_scout_run(
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
-            if let Err(e) = run_scout(&client, &config, &region_slug, cancel).await {
+            if let Err(e) = run_scout(&client, &config, &region_slug, scope.clone(), cancel).await {
                 tracing::error!(error = %e, "Scout run failed");
             } else {
-                run_supervisor(&client, &config, &region_slug).await;
+                run_supervisor(&client, &config, &region_slug, scope).await;
                 cache_store.reload(&client).await;
             }
         });
@@ -589,18 +692,9 @@ async fn run_scout(
     client: &GraphClient,
     config: &rootsignal_common::Config,
     region_slug: &str,
+    region: ScoutScope,
     cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
-    let region = ScoutScope {
-        center_lat: config.region_lat.unwrap_or(44.9778),
-        center_lng: config.region_lng.unwrap_or(-93.2650),
-        radius_km: config.region_radius_km.unwrap_or(30.0),
-        name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
-        geo_terms: config.region_name.as_deref()
-            .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-            .unwrap_or_else(|| vec![config.region.clone()]),
-    };
-
     info!(region = region_slug, "Scout run starting");
 
     // Save region geo bounds before moving region into Scout
@@ -630,17 +724,8 @@ async fn run_supervisor(
     client: &GraphClient,
     config: &rootsignal_common::Config,
     region_slug: &str,
+    region: ScoutScope,
 ) {
-    let region = ScoutScope {
-        center_lat: config.region_lat.unwrap_or(44.9778),
-        center_lng: config.region_lng.unwrap_or(-93.2650),
-        radius_km: config.region_radius_km.unwrap_or(30.0),
-        name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
-        geo_terms: config.region_name.as_deref()
-            .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-            .unwrap_or_else(|| vec![config.region.clone()]),
-    };
-
     let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
         Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
 
@@ -659,6 +744,13 @@ async fn run_supervisor(
 }
 
 /// Start the background scout interval loop (called from main).
+///
+/// Each iteration:
+/// 1. Run news scan (Driver B) — produces signals with lat/lng
+/// 2. Aggregate demand signals into tasks (Driver A)
+/// 3. Consume pending tasks from the queue
+/// 4. If no pending tasks, fall back to config-based scope (backwards compat)
+/// 5. Run beacon detection to create follow-up tasks
 pub fn start_scout_interval(
     client: GraphClient,
     config: rootsignal_common::Config,
@@ -675,21 +767,130 @@ pub fn start_scout_interval(
         rt.block_on(async move {
             let writer = rootsignal_graph::GraphWriter::new(client.clone());
             loop {
-                match writer.is_scout_running(&region_slug).await {
-                    Ok(true) => {
-                        info!(region = region_slug.as_str(), "Scout interval: already running, skipping");
+                // Step 1: Run news scan (Driver B)
+                info!("Scout interval: running news scan");
+                match rootsignal_scout::news_scanner::NewsScanner::new(
+                    &config.anthropic_api_key,
+                    &config.voyage_api_key,
+                    &config.serper_api_key,
+                    rootsignal_graph::GraphWriter::new(client.clone()),
+                    config.daily_budget_cents,
+                ) {
+                    Ok(scanner) => match scanner.scan().await {
+                        Ok(locations) => info!(count = locations.len(), "News scan produced signals"),
+                        Err(e) => warn!(error = %e, "News scan failed"),
+                    },
+                    Err(e) => warn!(error = %e, "Failed to create news scanner"),
+                }
+
+                // Step 2: Aggregate demand signals into tasks (Driver A)
+                info!("Scout interval: aggregating demand signals");
+                match writer.aggregate_demand().await {
+                    Ok(tasks) => {
+                        if !tasks.is_empty() {
+                            info!(count = tasks.len(), "Created tasks from demand aggregation");
+                        }
                     }
+                    Err(e) => warn!(error = %e, "Demand aggregation failed"),
+                }
+
+                // Step 3: Consume pending tasks from the queue
+                let pending_tasks = match writer.list_scout_tasks(Some("pending"), 10).await {
+                    Ok(tasks) => tasks,
                     Err(e) => {
-                        warn!(region = region_slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
+                        warn!(error = %e, "Failed to list pending tasks");
+                        Vec::new()
                     }
-                    Ok(false) => {
-                        info!(region = region_slug.as_str(), "Scout interval: starting run");
-                        let cancel = Arc::new(AtomicBool::new(false));
-                        if let Err(e) = run_scout(&client, &config, &region_slug, cancel).await {
-                            tracing::error!(region = region_slug.as_str(), error = %e, "Scout interval run failed");
-                        } else {
-                            run_supervisor(&client, &config, &region_slug).await;
+                };
+
+                let mut ran_any_task = false;
+                for task in &pending_tasks {
+                    let task_id = task.id.to_string();
+                    let scope: ScoutScope = task.into();
+                    let slug = rootsignal_common::slugify(&scope.name);
+
+                    // Check if already running
+                    match writer.is_scout_running(&slug).await {
+                        Ok(true) => {
+                            info!(task = task_id.as_str(), "Scout already running for task scope, skipping");
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!(task = task_id.as_str(), error = %e, "Lock check failed, skipping task");
+                            continue;
+                        }
+                        Ok(false) => {}
+                    }
+
+                    // Claim the task
+                    match writer.claim_scout_task(&task_id).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            info!(task = task_id.as_str(), "Task already claimed, skipping");
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!(task = task_id.as_str(), error = %e, "Failed to claim task");
+                            continue;
+                        }
+                    }
+
+                    info!(task = task_id.as_str(), context = scope.name.as_str(), "Running scout for task");
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    match run_scout(&client, &config, &slug, scope.clone(), cancel).await {
+                        Ok(()) => {
+                            if let Err(e) = writer.complete_scout_task(&task_id).await {
+                                warn!(task = task_id.as_str(), error = %e, "Failed to complete task");
+                            }
+                            run_supervisor(&client, &config, &slug, scope).await;
+
+                            // Step 5: Beacon detection after each successful run
+                            match rootsignal_graph::beacon::detect_beacons(&client, &writer).await {
+                                Ok(new_tasks) => {
+                                    if !new_tasks.is_empty() {
+                                        info!(count = new_tasks.len(), "Beacon detection created new tasks");
+                                    }
+                                }
+                                Err(e) => warn!(error = %e, "Beacon detection failed"),
+                            }
+
                             cache_store.reload(&client).await;
+                            ran_any_task = true;
+                        }
+                        Err(e) => {
+                            tracing::error!(task = task_id.as_str(), error = %e, "Scout run failed for task");
+                            // Leave as running — will be retried or manually reset
+                        }
+                    }
+                }
+
+                // Step 4: If no pending tasks were consumed, fall back to config-based scope
+                if !ran_any_task {
+                    match writer.is_scout_running(&region_slug).await {
+                        Ok(true) => {
+                            info!(region = region_slug.as_str(), "Scout interval: already running, skipping config fallback");
+                        }
+                        Err(e) => {
+                            warn!(region = region_slug.as_str(), error = %e, "Scout interval: lock check failed");
+                        }
+                        Ok(false) => {
+                            info!(region = region_slug.as_str(), "Scout interval: no tasks, running config-based scope");
+                            let scope = ScoutScope {
+                                center_lat: config.region_lat.unwrap_or(44.9778),
+                                center_lng: config.region_lng.unwrap_or(-93.2650),
+                                radius_km: config.region_radius_km.unwrap_or(30.0),
+                                name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
+                                geo_terms: config.region_name.as_deref()
+                                    .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                                    .unwrap_or_else(|| vec![config.region.clone()]),
+                            };
+                            let cancel = Arc::new(AtomicBool::new(false));
+                            if let Err(e) = run_scout(&client, &config, &region_slug, scope.clone(), cancel).await {
+                                tracing::error!(region = region_slug.as_str(), error = %e, "Scout interval run failed");
+                            } else {
+                                run_supervisor(&client, &config, &region_slug, scope).await;
+                                cache_store.reload(&client).await;
+                            }
                         }
                     }
                 }

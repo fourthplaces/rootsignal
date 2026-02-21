@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, NeedNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
+    ActorNode, NeedNode, ClusterSnapshot, DemandSignal, DiscoveryMethod, GatheringNode, EvidenceNode,
     AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
     StoryNode, TensionNode, ScoutTask, ScoutTaskSource, ScoutTaskStatus,
     NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
@@ -47,6 +47,34 @@ impl GraphWriter {
                     "Evidence nodes should use create_evidence() directly".to_string(),
                 ));
             }
+        }
+    }
+
+    /// Create a node without an embedding (for news scanner and other non-search pipelines).
+    pub async fn upsert_node(
+        &self,
+        node: &Node,
+        created_by: &str,
+    ) -> Result<Uuid, neo4rs::Error> {
+        let empty_embedding: Vec<f32> = Vec::new();
+        let run_id = Uuid::new_v4().to_string();
+        self.create_node(node, &empty_embedding, created_by, &run_id).await
+    }
+
+    /// Check if a Source node with the given URL already exists in the graph.
+    pub async fn source_exists(&self, url: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "OPTIONAL MATCH (s:Source {url: $url})
+             RETURN count(s) > 0 AS exists",
+        )
+        .param("url", url);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let exists: bool = row.get("exists").unwrap_or(false);
+            Ok(exists)
+        } else {
+            Ok(false)
         }
     }
 
@@ -1551,6 +1579,142 @@ impl GraphWriter {
         .param("id", id);
 
         self.client.graph.run(q).await
+    }
+
+    /// Claim a scout task by setting its status from pending → running.
+    pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id, status: 'pending'})
+             SET t.status = 'running'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // --- Demand Signal operations (Driver A) ---
+
+    /// Store a raw demand signal from a user search.
+    pub async fn upsert_demand_signal(&self, signal: &DemandSignal) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (d:DemandSignal {id: $id})
+             SET d.query = $query,
+                 d.center_lat = $center_lat,
+                 d.center_lng = $center_lng,
+                 d.radius_km = $radius_km,
+                 d.created_at = datetime($created_at)",
+        )
+        .param("id", signal.id.to_string())
+        .param("query", signal.query.as_str())
+        .param("center_lat", signal.center_lat)
+        .param("center_lng", signal.center_lng)
+        .param("radius_km", signal.radius_km)
+        .param("created_at", format_datetime(&signal.created_at));
+
+        self.client.graph.run(q).await?;
+        info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
+        Ok(())
+    }
+
+    /// Aggregate recent demand signals into ScoutTasks.
+    /// Buckets by geohash-5 (~5km cells), creates tasks for cells with ≥ 2 signals.
+    /// Deletes consumed demand signals.
+    pub async fn aggregate_demand(&self) -> Result<Vec<ScoutTask>, neo4rs::Error> {
+        // Fetch recent demand signals (last 24h)
+        let q = query(
+            "MATCH (d:DemandSignal)
+             WHERE d.created_at > datetime() - duration('P1D')
+             RETURN d.id AS id, d.query AS query,
+                    d.center_lat AS center_lat, d.center_lng AS center_lng,
+                    d.radius_km AS radius_km",
+        );
+
+        let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let q_text: String = row.get("query").unwrap_or_default();
+            let lat: f64 = row.get("center_lat").unwrap_or(0.0);
+            let lng: f64 = row.get("center_lng").unwrap_or(0.0);
+            let radius: f64 = row.get("radius_km").unwrap_or(30.0);
+            signals.push((id, q_text, lat, lng, radius));
+        }
+
+        if signals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Bucket by truncated lat/lng (~5km grid cells)
+        // Using 0.05 degree resolution ≈ 5km
+        use std::collections::HashMap;
+        let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
+        for sig in &signals {
+            let lat_cell = (sig.2 / 0.05).round() as i64;
+            let lng_cell = (sig.3 / 0.05).round() as i64;
+            cells.entry((lat_cell, lng_cell)).or_default().push(sig);
+        }
+
+        let mut tasks = Vec::new();
+        let mut consumed_ids = Vec::new();
+
+        for ((_lat_cell, _lng_cell), cell_signals) in &cells {
+            if cell_signals.len() < 2 {
+                continue;
+            }
+
+            // Compute centroid
+            let n = cell_signals.len() as f64;
+            let avg_lat: f64 = cell_signals.iter().map(|s| s.2).sum::<f64>() / n;
+            let avg_lng: f64 = cell_signals.iter().map(|s| s.3).sum::<f64>() / n;
+            let avg_radius: f64 = cell_signals.iter().map(|s| s.4).sum::<f64>() / n;
+
+            // Collect unique query terms for context
+            let queries: Vec<&str> = cell_signals.iter().map(|s| s.1.as_str()).collect();
+            let context = queries.join("; ");
+
+            let task = ScoutTask {
+                id: Uuid::new_v4(),
+                center_lat: avg_lat,
+                center_lng: avg_lng,
+                radius_km: avg_radius.min(100.0),
+                context,
+                geo_terms: queries.iter().map(|q| q.to_string()).collect(),
+                priority: 0.5,
+                source: ScoutTaskSource::DriverA,
+                status: ScoutTaskStatus::Pending,
+                created_at: chrono::Utc::now(),
+                completed_at: None,
+            };
+
+            self.upsert_scout_task(&task).await?;
+            tasks.push(task);
+
+            // Mark these signals as consumed
+            for sig in cell_signals {
+                consumed_ids.push(sig.0.clone());
+            }
+        }
+
+        // Delete consumed demand signals
+        if !consumed_ids.is_empty() {
+            let q = query(
+                "UNWIND $ids AS id
+                 MATCH (d:DemandSignal {id: id})
+                 DELETE d",
+            )
+            .param("ids", consumed_ids);
+            self.client.graph.run(q).await?;
+        }
+
+        info!(tasks = tasks.len(), "Demand aggregation complete");
+        Ok(tasks)
     }
 
     // --- Source operations (emergent source discovery) ---

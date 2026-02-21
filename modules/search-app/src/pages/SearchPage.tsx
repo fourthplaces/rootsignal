@@ -1,5 +1,5 @@
-import { useState, useCallback, useMemo } from "react";
-import { useQuery } from "@apollo/client";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { useQuery, useMutation } from "@apollo/client";
 import { MapView } from "@/components/MapView";
 import { SearchInput, parseQuery, toggleToken } from "@/components/SearchInput";
 import { TabBar } from "@/components/TabBar";
@@ -18,6 +18,7 @@ import {
   SEARCH_SIGNALS_IN_BOUNDS,
   SEARCH_STORIES_IN_BOUNDS,
 } from "@/graphql/queries";
+import { RECORD_DEMAND } from "@/graphql/mutations";
 
 // Maps type filter keys to GraphQL __typename values
 const TYPE_TO_TYPENAME: Record<string, string> = {
@@ -39,6 +40,9 @@ export function SearchPage() {
   const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number } | null>(null);
   const [sheetSnap, setSheetSnap] = useState<Snap>("half");
   const isDesktop = useMediaQuery("(min-width: 768px)");
+
+  const [recordDemand] = useMutation(RECORD_DEMAND);
+  const lastDemandQuery = useRef<string>("");
 
   const parsed = useMemo(() => parseQuery(rawQuery), [rawQuery]);
   const hasTextQuery = parsed.text.length > 0;
@@ -172,8 +176,25 @@ export function SearchPage() {
       setRawQuery(q);
       setSelectedId(null);
       url.updateUrl({ q: q || undefined }, { replace: false });
+
+      // Fire demand signal (fire-and-forget) when we have bounds and a non-empty query
+      const text = parseQuery(q).text;
+      if (text && bounds && text !== lastDemandQuery.current) {
+        lastDemandQuery.current = text;
+        const centerLat = (bounds.minLat + bounds.maxLat) / 2;
+        const centerLng = (bounds.minLng + bounds.maxLng) / 2;
+        const latSpan = bounds.maxLat - bounds.minLat;
+        const lngSpan = bounds.maxLng - bounds.minLng;
+        const radiusKm = Math.max(
+          1,
+          Math.min(500, Math.sqrt(latSpan ** 2 + lngSpan ** 2) * 111 / 2),
+        );
+        recordDemand({
+          variables: { query: text, centerLat, centerLng, radiusKm },
+        }).catch(() => {}); // fire-and-forget
+      }
     },
-    [url],
+    [url, bounds, recordDemand],
   );
 
   const handleTabChange = useCallback(
