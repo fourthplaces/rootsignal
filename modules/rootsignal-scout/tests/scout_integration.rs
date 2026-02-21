@@ -1046,6 +1046,80 @@ async fn coordinated_social_posts_detected() {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-city contamination: Giessen bug reproduction
+// ---------------------------------------------------------------------------
+//
+// A Giessen scout run receives content about a US national charity with no
+// geographic markers. The LLM extracts signals without coordinates or
+// location_name. These MUST be rejected — not backfilled with Giessen coords.
+
+#[tokio::test]
+async fn cross_city_contamination_rejected() {
+    let Some(ctx) = TestContext::try_new().await else {
+        eprintln!("Skipping: API keys not set");
+        return;
+    };
+
+    let stats = ctx
+        .scout()
+        .with_city(city_node(
+            "Giessen, Germany",
+            "giessen",
+            50.6214,
+            8.6567,
+            20.0,
+            &["Giessen", "Gießen", "Hessen", "Lahn"],
+        ))
+        .with_web_content(include_str!("fixtures/national_charity_page.txt"))
+        .with_search_results(vec![search_result(
+            "https://www.cancerresearchfoundation.org/donate",
+            "American Cancer Research Foundation — Donate Today",
+        )])
+        .run()
+        .await;
+
+    // Signals from a US national charity page should be geo-filtered when
+    // running a Giessen scout — no coordinates, no Giessen location_name.
+    assert_eq!(
+        stats.signals_stored, 0,
+        "national charity page should produce 0 stored signals for Giessen; \
+         extracted={}, geo_filtered={}, stored={}",
+        stats.signals_extracted, stats.geo_filtered, stats.signals_stored,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// National org without location rejected for any city profile
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn national_org_without_location_rejected() {
+    let Some(ctx) = TestContext::try_new().await else {
+        eprintln!("Skipping: API keys not set");
+        return;
+    };
+
+    // Run against Twin Cities (default) — still should reject content with
+    // no geographic specificity.
+    let stats = ctx
+        .scout()
+        .with_web_content(include_str!("fixtures/national_charity_page.txt"))
+        .with_search_results(vec![search_result(
+            "https://www.cancerresearchfoundation.org/donate",
+            "American Cancer Research Foundation — Donate Today",
+        )])
+        .run()
+        .await;
+
+    assert_eq!(
+        stats.signals_stored, 0,
+        "national charity page should produce 0 stored signals for Twin Cities; \
+         extracted={}, geo_filtered={}, stored={}",
+        stats.signals_extracted, stats.geo_filtered, stats.signals_stored,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Scenario: Signals without coordinates get city-center backfill
 // ---------------------------------------------------------------------------
 //
@@ -1094,19 +1168,7 @@ async fn city_wide_signals_get_center_coordinates() {
         missing_coords.iter().map(|s| &s.title).collect::<Vec<_>>(),
     );
 
-    // Signals without specific locations should have City precision
-    let city_precision: Vec<_> = geo_signals
-        .iter()
-        .filter(|s| s.geo_precision.as_deref() == Some("city"))
-        .collect();
-
-    assert!(
-        !city_precision.is_empty(),
-        "at least one signal should have city-level precision (backfilled), \
-         precisions found: {:?}",
-        geo_signals
-            .iter()
-            .map(|s| &s.geo_precision)
-            .collect::<Vec<_>>(),
-    );
+    // Coordinates should be near Minneapolis (whether LLM-provided or backfilled).
+    // We don't assert on precision — LLM-provided Exact coords are strictly
+    // better than City-level backfill.
 }

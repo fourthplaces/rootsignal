@@ -37,7 +37,6 @@ pub struct ScoutStats {
     pub fresh_30d: u32,
     pub fresh_90d: u32,
     pub social_media_posts: u32,
-    pub geo_stripped: u32,
     pub geo_filtered: u32,
     pub discovery_posts_found: u32,
     pub discovery_accounts_found: u32,
@@ -54,7 +53,6 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "URLs unchanged:     {}", self.urls_unchanged)?;
         writeln!(f, "URLs failed:        {}", self.urls_failed)?;
         writeln!(f, "Social media posts: {}", self.social_media_posts)?;
-        writeln!(f, "Geo stripped:       {}", self.geo_stripped)?;
         writeln!(f, "Geo filtered:       {}", self.geo_filtered)?;
         writeln!(f, "Discovery posts:    {}", self.discovery_posts_found)?;
         writeln!(f, "Accounts discovered:{}", self.discovery_accounts_found)?;

@@ -17,11 +17,12 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode,
-    DiscoveryMethod, EvidenceNode, GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy,
+    DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
     SocialPlatform as CommonSocialPlatform, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
+use super::geo_filter;
 use crate::embedder::TextEmbedder;
 use crate::extractor::{ResourceTag, SignalExtractor};
 use crate::quality;
@@ -162,17 +163,6 @@ enum ScrapeOutcome {
 /// Normalize a title for dedup comparison: lowercase and trim.
 fn normalize_title(title: &str) -> String {
     title.trim().to_lowercase()
-}
-
-fn node_meta_mut(node: &mut Node) -> Option<&mut rootsignal_common::NodeMeta> {
-    match node {
-        Node::Gathering(n) => Some(&mut n.meta),
-        Node::Aid(n) => Some(&mut n.meta),
-        Node::Need(n) => Some(&mut n.meta),
-        Node::Notice(n) => Some(&mut n.meta),
-        Node::Tension(n) => Some(&mut n.meta),
-        Node::Evidence(_) => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1127,109 +1117,24 @@ impl<'a> ScrapePhase<'a> {
         // Score quality, set confidence, and apply sanitized URL
         for node in &mut nodes {
             let q = quality::score(node);
-            if let Some(meta) = node_meta_mut(node) {
+            if let Some(meta) = node.meta_mut() {
                 meta.confidence = q.confidence;
                 meta.source_url = url.clone();
             }
         }
 
-        // Strip fake city-center coordinates.
-        // Safety net: if the LLM echoes the default city coords, remove them.
-        let center_lat = self.region.center_lat;
-        let center_lng = self.region.center_lng;
-        for node in &mut nodes {
-            let is_fake = node
-                .meta()
-                .and_then(|m| m.location.as_ref())
-                .map(|loc| {
-                    (loc.lat - center_lat).abs() < 0.01 && (loc.lng - center_lng).abs() < 0.01
-                })
-                .unwrap_or(false);
-
-            if is_fake {
-                if let Some(meta) = node_meta_mut(node) {
-                    meta.location = None;
-                    ctx.stats.geo_stripped += 1;
-                }
-            }
-        }
-
-        // Layered geo-check:
-        // 1. Has coordinates within radius → accept
-        // 2. Has coordinates outside radius → reject
-        // 3. No coordinates, location_name matches a geo_term → accept
-        // 4. No coordinates, no location_name match, source is city-local → accept with 0.8x confidence
-        // 5. No coordinates, no match, source not city-local → reject
-        let geo_terms = &self.region.geo_terms;
-        let center_lat = self.region.center_lat;
-        let center_lng = self.region.center_lng;
-        let radius_km = self.region.radius_km;
-
-        // Determine if this source URL belongs to a city-local source
+        // Geographic filtering: reject off-geography signals and backfill
+        // city-center coordinates on survivors that lack coords.
+        let geo_config = geo_filter::GeoFilterConfig {
+            center_lat: self.region.center_lat,
+            center_lng: self.region.center_lng,
+            radius_km: self.region.radius_km,
+            geo_terms: &self.region.geo_terms,
+        };
         let is_city_local = known_city_urls.contains(&url);
-
         let before_geo = nodes.len();
-        let mut nodes_filtered = Vec::new();
-        for mut node in nodes {
-            let has_coords = node.meta().and_then(|m| m.location.as_ref()).is_some();
-            let loc_name = node
-                .meta()
-                .and_then(|m| m.location_name.as_deref())
-                .unwrap_or("")
-                .to_string();
-
-            if has_coords {
-                let loc = node.meta().unwrap().location.as_ref().unwrap();
-                let dist =
-                    rootsignal_common::haversine_km(center_lat, center_lng, loc.lat, loc.lng);
-                if dist <= radius_km {
-                    // Case 1: coordinates within radius → accept
-                    nodes_filtered.push(node);
-                } else {
-                    // Case 2: coordinates outside radius → reject
-                    ctx.stats.geo_filtered += 1;
-                }
-            } else if !loc_name.is_empty() && loc_name != "<UNKNOWN>" {
-                let loc_lower = loc_name.to_lowercase();
-                if geo_terms
-                    .iter()
-                    .any(|term| loc_lower.contains(&term.to_lowercase()))
-                {
-                    // Case 3: location_name matches geo_term → accept
-                    nodes_filtered.push(node);
-                } else if is_city_local {
-                    // Case 4: city-local source, no name match → accept with confidence penalty
-                    if let Some(meta) = node_meta_mut(&mut node) {
-                        meta.confidence *= 0.8;
-                    }
-                    nodes_filtered.push(node);
-                } else {
-                    // Case 5: non-local source, no match → reject
-                    ctx.stats.geo_filtered += 1;
-                }
-            } else {
-                // No coordinates, no location_name — keep with benefit of the doubt
-                nodes_filtered.push(node);
-            }
-        }
-        // Backfill city-center coordinates on signals that passed the geo-filter
-        // but have no coordinates. This ensures they're visible in geo bounding-box
-        // queries (admin UI, API). Precision is marked City so consumers know it's
-        // approximate, not a specific location.
-        for node in &mut nodes_filtered {
-            let needs_coords = node.meta().map(|m| m.location.is_none()).unwrap_or(false);
-            if needs_coords {
-                if let Some(meta) = node_meta_mut(node) {
-                    meta.location = Some(GeoPoint {
-                        lat: center_lat,
-                        lng: center_lng,
-                        precision: GeoPrecision::City,
-                    });
-                }
-            }
-        }
-
-        let nodes = nodes_filtered;
+        let (nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config, is_city_local);
+        ctx.stats.geo_filtered += geo_stats.filtered;
         let geo_filtered = before_geo - nodes.len();
         if geo_filtered > 0 {
             info!(
