@@ -111,7 +111,7 @@ impl TestContext {
             Box::new(Embedder::new(&self.voyage_key)),
             Arc::new(SimPageAdapter::new(sim.clone())),
             Arc::new(SimSearchAdapter::new(sim.clone())),
-            Box::new(SimSocialAdapter::new(sim)),
+            Arc::new(SimSocialAdapter::new(sim)),
             &self.anthropic_key,
             city_node,
         )
@@ -130,7 +130,7 @@ impl TestContext {
             Box::new(Embedder::new(&self.voyage_key)),
             Arc::new(SimPageAdapter::new(sim.clone())),
             Arc::new(SimSearchAdapter::new(sim.clone())),
-            Box::new(SimSocialAdapter::new(sim)),
+            Arc::new(SimSocialAdapter::new(sim)),
             &self.anthropic_key,
             city_node,
         )
@@ -158,7 +158,7 @@ pub struct ScoutBuilder<'a> {
     search_results: Vec<SearchResult>,
     social_posts: Vec<SocialPost>,
     searcher_override: Option<Box<dyn WebSearcher>>,
-    social_override: Option<Box<dyn SocialScraper>>,
+    social_override: Option<Arc<dyn SocialScraper>>,
 }
 
 impl<'a> ScoutBuilder<'a> {
@@ -216,7 +216,7 @@ impl<'a> ScoutBuilder<'a> {
 
     /// Use a pre-built ScenarioSocialScraper.
     pub fn with_social_scenario(mut self, scraper: ScenarioSocialScraper) -> Self {
-        self.social_override = Some(Box::new(scraper));
+        self.social_override = Some(Arc::new(scraper));
         self
     }
 
@@ -229,9 +229,9 @@ impl<'a> ScoutBuilder<'a> {
             None => Arc::new(FixtureSearcher::new(self.search_results)),
         };
 
-        let social: Box<dyn SocialScraper> = match self.social_override {
+        let social: Arc<dyn SocialScraper> = match self.social_override {
             Some(s) => s,
-            None => Box::new(FixtureSocialScraper::new(self.social_posts)),
+            None => Arc::new(FixtureSocialScraper::new(self.social_posts)),
         };
 
         let scout = Scout::with_deps(

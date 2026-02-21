@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use sqlx::PgPool;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -11,6 +12,8 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
+use rootsignal_archive::{Archive, ArchiveConfig, PageBackend};
+
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::TextEmbedder;
 use crate::extractor::{Extractor, SignalExtractor};
@@ -18,9 +21,7 @@ use crate::expansion::Expansion;
 use crate::metrics::Metrics;
 use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::{RunContext, ScrapePhase};
-use crate::scraper::{
-    self, NoopSocialScraper, PageScraper, SerperSearcher, SocialScraper, WebSearcher,
-};
+use crate::scraper::{PageScraper, SocialScraper, WebSearcher};
 use crate::util::sanitize_url;
 
 /// Stats from a scout run.
@@ -117,7 +118,7 @@ pub struct Scout {
     embedder: Box<dyn TextEmbedder>,
     scraper: Arc<dyn PageScraper>,
     searcher: Arc<dyn WebSearcher>,
-    social: Box<dyn SocialScraper>,
+    social: Arc<dyn SocialScraper>,
     anthropic_api_key: String,
     region: RegionNode,
     budget: BudgetTracker,
@@ -127,6 +128,7 @@ pub struct Scout {
 impl Scout {
     pub fn new(
         graph_client: GraphClient,
+        pool: PgPool,
         anthropic_api_key: &str,
         voyage_api_key: &str,
         serper_api_key: &str,
@@ -136,19 +138,32 @@ impl Scout {
         cancelled: Arc<AtomicBool>,
     ) -> Result<Self> {
         info!(region = region.name.as_str(), "Initializing scout");
-        let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
-            warn!("APIFY_API_KEY not set, skipping social media scraping");
-            Box::new(NoopSocialScraper)
-        } else {
-            Box::new(apify_client::ApifyClient::new(apify_api_key.to_string()))
+
+        let city_slug = rootsignal_common::slugify(&region.name);
+        let archive_config = ArchiveConfig {
+            page_backend: match std::env::var("BROWSERLESS_URL") {
+                Ok(url) => {
+                    let token = std::env::var("BROWSERLESS_TOKEN").ok();
+                    PageBackend::Browserless { base_url: url, token }
+                }
+                Err(_) => PageBackend::Chrome,
+            },
+            serper_api_key: serper_api_key.to_string(),
+            apify_api_key: if apify_api_key.is_empty() {
+                warn!("APIFY_API_KEY not set, social media scraping will return errors");
+                None
+            } else {
+                Some(apify_api_key.to_string())
+            },
         };
-        let scraper: Arc<dyn PageScraper> = match std::env::var("BROWSERLESS_URL") {
-            Ok(url) => {
-                let token = std::env::var("BROWSERLESS_TOKEN").ok();
-                Arc::new(scraper::BrowserlessScraper::new(&url, token.as_deref()))
-            }
-            Err(_) => Arc::new(scraper::ChromeScraper::new()),
-        };
+
+        let archive = Arc::new(Archive::new(
+            pool,
+            archive_config,
+            Uuid::new_v4(),
+            city_slug,
+        ));
+
         Ok(Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
@@ -159,9 +174,9 @@ impl Scout {
                 region.center_lng,
             )),
             embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
-            scraper,
-            searcher: Arc::new(SerperSearcher::new(serper_api_key)),
-            social,
+            scraper: archive.clone(),
+            searcher: archive.clone(),
+            social: archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
             budget: BudgetTracker::new(daily_budget_cents),
@@ -176,7 +191,7 @@ impl Scout {
         embedder: Box<dyn TextEmbedder>,
         scraper: Arc<dyn PageScraper>,
         searcher: Arc<dyn WebSearcher>,
-        social: Box<dyn SocialScraper>,
+        social: Arc<dyn SocialScraper>,
         anthropic_api_key: &str,
         region: RegionNode,
     ) -> Self {

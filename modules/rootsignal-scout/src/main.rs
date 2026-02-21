@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Serialize;
+use sqlx::postgres::PgPoolOptions;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -114,9 +115,19 @@ async fn main() -> Result<()> {
     let region_name_key = region.name.clone();
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
+    // Connect to Postgres for the web archive
+    let database_url = std::env::var("DATABASE_URL")
+        .context("DATABASE_URL required for web archive")?;
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .context("Failed to connect to Postgres")?;
+
     // Create and run scout
     let scout = Scout::new(
         client.clone(),
+        pool,
         &config.anthropic_api_key,
         &config.voyage_api_key,
         &config.serper_api_key,
