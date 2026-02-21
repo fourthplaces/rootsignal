@@ -113,6 +113,7 @@ pub enum StoryCategory {
     Governance,
     Stewardship,
     Community,
+    Environment,
 }
 
 impl std::fmt::Display for StoryCategory {
@@ -124,6 +125,7 @@ impl std::fmt::Display for StoryCategory {
             StoryCategory::Governance => write!(f, "governance"),
             StoryCategory::Stewardship => write!(f, "stewardship"),
             StoryCategory::Community => write!(f, "community"),
+            StoryCategory::Environment => write!(f, "environment"),
         }
     }
 }

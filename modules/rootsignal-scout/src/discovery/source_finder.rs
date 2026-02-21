@@ -365,9 +365,12 @@ pub fn discovery_system_prompt(city_name: &str) -> String {
          \n\
          Generate 3-7 targeted web search queries. Prioritize:\n\
          1. RESPONSE RESOURCES for unmet tensions (highest priority)\n\
-         2. MISSING SIGNAL TYPES for stories with low type diversity\n\
-         3. EMERGING THREADS that deserve deeper investigation\n\
-         4. NOVEL ANGLES that existing sources aren't covering\n\
+         2. DEMAND SIGNALS — if tensions have few associated Needs, search for \
+people expressing needs related to those tensions (GoFundMe campaigns, \
+mutual aid requests, community forum posts, volunteer calls)\n\
+         3. MISSING SIGNAL TYPES for stories with low type diversity\n\
+         4. EMERGING THREADS that deserve deeper investigation\n\
+         5. NOVEL ANGLES that existing sources aren't covering\n\
          \n\
          Query quality guidelines:\n\
          - Include \"{city_name}\" or neighborhood names — local results only\n\

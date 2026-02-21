@@ -104,17 +104,18 @@ impl<'a> Bootstrapper<'a> {
         // Tension queries — surface friction, complaints, unmet needs
         let tension_prompt = format!(
             r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {city}. These should find:
-- Complaints, frustrations, and heated debates among residents
-- Housing crises, evictions, rent disputes, homelessness
-- Public safety concerns, crime, policing controversies
-- Infrastructure failures, transit problems, road conditions
-- Government accountability, budget fights, corruption
-- Environmental hazards, pollution, contamination
-- School closures, education funding cuts
-- Business closures, economic hardship, job losses
-- Immigration enforcement, deportation fears
-- Healthcare access gaps, mental health crises
-- Gentrification, displacement, neighborhood change
+- Housing pressures and instability
+- Public safety and community trust
+- Infrastructure and utilities access
+- Government accountability and institutional failures
+- Environmental hazards and ecological harm
+- Climate impacts, natural disasters, extreme weather
+- Education access and youth needs
+- Economic hardship and cost of living
+- Immigration and cultural displacement
+- Healthcare access and mental health
+- Industrial impacts on land and water
+- Rural access gaps and isolation
 
 Each query should be the kind of thing someone would type into Google to find real community friction — not resources or programs.
 
@@ -124,29 +125,49 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         // Response queries — surface organizations and efforts addressing needs
         let response_prompt = format!(
             r#"Generate 10 search queries that would surface organizations and efforts actively helping people in {city}. These should find:
-- Mutual aid networks distributing resources
-- Legal aid for tenants, immigrants, workers
-- Food banks and food shelves serving people now
-- Housing advocacy organizations fighting for tenants
-- Immigration support and sanctuary resources
-- Community health clinics and mental health services
+- Mutual aid networks and community support
+- Legal aid and advocacy organizations
+- Food assistance and community kitchens
+- Housing assistance and shelter programs
+- Community health and mental health services
+- Environmental restoration and conservation groups
+- Disaster preparedness and community resilience programs
+- Volunteer networks and community organizing
 
 Each query should find specific organizations doing real work — not event calendars, festivals, or generic community directories.
 
 Return ONLY the queries, one per line. No numbering, no explanations."#
         );
 
-        let (tension_resp, response_resp) = tokio::join!(
+        // Social queries — surface where people are actually talking
+        let social_prompt = format!(
+            r#"Generate 10 social media search terms and hashtags for finding people talking about community issues in {city}. These should find:
+- Local hashtags people actually use (not branded campaigns)
+- Mutual aid and community support conversations
+- Neighborhood-level discussion and organizing
+- People expressing needs or offering help
+- Community responses to local problems
+
+Include a mix of:
+- Hashtags (e.g. #{city}MutualAid, #{city}Community)
+- Search terms for GoFundMe, Instagram, X/Twitter, TikTok
+- Neighborhood or region-specific terms people use locally
+
+Return ONLY the terms, one per line. No numbering, no explanations."#
+        );
+
+        let (tension_resp, response_resp, social_resp) = tokio::join!(
             claude.complete(&tension_prompt),
             claude.complete(&response_prompt),
+            claude.complete(&social_prompt),
         );
 
         let mut queries = Vec::new();
 
         let parse_lines = |text: &str| -> Vec<String> {
             text.lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty() && l.len() > 5)
+                .map(|l| l.trim().trim_start_matches('#').to_string())
+                .filter(|l| !l.is_empty() && l.len() > 3)
                 .collect()
         };
 
@@ -159,6 +180,12 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         if let Ok(text) = response_resp {
             for q in parse_lines(&text) {
                 queries.push((q, SourceRole::Response));
+            }
+        }
+
+        if let Ok(text) = social_resp {
+            for q in parse_lines(&text) {
+                queries.push((q, SourceRole::Mixed));
             }
         }
 

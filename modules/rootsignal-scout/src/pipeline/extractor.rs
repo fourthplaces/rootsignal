@@ -571,11 +571,26 @@ For signals with a clear community tension connection, provide up to 3
 implied_queries — searches that would discover RELATED community signals
 by expanding outward from this one.
 
-- A Need for donations → search for the service that helps affected people directly
-- An Aid serving a population → search for what else that population needs
-- A Gathering at a venue → search for other community events at that venue
-- A Tension → search for who's responding and where people are gathering
-- A Notice about policy → search for who's affected and how they're organizing
+- A Need (donations, volunteers, drivers, medical bills, rent help,
+  funeral costs, school supplies, legal aid, shelter, food, or any
+  other expressed need) → search for others expressing the same kind
+  of need nearby (GoFundMe campaigns, mutual aid threads, community
+  posts, neighborhood forums). If one person needs it, others do too.
+- An Aid (food banks, shelters, legal clinics, free clinics, job
+  training, mutual aid networks, or any other service) → search for
+  more of the same kind of aid in the area, and for unmet needs in
+  the population it serves.
+- A Gathering (town halls, protests, rallies, marches, cleanups,
+  vigils, mutual aid distributions, political movements, or any
+  community event) → search for other gatherings around the same
+  issue or cause, who is organizing them, and what tensions are
+  driving people to show up.
+- A Tension → search for who's responding (aid, organizing, legal
+  action), where people are gathering, and what needs people are
+  expressing because of it.
+- A Notice about policy or institutional action → search for who is
+  affected, what they need as a result, and how they're organizing
+  in response.
 
 Always include the city name or neighborhood. Target specific organizations,
 services, and events — not news articles.
