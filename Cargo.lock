@@ -3272,6 +3272,7 @@ dependencies = [
  "jsonwebtoken",
  "regex",
  "reqwest",
+ "rootsignal-archive",
  "rootsignal-common",
  "rootsignal-graph",
  "rootsignal-scout",
