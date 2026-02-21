@@ -25,6 +25,7 @@ use twilio::TwilioService;
 
 mod graphql;
 mod jwt;
+mod link_preview;
 
 use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
@@ -198,12 +199,19 @@ async fn main() -> Result<()> {
         jwt_service: jwt_service.clone(),
     });
 
+    let link_preview_cache = Arc::new(link_preview::LinkPreviewCache::new());
+
     let app = Router::new()
         // GraphQL
         .route("/graphql", get(graphiql).post(graphql_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
         .with_state(state)
+        // Link preview (separate state)
+        .route(
+            "/api/link-preview",
+            get(link_preview::link_preview_handler).with_state(link_preview_cache),
+        )
         // CORS: support credentials for JWT cookies
         .layer(if cfg!(debug_assertions) {
             tower_http::cors::CorsLayer::new()

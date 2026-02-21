@@ -260,7 +260,6 @@ export const STORY_DETAIL = gql`
       category
       lede
       narrative
-      actionGuidance
       tags {
         slug
         name

@@ -76,12 +76,6 @@ export function StoryDetail({ storyId, onBack }: StoryDetailProps) {
             </div>
           </div>
 
-          {story.actionGuidance && (
-            <div>
-              <h3 className="text-sm font-medium text-foreground mb-1">Action Guidance</h3>
-              <p className="text-xs text-muted-foreground">{story.actionGuidance}</p>
-            </div>
-          )}
         </div>
       )}
     </div>
