@@ -48,7 +48,7 @@ impl<'a> Bootstrapper<'a> {
         // Step 2: Create WebQuery source nodes for each query
         let mut sources_created = 0u32;
         let now = Utc::now();
-        for query in &queries {
+        for (query, role) in &queries {
             let cv = query.clone();
             let ck = sources::make_canonical_key(&cv);
             let source = SourceNode {
@@ -69,7 +69,7 @@ impl<'a> Bootstrapper<'a> {
                 cadence_hours: None,
                 avg_signals_per_scrape: 0.0,
                 quality_penalty: 1.0,
-                source_role: SourceRole::default(),
+                source_role: role.clone(),
                 scrape_count: 0,
             };
             match self.writer.upsert_source(&source, &self.region.slug).await {
@@ -94,38 +94,73 @@ impl<'a> Bootstrapper<'a> {
         Ok(sources_created)
     }
 
-    /// Use Claude Haiku to generate 20-30 seed web search queries for the city.
-    async fn generate_seed_queries(&self) -> Result<Vec<String>> {
+    /// Use Claude Haiku to generate seed web search queries for the city.
+    /// Returns (query, role) pairs so tension vs response sources are labeled correctly.
+    async fn generate_seed_queries(&self) -> Result<Vec<(String, SourceRole)>> {
         let city = &self.region.name;
+        let claude =
+            ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
 
-        let prompt = format!(
-            r#"Generate 25 search queries to discover community life in {city}. Focus on:
-- Community volunteer opportunities
-- Food banks, food shelves, mutual aid
-- Local government meetings, public hearings
-- Housing advocacy, tenant rights
-- Immigration support, sanctuary resources
-- Youth and senior services
-- Environmental cleanup, community gardens
-- Community events, festivals
-- Local news about tensions or community issues
-- Donation drives, crowdfunding, solidarity funds, and community fundraisers
-- Repair cafes, tool libraries
-- School board and education policy
+        // Tension queries — surface friction, complaints, unmet needs
+        let tension_prompt = format!(
+            r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {city}. These should find:
+- Complaints, frustrations, and heated debates among residents
+- Housing crises, evictions, rent disputes, homelessness
+- Public safety concerns, crime, policing controversies
+- Infrastructure failures, transit problems, road conditions
+- Government accountability, budget fights, corruption
+- Environmental hazards, pollution, contamination
+- School closures, education funding cuts
+- Business closures, economic hardship, job losses
+- Immigration enforcement, deportation fears
+- Healthcare access gaps, mental health crises
+- Gentrification, displacement, neighborhood change
+
+Each query should be the kind of thing someone would type into Google to find real community friction — not resources or programs.
 
 Return ONLY the queries, one per line. No numbering, no explanations."#
         );
 
-        let claude =
-            ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
+        // Response queries — surface organizations and efforts addressing needs
+        let response_prompt = format!(
+            r#"Generate 10 search queries that would surface organizations and efforts actively helping people in {city}. These should find:
+- Mutual aid networks distributing resources
+- Legal aid for tenants, immigrants, workers
+- Food banks and food shelves serving people now
+- Housing advocacy organizations fighting for tenants
+- Immigration support and sanctuary resources
+- Community health clinics and mental health services
 
-        let response = claude.complete(&prompt).await?;
+Each query should find specific organizations doing real work — not event calendars, festivals, or generic community directories.
 
-        let queries: Vec<String> = response
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && l.len() > 5)
-            .collect();
+Return ONLY the queries, one per line. No numbering, no explanations."#
+        );
+
+        let (tension_resp, response_resp) = tokio::join!(
+            claude.complete(&tension_prompt),
+            claude.complete(&response_prompt),
+        );
+
+        let mut queries = Vec::new();
+
+        let parse_lines = |text: &str| -> Vec<String> {
+            text.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty() && l.len() > 5)
+                .collect()
+        };
+
+        if let Ok(text) = tension_resp {
+            for q in parse_lines(&text) {
+                queries.push((q, SourceRole::Tension));
+            }
+        }
+
+        if let Ok(text) = response_resp {
+            for q in parse_lines(&text) {
+                queries.push((q, SourceRole::Response));
+            }
+        }
 
         Ok(queries)
     }
@@ -277,16 +312,17 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
         let city = &self.region.name;
 
         let prompt = format!(
-            r#"What are the active Reddit subreddits relevant to community life in {city}?
+            r#"What are the active Reddit subreddits specifically for {city} and its immediate metro area?
 
-Include:
-- The main city subreddit
-- Neighborhood or metro area subreddits
-- Local housing, community, or environment-focused subreddits
+Rules:
+- ONLY include subreddits dedicated to {city} or its immediate suburbs/neighborhoods
+- Do NOT include state-level subreddits (e.g. r/Minnesota, r/Texas)
+- Do NOT include national/global topic subreddits (e.g. r/FuckCars, r/urbanplanning, r/housing)
+- Do NOT include subreddits for cities more than 30 miles away
+- Each subreddit must have {city} or a neighborhood/suburb name in its name or be the well-known main sub for the city
 
-Only include subreddits that actually exist and are active.
 Return ONLY the subreddit names (without r/ prefix), one per line. No numbering, no explanations.
-Maximum 8 subreddits."#
+Maximum 5 subreddits."#
         );
 
         let claude =
@@ -303,7 +339,7 @@ Maximum 8 subreddits."#
                     .to_string()
             })
             .filter(|l| !l.is_empty() && !l.contains(' ') && l.len() >= 2)
-            .take(8)
+            .take(5)
             .collect();
 
         Ok(subreddits)
