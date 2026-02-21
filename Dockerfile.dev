@@ -6,4 +6,4 @@ RUN cargo install cargo-watch --locked
 
 WORKDIR /app
 EXPOSE 3000
-CMD ["cargo", "watch", "-x", "run --bin api"]
+CMD ["cargo", "watch", "-i", "*.md", "-i", "docs/*", "-i", "modules/admin-app/*", "-i", "modules/search-app/*", "-i", "target/*", "-x", "run --bin api"]
