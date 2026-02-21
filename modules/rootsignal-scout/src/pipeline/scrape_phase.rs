@@ -28,8 +28,10 @@ use crate::extractor::{ResourceTag, SignalExtractor};
 use crate::quality;
 use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
+use rootsignal_archive::Archive;
+
 use crate::scraper::{
-    self, PageScraper, RssFetcher, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
+    self, PageScraper, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
     WebSearcher,
 };
 use crate::sources;
@@ -176,6 +178,7 @@ pub(crate) struct ScrapePhase<'a> {
     scraper: Arc<dyn PageScraper>,
     searcher: Arc<dyn WebSearcher>,
     social: &'a dyn SocialScraper,
+    archive: Option<Arc<Archive>>,
     region: &'a RegionNode,
     run_id: String,
 }
@@ -188,6 +191,7 @@ impl<'a> ScrapePhase<'a> {
         scraper: Arc<dyn PageScraper>,
         searcher: Arc<dyn WebSearcher>,
         social: &'a dyn SocialScraper,
+        archive: Option<Arc<Archive>>,
         region: &'a RegionNode,
         run_id: String,
     ) -> Self {
@@ -198,6 +202,7 @@ impl<'a> ScrapePhase<'a> {
             scraper,
             searcher,
             social,
+            archive,
             region,
             run_id,
         }
@@ -326,10 +331,22 @@ impl<'a> ScrapePhase<'a> {
             .collect();
         if !rss_sources.is_empty() {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
-            let fetcher = RssFetcher::new();
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    match fetcher.fetch_items(feed_url).await {
+                    let feed_result = if let Some(ref archive) = self.archive {
+                        archive.fetch(feed_url).await
+                            .map(|resp| match resp.content {
+                                rootsignal_archive::Content::Feed(items) => items
+                                    .into_iter()
+                                    .map(|i| crate::scraper::FeedItem { url: i.url, title: i.title, pub_date: i.pub_date })
+                                    .collect(),
+                                _ => Vec::new(),
+                            })
+                            .map_err(|e| anyhow::anyhow!("{e}"))
+                    } else {
+                        crate::scraper::RssFetcher::new().fetch_items(feed_url).await
+                    };
+                    match feed_result {
                         Ok(items) => {
                             run_log.log(EventKind::ScrapeFeed {
                                 url: feed_url.clone(),
