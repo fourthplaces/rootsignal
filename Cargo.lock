@@ -3295,6 +3295,7 @@ dependencies = [
 name = "rootsignal-archive"
 version = "0.1.0"
 dependencies = [
+ "ai-client",
  "anyhow",
  "apify-client",
  "async-trait",
@@ -3305,6 +3306,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rootsignal-common",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "spider_transformations",

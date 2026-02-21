@@ -6,10 +6,9 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::Archive;
+use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
 use crate::pipeline::extractor::{Extractor, SignalExtractor};
-use crate::pipeline::scraper::PageScraper;
 use crate::scheduling::budget::BudgetTracker;
 
 /// Hardcoded seed list of global/national RSS feeds for Driver B.
@@ -44,32 +43,19 @@ const NEWS_FEEDS: &[&str] = &[
 
 /// News scanner that fetches global RSS feeds, extracts signals, and stores them.
 pub struct NewsScanner {
-    archive: Option<Arc<Archive>>,
+    archive: Arc<dyn FetchBackend>,
     extractor: Box<dyn SignalExtractor>,
-    scraper: Arc<dyn PageScraper>,
     writer: GraphWriter,
     budget: BudgetTracker,
 }
 
 impl NewsScanner {
     pub fn new(
+        archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
-        voyage_api_key: &str,
-        _serper_api_key: &str,
         writer: GraphWriter,
         daily_budget_cents: u64,
-    ) -> Result<Self> {
-        let scraper: Arc<dyn PageScraper> = match std::env::var("BROWSERLESS_URL") {
-            Ok(url) => {
-                let token = std::env::var("BROWSERLESS_TOKEN").ok();
-                Arc::new(crate::pipeline::scraper::BrowserlessScraper::new(
-                    &url,
-                    token.as_deref(),
-                ))
-            }
-            Err(_) => Arc::new(crate::pipeline::scraper::ChromeScraper::new()),
-        };
-
+    ) -> Self {
         // Use a generic "Global" scope for extraction — no city bias
         let extractor = Box::new(Extractor::new(
             anthropic_api_key,
@@ -78,22 +64,12 @@ impl NewsScanner {
             0.0,
         ));
 
-        let _ = voyage_api_key; // reserved for future embedding use
-
-        Ok(Self {
-            archive: None,
+        Self {
+            archive,
             extractor,
-            scraper,
             writer,
             budget: BudgetTracker::new(daily_budget_cents),
-        })
-    }
-
-    pub fn with_archive(mut self, archive: Arc<Archive>) -> Self {
-        // Use archive as the page scraper too
-        self.scraper = archive.clone();
-        self.archive = Some(archive);
-        self
+        }
     }
 
     /// Scan all news feeds, extract signals, store them.
@@ -104,22 +80,15 @@ impl NewsScanner {
         // 1. Fetch all feeds
         let mut all_urls: Vec<(String, Option<String>)> = Vec::new();
         for feed_url in NEWS_FEEDS {
-            let feed_result = if let Some(ref archive) = self.archive {
-                archive.fetch(feed_url).await
-                    .map(|resp| match resp.content {
-                        rootsignal_archive::Content::Feed(items) => items
-                            .into_iter()
-                            .map(|i| (i.url, i.title))
-                            .collect::<Vec<_>>(),
-                        _ => Vec::new(),
-                    })
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            } else {
-                crate::pipeline::scraper::RssFetcher::new()
-                    .fetch_items(feed_url)
-                    .await
-                    .map(|items| items.into_iter().map(|i| (i.url, i.title)).collect())
-            };
+            let feed_result = self.archive.fetch(feed_url).content().await
+                .map(|content| match content {
+                    Content::Feed(items) => items
+                        .into_iter()
+                        .map(|i| (i.url, i.title))
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .map_err(|e| anyhow::anyhow!("{e}"));
             match feed_result {
                 Ok(items) => {
                     for (url, title) in items {
@@ -163,14 +132,14 @@ impl NewsScanner {
             }
 
             // Scrape
-            let content = match self.scraper.scrape(url).await {
+            let content = match self.archive.fetch(url).text().await {
                 Ok(c) if !c.is_empty() => c,
                 Ok(_) => {
-                    warn!(url, "Empty content from scraper");
+                    warn!(url, "Empty content from archive");
                     continue;
                 }
                 Err(e) => {
-                    warn!(url, error = %e, "Failed to scrape article");
+                    warn!(url, error = %e, "Failed to fetch article");
                     continue;
                 }
             };

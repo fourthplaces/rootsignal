@@ -12,7 +12,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
-use rootsignal_archive::{Archive, ArchiveConfig, PageBackend};
+use rootsignal_archive::{Archive, ArchiveConfig, FetchBackend, PageBackend};
 
 use crate::budget::{BudgetTracker, OperationCost};
 use crate::embedder::TextEmbedder;
@@ -21,7 +21,6 @@ use crate::expansion::Expansion;
 use crate::metrics::Metrics;
 use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::{RunContext, ScrapePhase};
-use crate::scraper::{PageScraper, SocialScraper, WebSearcher};
 use crate::util::sanitize_url;
 
 /// Stats from a scout run.
@@ -116,12 +115,7 @@ pub struct Scout {
     writer: GraphWriter,
     extractor: Box<dyn SignalExtractor>,
     embedder: Box<dyn TextEmbedder>,
-    scraper: Arc<dyn PageScraper>,
-    searcher: Arc<dyn WebSearcher>,
-    social: Arc<dyn SocialScraper>,
-    /// Concrete archive for direct access (RSS feeds, etc.).
-    /// None in test paths that use fixture trait objects.
-    archive: Option<Arc<Archive>>,
+    archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
     region: RegionNode,
     budget: BudgetTracker,
@@ -158,6 +152,7 @@ impl Scout {
             } else {
                 Some(apify_api_key.to_string())
             },
+            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
         };
 
         let archive = Arc::new(Archive::new(
@@ -177,10 +172,7 @@ impl Scout {
                 region.center_lng,
             )),
             embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
-            scraper: archive.clone(),
-            searcher: archive.clone(),
-            social: archive.clone(),
-            archive: Some(archive),
+            archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
             budget: BudgetTracker::new(daily_budget_cents),
@@ -188,14 +180,12 @@ impl Scout {
         })
     }
 
-    /// Build a Scout with pre-built trait objects (for testing).
-    pub fn with_deps(
+    /// Build a Scout with pre-built dependencies (for testing).
+    pub fn new_for_test(
         graph_client: GraphClient,
         extractor: Box<dyn SignalExtractor>,
         embedder: Box<dyn TextEmbedder>,
-        scraper: Arc<dyn PageScraper>,
-        searcher: Arc<dyn WebSearcher>,
-        social: Arc<dyn SocialScraper>,
+        archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
         region: RegionNode,
     ) -> Self {
@@ -204,10 +194,7 @@ impl Scout {
             writer: GraphWriter::new(graph_client),
             extractor,
             embedder,
-            scraper,
-            searcher,
-            social,
-            archive: None,
+            archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
             budget: BudgetTracker::new(0), // Unlimited for tests
@@ -303,15 +290,12 @@ impl Scout {
         // or any other state where sources were lost.
         if all_sources.is_empty() {
             info!("No sources found — running cold-start bootstrap");
-            let mut bootstrapper = crate::bootstrap::Bootstrapper::new(
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
                 &self.writer,
-                &*self.searcher,
+                self.archive.clone(),
                 &self.anthropic_api_key,
                 self.region.clone(),
             );
-            if let Some(ref archive) = self.archive {
-                bootstrapper = bootstrapper.with_archive(archive.clone());
-            }
             match bootstrapper.run().await {
                 Ok(n) => {
                     run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
@@ -375,9 +359,6 @@ impl Scout {
             &self.writer,
             &*self.extractor,
             &*self.embedder,
-            self.scraper.clone(),
-            self.searcher.clone(),
-            &*self.social,
             self.archive.clone(),
             &self.region,
             run_id.clone(),
@@ -563,8 +544,7 @@ impl Scout {
                     info!("Starting tension linker...");
                     let tension_linker = crate::tension_linker::TensionLinker::new(
                         &self.writer,
-                        self.searcher.clone(),
-                        self.scraper.clone(),
+                        self.archive.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
                         self.region.clone(),
@@ -582,8 +562,7 @@ impl Scout {
                     info!("Starting response finder...");
                     let response_finder = crate::response_finder::ResponseFinder::new(
                         &self.writer,
-                        self.searcher.clone(),
-                        self.scraper.clone(),
+                        self.archive.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
                         self.region.clone(),
@@ -601,8 +580,7 @@ impl Scout {
                     info!("Starting gathering finder...");
                     let gathering_finder = crate::gathering_finder::GatheringFinder::new(
                         &self.writer,
-                        self.searcher.clone(),
-                        self.scraper.clone(),
+                        self.archive.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
                         self.region.clone(),
@@ -620,7 +598,7 @@ impl Scout {
                     info!("Starting investigation phase...");
                     let investigator = crate::investigator::Investigator::new(
                         &self.writer,
-                        &*self.searcher,
+                        self.archive.clone(),
                         &self.anthropic_api_key,
                         &self.region,
                         self.cancelled.clone(),

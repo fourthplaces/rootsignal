@@ -590,25 +590,22 @@ impl MutationRoot {
 
         tokio::spawn(async move {
             let writer = rootsignal_graph::GraphWriter::new(client.clone());
-            match rootsignal_scout::news_scanner::NewsScanner::new(
+            let archive = match create_archive_for_news_scan(&config_clone).await {
+                Some(archive) => archive,
+                None => {
+                    warn!("Cannot create archive for news scan (DATABASE_URL not set)");
+                    return;
+                }
+            };
+            let scanner = rootsignal_scout::news_scanner::NewsScanner::new(
+                archive,
                 &config_clone.anthropic_api_key,
-                &config_clone.voyage_api_key,
-                &config_clone.serper_api_key,
                 writer,
                 config_clone.daily_budget_cents,
-            ) {
-                Ok(scanner) => {
-                    // Wire through archive if DATABASE_URL is available
-                    let scanner = match create_archive_for_news_scan(&config_clone).await {
-                        Some(archive) => scanner.with_archive(archive),
-                        None => scanner,
-                    };
-                    match scanner.scan().await {
-                        Ok(locations) => info!(count = locations.len(), "News scan complete"),
-                        Err(e) => warn!(error = %e, "News scan failed"),
-                    }
-                }
-                Err(e) => warn!(error = %e, "Failed to create news scanner"),
+            );
+            match scanner.scan().await {
+                Ok(locations) => info!(count = locations.len(), "News scan complete"),
+                Err(e) => warn!(error = %e, "News scan failed"),
             }
         });
 
@@ -766,7 +763,7 @@ async fn run_scout(
 /// Create an Archive for news scanning. Returns None if DATABASE_URL is not set.
 async fn create_archive_for_news_scan(
     config: &rootsignal_common::Config,
-) -> Option<std::sync::Arc<rootsignal_archive::Archive>> {
+) -> Option<std::sync::Arc<dyn rootsignal_archive::FetchBackend>> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(3)
@@ -787,6 +784,7 @@ async fn create_archive_for_news_scan(
         } else {
             Some(config.apify_api_key.clone())
         },
+        anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
     };
     Some(std::sync::Arc::new(rootsignal_archive::Archive::new(
         pool,
@@ -846,24 +844,20 @@ pub fn start_scout_interval(
             loop {
                 // Step 1: Run news scan (Driver B)
                 info!("Scout interval: running news scan");
-                match rootsignal_scout::news_scanner::NewsScanner::new(
-                    &config.anthropic_api_key,
-                    &config.voyage_api_key,
-                    &config.serper_api_key,
-                    rootsignal_graph::GraphWriter::new(client.clone()),
-                    config.daily_budget_cents,
-                ) {
-                    Ok(scanner) => {
-                        let scanner = match create_archive_for_news_scan(&config).await {
-                            Some(archive) => scanner.with_archive(archive),
-                            None => scanner,
-                        };
+                match create_archive_for_news_scan(&config).await {
+                    Some(archive) => {
+                        let scanner = rootsignal_scout::news_scanner::NewsScanner::new(
+                            archive,
+                            &config.anthropic_api_key,
+                            rootsignal_graph::GraphWriter::new(client.clone()),
+                            config.daily_budget_cents,
+                        );
                         match scanner.scan().await {
                             Ok(locations) => info!(count = locations.len(), "News scan produced signals"),
                             Err(e) => warn!(error = %e, "News scan failed"),
                         }
                     }
-                    Err(e) => warn!(error = %e, "Failed to create news scanner"),
+                    None => warn!("Cannot create archive for news scan (DATABASE_URL not set)"),
                 }
 
                 // Step 2: Aggregate demand signals into tasks (Driver A)

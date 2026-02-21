@@ -640,6 +640,95 @@ pub struct PdfContent {
     pub extracted_text: String,
 }
 
+// --- Semantic Extraction Types ---
+
+pub const CONTENT_SEMANTICS_VERSION: u32 = 1;
+
+fn default_semantics_version() -> u32 {
+    CONTENT_SEMANTICS_VERSION
+}
+
+/// Domain-neutral semantic extraction from any web content.
+/// Populated lazily via `FetchResponse::semantics()`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContentSemantics {
+    pub summary: String,
+    pub entities: Vec<SemanticEntity>,
+    pub locations: Vec<SemanticLocation>,
+    pub contacts: Vec<SemanticContact>,
+    pub schedules: Vec<SemanticSchedule>,
+    pub claims: Vec<SemanticClaim>,
+    #[serde(default)]
+    pub temporal_markers: Vec<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    pub provenance: Option<Provenance>,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub outbound_links: Vec<SemanticLink>,
+    #[serde(default = "default_semantics_version")]
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticEntity {
+    pub name: String,
+    /// "organization", "person", "government_body", "place", "event", "product"
+    pub entity_type: String,
+    pub description: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticLocation {
+    pub name: String,
+    pub address: Option<String>,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticContact {
+    pub name: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub address: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticSchedule {
+    pub label: String,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    /// "one-time", "weekly", "monthly", "daily", "irregular"
+    pub recurrence: Option<String>,
+    pub raw_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticClaim {
+    pub statement: String,
+    pub attribution: Option<String>,
+    /// "statistic", "quote", "policy", "assertion", "announcement"
+    pub claim_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Provenance {
+    pub author: Option<String>,
+    pub published_at: Option<String>,
+    pub source_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticLink {
+    pub url: String,
+    pub label: Option<String>,
+    /// "related", "source", "action", "reference", "follow-up"
+    pub relationship: Option<String>,
+}
+
 /// Deterministic content hash for change detection (FNV-1a).
 /// Must be stable across process restarts — `DefaultHasher` is NOT (HashDoS randomization).
 pub fn content_hash(content: &str) -> u64 {
