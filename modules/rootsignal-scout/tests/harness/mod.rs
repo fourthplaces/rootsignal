@@ -10,16 +10,16 @@ pub mod sim_adapter;
 use std::sync::Arc;
 
 use rootsignal_archive::FetchBackend;
-use rootsignal_common::{CityNode, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{CityNode, DiscoveryMethod, SearchResult, SocialPost, SourceNode, SourceRole};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::{self, Extractor};
 use rootsignal_scout::fixtures::{
-    CorpusSearcher, LayeredSearcher, MockArchive, ScenarioSearcher, ScenarioSocialScraper,
+    CorpusSearcher, FixtureArchive, FixtureSocialKind, FixtureSocialScraper,
+    LayeredSearcher, MockArchive, ScenarioSearcher, ScenarioSocialScraper,
 };
 use rootsignal_scout::scout::{Scout, ScoutStats};
-use rootsignal_scout::scraper::{SearchResult, SocialPost, WebSearcher, SocialScraper};
 use rootsignal_scout::sources;
 use simweb::{SimulatedWeb, World};
 
@@ -143,8 +143,8 @@ impl TestContext {
             pages: std::collections::HashMap::new(),
             search_results: Vec::new(),
             social_posts: Vec::new(),
-            searcher_override: None,
-            social_override: None,
+            searcher_kind: None,
+            social_kind: None,
         }
     }
 }
@@ -155,10 +155,15 @@ pub struct ScoutBuilder<'a> {
     city_node: CityNode,
     archive_override: Option<Arc<dyn FetchBackend>>,
     pages: std::collections::HashMap<String, String>,
-    search_results: Vec<rootsignal_common::SearchResult>,
-    social_posts: Vec<rootsignal_common::SocialPost>,
-    searcher_override: Option<Box<dyn WebSearcher>>,
-    social_override: Option<Arc<dyn SocialScraper>>,
+    search_results: Vec<SearchResult>,
+    social_posts: Vec<SocialPost>,
+    searcher_kind: Option<SearcherKind>,
+    social_kind: Option<FixtureSocialKind>,
+}
+
+enum SearcherKind {
+    Scenario(ScenarioSearcher),
+    Layered(LayeredSearcher),
 }
 
 impl<'a> ScoutBuilder<'a> {
@@ -168,26 +173,17 @@ impl<'a> ScoutBuilder<'a> {
     }
 
     pub fn with_web_content(mut self, content: &str) -> Self {
-        // Store as a default page for any URL
         self.pages.insert("*".to_string(), content.to_string());
         self
     }
 
     pub fn with_search_results(mut self, results: Vec<SearchResult>) -> Self {
-        self.search_results = results.into_iter().map(|r| rootsignal_common::SearchResult {
-            url: r.url,
-            title: r.title,
-            snippet: r.snippet,
-        }).collect();
+        self.search_results = results;
         self
     }
 
     pub fn with_social_posts(mut self, posts: Vec<SocialPost>) -> Self {
-        self.social_posts = posts.into_iter().map(|p| rootsignal_common::SocialPost {
-            content: p.content,
-            author: p.author,
-            url: p.url,
-        }).collect();
+        self.social_posts = posts;
         self
     }
 
@@ -200,26 +196,26 @@ impl<'a> ScoutBuilder<'a> {
     /// Use a ScenarioSearcher with default system prompt.
     pub fn with_scenario(mut self, scenario: &str) -> Self {
         let searcher = ScenarioSearcher::new(&self.ctx.anthropic_key, scenario);
-        self.searcher_override = Some(Box::new(searcher));
+        self.searcher_kind = Some(SearcherKind::Scenario(searcher));
         self
     }
 
     /// Use a pre-built ScenarioSearcher (with custom system prompt).
     pub fn with_search_scenario(mut self, searcher: ScenarioSearcher) -> Self {
-        self.searcher_override = Some(Box::new(searcher));
+        self.searcher_kind = Some(SearcherKind::Scenario(searcher));
         self
     }
 
     /// Use a LayeredSearcher: corpus-first, scenario-fallback.
     pub fn with_layered(mut self, corpus: CorpusSearcher, scenario: &str) -> Self {
         let fallback = ScenarioSearcher::new(&self.ctx.anthropic_key, scenario);
-        self.searcher_override = Some(Box::new(LayeredSearcher::new(corpus, fallback)));
+        self.searcher_kind = Some(SearcherKind::Layered(LayeredSearcher::new(corpus, fallback)));
         self
     }
 
     /// Use a pre-built ScenarioSocialScraper.
     pub fn with_social_scenario(mut self, scraper: ScenarioSocialScraper) -> Self {
-        self.social_override = Some(Arc::new(scraper));
+        self.social_kind = Some(FixtureSocialKind::Scenario(scraper));
         self
     }
 
@@ -231,33 +227,24 @@ impl<'a> ScoutBuilder<'a> {
 
         let archive: Arc<dyn FetchBackend> = match self.archive_override {
             Some(a) => a,
-            None if self.searcher_override.is_some() || self.social_override.is_some() => {
-                // Legacy mode: wrap old-style fixtures in FixtureArchive
-                use rootsignal_scout::fixtures::{FixtureSearcher, FixtureSocialScraper};
-                let searcher: Box<dyn WebSearcher> = match self.searcher_override {
-                    Some(s) => s,
-                    None => Box::new(FixtureSearcher::new(self.search_results.iter().map(|r| SearchResult {
-                        url: r.url.clone(),
-                        title: r.title.clone(),
-                        snippet: r.snippet.clone(),
-                    }).collect())),
-                };
-                let social: Arc<dyn SocialScraper> = match self.social_override {
-                    Some(s) => s,
-                    None => Arc::new(FixtureSocialScraper::new(self.social_posts.iter().map(|p| SocialPost {
-                        content: p.content.clone(),
-                        author: p.author.clone(),
-                        url: p.url.clone(),
-                    }).collect())),
-                };
-                Arc::new(FixtureArchive {
-                    searcher,
-                    page_content: default_content,
-                    social,
-                })
+            None if self.searcher_kind.is_some() || self.social_kind.is_some() => {
+                let social = self.social_kind.unwrap_or_else(|| {
+                    FixtureSocialKind::Static(FixtureSocialScraper::new(self.social_posts))
+                });
+
+                match self.searcher_kind {
+                    Some(SearcherKind::Scenario(s)) => {
+                        Arc::new(FixtureArchive::with_scenario_searcher(s, default_content, social))
+                    }
+                    Some(SearcherKind::Layered(l)) => {
+                        Arc::new(FixtureArchive::with_layered_searcher(l, default_content, social))
+                    }
+                    None => {
+                        Arc::new(FixtureArchive::with_static_searcher(self.search_results, default_content, social))
+                    }
+                }
             }
             None => {
-                // Build a MockArchive from the configured data
                 let pages = if !default_content.is_empty() {
                     let mut map = self.pages.clone();
                     map.remove("*");
@@ -287,87 +274,6 @@ impl<'a> ScoutBuilder<'a> {
     }
 }
 
-// --- FixtureArchive: wraps old-style test fixtures into FetchBackend ---
-
-/// Adapts legacy fixture types (WebSearcher, PageScraper, SocialScraper) into
-/// a single FetchBackend for backwards compatibility in integration tests.
-struct FixtureArchive {
-    searcher: Box<dyn WebSearcher>,
-    page_content: String,
-    social: Arc<dyn SocialScraper>,
-}
-
-#[async_trait::async_trait]
-impl FetchBackend for FixtureArchive {
-    async fn fetch_content(&self, target: &str) -> rootsignal_archive::Result<rootsignal_archive::FetchedContent> {
-        let now = chrono::Utc::now();
-
-        // Social targets
-        if target.starts_with("social:") || target.contains("reddit.com/r/") || target.contains("instagram.com") || target.contains("x.com/") || target.contains("tiktok.com") || target.contains("bluesky.social") {
-            // Build a dummy account for the social scraper
-            let account = rootsignal_scout::scraper::SocialAccount {
-                platform: rootsignal_scout::scraper::SocialPlatform::Reddit,
-                identifier: target.to_string(),
-            };
-            let posts = self.social.search_posts(&account, 20).await
-                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
-            let common_posts: Vec<rootsignal_common::SocialPost> = posts.into_iter().map(|p| rootsignal_common::SocialPost {
-                content: p.content,
-                author: p.author,
-                url: p.url,
-            }).collect();
-            let text = common_posts.iter().map(|p| p.content.as_str()).collect::<Vec<_>>().join("\n");
-            return Ok(rootsignal_archive::FetchedContent {
-                target: target.to_string(),
-                content: rootsignal_archive::Content::SocialPosts(common_posts),
-                content_hash: format!("fixture-{}", target),
-                fetched_at: now,
-                duration_ms: 0,
-                text,
-            });
-        }
-
-        // Non-URL → search query
-        if !target.starts_with("http") {
-            let results = self.searcher.search(target, 10).await
-                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
-            let common_results: Vec<rootsignal_common::SearchResult> = results.into_iter().map(|r| rootsignal_common::SearchResult {
-                url: r.url,
-                title: r.title,
-                snippet: r.snippet,
-            }).collect();
-            let text = common_results.iter().map(|r| format!("{}: {}", r.title, r.snippet)).collect::<Vec<_>>().join("\n");
-            return Ok(rootsignal_archive::FetchedContent {
-                target: target.to_string(),
-                content: rootsignal_archive::Content::SearchResults(common_results),
-                content_hash: format!("fixture-{}", target),
-                fetched_at: now,
-                duration_ms: 0,
-                text,
-            });
-        }
-
-        // URL → return page content
-        Ok(rootsignal_archive::FetchedContent {
-            target: target.to_string(),
-            content: rootsignal_archive::Content::Page(rootsignal_common::ScrapedPage {
-                url: target.to_string(),
-                markdown: self.page_content.clone(),
-                raw_html: format!("<html><body>{}</body></html>", self.page_content),
-                content_hash: format!("fixture-{}", target),
-            }),
-            content_hash: format!("fixture-{}", target),
-            fetched_at: now,
-            duration_ms: 0,
-            text: self.page_content.clone(),
-        })
-    }
-
-    async fn resolve_semantics(&self, _content: &rootsignal_archive::FetchedContent) -> rootsignal_archive::Result<rootsignal_common::ContentSemantics> {
-        Err(rootsignal_archive::ArchiveError::Other(anyhow::anyhow!("FixtureArchive does not support semantics")))
-    }
-}
-
 /// Convert a simweb World geography to a CityNode for Scout.
 pub fn city_node_for(world: &World) -> CityNode {
     CityNode {
@@ -392,7 +298,6 @@ pub fn search_result(url: &str, title: &str) -> SearchResult {
 }
 
 /// Seed Neo4j with SourceNodes derived from a World's sites and social profiles.
-/// This ensures the scout has sources to schedule and scrape.
 pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_slug: &str) {
     let now = chrono::Utc::now();
 
@@ -437,7 +342,6 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
     }
 
     for profile in &world.social_profiles {
-        // Build URL from platform + identifier for proper canonical_value computation
         let url = match profile.platform.to_lowercase().as_str() {
             "reddit" => format!("https://www.reddit.com/r/{}/", profile.identifier),
             "instagram" => format!("https://www.instagram.com/{}/", profile.identifier),
@@ -481,7 +385,6 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
 }
 
 /// Load `.env` from the workspace root (two levels up from CARGO_MANIFEST_DIR).
-/// Only sets vars that aren't already in the environment.
 fn dotenv_load() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

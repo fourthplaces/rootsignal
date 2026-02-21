@@ -18,7 +18,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode,
     DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
-    SocialPlatform as CommonSocialPlatform, SourceNode, SourceRole,
+    SocialPlatform, SocialPost, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -30,9 +30,6 @@ use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
-use crate::scraper::{
-    self, SocialAccount, SocialPlatform, SocialPost,
-};
 use crate::sources;
 use crate::util::{content_hash, sanitize_url};
 
@@ -309,7 +306,7 @@ impl<'a> ScrapePhase<'a> {
                 };
                 match html {
                     Some(html) if !html.is_empty() => {
-                        let links = scraper::extract_links_by_pattern(&html, url, pattern);
+                        let links = rootsignal_archive::extract_links_by_pattern(&html, url, pattern);
                         info!(url = url.as_str(), links = links.len(), "Query resolved");
                         phase_urls.extend(links);
                     }
@@ -337,10 +334,7 @@ impl<'a> ScrapePhase<'a> {
                 if let Some(ref feed_url) = source.url {
                     let feed_result = self.archive.fetch(feed_url).content().await
                         .map(|content| match content {
-                            Content::Feed(items) => items
-                                .into_iter()
-                                .map(|i| crate::scraper::FeedItem { url: i.url, title: i.title, pub_date: i.pub_date })
-                                .collect(),
+                            Content::Feed(items) => items,
                             _ => Vec::new(),
                         })
                         .map_err(|e| anyhow::anyhow!("{e}"));
@@ -550,8 +544,12 @@ impl<'a> ScrapePhase<'a> {
             usize,
         )>; // (canonical_key, source_url, combined_text, nodes, resource_tags, signal_tags, post_count)
 
-        // Build uniform list of SocialAccounts from SourceNodes
-        let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
+        // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
+        struct SocialEntry {
+            platform: SocialPlatform,
+            identifier: String,
+        }
+        let mut accounts: Vec<(String, String, SocialEntry)> = Vec::new();
 
         for source in social_sources {
             let common_platform = match scraping_strategy(source.value()) {
@@ -559,10 +557,10 @@ impl<'a> ScrapePhase<'a> {
                 _ => continue,
             };
             let (platform, identifier) = match common_platform {
-                CommonSocialPlatform::Instagram => {
+                SocialPlatform::Instagram => {
                     (SocialPlatform::Instagram, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                CommonSocialPlatform::Facebook => {
+                SocialPlatform::Facebook => {
                     let url = source
                         .url
                         .as_deref()
@@ -570,13 +568,12 @@ impl<'a> ScrapePhase<'a> {
                         .unwrap_or(&source.canonical_value);
                     (SocialPlatform::Facebook, url.to_string())
                 }
-                CommonSocialPlatform::Reddit => {
+                SocialPlatform::Reddit => {
                     let url = source
                         .url
                         .as_deref()
                         .filter(|u| !u.is_empty())
                         .unwrap_or(&source.canonical_value);
-                    // If identifier is just a subreddit name (e.g. "r/Minneapolis"), build a full URL
                     let identifier = if !url.starts_with("http") {
                         let name = url.trim_start_matches("r/");
                         format!("https://www.reddit.com/r/{}/", name)
@@ -585,13 +582,13 @@ impl<'a> ScrapePhase<'a> {
                     };
                     (SocialPlatform::Reddit, identifier)
                 }
-                CommonSocialPlatform::Twitter => {
+                SocialPlatform::Twitter => {
                     (SocialPlatform::Twitter, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                CommonSocialPlatform::TikTok => {
+                SocialPlatform::TikTok => {
                     (SocialPlatform::TikTok, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                CommonSocialPlatform::Bluesky => continue, // Not yet supported by social scraper
+                SocialPlatform::Bluesky => continue,
             };
             let source_url = source
                 .url
@@ -602,7 +599,7 @@ impl<'a> ScrapePhase<'a> {
             accounts.push((
                 source.canonical_key.clone(),
                 source_url,
-                SocialAccount {
+                SocialEntry {
                     platform,
                     identifier,
                 },
@@ -646,18 +643,10 @@ impl<'a> ScrapePhase<'a> {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
             let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
-            let limit: u32 = if is_reddit { 20 } else { 10 };
 
             futures.push(Box::pin(async move {
                 let posts = match self.archive.fetch(&account.identifier).content().await {
-                    Ok(Content::SocialPosts(common_posts)) => common_posts
-                        .into_iter()
-                        .map(|p| SocialPost {
-                            content: p.content,
-                            author: p.author,
-                            url: p.url,
-                        })
-                        .collect::<Vec<_>>(),
+                    Ok(Content::SocialPosts(posts)) => posts,
                     Ok(_) => Vec::new(),
                     Err(e) => {
                         warn!(source_url, error = %e, "Social media scrape failed");
@@ -864,27 +853,13 @@ impl<'a> ScrapePhase<'a> {
                 _ => continue,
             };
 
-            let common_platform = match platform {
-                SocialPlatform::Instagram => rootsignal_common::SocialPlatform::Instagram,
-                SocialPlatform::Twitter => rootsignal_common::SocialPlatform::Twitter,
-                SocialPlatform::TikTok => rootsignal_common::SocialPlatform::TikTok,
-                SocialPlatform::Reddit => rootsignal_common::SocialPlatform::Reddit,
-                _ => continue,
-            };
             let social_search = rootsignal_archive::SocialSearch {
-                platform: common_platform,
+                platform: *platform,
                 topics: topic_strs.iter().map(|s| s.to_string()).collect(),
                 limit: POSTS_PER_SEARCH,
             };
             let discovered_posts = match self.archive.fetch(&social_search.to_string()).content().await {
-                Ok(Content::SocialPosts(posts)) => posts
-                    .into_iter()
-                    .map(|p| SocialPost {
-                        content: p.content,
-                        author: p.author,
-                        url: p.url,
-                    })
-                    .collect::<Vec<_>>(),
+                Ok(Content::SocialPosts(posts)) => posts,
                 Ok(_) => Vec::new(),
                 Err(e) => {
                     warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");

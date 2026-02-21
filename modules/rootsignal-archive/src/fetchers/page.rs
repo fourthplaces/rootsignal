@@ -186,7 +186,7 @@ impl BrowserlessFetcher {
 
 /// Extract links from raw HTML that match a given URL pattern.
 /// Resolves relative URLs against `base_url`, deduplicates, and caps at 20 results.
-pub(crate) fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Vec<String> {
+pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Vec<String> {
     let href_re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("valid regex");
     let base = url::Url::parse(base_url).ok();
 
