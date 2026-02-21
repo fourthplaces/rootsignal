@@ -651,6 +651,7 @@ impl<'a> GatheringFinder<'a> {
             source_diversity: 1,
             external_ratio: 1.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         };
@@ -983,6 +984,7 @@ mod tests {
             source_diversity: 1,
             external_ratio: 1.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         };

@@ -21,6 +21,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng }
         locationName
@@ -33,6 +34,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng }
         locationName
@@ -44,6 +46,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng }
         locationName
@@ -56,6 +59,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng }
         locationName
@@ -67,6 +71,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng }
         locationName
@@ -139,6 +144,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           summary
           confidence
           causeHeat
+          channelDiversity
           extractedAt
           location { lat lng }
           locationName
@@ -151,6 +157,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           summary
           confidence
           causeHeat
+          channelDiversity
           extractedAt
           location { lat lng }
           locationName
@@ -162,6 +169,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           summary
           confidence
           causeHeat
+          channelDiversity
           extractedAt
           location { lat lng }
           locationName
@@ -174,6 +182,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           summary
           confidence
           causeHeat
+          channelDiversity
           extractedAt
           location { lat lng }
           locationName
@@ -185,6 +194,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           summary
           confidence
           causeHeat
+          channelDiversity
           extractedAt
           location { lat lng }
           locationName
@@ -277,6 +287,7 @@ export const SIGNAL_DETAIL = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng precision }
         locationName
@@ -294,6 +305,7 @@ export const SIGNAL_DETAIL = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng precision }
         locationName
@@ -309,6 +321,7 @@ export const SIGNAL_DETAIL = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng precision }
         locationName
@@ -325,6 +338,7 @@ export const SIGNAL_DETAIL = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng precision }
         locationName
@@ -340,6 +354,7 @@ export const SIGNAL_DETAIL = gql`
         summary
         confidence
         causeHeat
+        channelDiversity
         extractedAt
         location { lat lng precision }
         locationName

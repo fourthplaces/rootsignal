@@ -9,6 +9,7 @@ struct SignalEmbed {
     label: String,
     embedding: Vec<f64>,
     source_diversity: u32,
+    channel_diversity: u32,
 }
 
 /// Compute cause_heat for signals within a geographic bounding box.
@@ -48,7 +49,8 @@ pub async fn compute_cause_heat(
                AND n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
              RETURN n.id AS id, n.embedding AS embedding,
-                    n.source_diversity AS source_diversity"
+                    n.source_diversity AS source_diversity,
+                    n.channel_diversity AS channel_diversity"
         ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -60,6 +62,7 @@ pub async fn compute_cause_heat(
             let id: String = row.get("id").unwrap_or_default();
             let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
             let source_diversity: i64 = row.get("source_diversity").unwrap_or(1);
+            let channel_diversity: i64 = row.get("channel_diversity").unwrap_or(1);
 
             if embedding.is_empty() {
                 continue;
@@ -70,6 +73,7 @@ pub async fn compute_cause_heat(
                 label: label.to_string(),
                 embedding,
                 source_diversity: source_diversity.max(1) as u32,
+                channel_diversity: channel_diversity.max(1) as u32,
             });
         }
     }
@@ -138,7 +142,7 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
                 norms[j],
             );
             if sim > threshold {
-                heat += sim * signals[j].source_diversity as f64;
+                heat += sim * signals[j].source_diversity as f64 * (signals[j].channel_diversity as f64).sqrt();
             }
         }
         heats[i] = heat;
@@ -178,6 +182,7 @@ mod tests {
             label: "Gathering".to_string(),
             embedding,
             source_diversity: diversity,
+            channel_diversity: 1,
         }
     }
 
@@ -187,6 +192,7 @@ mod tests {
             label: "Tension".to_string(),
             embedding,
             source_diversity: diversity,
+            channel_diversity: 1,
         }
     }
 
@@ -196,6 +202,7 @@ mod tests {
             label: "Aid".to_string(),
             embedding,
             source_diversity: diversity,
+            channel_diversity: 1,
         }
     }
 
@@ -524,6 +531,38 @@ mod tests {
             heats_corroborated[0] > 0.0,
             "Housing tension should get heat from corroborating rent tension, got {}",
             heats_corroborated[0]
+        );
+    }
+
+    #[test]
+    fn cross_channel_tension_radiates_more_heat() {
+        // Two tensions with the same source_diversity but different channel_diversity.
+        // The one confirmed across channels should radiate more heat.
+        let signals = vec![
+            gathering("a", vec![1.0, 0.0, 0.0], 1),
+            SignalEmbed {
+                id: "multi_channel".to_string(),
+                label: "Tension".to_string(),
+                embedding: vec![0.99, 0.1, 0.0],
+                source_diversity: 3,
+                channel_diversity: 3,
+            },
+            gathering("b", vec![0.0, 1.0, 0.0], 1),
+            SignalEmbed {
+                id: "single_channel".to_string(),
+                label: "Tension".to_string(),
+                embedding: vec![0.1, 0.99, 0.0],
+                source_diversity: 3,
+                channel_diversity: 1,
+            },
+        ];
+        let heats = compute_heats(&signals, 0.7);
+
+        assert!(
+            heats[0] > heats[2],
+            "Gathering near multi-channel tension ({}) should outrank gathering near single-channel tension ({})",
+            heats[0],
+            heats[2]
         );
     }
 

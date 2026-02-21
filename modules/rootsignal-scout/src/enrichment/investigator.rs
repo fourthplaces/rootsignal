@@ -326,6 +326,7 @@ impl<'a> Investigator<'a> {
                 snippet: Some(item.snippet),
                 relevance: Some(relevance.clone()),
                 evidence_confidence: Some(item.confidence as f32),
+                channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 
             match self

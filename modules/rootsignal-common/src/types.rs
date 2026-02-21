@@ -213,6 +213,9 @@ pub struct NodeMeta {
     /// Implied search queries from this signal for expansion discovery.
     /// Only populated during extraction; cleared after expansion processing.
     pub implied_queries: Vec<String>,
+    /// Number of distinct channel types with external entity evidence (1-4).
+    #[serde(default = "default_channel_diversity")]
+    pub channel_diversity: u32,
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
@@ -273,6 +276,8 @@ pub struct EvidenceNode {
     pub snippet: Option<String>,
     pub relevance: Option<String>,
     pub evidence_confidence: Option<f32>,
+    #[serde(default)]
+    pub channel_type: Option<ChannelType>,
 }
 
 // --- Sum type ---
@@ -371,6 +376,7 @@ pub struct StoryNode {
     pub drawn_to_count: u32,
     pub gap_score: i32,
     pub gap_velocity: f64,
+    pub channel_diversity: u32,
 }
 
 /// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
@@ -703,6 +709,99 @@ pub struct BlockedSource {
     pub reason: String,
 }
 
+// --- Channel Types ---
+
+/// The type of channel a piece of evidence came through.
+/// Used for channel diversity scoring — cross-channel corroboration is
+/// epistemologically stronger than same-channel repetition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    Press,
+    Social,
+    DirectAction,
+    CommunityMedia,
+}
+
+impl ChannelType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChannelType::Press => "press",
+            ChannelType::Social => "social",
+            ChannelType::DirectAction => "direct_action",
+            ChannelType::CommunityMedia => "community_media",
+        }
+    }
+}
+
+impl std::fmt::Display for ChannelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Classify a URL into a channel type based on domain patterns.
+/// No LLM needed — pure pattern matching.
+pub fn channel_type(url: &str) -> ChannelType {
+    let lower = url.to_lowercase();
+    let domain = extract_domain(&lower);
+
+    // Social platforms
+    let social_domains = [
+        "reddit.com",
+        "facebook.com",
+        "instagram.com",
+        "twitter.com",
+        "x.com",
+        "tiktok.com",
+        "nextdoor.com",
+        "threads.net",
+        "mastodon.social",
+        "bsky.app",
+        "linkedin.com",
+    ];
+    if social_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::Social;
+    }
+
+    // Direct action platforms (fundraising, volunteering, petitions, event ticketing)
+    let direct_action_domains = [
+        "gofundme.com",
+        "eventbrite.com",
+        "volunteermatch.org",
+        "change.org",
+        "givemn.org",
+        "givebutter.com",
+        "actionnetwork.org",
+        "mobilize.us",
+        "signupgenius.com",
+    ];
+    if direct_action_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::DirectAction;
+    }
+
+    // Community media (RSS feeds, community radio/TV, neighborhood newsletters)
+    if lower.contains("/feed") || lower.contains("/rss") || lower.contains(".rss") {
+        return ChannelType::CommunityMedia;
+    }
+    let community_media_domains = [
+        "patch.com",
+        "swnewsmedia.com",
+        "southwestjournal.com",
+        "tcdailyplanet.net",
+    ];
+    if community_media_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::CommunityMedia;
+    }
+
+    // Default: press (news articles, org websites, government pages)
+    ChannelType::Press
+}
+
+fn default_channel_diversity() -> u32 {
+    1
+}
+
 // --- Entity Resolution ---
 
 /// Owned entity mapping for resolving source URLs to parent entities.
@@ -829,6 +928,7 @@ mod tests {
             source_diversity: 1,
             external_ratio: 0.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         }
@@ -917,5 +1017,57 @@ mod tests {
         assert_eq!(req_json, "\"requires\"");
         assert_eq!(pref_json, "\"prefers\"");
         assert_eq!(off_json, "\"offers\"");
+    }
+
+    // --- channel_type tests ---
+
+    #[test]
+    fn channel_type_social_platforms() {
+        assert_eq!(channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"), ChannelType::Social);
+        assert_eq!(channel_type("https://facebook.com/lakestreetstories"), ChannelType::Social);
+        assert_eq!(channel_type("https://www.instagram.com/p/abc123"), ChannelType::Social);
+        assert_eq!(channel_type("https://x.com/user/status/123"), ChannelType::Social);
+        assert_eq!(channel_type("https://nextdoor.com/post/123"), ChannelType::Social);
+    }
+
+    #[test]
+    fn channel_type_direct_action() {
+        assert_eq!(channel_type("https://www.gofundme.com/f/help-family"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.eventbrite.com/e/community-event-123"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.volunteermatch.org/search/opp123"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.change.org/p/petition-name"), ChannelType::DirectAction);
+    }
+
+    #[test]
+    fn channel_type_community_media() {
+        assert_eq!(channel_type("https://example.com/feed"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://example.com/rss"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://patch.com/minnesota/minneapolis/story"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://swnewsmedia.com/article/123"), ChannelType::CommunityMedia);
+    }
+
+    #[test]
+    fn channel_type_press_default() {
+        assert_eq!(channel_type("https://startribune.com/article/123"), ChannelType::Press);
+        assert_eq!(channel_type("https://www.mprnews.org/story/abc"), ChannelType::Press);
+        assert_eq!(channel_type("https://citycouncil.gov/minutes"), ChannelType::Press);
+    }
+
+    #[test]
+    fn channel_type_display_and_as_str() {
+        assert_eq!(ChannelType::Press.as_str(), "press");
+        assert_eq!(ChannelType::Social.as_str(), "social");
+        assert_eq!(ChannelType::DirectAction.as_str(), "direct_action");
+        assert_eq!(ChannelType::CommunityMedia.as_str(), "community_media");
+        assert_eq!(format!("{}", ChannelType::Press), "press");
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        let ct = ChannelType::DirectAction;
+        let json = serde_json::to_string(&ct).unwrap();
+        assert_eq!(json, "\"direct_action\"");
+        let deserialized: ChannelType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ct);
     }
 }

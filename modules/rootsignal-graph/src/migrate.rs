@@ -522,7 +522,55 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Region decoupling: move Source.city and Actor.city to relationships ---
     migrate_region_relationships(client).await?;
 
+    // --- Channel diversity backfill and indexes ---
+    backfill_channel_diversity(client).await?;
+
     info!("Schema migration complete");
+    Ok(())
+}
+
+/// Backfill `channel_diversity = 1` on existing signal and story nodes where null.
+/// Also creates property indexes for channel_diversity.
+/// Idempotent — WHERE clause matches nothing after the first run.
+async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling channel_diversity...");
+
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.channel_diversity IS NULL SET n.channel_diversity = 1 RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Backfilled channel_diversity = 1");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "channel_diversity backfill failed (non-fatal): {e}"),
+        }
+    }
+
+    // Channel diversity indexes
+    let channel_indexes = [
+        "CREATE INDEX gathering_channel_diversity IF NOT EXISTS FOR (n:Gathering) ON (n.channel_diversity)",
+        "CREATE INDEX aid_channel_diversity IF NOT EXISTS FOR (n:Aid) ON (n.channel_diversity)",
+        "CREATE INDEX need_channel_diversity IF NOT EXISTS FOR (n:Need) ON (n.channel_diversity)",
+        "CREATE INDEX notice_channel_diversity IF NOT EXISTS FOR (n:Notice) ON (n.channel_diversity)",
+        "CREATE INDEX tension_channel_diversity IF NOT EXISTS FOR (n:Tension) ON (n.channel_diversity)",
+        "CREATE INDEX story_channel_diversity IF NOT EXISTS FOR (n:Story) ON (n.channel_diversity)",
+    ];
+
+    for idx in &channel_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Channel diversity indexes created");
+
+    info!("Channel diversity backfill complete");
     Ok(())
 }
 

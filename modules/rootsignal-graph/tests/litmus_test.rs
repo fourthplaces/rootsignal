@@ -611,6 +611,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("First scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev1, signal_id)
@@ -626,6 +627,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("Second scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev2, signal_id)
@@ -641,6 +643,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("Third scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev3, signal_id)
@@ -698,6 +701,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source A".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_a, signal_id)
@@ -713,6 +717,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source B".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_b, signal_id)
@@ -728,6 +733,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source C".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_c, signal_id)
@@ -779,6 +785,7 @@ async fn same_source_does_not_inflate_corroboration() {
         snippet: None,
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev, signal_id)
@@ -800,6 +807,7 @@ async fn same_source_does_not_inflate_corroboration() {
             snippet: None,
             relevance: None,
             evidence_confidence: None,
+            channel_type: None,
         };
         writer
             .create_evidence(&ev, signal_id)
@@ -857,6 +865,7 @@ async fn same_source_does_not_inflate_corroboration() {
         snippet: None,
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_cross, signal_id)
