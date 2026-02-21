@@ -1,3 +1,4 @@
+pub mod archive_bridge;
 pub mod discovery;
 pub mod enrichment;
 pub mod infra;

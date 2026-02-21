@@ -727,8 +727,18 @@ async fn run_scout(
     // Save region geo bounds before moving region into Scout
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
+    // Connect to Postgres for the web archive
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("DATABASE_URL required for web archive"))?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to Postgres: {e}"))?;
+
     let scout = Scout::new(
         client.clone(),
+        pool,
         &config.anthropic_api_key,
         &config.voyage_api_key,
         &config.serper_api_key,

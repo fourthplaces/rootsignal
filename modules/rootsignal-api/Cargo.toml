@@ -25,6 +25,7 @@ anyhow = { workspace = true }
 tower-http = { workspace = true }
 tower = { workspace = true }
 rootsignal-scout = { path = "../rootsignal-scout" }
+sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
 twilio = { workspace = true }
 reqwest = { workspace = true }
