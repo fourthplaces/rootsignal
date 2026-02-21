@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, RegionNode, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
+    NodeMeta, NodeType, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
@@ -132,7 +132,7 @@ mutual aid efforts, creative actions — that address this problem.
 You have two tools: web_search and read_page.
 
 HOW TO INVESTIGATE:
-1. Start broad: \"what is being done about [tension] in [city]?\"
+1. Start broad: \"what is being done about [tension] in [region]?\"
 2. Read the most promising results — understand the landscape
 3. Think about MECHANISMS: what feeds this tension? What starves it?
 4. Follow threads creatively — an article about ICE funding might lead \
@@ -244,7 +244,7 @@ pub struct ResponseFinder<'a> {
     anthropic_api_key: String,
     archive: Arc<dyn FetchBackend>,
     embedder: &'a dyn TextEmbedder,
-    region: RegionNode,
+    region: ScoutScope,
     _region_slug: String,
     min_lat: f64,
     max_lat: f64,
@@ -260,7 +260,7 @@ impl<'a> ResponseFinder<'a> {
         archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
@@ -492,7 +492,7 @@ impl<'a> ResponseFinder<'a> {
             }
         };
 
-        // Check for duplicate (city-scoped)
+        // Check for duplicate (region-scoped)
         let existing = self
             .writer
             .find_duplicate(
@@ -649,7 +649,7 @@ impl<'a> ResponseFinder<'a> {
             location: Some(GeoPoint {
                 lat: self.region.center_lat,
                 lng: self.region.center_lng,
-                precision: GeoPrecision::City,
+                precision: GeoPrecision::Approximate,
             }),
             location_name: Some(self.region.name.clone()),
             source_url: response.url.clone(),
@@ -773,7 +773,7 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        // Dedup check (city-scoped)
+        // Dedup check (region-scoped)
         let existing = self
             .writer
             .find_duplicate(
@@ -825,7 +825,7 @@ impl<'a> ResponseFinder<'a> {
                 location: Some(GeoPoint {
                     lat: self.region.center_lat,
                     lng: self.region.center_lng,
-                    precision: GeoPrecision::City,
+                    precision: GeoPrecision::Approximate,
                 }),
                 location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
@@ -1026,7 +1026,7 @@ mod tests {
 
     #[test]
     fn response_node_gets_region_center_coordinates() {
-        let region = RegionNode {
+        let region = ScoutScope {
             name: "Minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
@@ -1046,7 +1046,7 @@ mod tests {
             location: Some(GeoPoint {
                 lat: region.center_lat,
                 lng: region.center_lng,
-                precision: GeoPrecision::City,
+                precision: GeoPrecision::Approximate,
             }),
             location_name: Some(region.name.clone()),
             source_url: "https://example.com/kyr".to_string(),
@@ -1070,6 +1070,6 @@ mod tests {
         let loc = node.meta().unwrap().location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
         assert!((loc.lng - (-93.2650)).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::City);
+        assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 }

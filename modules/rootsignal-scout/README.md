@@ -12,12 +12,12 @@ export NEO4J_PASSWORD=...
 export ANTHROPIC_API_KEY=...
 export VOYAGE_API_KEY=...
 export SERPER_API_KEY=...
-export CITY=twincities
+export REGION=twincities
 
 # Run the scout
 cargo run --bin scout
 
-# Or specify city as CLI argument (overrides CITY env var)
+# Or specify region as CLI argument (overrides REGION env var)
 cargo run --bin scout -- minneapolis
 
 # Dump graph data as JSON (no scraping)
@@ -36,7 +36,7 @@ cargo run --bin scout -- --dump
 | `ANTHROPIC_API_KEY` | Claude API key (extraction, synthesis, investigation) |
 | `VOYAGE_API_KEY` | Voyage AI key (1024-dim signal embeddings) |
 | `SERPER_API_KEY` | Serper web search API key |
-| `CITY` | Target city slug (e.g. `twincities`, `nyc`, `portland`, `berlin`) |
+| `REGION` | Target region slug (e.g. `twincities`, `nyc`, `portland`, `berlin`) |
 
 ### Optional
 
@@ -45,10 +45,10 @@ cargo run --bin scout -- --dump
 | `APIFY_API_KEY` | Social media scraping (Instagram, Facebook, Reddit) | Disabled |
 | `BROWSERLESS_URL` | Browserless headless Chrome service URL | Local Chrome |
 | `BROWSERLESS_TOKEN` | Browserless auth token | None |
-| `CITY_LAT` | City center latitude | Required for cold start only |
-| `CITY_LNG` | City center longitude | Required for cold start only |
-| `CITY_RADIUS_KM` | Geo bounding radius | `30.0` |
-| `CITY_NAME` | Human-readable city name | Same as `CITY` slug |
+| `REGION_LAT` | Region center latitude | Required for cold start only |
+| `REGION_LNG` | Region center longitude | Required for cold start only |
+| `REGION_RADIUS_KM` | Geo bounding radius | `30.0` |
+| `REGION_NAME` | Human-readable region name | Same as `REGION` slug |
 | `DAILY_BUDGET_CENTS` | Daily API spend limit (0 = unlimited) | `0` |
 | `RUST_LOG` | Log level filter | `rootsignal=info` |
 
@@ -80,7 +80,7 @@ See [docs/architecture.md](docs/architecture.md) for full details.
 | `extractor` | LLM signal extraction — Claude Haiku → `ExtractionResult` |
 | `embedder` | `TextEmbedder` trait + Voyage AI implementation |
 | `quality` | Quality scoring (completeness + geo accuracy → confidence) |
-| `bootstrap` | Cold-start seed generation — creates initial sources for a new city |
+| `bootstrap` | Cold-start seed generation — creates initial sources for a new region |
 | `expansion` | Signal expansion — implied queries → new discovery sources |
 | `source_finder` | LLM-driven source discovery from graph gaps and imbalances |
 | `gathering_finder` | Agentic investigation — discovers where people gather around tensions |
@@ -146,7 +146,7 @@ Tests use the `simweb` crate for deterministic, offline simulation of web pages 
 
 | Crate | Role |
 |-------|------|
-| `rootsignal-common` | Shared types (`Node`, `NodeMeta`, `CityNode`, `SourceNode`), config, quality scoring, PII detection |
+| `rootsignal-common` | Shared types (`Node`, `NodeMeta`, `ScoutScope`, `SourceNode`), config, quality scoring, PII detection |
 | `rootsignal-graph` | Neo4j client, graph writer/reader, story weaver, cause heat, similarity, migrations |
 | `ai-client` | Provider-agnostic LLM client (Claude, OpenAI, OpenRouter) |
 | `apify-client` | Apify API wrapper for social scraping |

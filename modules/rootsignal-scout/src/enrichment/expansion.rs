@@ -53,7 +53,7 @@ impl<'a> Expansion<'a> {
         // that are now linked to tensions via response mapping.
         match self
             .writer
-            .get_recently_linked_signals_with_queries(self.region_slug)
+            .get_recently_linked_signals_with_queries()
             .await
         {
             Ok(deferred) => {

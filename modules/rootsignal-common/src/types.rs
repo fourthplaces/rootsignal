@@ -12,7 +12,7 @@ use crate::safety::SensitivityLevel;
 pub enum GeoPrecision {
     Exact,
     Neighborhood,
-    City,
+    Approximate,
     Region,
 }
 
@@ -432,16 +432,13 @@ impl ScoutScope {
     }
 }
 
-/// Temporary aliases — will be removed once all callers migrate.
-pub type RegionNode = ScoutScope;
-pub type CityNode = ScoutScope;
 
 // --- Scout Task (ephemeral unit of work for the scout swarm) ---
 
 /// How a scout task was created.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ScoutTaskSource {
-    /// Seeded from config/env vars (replaces old RegionNode)
+    /// Seeded from config/env vars
     Manual,
     /// Created by signal clustering (feedback loop)
     Beacon,
@@ -509,7 +506,7 @@ impl std::str::FromStr for ScoutTaskStatus {
 }
 
 /// An ephemeral unit of work for the scout swarm.
-/// Replaces RegionNode as the thing that tells scout where to look.
+/// An ephemeral unit of work for the scout swarm.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoutTask {
     pub id: Uuid,
@@ -558,7 +555,6 @@ pub struct PlaceNode {
     pub id: Uuid,
     pub name: String,
     pub slug: String,
-    pub city: String,
     pub lat: f64,
     pub lng: f64,
     pub geocoded: bool,
@@ -568,7 +564,7 @@ pub struct PlaceNode {
 // --- Resource Node (capability/resource matching) ---
 
 /// A capability or resource type that signals can require, prefer, or offer.
-/// Global taxonomy — not city-scoped. Geographic filtering happens through signal edges.
+/// Global taxonomy — not region-scoped. Geographic filtering happens through signal edges.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceNode {
     pub id: Uuid,
@@ -588,7 +584,7 @@ pub struct ResourceNode {
 // --- Tag Node (thematic tagging for signals and stories) ---
 
 /// A thematic tag that can be applied to signals and stories.
-/// Global taxonomy — not city-scoped. Tags are lowercased, slugified.
+/// Global taxonomy — not region-scoped. Tags are lowercased, slugified.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagNode {
     pub id: Uuid,
@@ -862,7 +858,7 @@ pub fn canonical_value(value: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryMethod {
-    /// From CityProfile seed list
+    /// From initial seed list
     Curated,
     /// LLM gap analysis identified a gap and suggested this
     GapAnalysis,
@@ -929,8 +925,7 @@ impl SourceRole {
 }
 
 /// A tracked source in the graph — either curated (from seed list) or discovered.
-/// Identity is `canonical_key` = `canonical_value` (region-independent).
-/// Regions link to sources via `:SCOUTS` relationships in the graph.
+/// Identity is `canonical_key` = `canonical_value` (globally unique).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceNode {
     pub id: Uuid,
@@ -977,7 +972,7 @@ pub struct SubmissionNode {
     pub id: Uuid,
     pub url: String,
     pub reason: Option<String>,
-    pub city: String,
+    pub region: String,
     pub submitted_at: DateTime<Utc>,
 }
 

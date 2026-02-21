@@ -396,7 +396,7 @@ fn test_scout_interactive(ctx: &AppContext) -> Result<()> {
         "Extraction (gathering, aid, need, notice, tension)",
         "Dedup & corroboration",
         "Adversarial (spam, astroturf, coordinated)",
-        "Multi-city (Portland, NYC, Berlin)",
+        "Multi-region (Portland, NYC, Berlin)",
         "← Back",
     ];
 

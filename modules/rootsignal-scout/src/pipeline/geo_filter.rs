@@ -44,14 +44,14 @@ pub struct GeoFilterConfig<'a> {
 /// 1. Has coordinates within radius → Accept
 /// 2. Has coordinates outside radius → Reject
 /// 3. No coordinates, `location_name` matches a geo-term → Accept
-/// 4. No coordinates, `location_name` present but no match, city-local source → AcceptWithPenalty
-/// 5. No coordinates, `location_name` present but no match, not city-local → Reject
+/// 4. No coordinates, `location_name` present but no match, known source → AcceptWithPenalty
+/// 5. No coordinates, `location_name` present but no match, not known source → Reject
 /// 6. No coordinates, no usable `location_name` → Accept (benefit of the doubt)
 ///
 /// NOTE: Case 6 is the known bug — signals with no geographic signal at all
-/// are accepted and later get city-center backfill. This causes cross-city
+/// are accepted and later get center backfill. This causes cross-region
 /// contamination (Giessen bug c2c27655).
-pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_city_local: bool) -> GeoVerdict {
+pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_known_source: bool) -> GeoVerdict {
     // --- Cases 1 & 2: signal has coordinates ---
     if let Some(loc) = &meta.location {
         let dist = haversine_km(config.center_lat, config.center_lng, loc.lat, loc.lng);
@@ -76,8 +76,8 @@ pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_city_local: bool)
             return GeoVerdict::Accept;
         }
 
-        // Case 4: city-local source, name present but no match → accept with penalty
-        if is_city_local {
+        // Case 4: known source, name present but no match → accept with penalty
+        if is_known_source {
             return GeoVerdict::AcceptWithPenalty(0.8);
         }
 
@@ -86,12 +86,12 @@ pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_city_local: bool)
     }
 
     // Case 6 (FIXED): no coordinates, no usable location_name → reject.
-    // Previously accepted with "benefit of the doubt", causing cross-city
+    // Previously accepted with "benefit of the doubt", causing cross-region
     // contamination (Giessen bug c2c27655).
     GeoVerdict::Reject
 }
 
-/// Backfill city-center coordinates on a signal that passed the geo-filter
+/// Backfill region-center coordinates on a signal that passed the geo-filter
 /// but has no coordinates. Only backfills when a usable `location_name` is
 /// present — signals with no name should have been rejected by `geo_check`,
 /// but this is a safety belt.
@@ -116,7 +116,7 @@ pub fn backfill_center_coords(meta: &mut NodeMeta, config: &GeoFilterConfig) -> 
     meta.location = Some(GeoPoint {
         lat: config.center_lat,
         lng: config.center_lng,
-        precision: GeoPrecision::City,
+        precision: GeoPrecision::Approximate,
     });
     true
 }
@@ -130,14 +130,14 @@ pub fn backfill_center_coords(meta: &mut NodeMeta, config: &GeoFilterConfig) -> 
 pub fn filter_nodes(
     nodes: Vec<Node>,
     config: &GeoFilterConfig,
-    is_city_local: bool,
+    is_known_source: bool,
 ) -> (Vec<Node>, GeoFilterStats) {
     let mut stats = GeoFilterStats::default();
     let mut accepted = Vec::with_capacity(nodes.len());
 
     for mut node in nodes {
         let verdict = match node.meta() {
-            Some(meta) => geo_check(meta, config, is_city_local),
+            Some(meta) => geo_check(meta, config, is_known_source),
             None => GeoVerdict::Accept, // Evidence nodes have no meta — pass through
         };
 
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn accept_city_local_with_penalty() {
+    fn accept_known_source_with_penalty() {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("Uptown"));
@@ -344,7 +344,7 @@ mod tests {
         assert!(backfill_center_coords(&mut meta, &config));
         let loc = meta.location.unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::City);
+        assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 
     #[test]
@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn reject_no_coords_no_name_even_if_city_local() {
+    fn reject_no_coords_no_name_even_if_known_source() {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, None);
@@ -453,7 +453,7 @@ mod tests {
                 Some(GeoPoint { lat: 30.2672, lng: -97.7431, precision: GeoPrecision::Exact }),
                 None,
             )),
-            // Reject: non-local name, not city-local
+            // Reject: non-local name, not known source
             make_node(test_meta(None, Some("Austin, Texas"))),
         ];
 
@@ -473,11 +473,11 @@ mod tests {
         assert_eq!(accepted.len(), 1);
         let loc = accepted[0].meta().unwrap().location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::City);
+        assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 
     #[test]
-    fn city_local_penalty_applied_in_batch() {
+    fn known_source_penalty_applied_in_batch() {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
 

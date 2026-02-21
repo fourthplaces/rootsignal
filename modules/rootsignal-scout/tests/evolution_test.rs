@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use harness::audit::AuditConfig;
 use harness::queries::serialize_graph_state;
-use harness::{city_node_for, TestContext};
+use harness::{scope_for, TestContext};
 use simweb::{
     AuditSummary, EvolutionConfig, Evolver, Judge, JudgeCriteria, ScenarioEntry, ScenarioGym,
     ScenarioSource, ScoutGenome, SimulatedWeb, World,
@@ -92,8 +92,8 @@ async fn run_scenario_with_genome(
     let sim = Arc::new(SimulatedWeb::new(world.clone(), api_key));
 
     // Build and run Scout with genome's extractor prompt
-    let city_node = city_node_for(world);
-    let scout = ctx.sim_scout_with_genome(sim.clone(), city_node, genome);
+    let scope = scope_for(world);
+    let scout = ctx.sim_scout_with_genome(sim.clone(), scope, genome);
     let stats = scout.run().await?;
 
     eprintln!(

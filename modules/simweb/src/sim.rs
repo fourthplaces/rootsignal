@@ -380,6 +380,11 @@ impl SimulatedWeb {
     pub fn world(&self) -> &World {
         &self.world
     }
+
+    /// Access the run log (all logged interactions so far).
+    pub async fn run_log(&self) -> RunLog {
+        self.log.read().await.clone()
+    }
 }
 
 fn parse_search_response(response: &str) -> Vec<SimSearchResult> {

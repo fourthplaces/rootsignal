@@ -2,7 +2,7 @@
 //!
 //! Three tiers:
 //! - Tier 1 (Pinned): Snapshot-based, deterministic sim content, fresh judge each run
-//! - Tier 2 (City Sim): Fresh sim generation each run, fresh judge
+//! - Tier 2 (Region Sim): Fresh sim generation each run, fresh judge
 //! - Tier 3 (Random Discovery): Random world, informational only, never blocks CI
 
 mod harness;
@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use harness::audit::{AuditConfig, AuditReport};
-use harness::queries::serialize_graph_state_for_city;
-use harness::{city_node_for, seed_sources_from_world, TestContext};
+use harness::queries::serialize_graph_state_for_region;
+use harness::{scope_for, seed_sources_from_world, TestContext};
 use rootsignal_graph::query;
 use simweb::{
     generate_random_world, Improver, Judge, JudgeCriteria, SimulatedWeb, TestFailure, World,
@@ -70,37 +70,36 @@ async fn run_scenario(
     };
 
     // Build and run Scout — use scenario name in slug to isolate parallel tests
-    let mut city_node = city_node_for(&world);
-    city_node.name = format!("{}_{}", city_node.name, scenario_name);
-    let city_slug = city_node.name.clone();
+    let mut scope = scope_for(&world);
+    scope.name = format!("{}_{}", scope.name, scenario_name);
+    let region_slug = scope.name.clone();
 
-    // Clean graph state for this test city (shared Neo4j may have leftover data)
+    // Clean graph state for this test region (shared Neo4j may have leftover data)
     let writer = ctx.writer();
-    let slug = &city_slug;
+    let slug = &region_slug;
 
-    // Collect URLs belonging to this city's sources
-    let url_q = query("MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL RETURN s.url AS url")
-        .param("slug", slug.as_str());
+    // Collect URLs belonging to sources
+    let url_q = query("MATCH (s:Source) WHERE s.url IS NOT NULL RETURN s.url AS url");
     let mut url_stream = ctx
         .client()
         .inner()
         .execute(url_q)
         .await
         .expect("Failed to query source URLs");
-    let mut city_urls: Vec<String> = Vec::new();
+    let mut source_urls: Vec<String> = Vec::new();
     while let Some(row) = url_stream.next().await.expect("row failed") {
-        city_urls.push(row.get::<String>("url").unwrap_or_default());
+        source_urls.push(row.get::<String>("url").unwrap_or_default());
     }
 
-    // Delete signals + evidence whose source_url matches this city's sources
-    if !city_urls.is_empty() {
+    // Delete signals + evidence whose source_url matches these sources
+    if !source_urls.is_empty() {
         let clean_signals = query(
             "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
              WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
              AND ev.source_url IN $urls \
              DETACH DELETE n, ev",
         )
-        .param("urls", city_urls.clone());
+        .param("urls", source_urls.clone());
         ctx.client()
             .inner()
             .run(clean_signals)
@@ -108,9 +107,8 @@ async fn run_scenario(
             .expect("Failed to clean signals");
     }
 
-    // Delete sources for this city
-    let clean_sources =
-        query("MATCH (s:Source {city: $slug}) DETACH DELETE s").param("slug", slug.as_str());
+    // Delete sources
+    let clean_sources = query("MATCH (s:Source) DETACH DELETE s");
     ctx.client()
         .inner()
         .run(clean_sources)
@@ -118,9 +116,9 @@ async fn run_scenario(
         .expect("Failed to clean sources");
 
     // Seed sources into Neo4j so the scout has something to schedule
-    seed_sources_from_world(&writer, &world, &city_node.name).await;
+    seed_sources_from_world(&writer, &world, &scope.name).await;
 
-    let scout = ctx.sim_scout(sim.clone(), city_node);
+    let scout = ctx.sim_scout(sim.clone(), scope);
     let stats = scout.run().await.expect("Scout run failed");
 
     eprintln!("=== {scenario_name} stats ===\n{stats}");
@@ -138,8 +136,8 @@ async fn run_scenario(
         }
     }
 
-    // Serialize graph state for judge (scoped to this test city)
-    let graph_state = serialize_graph_state_for_city(ctx.client(), Some(&city_slug)).await;
+    // Serialize graph state for judge (scoped to this test region)
+    let graph_state = serialize_graph_state_for_region(ctx.client(), Some(&city_slug)).await;
 
     // Judge evaluates
     let judge = Judge::new(&api_key);
@@ -166,7 +164,7 @@ async fn run_scenario(
 }
 
 // =============================================================================
-// Tier 2: City Simulation Tests (fresh sim each run)
+// Tier 2: Region Simulation Tests (fresh sim each run)
 // =============================================================================
 
 #[tokio::test]

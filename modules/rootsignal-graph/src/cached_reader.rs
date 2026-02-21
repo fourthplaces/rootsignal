@@ -291,7 +291,7 @@ impl CachedReader {
         Ok(ranked.into_iter().map(|(n, _)| n).collect())
     }
 
-    pub async fn list_recent_for_city(
+    pub async fn list_recent_in_bbox(
         &self,
         lat: f64,
         lng: f64,
@@ -363,7 +363,7 @@ impl CachedReader {
         Ok(results)
     }
 
-    pub async fn top_stories_for_city(
+    pub async fn top_stories_in_bbox(
         &self,
         lat: f64,
         lng: f64,

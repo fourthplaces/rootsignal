@@ -23,7 +23,7 @@ pub struct AuditReport {
     pub failed: usize,
 }
 
-/// City-specific parameters for audit checks.
+/// Region-specific parameters for audit checks.
 pub struct AuditConfig {
     pub min_signals: usize,
     pub min_types: usize,
@@ -374,7 +374,7 @@ pub async fn check_no_empty_signals(client: &GraphClient) -> CheckResult {
     }
 }
 
-/// No signals at (0,0) or exact city-center coordinates (likely fake).
+/// No signals at (0,0) or exact region-center coordinates (likely fake).
 pub async fn check_no_fake_coordinates(
     client: &GraphClient,
     center_lat: f64,
@@ -394,7 +394,7 @@ pub async fn check_no_fake_coordinates(
 
         // (0,0) is almost certainly fake
         let is_null_island = lat.abs() < 0.001 && lng.abs() < 0.001;
-        // Exact city center (4+ decimal places matching) is suspicious
+        // Exact region center (4+ decimal places matching) is suspicious
         let is_exact_center =
             (lat - center_lat).abs() < 0.0001 && (lng - center_lng).abs() < 0.0001;
 

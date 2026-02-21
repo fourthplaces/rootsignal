@@ -117,7 +117,7 @@ pub fn world() -> World {
             "after-school".to_string(),
         ],
         geography: Geography {
-            city: "St. Paul".to_string(),
+            name: "St. Paul".to_string(),
             state_or_region: "Minnesota".to_string(),
             country: "US".to_string(),
             local_terms: vec![

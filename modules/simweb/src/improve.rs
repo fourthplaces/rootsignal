@@ -169,7 +169,7 @@ impl Improver {
             serde_json::to_string_pretty(blind_spot).map_err(|e| anyhow!("serialize: {e}"))?;
 
         let system = "You generate World definitions for testing scout, a signal agent. \
-                      A World describes a simulated city with websites, social profiles, and \
+                      A World describes a simulated region with websites, social profiles, and \
                       ground-truth facts. The scenario must target a specific blind spot in scout's \
                       tension-response extraction so that a system with this weakness WILL fail.";
 
@@ -186,7 +186,7 @@ impl Improver {
              \"social_profiles\": [{{\"platform\": \"Instagram|Reddit|Facebook\", \
              \"identifier\": \"string\", \"persona\": \"string\", \"post_count\": number}}],\n  \
              \"topics\": [\"string\"],\n  \
-             \"geography\": {{\"city\": \"string\", \"state_or_region\": \"string\", \
+             \"geography\": {{\"name\": \"string\", \"state_or_region\": \"string\", \
              \"country\": \"US\", \"local_terms\": [\"string\"], \
              \"center_lat\": number, \"center_lng\": number}}\n}}"
         );

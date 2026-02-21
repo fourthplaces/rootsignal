@@ -3383,6 +3383,7 @@ dependencies = [
  "spider_transformations",
  "sqlx",
  "tempfile",
+ "testcontainers",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

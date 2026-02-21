@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    RegionNode, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
+    ScoutScope, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
     TensionNode,
 };
 use rootsignal_graph::{GraphWriter, TensionLinkerOutcome, TensionLinkerTarget};
@@ -241,9 +241,9 @@ impl std::fmt::Display for TensionLinkerStats {
 // Prompts
 // =============================================================================
 
-fn investigation_system_prompt(city: &str, tension_landscape: &str) -> String {
+fn investigation_system_prompt(region: &str, tension_landscape: &str) -> String {
     format!(
-        "You are investigating a signal to understand WHY it exists in {city}. \
+        "You are investigating a signal to understand WHY it exists in {region}. \
 Your goal is to find the underlying tensions — the problems, needs, conflicts, or fears — \
 that caused this signal to exist.
 
@@ -259,7 +259,7 @@ raise questions about underlying community tensions?
 reason about what you've learned, and search deeper if needed.
 4. Go deep: search → read → refine → search again if needed. Follow one thread at a time.
 
-Known tensions in {city}:
+Known tensions in {region}:
 {tension_landscape}
 
 If your investigation confirms an existing tension, note the match rather than treating it as \
@@ -294,7 +294,7 @@ pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
-    region: RegionNode,
+    region: ScoutScope,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -309,7 +309,7 @@ impl<'a> TensionLinker<'a> {
         archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
@@ -582,7 +582,7 @@ impl<'a> TensionLinker<'a> {
                 location: Some(GeoPoint {
                     lat: self.region.center_lat,
                     lng: self.region.center_lng,
-                    precision: GeoPrecision::City,
+                    precision: GeoPrecision::Approximate,
                 }),
                 location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
@@ -671,7 +671,7 @@ mod tests {
     #[test]
     fn tension_node_gets_region_center_coordinates() {
         // Verify that a DiscoveredTension produces a TensionNode with region-center lat/lng.
-        let region = RegionNode {
+        let region = ScoutScope {
             name: "Minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
@@ -712,7 +712,7 @@ mod tests {
                 location: Some(GeoPoint {
                     lat: region.center_lat,
                     lng: region.center_lng,
-                    precision: GeoPrecision::City,
+                    precision: GeoPrecision::Approximate,
                 }),
                 location_name: Some(region.name.clone()),
                 source_url: tension.source_url.clone(),
@@ -743,7 +743,7 @@ mod tests {
             (loc.lng - (-93.2650)).abs() < 0.001,
             "lng should be region center"
         );
-        assert_eq!(loc.precision, GeoPrecision::City);
+        assert_eq!(loc.precision, GeoPrecision::Approximate);
         assert_eq!(
             tension_node.meta.location_name.as_deref(),
             Some("Minneapolis")

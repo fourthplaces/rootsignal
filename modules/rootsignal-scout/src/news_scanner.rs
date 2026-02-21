@@ -56,7 +56,7 @@ impl NewsScanner {
         writer: GraphWriter,
         daily_budget_cents: u64,
     ) -> Self {
-        // Use a generic "Global" scope for extraction — no city bias
+        // Use a generic "Global" scope for extraction — no region bias
         let extractor = Box::new(Extractor::new(
             anthropic_api_key,
             "Global",

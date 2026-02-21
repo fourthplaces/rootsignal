@@ -10,18 +10,18 @@
 mod harness;
 
 use harness::{search_result, TestContext};
-use rootsignal_common::CityNode;
+use rootsignal_common::ScoutScope;
 use rootsignal_scout::fixtures::{CorpusSearcher, ScenarioSearcher, ScenarioSocialScraper};
 
-fn city_node(
+fn test_scope(
     name: &str,
     _slug: &str,
     lat: f64,
     lng: f64,
     radius_km: f64,
     geo_terms: &[&str],
-) -> CityNode {
-    CityNode {
+) -> ScoutScope {
+    ScoutScope {
         name: name.to_string(),
         center_lat: lat,
         center_lng: lng,
@@ -304,7 +304,7 @@ async fn off_geography_signals_filtered() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 8: Portland city profile — different city, different content
+// Scenario 8: Portland region profile — different region, different content
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -316,7 +316,7 @@ async fn portland_content_with_portland_profile() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node(
+        .with_city(test_scope(
             "Portland, Oregon",
             "portland",
             45.5152,
@@ -360,7 +360,7 @@ async fn nyc_mutual_aid_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node(
+        .with_city(test_scope(
             "New York City",
             "nyc",
             40.7128,
@@ -411,7 +411,7 @@ async fn berlin_german_language_extraction() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node(
+        .with_city(test_scope(
             "Berlin, Germany",
             "berlin",
             52.5200,
@@ -568,7 +568,7 @@ async fn nyc_community_discussion_extracts_responses() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node(
+        .with_city(test_scope(
             "New York City",
             "nyc",
             40.7128,
@@ -1046,7 +1046,7 @@ async fn coordinated_social_posts_detected() {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-city contamination: Giessen bug reproduction
+// Cross-region contamination: Giessen bug reproduction
 // ---------------------------------------------------------------------------
 //
 // A Giessen scout run receives content about a US national charity with no
@@ -1054,7 +1054,7 @@ async fn coordinated_social_posts_detected() {
 // location_name. These MUST be rejected — not backfilled with Giessen coords.
 
 #[tokio::test]
-async fn cross_city_contamination_rejected() {
+async fn cross_region_contamination_rejected() {
     let Some(ctx) = TestContext::try_new().await else {
         eprintln!("Skipping: API keys not set");
         return;
@@ -1062,7 +1062,7 @@ async fn cross_city_contamination_rejected() {
 
     let stats = ctx
         .scout()
-        .with_city(city_node(
+        .with_city(test_scope(
             "Giessen, Germany",
             "giessen",
             50.6214,
@@ -1089,7 +1089,7 @@ async fn cross_city_contamination_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// National org without location rejected for any city profile
+// National org without location rejected for any region profile
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1120,21 +1120,21 @@ async fn national_org_without_location_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario: Signals without coordinates get city-center backfill
+// Scenario: Signals without coordinates get region-center backfill
 // ---------------------------------------------------------------------------
 //
-// Reddit-style content about city-wide issues (rent increases, policy) produces
-// signals with location_name but no lat/lng. These must get city-center coords
-// at City precision so they appear in geo bounding-box queries (the admin UI).
+// Reddit-style content about region-wide issues (rent increases, policy) produces
+// signals with location_name but no lat/lng. These must get region-center coords
+// at Approximate precision so they appear in geo bounding-box queries (the admin UI).
 
 #[tokio::test]
-async fn city_wide_signals_get_center_coordinates() {
+async fn region_wide_signals_get_center_coordinates() {
     let Some(ctx) = TestContext::try_new().await else {
         eprintln!("Skipping: API keys not set");
         return;
     };
 
-    // Reddit housing discussion — city-wide issue, no specific addresses
+    // Reddit housing discussion — region-wide issue, no specific addresses
     let stats = ctx
         .scout()
         .with_web_content(include_str!("fixtures/reddit_housing_discussion.txt"))
@@ -1151,7 +1151,7 @@ async fn city_wide_signals_get_center_coordinates() {
         stats.signals_stored,
     );
 
-    // Every stored signal must have coordinates (either from LLM or city-center backfill)
+    // Every stored signal must have coordinates (either from LLM or region-center backfill)
     let geo_signals = harness::queries::all_signals_with_geo(ctx.client()).await;
     assert!(!geo_signals.is_empty(), "should have signals in graph");
 
@@ -1162,7 +1162,7 @@ async fn city_wide_signals_get_center_coordinates() {
 
     assert!(
         missing_coords.is_empty(),
-        "all stored signals should have coordinates after city-center backfill; \
+        "all stored signals should have coordinates after region-center backfill; \
          {} signals missing coords: {:?}",
         missing_coords.len(),
         missing_coords.iter().map(|s| &s.title).collect::<Vec<_>>(),
@@ -1170,5 +1170,5 @@ async fn city_wide_signals_get_center_coordinates() {
 
     // Coordinates should be near Minneapolis (whether LLM-provided or backfilled).
     // We don't assert on precision — LLM-provided Exact coords are strictly
-    // better than City-level backfill.
+    // better than Approximate-level backfill.
 }

@@ -114,7 +114,7 @@ impl From<rootsignal_common::SensitivityLevel> for GqlSensitivityLevel {
 pub enum GqlGeoPrecision {
     Exact,
     Neighborhood,
-    City,
+    Approximate,
     Region,
 }
 
@@ -123,7 +123,7 @@ impl From<rootsignal_common::GeoPrecision> for GqlGeoPrecision {
         match p {
             rootsignal_common::GeoPrecision::Exact => GqlGeoPrecision::Exact,
             rootsignal_common::GeoPrecision::Neighborhood => GqlGeoPrecision::Neighborhood,
-            rootsignal_common::GeoPrecision::City => GqlGeoPrecision::City,
+            rootsignal_common::GeoPrecision::Approximate => GqlGeoPrecision::Approximate,
             rootsignal_common::GeoPrecision::Region => GqlGeoPrecision::Region,
         }
     }

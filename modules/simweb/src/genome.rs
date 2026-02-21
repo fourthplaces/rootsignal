@@ -11,9 +11,9 @@ pub struct ScoutGenome {
     pub parent_id: Option<String>,
     pub generation: u32,
     pub created_at: DateTime<Utc>,
-    /// Extractor system prompt template with `{city_name}` and `{today}` placeholders.
+    /// Extractor system prompt template with `{region_name}` and `{today}` placeholders.
     pub extractor_prompt: String,
-    /// Discovery system prompt template with `{city_name}` placeholder.
+    /// Discovery system prompt template with `{region_name}` placeholder.
     pub discovery_prompt: String,
     /// Which prompt was mutated (if any).
     pub mutation_target: Option<String>,
@@ -45,7 +45,7 @@ impl ScoutGenome {
     /// Create the baseline genome from current prompt templates.
     ///
     /// Callers pass in the current extractor and discovery prompt templates
-    /// (with `{city_name}` / `{today}` placeholders intact).
+    /// (with `{region_name}` / `{today}` placeholders intact).
     pub fn baseline(extractor_prompt: String, discovery_prompt: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -76,16 +76,16 @@ impl ScoutGenome {
     }
 
     /// Render the extractor prompt for a specific city, substituting placeholders.
-    pub fn render_extractor_prompt(&self, city_name: &str) -> String {
+    pub fn render_extractor_prompt(&self, region_name: &str) -> String {
         let today = Utc::now().format("%Y-%m-%d").to_string();
         self.extractor_prompt
-            .replace("{city_name}", city_name)
+            .replace("{region_name}", region_name)
             .replace("{today}", &today)
     }
 
     /// Render the discovery prompt for a specific city.
-    pub fn render_discovery_prompt(&self, city_name: &str) -> String {
-        self.discovery_prompt.replace("{city_name}", city_name)
+    pub fn render_discovery_prompt(&self, region_name: &str) -> String {
+        self.discovery_prompt.replace("{region_name}", region_name)
     }
 }
 
@@ -96,8 +96,8 @@ mod tests {
     #[test]
     fn baseline_creates_generation_zero() {
         let genome = ScoutGenome::baseline(
-            "Extract signals for {city_name} on {today}".to_string(),
-            "Discover sources for {city_name}".to_string(),
+            "Extract signals for {region_name} on {today}".to_string(),
+            "Discover sources for {region_name}".to_string(),
         );
         assert_eq!(genome.generation, 0);
         assert!(genome.parent_id.is_none());
@@ -116,16 +116,16 @@ mod tests {
     #[test]
     fn render_substitutes_placeholders() {
         let genome = ScoutGenome::baseline(
-            "Extract for {city_name} on {today}".to_string(),
-            "Discover for {city_name}".to_string(),
+            "Extract for {region_name} on {today}".to_string(),
+            "Discover for {region_name}".to_string(),
         );
         let rendered = genome.render_extractor_prompt("Minneapolis");
         assert!(rendered.contains("Minneapolis"));
-        assert!(!rendered.contains("{city_name}"));
+        assert!(!rendered.contains("{region_name}"));
         assert!(!rendered.contains("{today}"));
 
         let disc = genome.render_discovery_prompt("Portland");
         assert!(disc.contains("Portland"));
-        assert!(!disc.contains("{city_name}"));
+        assert!(!disc.contains("{region_name}"));
     }
 }

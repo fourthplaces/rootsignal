@@ -33,7 +33,7 @@ pub fn search_system(world: &World) -> String {
 WORLD: {name}
 {description}
 
-GEOGRAPHY: {city}, {state}, {country}
+GEOGRAPHY: {geo_name}, {state}, {country}
 Local terms: {local_terms}
 
 AVAILABLE SITES (you may ONLY return URLs from this list):
@@ -52,7 +52,7 @@ RULES:
 Return JSON: {{"results": [{{"url": "...", "title": "...", "snippet": "..."}}]}}"#,
         name = world.name,
         description = world.description,
-        city = world.geography.city,
+        geo_name = world.geography.name,
         state = world.geography.state_or_region,
         country = world.geography.country,
         local_terms = world.geography.local_terms.join(", "),
@@ -81,7 +81,7 @@ pub fn scrape_system(world: &World) -> String {
 WORLD: {name}
 {description}
 
-GEOGRAPHY: {city}, {state}, {country}
+GEOGRAPHY: {geo_name}, {state}, {country}
 
 GROUND-TRUTH FACTS (use these exact strings verbatim when relevant):
 {facts_list}
@@ -94,7 +94,7 @@ RULES:
 5. Write 200-500 words of main content (like what Readability extraction would produce)."#,
         name = world.name,
         description = world.description,
-        city = world.geography.city,
+        geo_name = world.geography.name,
         state = world.geography.state_or_region,
         country = world.geography.country,
         facts_list = facts_list,
@@ -130,7 +130,7 @@ pub fn social_system(world: &World) -> String {
 WORLD: {name}
 {description}
 
-GEOGRAPHY: {city}, {state}, {country}
+GEOGRAPHY: {geo_name}, {state}, {country}
 
 GROUND-TRUTH FACTS (use these exact strings verbatim when relevant):
 {facts_list}
@@ -144,7 +144,7 @@ RULES:
 Return JSON: {{"posts": [{{"content": "...", "author": "...", "url": "..."}}]}}"#,
         name = world.name,
         description = world.description,
-        city = world.geography.city,
+        geo_name = world.geography.name,
         state = world.geography.state_or_region,
         country = world.geography.country,
         facts_list = facts_list,
@@ -235,7 +235,7 @@ pub fn judge_user(world: &World, criteria_checks: &[String], agent_output: &str)
 Name: {name}
 {description}
 
-Geography: {city}, {state}, {country}
+Geography: {geo_name}, {state}, {country}
 
 ### Ground-Truth Facts:
 {facts_list}
@@ -255,7 +255,7 @@ Geography: {city}, {state}, {country}
 {agent_output}"#,
         name = world.name,
         description = world.description,
-        city = world.geography.city,
+        geo_name = world.geography.name,
         state = world.geography.state_or_region,
         country = world.geography.country,
         facts_list = facts_list,
@@ -287,7 +287,7 @@ Geography: {city}, {state}, {country}
 pub fn world_gen_system() -> &'static str {
     r#"You generate realistic simulated worlds for testing a signal detection agent.
 
-A "world" describes a city neighborhood with:
+A "world" describes a neighborhood with:
 - Active community life (community organizations, mutual aid, local government, etc.)
 - Multiple web sources (news sites, org pages, government pages, blogs)
 - Social media presence (Instagram, Reddit, Facebook accounts)
@@ -308,7 +308,7 @@ Return a complete World as JSON matching this schema:
   "sites": [{"url": "https://...", "kind": "string", "content_description": "string", "published": "YYYY-MM-DD or null", "links_to": ["url"]}],
   "social_profiles": [{"platform": "Instagram|Reddit|Facebook", "identifier": "string", "persona": "string", "post_count": number}],
   "topics": ["string"],
-  "geography": {"city": "string", "state_or_region": "string", "country": "US", "local_terms": ["string"], "center_lat": number, "center_lng": number}
+  "geography": {"name": "string", "state_or_region": "string", "country": "US", "local_terms": ["string"], "center_lat": number, "center_lng": number}
 }
 
 Generate 6-10 sites, 3-5 social profiles, 5-10 facts, and 3-5 topics.

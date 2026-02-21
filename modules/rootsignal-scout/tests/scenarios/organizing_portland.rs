@@ -131,7 +131,7 @@ pub fn world() -> World {
             "housing".to_string(),
         ],
         geography: Geography {
-            city: "Portland".to_string(),
+            name: "Portland".to_string(),
             state_or_region: "Oregon".to_string(),
             country: "US".to_string(),
             local_terms: vec![

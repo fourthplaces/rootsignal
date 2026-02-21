@@ -837,7 +837,7 @@ impl<'a> SourceFinder<'a> {
 
         let signal_counts = self
             .writer
-            .get_signal_type_counts(&self.region_slug)
+            .get_signal_type_counts()
             .await
             .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
 
@@ -849,13 +849,13 @@ impl<'a> SourceFinder<'a> {
 
         let gap_type_stats = self
             .writer
-            .get_gap_type_stats(&self.region_slug)
+            .get_gap_type_stats()
             .await
             .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
 
         let extraction_yield = self
             .writer
-            .get_extraction_yield(&self.region_slug)
+            .get_extraction_yield()
             .await
             .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
 

@@ -5,21 +5,20 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{RegionNode, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::{FetchBackend, FetchBackendExt};
 
 use crate::sources;
 
-/// Handles cold-start bootstrapping for a brand-new city.
-/// When no CityNode exists, this generates seed search queries,
-/// performs a news sweep, and creates initial Source nodes.
+/// Handles cold-start bootstrapping for a brand-new region.
+/// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
     archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
-    region: RegionNode,
+    region: ScoutScope,
 }
 
 impl<'a> Bootstrapper<'a> {
@@ -27,7 +26,7 @@ impl<'a> Bootstrapper<'a> {
         writer: &'a GraphWriter,
         archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
     ) -> Self {
         Self {
             writer,
@@ -40,7 +39,7 @@ impl<'a> Bootstrapper<'a> {
     /// Run the cold start bootstrap. Returns number of sources discovered.
     pub async fn run(&self) -> Result<u32> {
         info!(
-            city = self.region.name.as_str(),
+            region = self.region.name.as_str(),
             "Starting cold start bootstrap..."
         );
 
@@ -97,16 +96,16 @@ impl<'a> Bootstrapper<'a> {
         Ok(sources_created)
     }
 
-    /// Use Claude Haiku to generate seed web search queries for the city.
+    /// Use Claude Haiku to generate seed web search queries for the region.
     /// Returns (query, role) pairs so tension vs response sources are labeled correctly.
     async fn generate_seed_queries(&self) -> Result<Vec<(String, SourceRole)>> {
-        let city = &self.region.name;
+        let region_name = &self.region.name;
         let claude =
             ai_client::claude::Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
 
         // Tension queries — surface friction, complaints, unmet needs
         let tension_prompt = format!(
-            r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {city}. These should find:
+            r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {region_name}. These should find:
 - Housing pressures and instability
 - Public safety and community trust
 - Infrastructure and utilities access
@@ -127,7 +126,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 
         // Response queries — surface organizations and efforts addressing needs
         let response_prompt = format!(
-            r#"Generate 10 search queries that would surface organizations and efforts actively helping people in {city}. These should find:
+            r#"Generate 10 search queries that would surface organizations and efforts actively helping people in {region_name}. These should find:
 - Mutual aid networks and community support
 - Legal aid and advocacy organizations
 - Food assistance and community kitchens
@@ -144,7 +143,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 
         // Social queries — surface where people are actually talking
         let social_prompt = format!(
-            r#"Generate 10 social media search terms and hashtags for finding people talking about community issues in {city}. These should find:
+            r#"Generate 10 social media search terms and hashtags for finding people talking about community issues in {region_name}. These should find:
 - Local hashtags people actually use (not branded campaigns)
 - Mutual aid and community support conversations
 - Neighborhood-level discussion and organizing
@@ -152,7 +151,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 - Community responses to local problems
 
 Include a mix of:
-- Hashtags (e.g. #{city}MutualAid, #{city}Community)
+- Hashtags (e.g. #{region_name}MutualAid, #{region_name}Community)
 - Search terms for GoFundMe, Instagram, X/Twitter, TikTok
 - Neighborhood or region-specific terms people use locally
 
@@ -195,13 +194,13 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         Ok(queries)
     }
 
-    /// Generate standard platform sources for the city (Reddit, GoFundMe, Eventbrite, VolunteerMatch, etc.)
+    /// Generate standard platform sources for the region (Reddit, GoFundMe, Eventbrite, VolunteerMatch, etc.)
     /// Eventbrite/VolunteerMatch/GoFundMe are query sources — they produce URLs, not content.
-    /// Reddit subreddits are discovered via LLM rather than guessed from the city slug.
+    /// Reddit subreddits are discovered via LLM rather than guessed from the region slug.
     async fn generate_platform_sources(&self) -> Vec<SourceNode> {
         let _slug = &self.region.name;
-        let city_name = &self.region.name;
-        let city_name_encoded = city_name.replace(' ', "+");
+        let region_name = &self.region.name;
+        let region_name_encoded = region_name.replace(' ', "+");
         let now = Utc::now();
 
         let make_url = |url: &str, role: SourceRole| {
@@ -259,27 +258,27 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
             make_url(
                 &format!(
                     "https://www.eventbrite.com/d/united-states--{}/community/",
-                    city_name_encoded
+                    region_name_encoded
                 ),
                 SourceRole::Response,
             ),
             make_url(
                 &format!(
                     "https://www.eventbrite.com/d/united-states--{}/volunteer/",
-                    city_name_encoded
+                    region_name_encoded
                 ),
                 SourceRole::Response,
             ),
             make_url(
                 &format!(
                     "https://www.volunteermatch.org/search?l={}&k=&v=true",
-                    city_name_encoded
+                    region_name_encoded
                 ),
                 SourceRole::Response,
             ),
-            // Site-scoped search: Serper will query `site:gofundme.com/f/ {city} {topic}`
+            // Site-scoped search: Serper will query `site:gofundme.com/f/ {region} {topic}`
             make_query(
-                &format!("site:gofundme.com/f/ {}", city_name),
+                &format!("site:gofundme.com/f/ {}", region_name),
                 SourceRole::Response,
             ),
         ];
@@ -289,7 +288,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
             Ok(subreddits) => {
                 info!(
                     count = subreddits.len(),
-                    "Discovered subreddits for {}", city_name
+                    "Discovered subreddits for {}", region_name
                 );
                 for sub in subreddits {
                     sources.push(make_url(
@@ -308,7 +307,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
             Ok(outlets) => {
                 info!(
                     count = outlets.len(),
-                    "Discovered news outlets for {}", city_name
+                    "Discovered news outlets for {}", region_name
                 );
                 for (name, feed_url) in outlets {
                     // Validate the feed URL is reachable by attempting a fetch
@@ -334,19 +333,19 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         sources
     }
 
-    /// Ask Claude for relevant subreddits for this city.
+    /// Ask Claude for relevant subreddits for this region.
     async fn discover_subreddits(&self) -> Result<Vec<String>> {
-        let city = &self.region.name;
+        let region_name = &self.region.name;
 
         let prompt = format!(
-            r#"What are the active Reddit subreddits specifically for {city} and its immediate metro area?
+            r#"What are the active Reddit subreddits specifically for {region_name} and its immediate metro area?
 
 Rules:
-- ONLY include subreddits dedicated to {city} or its immediate suburbs/neighborhoods
+- ONLY include subreddits dedicated to {region_name} or its immediate suburbs/neighborhoods
 - Do NOT include state-level subreddits (e.g. r/Minnesota, r/Texas)
 - Do NOT include national/global topic subreddits (e.g. r/FuckCars, r/urbanplanning, r/housing)
 - Do NOT include subreddits for cities more than 30 miles away
-- Each subreddit must have {city} or a neighborhood/suburb name in its name or be the well-known main sub for the city
+- Each subreddit must have {region_name} or a neighborhood/suburb name in its name or be the well-known main sub for the area
 
 Return ONLY the subreddit names (without r/ prefix), one per line. No numbering, no explanations.
 Maximum 5 subreddits."#
@@ -375,13 +374,13 @@ Maximum 5 subreddits."#
     /// Ask Claude for local news outlets and their RSS feed URLs.
     /// Returns (outlet_name, feed_url) pairs.
     async fn discover_news_outlets(&self) -> Result<Vec<(String, String)>> {
-        let city = &self.region.name;
+        let region_name = &self.region.name;
 
         let prompt = format!(
-            r#"What are the local news outlets for {city}? Include newspapers, alt-weeklies, TV station news sites, and hyperlocal blogs.
+            r#"What are the local news outlets for {region_name}? Include newspapers, alt-weeklies, TV station news sites, and hyperlocal blogs.
 
 Do NOT include national wire services (AP, Reuters, NPR national, CNN, Fox News).
-Only include outlets that primarily cover {city} and its surrounding area.
+Only include outlets that primarily cover {region_name} and its surrounding area.
 
 For each outlet, provide the name and RSS/Atom feed URL if you know it.
 Return as JSON array: [{{"name": "Outlet Name", "feed_url": "https://..."}}]
@@ -427,7 +426,7 @@ struct NewsOutlet {
 /// For each tension, creates targeted search queries to find organizations helping.
 pub async fn tension_seed_queries(
     writer: &GraphWriter,
-    region: &RegionNode,
+    region: &ScoutScope,
 ) -> Result<Vec<SourceNode>> {
     // Get existing tensions from the graph
     let tensions = writer.get_recent_tensions(10).await.unwrap_or_default();
@@ -436,13 +435,13 @@ pub async fn tension_seed_queries(
         return Ok(Vec::new());
     }
 
-    let city = &region.name;
+    let region_name = &region.name;
     let mut all_sources = Vec::new();
     let now = Utc::now();
 
     for (title, what_would_help) in &tensions {
         let help_text = what_would_help.as_deref().unwrap_or(title);
-        let query = format!("organizations helping with {} in {}", help_text, city);
+        let query = format!("organizations helping with {} in {}", help_text, region_name);
 
         let cv = query.clone();
         let ck = sources::make_canonical_key(&cv);
