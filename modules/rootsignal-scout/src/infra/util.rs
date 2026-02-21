@@ -21,16 +21,8 @@ pub const TENSION_CATEGORIES: &str =
     "housing, safety, economic, health, education, infrastructure, \
 environment, social, governance, immigration, civil_rights, other";
 
-/// Deterministic content hash for change detection (FNV-1a).
-/// Must be stable across process restarts — `DefaultHasher` is NOT (HashDoS randomization).
-pub fn content_hash(content: &str) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325; // FNV offset basis
-    for byte in content.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3); // FNV prime
-    }
-    hash
-}
+// Re-export content_hash from common for backwards compatibility within scout.
+pub use rootsignal_common::content_hash;
 
 /// Cosine similarity between two f64 vectors. Returns 0.0 for zero-norm inputs.
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {

@@ -10,6 +10,7 @@ members = [
     "modules/rootsignal-scout-supervisor",
     "modules/rootsignal-api",
     "modules/simweb",
+    "modules/rootsignal-archive",
 ]
 resolver = "2"
 
@@ -68,6 +69,9 @@ geohash = "0.13"
 # Regex (PII detection)
 regex = "1"
 
+# Database (Postgres)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+
 # Testing
 testcontainers = "0.23"
 
@@ -78,4 +82,5 @@ browserless-client = { path = "modules/browserless-client" }
 twilio = { path = "modules/twilio-rs" }
 rootsignal-common = { path = "modules/rootsignal-common" }
 rootsignal-graph = { path = "modules/rootsignal-graph" }
+rootsignal-archive = { path = "modules/rootsignal-archive" }
 simweb = { path = "modules/simweb" }

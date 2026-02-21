@@ -599,9 +599,62 @@ pub struct TagNode {
     pub created_at: DateTime<Utc>,
 }
 
+// --- Web Archive shared types ---
+
+/// A scraped web page with both raw HTML and extracted markdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrapedPage {
+    pub url: String,
+    pub raw_html: String,
+    pub markdown: String,
+    pub content_hash: String,
+}
+
+/// A web search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub url: String,
+    pub title: String,
+    pub snippet: String,
+}
+
+/// A social media post.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SocialPost {
+    pub content: String,
+    pub author: Option<String>,
+    pub url: Option<String>,
+}
+
+/// A single item from an RSS/Atom feed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedItem {
+    pub url: String,
+    pub title: Option<String>,
+    pub pub_date: Option<DateTime<Utc>>,
+}
+
+/// Extracted content from a PDF document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfContent {
+    pub extracted_text: String,
+}
+
+/// Deterministic content hash for change detection (FNV-1a).
+/// Must be stable across process restarts — `DefaultHasher` is NOT (HashDoS randomization).
+pub fn content_hash(content: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV offset basis
+    for byte in content.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3); // FNV prime
+    }
+    hash
+}
+
 // --- Scraping Strategy (computed from URL, never stored) ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SocialPlatform {
     Instagram,
     Facebook,
