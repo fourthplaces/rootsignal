@@ -154,6 +154,48 @@ export const ADMIN_SCOUT_TASKS = gql`
   }
 `;
 
+export const SIGNALS_NEAR = gql`
+  query SignalsNear(
+    $lat: Float!
+    $lng: Float!
+    $radiusKm: Float!
+    $types: [SignalType!]
+  ) {
+    signalsNear(lat: $lat, lng: $lng, radiusKm: $radiusKm, types: $types) {
+      ... on GqlGatheringSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        startsAt endsAt actionUrl organizer isRecurring
+        actors { id name actorType }
+      }
+      ... on GqlAidSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        actionUrl availability isOngoing
+        actors { id name actorType }
+      }
+      ... on GqlNeedSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        urgency whatNeeded actionUrl goal
+        actors { id name actorType }
+      }
+      ... on GqlNoticeSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        severity category effectiveDate sourceAuthority
+        actors { id name actorType }
+      }
+      ... on GqlTensionSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        severity category whatWouldHelp
+        actors { id name actorType }
+      }
+    }
+  }
+`;
+
 export const SIGNALS_NEAR_GEO_JSON = gql`
   query SignalsNearGeoJson(
     $lat: Float!

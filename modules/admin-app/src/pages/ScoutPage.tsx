@@ -361,7 +361,14 @@ export function ScoutPage() {
                 <tbody>
                   {tasks.map((t) => (
                     <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                      <td className="px-4 py-2 max-w-[200px] truncate">{t.context}</td>
+                      <td className="px-4 py-2 max-w-[200px] truncate">
+                        <Link
+                          to={`/scout/tasks/${t.id}`}
+                          className="text-blue-400 hover:underline"
+                        >
+                          {t.context}
+                        </Link>
+                      </td>
                       <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
                         {t.centerLat.toFixed(3)}, {t.centerLng.toFixed(3)}
                       </td>
