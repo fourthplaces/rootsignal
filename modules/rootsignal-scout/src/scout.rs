@@ -16,6 +16,7 @@ use crate::embedder::TextEmbedder;
 use crate::extractor::{Extractor, SignalExtractor};
 use crate::expansion::Expansion;
 use crate::metrics::Metrics;
+use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::{RunContext, ScrapePhase};
 use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SerperSearcher, SocialScraper, WebSearcher,
@@ -232,12 +233,19 @@ impl Scout {
         let run_id = Uuid::new_v4().to_string();
         info!(run_id = run_id.as_str(), "Scout run started");
 
+        let mut run_log = RunLog::new(run_id.clone(), self.region.slug.clone());
+
         // ================================================================
         // 1. Reap expired signals
         // ================================================================
         info!("Reaping expired signals...");
         match self.writer.reap_expired().await {
             Ok(reap) => {
+                run_log.log(EventKind::ReapExpired {
+                    gatherings: reap.gatherings,
+                    needs: reap.needs,
+                    stale: reap.stale,
+                });
                 if reap.gatherings + reap.needs + reap.stale > 0 {
                     info!(
                         gatherings = reap.gatherings,
@@ -284,7 +292,10 @@ impl Scout {
                 self.region.clone(),
             );
             match bootstrapper.run().await {
-                Ok(n) => info!(sources = n, "Bootstrap created seed sources"),
+                Ok(n) => {
+                    run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
+                    info!(sources = n, "Bootstrap created seed sources");
+                }
                 Err(e) => warn!(error = %e, "Bootstrap failed"),
             }
             all_sources = self
@@ -360,7 +371,7 @@ impl Scout {
             .copied()
             .collect();
 
-        phase.run_web(&phase_a_sources, &mut ctx).await;
+        phase.run_web(&phase_a_sources, &mut ctx, &mut run_log).await;
 
         // Phase A social: tension + mixed social sources
         let phase_a_social: Vec<&SourceNode> = scheduled_sources
@@ -372,7 +383,7 @@ impl Scout {
             .copied()
             .collect();
         if !phase_a_social.is_empty() {
-            phase.run_social(&phase_a_social, &mut ctx).await;
+            phase.run_social(&phase_a_social, &mut ctx, &mut run_log).await;
         }
 
         self.check_cancelled()?;
@@ -433,7 +444,7 @@ impl Scout {
                 count = phase_b_sources.len(),
                 "Phase B sources (response + fresh discovery)"
             );
-            phase.run_web(&phase_b_sources, &mut ctx).await;
+            phase.run_web(&phase_b_sources, &mut ctx, &mut run_log).await;
         }
 
         // Phase B social: response social sources
@@ -446,7 +457,7 @@ impl Scout {
             .copied()
             .collect();
         if !phase_b_social.is_empty() {
-            phase.run_social(&phase_b_social, &mut ctx).await;
+            phase.run_social(&phase_b_social, &mut ctx, &mut run_log).await;
         }
 
         self.check_cancelled()?;
@@ -456,7 +467,7 @@ impl Scout {
         let mut all_social_topics = social_topics;
         all_social_topics.extend(ctx.social_expansion_topics.drain(..));
         phase
-            .discover_from_topics(&all_social_topics, &mut ctx)
+            .discover_from_topics(&all_social_topics, &mut ctx, &mut run_log)
             .await;
 
         // ================================================================
@@ -631,7 +642,7 @@ impl Scout {
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
         let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.slug);
-        expansion.run(&mut ctx).await;
+        expansion.run(&mut ctx, &mut run_log).await;
 
         self.check_cancelled()?;
 
@@ -652,11 +663,21 @@ impl Scout {
         }
         if !end_social_topics.is_empty() {
             info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
-            phase.discover_from_topics(&end_social_topics, &mut ctx).await;
+            phase.discover_from_topics(&end_social_topics, &mut ctx, &mut run_log).await;
         }
 
         // Log final budget status
         self.budget.log_status();
+
+        run_log.log(EventKind::BudgetCheckpoint {
+            spent_cents: self.budget.total_spent(),
+            remaining_cents: self.budget.remaining(),
+        });
+
+        // Save run log to disk
+        if let Err(e) = run_log.save(&ctx.stats) {
+            warn!(error = %e, "Failed to save scout run log");
+        }
 
         info!("{}", ctx.stats);
         Ok(ctx.stats)

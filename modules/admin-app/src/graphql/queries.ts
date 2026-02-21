@@ -310,6 +310,87 @@ export const ALL_TAGS = gql`
   }
 `;
 
+export const ADMIN_SCOUT_RUNS = gql`
+  query AdminScoutRuns($region: String!, $limit: Int) {
+    adminScoutRuns(region: $region, limit: $limit) {
+      runId
+      region
+      startedAt
+      finishedAt
+      stats {
+        urlsScraped
+        urlsUnchanged
+        urlsFailed
+        signalsExtracted
+        signalsDeduplicated
+        signalsStored
+        socialMediaPosts
+        expansionQueriesCollected
+        expansionSourcesCreated
+      }
+    }
+  }
+`;
+
+export const ADMIN_SCOUT_RUN = gql`
+  query AdminScoutRun($runId: String!) {
+    adminScoutRun(runId: $runId) {
+      runId
+      region
+      startedAt
+      finishedAt
+      stats {
+        urlsScraped
+        urlsUnchanged
+        urlsFailed
+        signalsExtracted
+        signalsDeduplicated
+        signalsStored
+        socialMediaPosts
+        expansionQueriesCollected
+        expansionSourcesCreated
+      }
+      events {
+        seq
+        ts
+        type
+        query
+        url
+        provider
+        platform
+        identifier
+        signalType
+        title
+        resultCount
+        postCount
+        items
+        contentBytes
+        contentChars
+        signalsExtracted
+        impliedQueries
+        similarity
+        confidence
+        success
+        action
+        nodeId
+        matchedId
+        existingId
+        sourceUrl
+        newSourceUrl
+        canonicalKey
+        gatherings
+        needs
+        stale
+        sourcesCreated
+        spentCents
+        remainingCents
+        topics
+        postsFound
+      }
+    }
+  }
+`;
+
 export const SUPERVISOR_FINDINGS = gql`
   query SupervisorFindings($region: String!, $status: String, $limit: Int) {
     supervisorFindings(region: $region, status: $status, limit: $limit) {

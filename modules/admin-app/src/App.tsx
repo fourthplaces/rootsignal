@@ -10,6 +10,8 @@ import { StoriesPage } from "@/pages/StoriesPage";
 import { StoryDetailPage } from "@/pages/StoryDetailPage";
 import { ActorsPage } from "@/pages/ActorsPage";
 import { FindingsPage } from "@/pages/FindingsPage";
+import { ScoutRunsPage } from "@/pages/ScoutRunsPage";
+import { ScoutRunDetailPage } from "@/pages/ScoutRunDetailPage";
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
         <Route path="stories/:id" element={<StoryDetailPage />} />
         <Route path="actors" element={<ActorsPage />} />
         <Route path="findings" element={<FindingsPage />} />
+        <Route path="scout-runs" element={<ScoutRunsPage />} />
+        <Route path="scout-runs/:runId" element={<ScoutRunDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

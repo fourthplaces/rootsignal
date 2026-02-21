@@ -11,6 +11,7 @@ const navItems = [
   { to: "/stories", label: "Stories" },
   { to: "/actors", label: "Actors" },
   { to: "/findings", label: "Findings" },
+  { to: "/scout-runs", label: "Scout Runs" },
 ];
 
 export function AdminLayout() {

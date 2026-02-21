@@ -25,6 +25,7 @@ use rootsignal_graph::GraphWriter;
 use crate::embedder::TextEmbedder;
 use crate::extractor::{ResourceTag, SignalExtractor};
 use crate::quality;
+use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
 use crate::scraper::{
     self, PageScraper, RssFetcher, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
@@ -220,7 +221,7 @@ impl<'a> ScrapePhase<'a> {
     ///
     /// Query API errors are inserted into `ctx.query_api_errors`. These queries
     /// should NOT be counted as empty scrapes — the query was never executed.
-    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext) {
+    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
@@ -267,6 +268,12 @@ impl<'a> ScrapePhase<'a> {
             for (canonical_key, query_str, result) in search_results {
                 match result {
                     Ok(results) => {
+                        run_log.log(EventKind::SearchQuery {
+                            query: query_str.clone(),
+                            provider: "serper".to_string(),
+                            result_count: results.len() as u32,
+                            canonical_key: canonical_key.clone(),
+                        });
                         // Map each resolved URL back to the query's canonical_key
                         // so scrape results get attributed to the originating query.
                         for r in &results {
@@ -334,6 +341,10 @@ impl<'a> ScrapePhase<'a> {
                 if let Some(ref feed_url) = source.url {
                     match fetcher.fetch_items(feed_url).await {
                         Ok(items) => {
+                            run_log.log(EventKind::ScrapeFeed {
+                                url: feed_url.clone(),
+                                items: items.len() as u32,
+                            });
                             // Ensure the RSS source gets a source_signal_counts entry
                             ctx.source_signal_counts
                                 .entry(source.canonical_key.clone())
@@ -445,15 +456,32 @@ impl<'a> ScrapePhase<'a> {
                     resource_tags,
                     signal_tags,
                 } => {
+                    run_log.log(EventKind::ScrapeUrl {
+                        url: url.clone(),
+                        strategy: "web".to_string(),
+                        success: true,
+                        content_bytes: content.len(),
+                    });
+
+                    // Count implied queries for logging
+                    let mut implied_q_count = 0u32;
                     // Collect implied queries from Tension + Need nodes for immediate expansion
                     for node in &nodes {
                         if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                             if let Some(meta) = node.meta() {
+                                implied_q_count += meta.implied_queries.len() as u32;
                                 ctx.expansion_queries
                                     .extend(meta.implied_queries.iter().cloned());
                             }
                         }
                     }
+
+                    run_log.log(EventKind::LlmExtraction {
+                        source_url: url.clone(),
+                        content_chars: content.len(),
+                        signals_extracted: nodes.len() as u32,
+                        implied_queries: implied_q_count,
+                    });
 
                     let signal_count_before = ctx.stats.signals_stored;
                     match self
@@ -465,6 +493,7 @@ impl<'a> ScrapePhase<'a> {
                             signal_tags,
                             ctx,
                             &known_urls,
+                            run_log,
                         )
                         .await
                     {
@@ -492,6 +521,12 @@ impl<'a> ScrapePhase<'a> {
                     ctx.source_signal_counts.entry(ck).or_default();
                 }
                 ScrapeOutcome::Failed => {
+                    run_log.log(EventKind::ScrapeUrl {
+                        url: url.clone(),
+                        strategy: "web".to_string(),
+                        success: false,
+                        content_bytes: 0,
+                    });
                     ctx.stats.urls_failed += 1;
                 }
             }
@@ -499,7 +534,7 @@ impl<'a> ScrapePhase<'a> {
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
-    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext) {
+    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
         type SocialResult = Option<(
             String,
             String,
@@ -713,6 +748,20 @@ impl<'a> ScrapePhase<'a> {
                 signal_tags,
                 post_count,
             ) = result;
+
+            run_log.log(EventKind::SocialScrape {
+                platform: "social".to_string(),
+                identifier: source_url.clone(),
+                post_count: post_count as u32,
+            });
+
+            run_log.log(EventKind::LlmExtraction {
+                source_url: source_url.clone(),
+                content_chars: combined_text.len(),
+                signals_extracted: nodes.len() as u32,
+                implied_queries: 0,
+            });
+
             // Collect implied queries from Tension/Need social signals
             for node in &nodes {
                 if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
@@ -733,6 +782,7 @@ impl<'a> ScrapePhase<'a> {
                     signal_tags,
                     ctx,
                     &known_city_urls,
+                    run_log,
                 )
                 .await
             {
@@ -747,7 +797,7 @@ impl<'a> ScrapePhase<'a> {
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
     /// across Instagram, X/Twitter, TikTok, and GoFundMe.
-    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext) {
+    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext, run_log: &mut RunLog) {
         const MAX_SOCIAL_SEARCHES: usize = 6;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
@@ -820,6 +870,12 @@ impl<'a> ScrapePhase<'a> {
                 );
                 continue;
             }
+
+            run_log.log(EventKind::SocialTopicSearch {
+                platform: platform_name.to_string(),
+                topics: topic_strs.iter().map(|t| t.to_string()).collect(),
+                posts_found: discovered_posts.len() as u32,
+            });
 
             ctx.stats.discovery_posts_found += discovered_posts.len() as u32;
 
@@ -903,6 +959,7 @@ impl<'a> ScrapePhase<'a> {
                         result.signal_tags,
                         ctx,
                         &known_city_urls,
+                        run_log,
                     )
                     .await
                 {
@@ -1023,6 +1080,7 @@ impl<'a> ScrapePhase<'a> {
                             extracted.signal_tags,
                             ctx,
                             &known_city_urls,
+                            run_log,
                         )
                         .await
                     {
@@ -1052,6 +1110,7 @@ impl<'a> ScrapePhase<'a> {
         signal_tags: Vec<(Uuid, Vec<String>)>,
         ctx: &mut RunContext,
         known_city_urls: &HashSet<String>,
+        run_log: &mut RunLog,
     ) -> Result<()> {
         let url = sanitize_url(url);
         ctx.stats.signals_extracted += nodes.len() as u32;
@@ -1247,6 +1306,12 @@ impl<'a> ScrapePhase<'a> {
             if let Some((existing_id, existing_url)) = global_matches.get(&key) {
                 if *existing_url != url {
                     // Cross-source: different URL confirms the same signal — real corroboration
+                    run_log.log(EventKind::SignalCorroborated {
+                        existing_id: existing_id.to_string(),
+                        signal_type: format!("{}", node.node_type()),
+                        new_source_url: url.clone(),
+                        similarity: 1.0,
+                    });
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
@@ -1275,6 +1340,13 @@ impl<'a> ScrapePhase<'a> {
                 } else {
                     // Same-source re-scrape: signal already exists from this URL.
                     // Refresh to prove it's still active, but don't inflate corroboration.
+                    run_log.log(EventKind::SignalDeduplicated {
+                        signal_type: format!("{}", node.node_type()),
+                        title: node.title().to_string(),
+                        matched_id: existing_id.to_string(),
+                        similarity: 1.0,
+                        action: "refresh".to_string(),
+                    });
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
@@ -1385,6 +1457,13 @@ impl<'a> ScrapePhase<'a> {
             {
                 let is_same_source = cached_url == url;
                 if is_same_source {
+                    run_log.log(EventKind::SignalDeduplicated {
+                        signal_type: format!("{}", node_type),
+                        title: node.title().to_string(),
+                        matched_id: cached_id.to_string(),
+                        similarity: sim,
+                        action: "refresh".to_string(),
+                    });
                     info!(
                         existing_id = %cached_id,
                         similarity = sim,
@@ -1411,6 +1490,12 @@ impl<'a> ScrapePhase<'a> {
                     ctx.stats.signals_deduplicated += 1;
                     continue;
                 } else if sim >= 0.92 {
+                    run_log.log(EventKind::SignalCorroborated {
+                        existing_id: cached_id.to_string(),
+                        signal_type: format!("{}", cached_type),
+                        new_source_url: url.clone(),
+                        similarity: sim,
+                    });
                     info!(
                         existing_id = %cached_id,
                         similarity = sim,
@@ -1460,6 +1545,13 @@ impl<'a> ScrapePhase<'a> {
                     let dominated_url = sanitize_url(&dup.source_url);
                     let is_same_source = dominated_url == url;
                     if is_same_source {
+                        run_log.log(EventKind::SignalDeduplicated {
+                            signal_type: format!("{}", dup.node_type),
+                            title: node.title().to_string(),
+                            matched_id: dup.id.to_string(),
+                            similarity: dup.similarity,
+                            action: "refresh".to_string(),
+                        });
                         info!(
                             existing_id = %dup.id,
                             similarity = dup.similarity,
@@ -1490,6 +1582,12 @@ impl<'a> ScrapePhase<'a> {
                         continue;
                     } else if dup.similarity >= 0.92 {
                         let cross_type = dup.node_type != node_type;
+                        run_log.log(EventKind::SignalCorroborated {
+                            existing_id: dup.id.to_string(),
+                            signal_type: format!("{}", dup.node_type),
+                            new_source_url: url.clone(),
+                            similarity: dup.similarity,
+                        });
                         info!(
                             existing_id = %dup.id,
                             similarity = dup.similarity,
@@ -1530,6 +1628,14 @@ impl<'a> ScrapePhase<'a> {
 
             // Create new node
             let node_id = self.writer.create_node(&node, &embedding, "scraper", &self.run_id).await?;
+
+            run_log.log(EventKind::SignalCreated {
+                node_id: node_id.to_string(),
+                signal_type: format!("{}", node_type),
+                title: node.title().to_string(),
+                confidence: node.meta().map(|m| m.confidence as f64).unwrap_or(0.0),
+                source_url: url.clone(),
+            });
 
             // Add to in-memory cache so subsequent batches can find it immediately
             ctx.embed_cache

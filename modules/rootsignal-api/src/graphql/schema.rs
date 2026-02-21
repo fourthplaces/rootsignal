@@ -649,6 +649,76 @@ impl QueryRoot {
             .collect())
     }
 
+    /// List recent scout runs for a region (reads JSON files from disk).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_runs(
+        &self,
+        _ctx: &Context<'_>,
+        region: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRun>> {
+        let limit = limit.unwrap_or(20).min(100) as usize;
+        let dir = rootsignal_scout::run_log::data_dir()
+            .join("scout-runs")
+            .join(&region);
+
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries: Vec<_> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .collect();
+
+        // Sort by modified time descending (most recent first)
+        entries.sort_by(|a, b| {
+            b.metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                .cmp(
+                    &a.metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                )
+        });
+
+        let mut runs = Vec::new();
+        for entry in entries.into_iter().take(limit) {
+            let content = std::fs::read_to_string(entry.path())?;
+            if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
+                runs.push(ScoutRun::from(run));
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Get a single scout run by run_id (searches all region dirs).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Option<ScoutRun>> {
+        let base = rootsignal_scout::run_log::data_dir().join("scout-runs");
+        if !base.exists() {
+            return Ok(None);
+        }
+        for region_dir in std::fs::read_dir(&base)?.filter_map(|e| e.ok()) {
+            if !region_dir.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let path = region_dir.path().join(format!("{run_id}.json"));
+            if path.exists() {
+                let content = std::fs::read_to_string(&path)?;
+                if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
+                    return Ok(Some(ScoutRun::from(run)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Aggregate summary of supervisor findings for a region.
     #[graphql(guard = "AdminGuard")]
     async fn supervisor_summary(
@@ -818,6 +888,202 @@ pub struct AdminSource {
     pub cadence_hours: f64,
     pub signals_produced: u32,
     pub active: bool,
+}
+
+// ========== Scout Run Types ==========
+
+/// JSON shape on disk (deserialization target).
+#[derive(serde::Deserialize)]
+struct ScoutRunJson {
+    run_id: String,
+    region: String,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    stats: ScoutRunStatsJson,
+    events: Vec<ScoutRunEventJson>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScoutRunStatsJson {
+    urls_scraped: Option<u32>,
+    urls_unchanged: Option<u32>,
+    urls_failed: Option<u32>,
+    signals_extracted: Option<u32>,
+    signals_deduplicated: Option<u32>,
+    signals_stored: Option<u32>,
+    social_media_posts: Option<u32>,
+    expansion_queries_collected: Option<u32>,
+    expansion_sources_created: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScoutRunEventJson {
+    seq: u32,
+    ts: DateTime<Utc>,
+    #[serde(rename = "type")]
+    event_type: String,
+    // Flat optional fields that vary by event type
+    query: Option<String>,
+    url: Option<String>,
+    provider: Option<String>,
+    platform: Option<String>,
+    identifier: Option<String>,
+    signal_type: Option<String>,
+    title: Option<String>,
+    result_count: Option<u32>,
+    post_count: Option<u32>,
+    items: Option<u32>,
+    content_bytes: Option<u64>,
+    content_chars: Option<u64>,
+    signals_extracted: Option<u32>,
+    implied_queries: Option<u32>,
+    similarity: Option<f64>,
+    confidence: Option<f64>,
+    success: Option<bool>,
+    action: Option<String>,
+    node_id: Option<String>,
+    matched_id: Option<String>,
+    existing_id: Option<String>,
+    source_url: Option<String>,
+    new_source_url: Option<String>,
+    canonical_key: Option<String>,
+    gatherings: Option<u64>,
+    needs: Option<u64>,
+    stale: Option<u64>,
+    sources_created: Option<u64>,
+    spent_cents: Option<u64>,
+    remaining_cents: Option<u64>,
+    topics: Option<Vec<String>>,
+    posts_found: Option<u32>,
+}
+
+/// GraphQL output type for a scout run.
+#[derive(SimpleObject)]
+struct ScoutRun {
+    run_id: String,
+    region: String,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    stats: ScoutRunStats,
+    events: Vec<ScoutRunEvent>,
+}
+
+#[derive(SimpleObject)]
+struct ScoutRunStats {
+    urls_scraped: u32,
+    urls_unchanged: u32,
+    urls_failed: u32,
+    signals_extracted: u32,
+    signals_deduplicated: u32,
+    signals_stored: u32,
+    social_media_posts: u32,
+    expansion_queries_collected: u32,
+    expansion_sources_created: u32,
+}
+
+#[derive(SimpleObject)]
+struct ScoutRunEvent {
+    seq: u32,
+    ts: DateTime<Utc>,
+    #[graphql(name = "type")]
+    event_type: String,
+    query: Option<String>,
+    url: Option<String>,
+    provider: Option<String>,
+    platform: Option<String>,
+    identifier: Option<String>,
+    signal_type: Option<String>,
+    title: Option<String>,
+    result_count: Option<u32>,
+    post_count: Option<u32>,
+    items: Option<u32>,
+    content_bytes: Option<u64>,
+    content_chars: Option<u64>,
+    signals_extracted: Option<u32>,
+    implied_queries: Option<u32>,
+    similarity: Option<f64>,
+    confidence: Option<f64>,
+    success: Option<bool>,
+    action: Option<String>,
+    node_id: Option<String>,
+    matched_id: Option<String>,
+    existing_id: Option<String>,
+    source_url: Option<String>,
+    new_source_url: Option<String>,
+    canonical_key: Option<String>,
+    gatherings: Option<u64>,
+    needs: Option<u64>,
+    stale: Option<u64>,
+    sources_created: Option<u64>,
+    spent_cents: Option<u64>,
+    remaining_cents: Option<u64>,
+    topics: Option<Vec<String>>,
+    posts_found: Option<u32>,
+}
+
+impl From<ScoutRunJson> for ScoutRun {
+    fn from(j: ScoutRunJson) -> Self {
+        Self {
+            run_id: j.run_id,
+            region: j.region,
+            started_at: j.started_at,
+            finished_at: j.finished_at,
+            stats: ScoutRunStats {
+                urls_scraped: j.stats.urls_scraped.unwrap_or(0),
+                urls_unchanged: j.stats.urls_unchanged.unwrap_or(0),
+                urls_failed: j.stats.urls_failed.unwrap_or(0),
+                signals_extracted: j.stats.signals_extracted.unwrap_or(0),
+                signals_deduplicated: j.stats.signals_deduplicated.unwrap_or(0),
+                signals_stored: j.stats.signals_stored.unwrap_or(0),
+                social_media_posts: j.stats.social_media_posts.unwrap_or(0),
+                expansion_queries_collected: j.stats.expansion_queries_collected.unwrap_or(0),
+                expansion_sources_created: j.stats.expansion_sources_created.unwrap_or(0),
+            },
+            events: j.events.into_iter().map(ScoutRunEvent::from).collect(),
+        }
+    }
+}
+
+impl From<ScoutRunEventJson> for ScoutRunEvent {
+    fn from(j: ScoutRunEventJson) -> Self {
+        Self {
+            seq: j.seq,
+            ts: j.ts,
+            event_type: j.event_type,
+            query: j.query,
+            url: j.url,
+            provider: j.provider,
+            platform: j.platform,
+            identifier: j.identifier,
+            signal_type: j.signal_type,
+            title: j.title,
+            result_count: j.result_count,
+            post_count: j.post_count,
+            items: j.items,
+            content_bytes: j.content_bytes,
+            content_chars: j.content_chars,
+            signals_extracted: j.signals_extracted,
+            implied_queries: j.implied_queries,
+            similarity: j.similarity,
+            confidence: j.confidence,
+            success: j.success,
+            action: j.action,
+            node_id: j.node_id,
+            matched_id: j.matched_id,
+            existing_id: j.existing_id,
+            source_url: j.source_url,
+            new_source_url: j.new_source_url,
+            canonical_key: j.canonical_key,
+            gatherings: j.gatherings,
+            needs: j.needs,
+            stale: j.stale,
+            sources_created: j.sources_created,
+            spent_cents: j.spent_cents,
+            remaining_cents: j.remaining_cents,
+            topics: j.topics,
+            posts_found: j.posts_found,
+        }
+    }
 }
 
 // ========== Helpers ==========

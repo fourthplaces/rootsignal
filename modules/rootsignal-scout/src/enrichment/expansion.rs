@@ -13,6 +13,7 @@ use rootsignal_common::{DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::embedder::TextEmbedder;
+use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::RunContext;
 use crate::sources;
 
@@ -47,7 +48,7 @@ impl<'a> Expansion<'a> {
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
     /// 3. Create new WebQuery sources for surviving queries
-    pub async fn run(&self, ctx: &mut RunContext) {
+    pub async fn run(&self, ctx: &mut RunContext, run_log: &mut RunLog) {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         match self
@@ -150,6 +151,10 @@ impl<'a> Expansion<'a> {
             };
             match self.writer.upsert_source(&source, self.region_slug).await {
                 Ok(_) => {
+                    run_log.log(EventKind::ExpansionSourceCreated {
+                        canonical_key: ck.clone(),
+                        query: query_text.clone(),
+                    });
                     created += 1;
                     // Store embedding for future dedup
                     if let Ok(embedding) = self.embedder.embed(query_text).await {

@@ -5,6 +5,11 @@ use chrono::Utc;
 use serde::Serialize;
 use tracing::{info, warn};
 
+/// Root data directory, controlled by `DATA_DIR` env var (default: `"data"`).
+fn data_dir() -> PathBuf {
+    PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()))
+}
+
 use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdict};
 
 // =============================================================================
@@ -33,7 +38,7 @@ pub fn save_report(city_slug: &str, output: &BatchReviewOutput) -> Result<PathBu
         .unwrap_or("unknown");
 
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    let dir = PathBuf::from(format!("data/supervisor-reports/{city_slug}"));
+    let dir = data_dir().join("supervisor-reports").join(city_slug);
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join(format!("{date}-{scout_run_id}.json"));
