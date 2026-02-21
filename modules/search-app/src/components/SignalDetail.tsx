@@ -74,7 +74,7 @@ export function SignalDetail({ signalId, onBack }: SignalDetailProps) {
                     {ev.snippet && (
                       <p className="text-muted-foreground mb-1">{ev.snippet}</p>
                     )}
-                    <LinkPreview url={ev.sourceUrl} />
+                    {ev.sourceUrl && <LinkPreview url={ev.sourceUrl} />}
                   </div>
                 ))}
               </div>
