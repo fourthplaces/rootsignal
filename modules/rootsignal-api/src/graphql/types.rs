@@ -809,3 +809,38 @@ impl GqlStorySearchResult {
         self.top_matching_signal_title.as_deref()
     }
 }
+
+// --- Scout Task types ---
+
+#[derive(SimpleObject)]
+pub struct GqlScoutTask {
+    pub id: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub context: String,
+    pub geo_terms: Vec<String>,
+    pub priority: f64,
+    pub source: String,
+    pub status: String,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+impl From<rootsignal_common::ScoutTask> for GqlScoutTask {
+    fn from(t: rootsignal_common::ScoutTask) -> Self {
+        GqlScoutTask {
+            id: t.id.to_string(),
+            center_lat: t.center_lat,
+            center_lng: t.center_lng,
+            radius_km: t.radius_km,
+            context: t.context,
+            geo_terms: t.geo_terms,
+            priority: t.priority,
+            source: t.source.to_string(),
+            status: t.status.to_string(),
+            created_at: t.created_at.to_rfc3339(),
+            completed_at: t.completed_at.map(|dt| dt.to_rfc3339()),
+        }
+    }
+}
