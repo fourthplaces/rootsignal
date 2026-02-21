@@ -253,7 +253,7 @@ impl Scout {
         // ================================================================
         // 2. Load sources + Schedule
         // ================================================================
-        let all_sources = match self.writer.get_active_sources(&self.region.slug).await {
+        let mut all_sources = match self.writer.get_active_sources(&self.region.slug).await {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -271,6 +271,28 @@ impl Scout {
                 Vec::new()
             }
         };
+
+        // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
+        // Covers regions created before bootstrapper existed, regions that were reset,
+        // or any other state where sources were lost.
+        if all_sources.is_empty() {
+            info!("No sources found — running cold-start bootstrap");
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+                &self.writer,
+                &*self.searcher,
+                &self.anthropic_api_key,
+                self.region.clone(),
+            );
+            match bootstrapper.run().await {
+                Ok(n) => info!(sources = n, "Bootstrap created seed sources"),
+                Err(e) => warn!(error = %e, "Bootstrap failed"),
+            }
+            all_sources = self
+                .writer
+                .get_active_sources(&self.region.slug)
+                .await
+                .unwrap_or_default();
+        }
 
         let now_schedule = Utc::now();
         let scheduler = crate::scheduler::SourceScheduler::new();
