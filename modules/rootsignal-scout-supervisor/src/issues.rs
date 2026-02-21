@@ -40,7 +40,7 @@ impl IssueStore {
         let create = query(
             "CREATE (v:ValidationIssue {
                 id: $id,
-                city: $city,
+                region: $region,
                 issue_type: $issue_type,
                 severity: $severity,
                 target_id: $target_id,
@@ -52,7 +52,7 @@ impl IssueStore {
             })",
         )
         .param("id", issue.id.to_string())
-        .param("city", issue.city.clone())
+        .param("region", issue.region.clone())
         .param("issue_type", issue.issue_type.to_string())
         .param("severity", issue.severity.to_string())
         .param("target_id", issue.target_id.to_string())

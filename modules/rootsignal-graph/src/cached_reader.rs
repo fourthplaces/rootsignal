@@ -447,17 +447,21 @@ impl CachedReader {
 
     pub async fn actors_active_in_area(
         &self,
-        city: &str,
+        region_slug: &str,
         limit: u32,
     ) -> Result<Vec<ActorNode>, neo4rs::Error> {
         let snap = self.cache.load_full();
 
         let mut results: Vec<ActorNode> = snap
-            .actors
-            .iter()
-            .filter(|a| a.city == city)
-            .cloned()
-            .collect();
+            .actors_by_region
+            .get(region_slug)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&idx| snap.actors[idx].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         results.sort_by(|a, b| b.last_active.cmp(&a.last_active));
         results.truncate(limit as usize);
@@ -905,5 +909,27 @@ impl CachedReader {
         });
         results.truncate(limit as usize);
         Ok(results)
+    }
+
+    // ========== Supervisor / Validation Issues (delegated to Neo4j) ==========
+
+    pub async fn list_validation_issues(
+        &self,
+        region: &str,
+        status_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<crate::reader::ValidationIssueRow>, neo4rs::Error> {
+        self.neo4j_reader
+            .list_validation_issues(region, status_filter, limit)
+            .await
+    }
+
+    pub async fn validation_issue_summary(
+        &self,
+        region: &str,
+    ) -> Result<crate::reader::ValidationIssueSummary, neo4rs::Error> {
+        self.neo4j_reader
+            .validation_issue_summary(region)
+            .await
     }
 }

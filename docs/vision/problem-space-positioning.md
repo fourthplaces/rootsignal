@@ -2,9 +2,15 @@
 
 ## The Core Problem
 
-There is massive signal loss between people who want to show up for the world around them and the actual opportunities to do so. The signal exists — people are broadcasting needs, organizations are posting volunteer shifts, fundraisers are live, cleanups are being organized, boycotts are being coordinated — but it's scattered across dozens of platforms, feeds, and walled gardens that were never designed to be searched together. The result is that most people who would act, don't — not because they don't care, but because the friction of finding where to plug in is too high.
+There are two failures in the civic information environment, and they compound each other.
 
-The internet has made information abundant but orientation scarce. There is no reliable place to go to answer the question: **where is life asking for help right now, and how do I show up?**
+**The first is fragmentation.** Community signal — who needs help, where resources exist, what tensions are shaping a place — is scattered across dozens of platforms, feeds, and walled gardens that were never designed to be searched together. The result is that most people who would act, don't — not because they don't care, but because the friction of finding where to plug in is too high.
+
+**The second is distortion.** The information that does exist is shaped by the incentive structures of whoever produced it. News outlets optimize for attention. Politicians frame issues to serve their position. Social media amplifies emotional resonance over grounded evidence. And in the worst cases, information is actively suppressed — edited, buried, or pre-empted by powerful actors who benefit from its absence.
+
+Fragmentation makes it hard to see the full picture. Distortion makes the picture you do see unreliable. Together they produce a world where people can't orient — they can't find where to show up, and they can't trust what they're told about what's happening.
+
+Root Signal exists to solve both. It concentrates fragmented signal into a single navigable graph, and it exposes the distortions — structural and deliberate — that corrupt the information environment. The goal is clarity: a system where individuals can see through narrative fog and act on what's actually real.
 
 ---
 
@@ -66,39 +72,68 @@ The platforms where community signal currently lives — Facebook, Instagram, Ti
 
 **What's missing:** Open-source, community-owned infrastructure that concentrates signal and returns it to the people as a public utility — not a product.
 
+### 8. Narrative Distortion Is Invisible
+
+Every signal the system collects is produced by someone with incentives — news outlets, politicians, social media users, organizations. These incentives shape framing, emphasis, and omission. A city can have excellent signal coverage and still be operating inside a culturally distorted frame. The local picture can be structurally complete but contextually blind — the entire conversation framed within assumptions that are contradicted by outcomes in cities that tried the same approach elsewhere in the world.
+
+**What exists today:** Fact-checkers that debunk individual claims. Media literacy campaigns. No systematic way to detect when an entire local information ecosystem is operating within a distorted frame.
+
+**What's missing:** A mechanism that compares how the same issues are understood across geographies and cultures, surfacing grounded counter-evidence — real outcomes, real data, real perspectives from other contexts — that reveals what's incomplete or distorted in the local picture.
+
+### 9. Active Suppression Leaves No Trace
+
+Information is actively suppressed by governments, corporations, and institutions. Wikipedia articles get edited to strip inconvenient context. Government reports are quietly revised. Datasets return 404. Publication patterns abruptly stop. Content gets buried through SEO manipulation or DMCA takedowns. Legal threats and gag orders prevent information from being published at all.
+
+Suppression is distinct from distortion. Distortion adds spin to what exists. Suppression removes evidence entirely. And suppression is invisible by design — once the information is gone, there's nothing to observe. You can't detect what was erased by looking at what's there. You detect it by looking at the seams where removal happened.
+
+**What exists today:** The Wayback Machine captures sporadic snapshots. Investigative journalists occasionally uncover suppression. No systematic, high-cadence monitoring of sensitive sources with pattern detection across the seams.
+
+**What's missing:** An archival layer that preserves what existed, AI-driven monitoring that watches sources likely to be suppression targets, and pattern recognition that identifies suppression signatures — coordinated timing, citation chain breaking, pre-event scrubbing — and surfaces the evidence chain with a full paper trail.
+
+### 10. Structural Power Is Practically Invisible
+
+Why do tensions persist? A city has a housing affordability crisis. The curiosity loop discovered the tension. Response scouting found legal clinics and tenant advocacy orgs. But nobody asked: why does the city council keep voting down rent stabilization? Who benefits from the status quo? What institutional forces maintain this structural condition?
+
+The information that answers these questions is technically public — voting records, campaign finance data, budget allocations, meeting minutes, lobbying disclosures. But it's practically invisible, buried across government websites, legislative databases, and news archives. The gap between "technically public" and "practically legible" is where structural power operates unchallenged.
+
+**What exists today:** Open government portals, FOIA, campaign finance databases, legislative records — all fragmented, rarely connected to the tensions they sustain.
+
+**What's missing:** A system that connects institutional actions to community tensions in a navigable graph. Not editorializing — just making the already-public legible. "Here's who voted how on the thing that affects you" is information that exists but that almost no one can find.
+
 ---
 
 ## Where Root Signal Fits
 
-Root Signal is not a social network. It's not a nonprofit directory. It's not a search engine in the traditional sense. It's a **signal utility** — infrastructure that sits beneath any number of applications and surfaces.
+Root Signal is a **civic intelligence system** — infrastructure that discovers the full landscape of community tension and response, exposes the forces that distort it, and makes it all navigable.
 
-It occupies a space that doesn't currently exist: the layer between the fragmented platforms where signal originates and the people and communities who want to act on it.
+It occupies a space that doesn't currently exist: a system that concentrates fragmented civic signal, investigates why tensions exist and persist, detects when the information environment itself has been corrupted, and serves the result as a utility.
 
 ```
- Fragmented Signal Sources                     People Who Want to Show Up
+ Fragmented Signal Sources                     People Who Want to Act Clearly
  ┌──────────────────────┐                      ┌────────────────────────┐
  │ GoFundMe             │                      │ Volunteers             │
  │ Instagram            │                      │ Donors                 │
  │ Facebook Groups      │                      │ Attendees              │
  │ Org websites         │                      │ Advocates              │
  │ Eventbrite           │                      │ Skilled professionals   │
- │ Meetup               │                      │ Citizen scientists     │
- │ News outlets         │                      │ Land stewards          │
- │ Government sites     │                      │ Conscious consumers    │
- │ iNaturalist          │                      │ Community members      │
- │ Newsletters          │                      │                        │
- │ ...dozens more       │                      │                        │
+ │ News outlets         │                      │ Citizen scientists     │
+ │ Government sites     │                      │ Land stewards          │
+ │ Legislative records  │                      │ Conscious consumers    │
+ │ Wikipedia            │                      │ Organizers             │
+ │ RSS feeds            │                      │ Journalists            │
+ │ ...dozens more       │                      │ Researchers            │
  └──────────┬───────────┘                      └────────────┬───────────┘
             │                                               │
             │          ┌─────────────────────┐              │
             │          │                     │              │
-            └─────────►│      Root Signal        │◄─────────────┘
+            └─────────►│    Root Signal      │◄─────────────┘
                        │                     │
                        │  Discovers signal   │
-                       │  Concentrates it    │
-                       │  Geo-localizes it   │
-                       │  Makes it findable  │
-                       │  Keeps it fresh     │
+                       │  Investigates why   │
+                       │  Maps response      │
+                       │  Detects distortion │
+                       │  Exposes suppression│
+                       │  Preserves evidence │
                        │  Serves it to all   │
                        │                     │
                        └─────────────────────┘
@@ -106,15 +141,17 @@ It occupies a space that doesn't currently exist: the layer between the fragment
 
 ### What Root Signal Is Not
 
-Root Signal is not competing with these platforms. It doesn't replace GoFundMe or Eventbrite or VolunteerMatch. It reads from them. It concentrates what they fragment. It links back to them for action. It makes their content more discoverable, not less valuable.
+Root Signal is not competing with the platforms it reads from. It doesn't replace GoFundMe or Eventbrite or VolunteerMatch. It concentrates what they fragment and links back to them for action.
+
+Root Signal is not a fact-checker, a newsroom, or an editorial voice. It surfaces triangulated evidence, structural relationships, and paper trails. It does not tell you what to think. The system has no opinion about what the world should look like — it has a complete picture of what organizations and institutions are broadcasting about what the world *does* look like. The gap between those two is where individual agency lives.
 
 ### What Root Signal Becomes
 
-In the near term: a signal pipeline proving that concentrated local signal is valuable and actionable.
+In the near term: a civic intelligence pipeline proving that concentrated, investigated, distortion-aware local signal is valuable and actionable.
 
-In the medium term: an open API that any community app, city dashboard, or organization can plug into to serve their people better.
+In the medium term: an open API that any community app, city dashboard, journalist, or organization can plug into — not just for signal, but for the structural context and evidence that makes signal trustworthy.
 
-In the long term: a community-owned, open-source utility — deployable by any city, any neighborhood, any community — that answers the most fundamental question: **how do we show up for each other and for the world we live in?**
+In the long term: a community-owned, open-source civic intelligence utility — deployable by any city, any neighborhood, any community — that answers: **what's actually happening here, why, and how do I show up?**
 
 ---
 
@@ -146,6 +183,8 @@ Root Signal serves people through roles, not demographics. The same person might
 
 ## The North Star
 
-A world where the distance between caring and acting is zero. Where no one who wants to help has to spend an hour searching for how. Where every community — human and ecological — has signal that is heard, concentrated, and acted on. Where the infrastructure for showing up is as reliable and available as running water.
+A world where the distance between caring and acting is zero — and where the information you need to act is not corrupted by the people who benefit from your confusion.
+
+Where no one who wants to help has to spend an hour searching for how. Where every community — human and ecological — has signal that is heard, concentrated, and acted on. Where narrative fog — political framing, media incentives, cultural assumptions, active suppression — is legible and penetrable. Where the infrastructure for civic clarity is as reliable and available as running water.
 
 Root Signal is the root system beneath all of that.

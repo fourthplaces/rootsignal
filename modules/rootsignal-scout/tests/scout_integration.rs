@@ -15,23 +15,18 @@ use rootsignal_scout::fixtures::{CorpusSearcher, ScenarioSearcher, ScenarioSocia
 
 fn city_node(
     name: &str,
-    slug: &str,
+    _slug: &str,
     lat: f64,
     lng: f64,
     radius_km: f64,
     geo_terms: &[&str],
 ) -> CityNode {
     CityNode {
-        id: uuid::Uuid::new_v4(),
         name: name.to_string(),
-        slug: slug.to_string(),
         center_lat: lat,
         center_lng: lng,
         radius_km,
         geo_terms: geo_terms.iter().map(|s| s.to_string()).collect(),
-        active: true,
-        created_at: chrono::Utc::now(),
-        last_scout_completed_at: None,
     }
 }
 use rootsignal_scout::scraper::SocialPost;

@@ -314,6 +314,7 @@ impl StoryWeaver {
                 drawn_to_count,
                 gap_score,
                 gap_velocity: 0.0,
+                channel_diversity: 1,
             };
 
             self.writer.create_story(&story).await?;
@@ -569,10 +570,11 @@ impl StoryWeaver {
                     s.entity_count AS entity_count, s.type_diversity AS type_diversity,
                     s.ask_count AS ask_count, s.give_count AS give_count,
                     s.last_updated AS last_updated,
-                    count(n) AS signal_count",
+                    count(n) AS signal_count,
+                    max(coalesce(n.channel_diversity, 1)) AS channel_diversity",
         );
 
-        let mut stories: Vec<(Uuid, u32, u32, u32, u32, u32, u32, String)> = Vec::new();
+        let mut stories: Vec<(Uuid, u32, u32, u32, u32, u32, u32, String, u32)> = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
@@ -583,6 +585,7 @@ impl StoryWeaver {
             let ask_count: i64 = row.get("ask_count").unwrap_or(0);
             let give_count: i64 = row.get("give_count").unwrap_or(0);
             let last_updated: String = row.get("last_updated").unwrap_or_default();
+            let channel_diversity: i64 = row.get("channel_diversity").unwrap_or(1);
             if let Ok(id) = Uuid::parse_str(&id_str) {
                 stories.push((
                     id,
@@ -593,13 +596,14 @@ impl StoryWeaver {
                     ask_count as u32,
                     give_count as u32,
                     last_updated,
+                    channel_diversity as u32,
                 ));
             }
         }
 
         info!(stories = stories.len(), "Phase D: computing velocity and energy");
 
-        for (story_id, current_count, source_count, entity_count, type_diversity, ask_count, give_count, last_updated_str) in stories {
+        for (story_id, current_count, source_count, entity_count, type_diversity, ask_count, give_count, last_updated_str, channel_diversity_raw) in stories {
             // Create snapshot
             let snapshot = rootsignal_common::ClusterSnapshot {
                 id: Uuid::new_v4(),
@@ -639,7 +643,15 @@ impl StoryWeaver {
             // Triangulation
             let triangulation = (type_diversity as f64 / 5.0).min(1.0);
 
-            let energy = story_energy(velocity, recency_score, source_diversity, triangulation);
+            // Channel diversity: normalized (raw - 1) / 3, clamped to [0, 1].
+            // Zeroed for echo stories — channel diversity should not reward media echo.
+            let channel_div_norm = if story_status(type_diversity, entity_count, current_count as usize) == "echo" {
+                0.0
+            } else {
+                ((channel_diversity_raw as f64 - 1.0) / 3.0).clamp(0.0, 1.0)
+            };
+
+            let energy = story_energy(velocity, recency_score, source_diversity, triangulation, channel_div_norm);
 
             // Archive zombie stories: last_updated > 30 days ago and velocity <= 0
             let age_days = {
@@ -731,6 +743,7 @@ impl StoryWeaver {
                       WHEN any(x IN collect(n.sensitivity) WHERE x = 'elevated') THEN 'elevated'
                       ELSE 'general'
                   END AS max_sensitivity,
+                  max(coalesce(n.channel_diversity, 1)) AS channel_diversity,
                   max(CASE WHEN n:Tension THEN coalesce(n.cause_heat, 0.0) ELSE 0.0 END) AS cause_heat,
                   size([x IN collect(CASE WHEN n:Ask THEN 1 END) WHERE x IS NOT NULL]) AS ask_count,
                   size([x IN collect(CASE WHEN n:Give THEN 1 END) WHERE x IS NOT NULL]) AS give_count,
@@ -740,6 +753,7 @@ impl StoryWeaver {
                  s.centroid_lat = avg_lat,
                  s.centroid_lng = avg_lng,
                  s.sensitivity = max_sensitivity,
+                 s.channel_diversity = channel_diversity,
                  s.cause_heat = cause_heat,
                  s.ask_count = ask_count,
                  s.give_count = give_count,

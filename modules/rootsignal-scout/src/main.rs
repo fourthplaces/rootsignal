@@ -7,7 +7,7 @@ use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use rootsignal_common::{CityNode, Config, Node, NodeType, StoryNode};
+use rootsignal_common::{Config, Node, NodeType, ScoutScope, StoryNode};
 use rootsignal_graph::{
     cause_heat::compute_cause_heat,
     migrate::{backfill_source_canonical_keys, backfill_source_diversity, migrate},
@@ -15,13 +15,13 @@ use rootsignal_graph::{
     reader::{node_type_label, row_to_node, row_to_story},
     GraphClient, GraphWriter,
 };
-use rootsignal_scout::{bootstrap, scout::Scout, scraper::SerperSearcher};
+use rootsignal_scout::scout::Scout;
 
 #[derive(Parser)]
-#[command(about = "Run the Root Signal scout for a city")]
+#[command(about = "Run the Root Signal scout for a region")]
 struct Cli {
-    /// City slug (e.g. "minneapolis"). Overrides CITY env var.
-    city: Option<String>,
+    /// Region slug (e.g. "minneapolis"). Overrides CITY env var.
+    region: Option<String>,
 
     /// Dump raw graph data (stories + signals) as JSON to stdout instead of running the scout.
     #[arg(long)]
@@ -30,7 +30,7 @@ struct Cli {
 
 #[derive(Serialize)]
 struct DumpOutput {
-    city: String,
+    region: String,
     stories: Vec<StoryDump>,
     ungrouped_signals: Vec<Node>,
 }
@@ -57,8 +57,8 @@ async fn main() -> Result<()> {
     // Load config, with optional CLI city override
     let cli = Cli::parse();
     let mut config = Config::scout_from_env();
-    if let Some(city) = cli.city {
-        config.city = city;
+    if let Some(region) = cli.region {
+        config.region = region;
     }
 
     // Connect to Neo4j
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     .await?;
 
     if cli.dump {
-        return dump_city(&client, &config.city).await;
+        return dump_city(&client, &config.region).await;
     }
 
     config.log_redacted();
@@ -78,65 +78,31 @@ async fn main() -> Result<()> {
     // Run migrations
     migrate(&client).await?;
 
-    // Load or seed CityNode from graph
-    let writer = GraphWriter::new(client.clone());
-    let city_node = match writer.get_city(&config.city).await? {
-        Some(node) => {
-            info!(
-                slug = node.slug.as_str(),
-                name = node.name.as_str(),
-                "Loaded city from graph"
-            );
-            node
-        }
-        None => {
-            // Cold start — create from env vars + bootstrap
-            let city_name = config.city_name.as_deref().unwrap_or(&config.city);
-            let center_lat = config
-                .city_lat
-                .expect("CITY_LAT required for cold start (no city in graph)");
-            let center_lng = config
-                .city_lng
-                .expect("CITY_LNG required for cold start (no city in graph)");
-            let radius_km = config.city_radius_km.unwrap_or(30.0);
+    // Construct ScoutScope from env vars
+    let region_name = config.region_name.as_deref().unwrap_or(&config.region);
+    let center_lat = config
+        .region_lat
+        .expect("REGION_LAT required");
+    let center_lng = config
+        .region_lng
+        .expect("REGION_LNG required");
+    let radius_km = config.region_radius_km.unwrap_or(30.0);
 
-            info!(
-                slug = config.city.as_str(),
-                name = city_name,
-                lat = center_lat,
-                lng = center_lng,
-                radius_km,
-                "Cold start: creating CityNode from env vars"
-            );
-
-            let node = CityNode {
-                id: uuid::Uuid::new_v4(),
-                name: city_name.to_string(),
-                slug: config.city.clone(),
-                center_lat,
-                center_lng,
-                radius_km,
-                geo_terms: vec![city_name.to_string()],
-                active: true,
-                created_at: chrono::Utc::now(),
-                last_scout_completed_at: None,
-            };
-            writer.upsert_city(&node).await?;
-
-            // Run cold start bootstrapper to generate seed sources
-            let searcher = SerperSearcher::new(&config.serper_api_key);
-            let bootstrapper = bootstrap::Bootstrapper::new(
-                &writer,
-                &searcher,
-                &config.anthropic_api_key,
-                node.clone(),
-            );
-            let sources_created = bootstrapper.run().await?;
-            info!(sources_created, "Cold start bootstrap complete");
-
-            node
-        }
+    let region = ScoutScope {
+        center_lat,
+        center_lng,
+        radius_km,
+        name: region_name.to_string(),
+        geo_terms: vec![region_name.to_string()],
     };
+
+    info!(
+        name = region.name.as_str(),
+        lat = center_lat,
+        lng = center_lng,
+        radius_km,
+        "Constructed ScoutScope from env vars"
+    );
 
     // Backfill canonical keys on existing Source nodes (idempotent migration)
     backfill_source_canonical_keys(&client).await?;
@@ -144,14 +110,9 @@ async fn main() -> Result<()> {
     // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
     backfill_source_diversity(&client, &[]).await?;
 
-    // Save city geo bounds before moving city_node into Scout
-    let city_name = city_node.name.clone();
-    let lat_delta = city_node.radius_km / 111.0;
-    let lng_delta = city_node.radius_km / (111.0 * city_node.center_lat.to_radians().cos());
-    let min_lat = city_node.center_lat - lat_delta;
-    let max_lat = city_node.center_lat + lat_delta;
-    let min_lng = city_node.center_lng - lng_delta;
-    let max_lng = city_node.center_lng + lng_delta;
+    // Save region geo bounds before moving region into Scout
+    let region_name_key = region.name.clone();
+    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
     // Create and run scout
     let scout = Scout::new(
@@ -160,7 +121,7 @@ async fn main() -> Result<()> {
         &config.voyage_api_key,
         &config.serper_api_key,
         &config.apify_api_key,
-        city_node,
+        region,
         config.daily_budget_cents,
         Arc::new(AtomicBool::new(false)),
     )?;
@@ -183,7 +144,7 @@ async fn main() -> Result<()> {
         &writer_ref,
         &client,
         &config.anthropic_api_key,
-        &city_name,
+        &region_name_key,
         min_lat,
         max_lat,
         min_lng,
@@ -200,19 +161,24 @@ async fn main() -> Result<()> {
 
 /// Dump all stories and signals for a city as raw JSON to stdout.
 async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
-    // Load city node to get geo bounds
-    let writer = GraphWriter::new(client.clone());
-    let city = writer
-        .get_city(city_slug)
-        .await?
-        .with_context(|| format!("City '{}' not found in graph", city_slug))?;
+    // Construct geo bounds from env vars (same as main scout flow)
+    let config = Config::scout_from_env();
+    let center_lat = config
+        .region_lat
+        .context("REGION_LAT required for dump")?;
+    let center_lng = config
+        .region_lng
+        .context("REGION_LNG required for dump")?;
+    let radius_km = config.region_radius_km.unwrap_or(30.0);
 
-    let lat_delta = city.radius_km / 111.0;
-    let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
-    let min_lat = city.center_lat - lat_delta;
-    let max_lat = city.center_lat + lat_delta;
-    let min_lng = city.center_lng - lng_delta;
-    let max_lng = city.center_lng + lng_delta;
+    let scope = ScoutScope {
+        center_lat,
+        center_lng,
+        radius_km,
+        name: city_slug.to_string(),
+        geo_terms: vec![city_slug.to_string()],
+    };
+    let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
     // Fetch all stories in the city's bounding box
     let story_q = query(
@@ -297,7 +263,7 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     }
 
     let output = DumpOutput {
-        city: city_slug.to_string(),
+        region: city_slug.to_string(),
         stories,
         ungrouped_signals: ungrouped,
     };

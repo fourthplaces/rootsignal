@@ -291,7 +291,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     let actor_indexes = [
         "CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)",
-        "CREATE INDEX actor_city IF NOT EXISTS FOR (a:Actor) ON (a.city)",
+        // actor_city index removed — actors are linked to regions via :DISCOVERED relationship
     ];
 
     for idx in &actor_indexes {
@@ -306,21 +306,16 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     .await?;
     info!("Edge indexes created");
 
-    // --- City node constraints and indexes ---
-    let city_constraints = [
-        "CREATE CONSTRAINT city_id_unique IF NOT EXISTS FOR (c:City) REQUIRE c.id IS UNIQUE",
-        "CREATE CONSTRAINT city_slug_unique IF NOT EXISTS FOR (c:City) REQUIRE c.slug IS UNIQUE",
+    // --- ScoutTask node constraints and indexes ---
+    let scout_task_schema = [
+        "CREATE CONSTRAINT scouttask_id IF NOT EXISTS FOR (t:ScoutTask) REQUIRE t.id IS UNIQUE",
+        "CREATE INDEX scouttask_status IF NOT EXISTS FOR (t:ScoutTask) ON (t.status)",
+        "CREATE INDEX scouttask_priority IF NOT EXISTS FOR (t:ScoutTask) ON (t.priority)",
     ];
-
-    for c in &city_constraints {
-        g.run(query(c)).await?;
+    for s in &scout_task_schema {
+        g.run(query(s)).await?;
     }
-
-    g.run(query(
-        "CREATE INDEX city_active IF NOT EXISTS FOR (c:City) ON (c.active)",
-    ))
-    .await?;
-    info!("City constraints and indexes created");
+    info!("ScoutTask constraints and indexes created");
 
     // --- Source node constraints and indexes ---
     let source_constraints = [
@@ -461,11 +456,8 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Deactivate orphaned web query sources ---
     deactivate_orphaned_web_queries(client).await?;
 
-    // --- Clean up off-geography signals and cross-geo edges ---
-    cleanup_off_geo_signals(client).await?;
-
-    // --- Deactivate duplicate city nodes ---
-    deactivate_duplicate_cities(client).await?;
+    // NOTE: cleanup_off_geo_signals and deactivate_duplicate_cities removed
+    // as part of RegionNode deletion (demand-driven scout swarm).
 
     // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
     cleanup_leiden_stories(client).await?;
@@ -480,9 +472,99 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Story metric indexes created");
 
+    // --- extracted_at indexes for supervisor time-window queries ---
+    let extracted_at_indexes = [
+        "CREATE INDEX gathering_extracted_at IF NOT EXISTS FOR (n:Gathering) ON (n.extracted_at)",
+        "CREATE INDEX aid_extracted_at IF NOT EXISTS FOR (n:Aid) ON (n.extracted_at)",
+        "CREATE INDEX need_extracted_at IF NOT EXISTS FOR (n:Need) ON (n.extracted_at)",
+        "CREATE INDEX notice_extracted_at IF NOT EXISTS FOR (n:Notice) ON (n.extracted_at)",
+        "CREATE INDEX tension_extracted_at IF NOT EXISTS FOR (n:Tension) ON (n.extracted_at)",
+    ];
+    for idx in &extracted_at_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Signal extracted_at indexes created");
+
+    // --- review_status indexes for quality gate (staged/live/rejected) ---
+    let review_status_indexes = [
+        "CREATE INDEX gathering_review_status IF NOT EXISTS FOR (n:Gathering) ON (n.review_status)",
+        "CREATE INDEX aid_review_status IF NOT EXISTS FOR (n:Aid) ON (n.review_status)",
+        "CREATE INDEX need_review_status IF NOT EXISTS FOR (n:Need) ON (n.review_status)",
+        "CREATE INDEX notice_review_status IF NOT EXISTS FOR (n:Notice) ON (n.review_status)",
+        "CREATE INDEX tension_review_status IF NOT EXISTS FOR (n:Tension) ON (n.review_status)",
+        "CREATE INDEX story_review_status IF NOT EXISTS FOR (n:Story) ON (n.review_status)",
+    ];
+    for idx in &review_status_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Review status indexes created");
+
+    // --- Backfill existing signals and stories as 'live' (already visible to users) ---
+    backfill_review_status(client).await?;
+
+    // --- Migrate canonical keys: remove source_type from key format, add domain to social values ---
+    migrate_canonical_keys_remove_source_type(client).await?;
+
+    // --- Drop legacy source_type index (property kept as read-only breadcrumb) ---
+    match g.run(query("DROP INDEX source_type IF EXISTS")).await {
+        Ok(_) => {}
+        Err(e) => warn!("Drop source_type index failed (non-fatal): {e}"),
+    }
+
+    // NOTE: migrate_region_relationships removed as part of RegionNode deletion.
+
+    // --- Channel diversity backfill and indexes ---
+    backfill_channel_diversity(client).await?;
+
     info!("Schema migration complete");
     Ok(())
 }
+
+/// Backfill `channel_diversity = 1` on existing signal and story nodes where null.
+/// Also creates property indexes for channel_diversity.
+/// Idempotent — WHERE clause matches nothing after the first run.
+async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling channel_diversity...");
+
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.channel_diversity IS NULL SET n.channel_diversity = 1 RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Backfilled channel_diversity = 1");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "channel_diversity backfill failed (non-fatal): {e}"),
+        }
+    }
+
+    // Channel diversity indexes
+    let channel_indexes = [
+        "CREATE INDEX gathering_channel_diversity IF NOT EXISTS FOR (n:Gathering) ON (n.channel_diversity)",
+        "CREATE INDEX aid_channel_diversity IF NOT EXISTS FOR (n:Aid) ON (n.channel_diversity)",
+        "CREATE INDEX need_channel_diversity IF NOT EXISTS FOR (n:Need) ON (n.channel_diversity)",
+        "CREATE INDEX notice_channel_diversity IF NOT EXISTS FOR (n:Notice) ON (n.channel_diversity)",
+        "CREATE INDEX tension_channel_diversity IF NOT EXISTS FOR (n:Tension) ON (n.channel_diversity)",
+        "CREATE INDEX story_channel_diversity IF NOT EXISTS FOR (n:Story) ON (n.channel_diversity)",
+    ];
+
+    for idx in &channel_indexes {
+        g.run(query(idx)).await?;
+    }
+    info!("Channel diversity indexes created");
+
+    info!("Channel diversity backfill complete");
+    Ok(())
+}
+
 
 /// Reclassify Source nodes that were stored as "web" but are actually query sources
 /// (Eventbrite, VolunteerMatch, GoFundMe listing pages). Updates both source_type
@@ -1014,210 +1096,7 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
     Ok(())
 }
 
-/// Delete off-geography signals that contaminate Twin Cities data.
-pub async fn cleanup_off_geo_signals(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
 
-    info!("Cleaning up off-geography signals...");
-
-    let delete_signals = query(
-        "MATCH (n)
-         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice)
-           AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
-         DETACH DELETE n
-         RETURN count(n) AS deleted",
-    );
-
-    match g.execute(delete_signals).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted off-geo signals (Gathering/Aid/Need/Notice)");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo signal cleanup failed (non-fatal): {e}"),
-    }
-
-    let unlink_tensions = query(
-        "MATCH (s:Story)-[r:CONTAINS]->(t:Tension)
-         WHERE t.lat < 43.0 OR t.lat > 46.5 OR t.lng < -95.5 OR t.lng > -91.0
-         DELETE r
-         RETURN count(r) AS unlinked",
-    );
-
-    match g.execute(unlink_tensions).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let unlinked: i64 = row.get("unlinked").unwrap_or(0);
-                if unlinked > 0 {
-                    info!(unlinked, "Unlinked off-geo tensions from stories");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo tension unlinking failed (non-fatal): {e}"),
-    }
-
-    let delete_tensions = query(
-        "MATCH (n:Tension)
-         WHERE n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0
-         DETACH DELETE n
-         RETURN count(n) AS deleted",
-    );
-
-    match g.execute(delete_tensions).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted off-geo tensions");
-                }
-            }
-        }
-        Err(e) => warn!("Off-geo tension cleanup failed (non-fatal): {e}"),
-    }
-
-    let delete_cross_geo_edges = query(
-        "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
-         WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
-         DELETE r
-         RETURN count(r) AS deleted",
-    );
-
-    match g.execute(delete_cross_geo_edges).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted cross-geography edges");
-                }
-            }
-        }
-        Err(e) => warn!("Cross-geo edge cleanup failed (non-fatal): {e}"),
-    }
-
-    let archive_orphans = query(
-        "MATCH (s:Story)
-         WHERE NOT (s)-[:CONTAINS]->(:Gathering)
-           AND NOT (s)-[:CONTAINS]->(:Aid)
-           AND NOT (s)-[:CONTAINS]->(:Need)
-           AND NOT (s)-[:CONTAINS]->(:Notice)
-         SET s.arc = 'archived'
-         RETURN count(s) AS archived",
-    );
-
-    match g.execute(archive_orphans).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let archived: i64 = row.get("archived").unwrap_or(0);
-                if archived > 0 {
-                    info!(archived, "Archived orphaned stories");
-                }
-            }
-        }
-        Err(e) => warn!("Orphaned story archival failed (non-fatal): {e}"),
-    }
-
-    info!("Off-geography cleanup complete");
-    Ok(())
-}
-
-/// Deactivate duplicate City nodes and reassign their sources to the canonical city.
-pub async fn deactivate_duplicate_cities(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
-
-    info!("Deactivating duplicate city nodes...");
-
-    let reactivate = query(
-        "MATCH (c:City {active: false})
-         SET c.active = true
-         RETURN count(c) AS reactivated",
-    );
-    match g.execute(reactivate).await {
-        Ok(mut stream) => {
-            if let Ok(Some(row)) = stream.next().await {
-                let reactivated: i64 = row.get("reactivated").unwrap_or(0);
-                if reactivated > 0 {
-                    info!(reactivated, "Re-activated cities for dedup evaluation");
-                }
-            }
-        }
-        Err(e) => warn!("City reactivation failed (non-fatal): {e}"),
-    }
-
-    let q = query(
-        "MATCH (a:City {active: true}), (b:City {active: true})
-         WHERE a.slug < b.slug
-           AND (
-             (abs(a.center_lat - b.center_lat) < 0.05 AND abs(a.center_lng - b.center_lng) < 0.05)
-             OR toLower(a.name) CONTAINS toLower(b.name)
-             OR toLower(b.name) CONTAINS toLower(a.name)
-           )
-         WITH a, b
-         OPTIONAL MATCH (sa:Source {active: true}) WHERE sa.city = a.slug
-         WITH a, b, count(sa) AS a_sources
-         OPTIONAL MATCH (sb:Source {active: true}) WHERE sb.city = b.slug
-         WITH a, b, a_sources, count(sb) AS b_sources
-         WITH CASE WHEN a_sources >= b_sources THEN a ELSE b END AS keeper,
-              CASE WHEN a_sources >= b_sources THEN b ELSE a END AS loser
-         RETURN keeper.slug AS keeper_slug, loser.slug AS loser_slug",
-    );
-
-    match g.execute(q).await {
-        Ok(mut stream) => {
-            let mut pairs = Vec::new();
-            while let Ok(Some(row)) = stream.next().await {
-                let keeper: String = row.get("keeper_slug").unwrap_or_default();
-                let loser: String = row.get("loser_slug").unwrap_or_default();
-                if !keeper.is_empty() && !loser.is_empty() {
-                    pairs.push((keeper, loser));
-                }
-            }
-
-            for (keeper, loser) in &pairs {
-                let reassign = query(
-                    "MATCH (s:Source) WHERE s.city = $loser
-                     SET s.city = $keeper
-                     RETURN count(s) AS reassigned",
-                )
-                .param("loser", loser.as_str())
-                .param("keeper", keeper.as_str());
-
-                match g.execute(reassign).await {
-                    Ok(mut s) => {
-                        if let Ok(Some(row)) = s.next().await {
-                            let reassigned: i64 = row.get("reassigned").unwrap_or(0);
-                            if reassigned > 0 {
-                                info!(
-                                    reassigned,
-                                    from = loser.as_str(),
-                                    to = keeper.as_str(),
-                                    "Reassigned sources to canonical city"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => warn!(loser, keeper, "Source reassignment failed (non-fatal): {e}"),
-                }
-
-                let deactivate = query(
-                    "MATCH (c:City {slug: $slug}) SET c.active = false",
-                )
-                .param("slug", loser.as_str());
-
-                match g.run(deactivate).await {
-                    Ok(_) => info!(slug = loser.as_str(), "Deactivated duplicate city"),
-                    Err(e) => warn!(slug = loser.as_str(), "City deactivation failed (non-fatal): {e}"),
-                }
-            }
-        }
-        Err(e) => warn!("Duplicate city detection failed (non-fatal): {e}"),
-    }
-
-    info!("Duplicate city cleanup complete");
-    Ok(())
-}
 
 /// Delete stories created by Leiden clustering that don't contain a Tension node.
 pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::Error> {
@@ -1245,5 +1124,174 @@ pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::
     }
 
     info!("Leiden story cleanup complete");
+    Ok(())
+}
+
+/// Backfill existing signals and stories with review_status = 'live'.
+/// Only sets the field on nodes where it is not already set (idempotent).
+async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Backfilling review_status on existing signals and stories...");
+
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.review_status IS NULL SET n.review_status = 'live' RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Backfilled review_status = 'live'");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "review_status backfill failed (non-fatal): {e}"),
+        }
+    }
+
+    info!("Review status backfill complete");
+    Ok(())
+}
+
+/// Migrate canonical_keys to remove source_type from the key format, and add domain
+/// prefixes to social source canonical_values to prevent collisions.
+///
+/// Old format: `city:source_type:canonical_value` (e.g. `twincities:instagram:lakestreetstories`)
+/// New format: `city:canonical_value` (e.g. `twincities:instagram.com/lakestreetstories`)
+///
+/// Idempotent — skips sources whose canonical_value already contains a domain prefix.
+async fn migrate_canonical_keys_remove_source_type(
+    client: &GraphClient,
+) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    // Guard: check if migration is needed by looking for old-format keys (city:type:value)
+    let check = query(
+        "MATCH (s:Source)
+         WHERE s.source_type IS NOT NULL
+           AND s.canonical_key CONTAINS ':' + s.source_type + ':'
+         RETURN count(s) AS cnt",
+    );
+    let mut stream = g.execute(check).await?;
+    let needs_migration = match stream.next().await? {
+        Some(row) => row.get::<i64>("cnt").unwrap_or(0) > 0,
+        None => false,
+    };
+
+    if !needs_migration {
+        info!("canonical_key migration: already complete, skipping");
+        return Ok(());
+    }
+
+    info!("Migrating canonical_keys: removing source_type from key format...");
+
+    // Pre-migration collision audit: check if the new keys would collide
+    let collision_check = query(
+        "MATCH (s:Source)
+         WITH s.city + ':' +
+           CASE
+             WHEN s.source_type = 'instagram' AND NOT s.canonical_value STARTS WITH 'instagram.com/'
+               THEN 'instagram.com/' + s.canonical_value
+             WHEN s.source_type = 'reddit' AND NOT s.canonical_value STARTS WITH 'reddit.com/'
+               THEN 'reddit.com/r/' + s.canonical_value
+             WHEN s.source_type = 'twitter' AND NOT s.canonical_value STARTS WITH 'x.com/'
+               THEN 'x.com/' + s.canonical_value
+             WHEN s.source_type = 'tiktok' AND NOT s.canonical_value STARTS WITH 'tiktok.com/'
+               THEN 'tiktok.com/' + s.canonical_value
+             ELSE s.canonical_value
+           END AS new_key, collect(s.id) AS ids, count(*) AS cnt
+         WHERE cnt > 1
+         RETURN new_key, ids, cnt",
+    );
+    let mut stream = g.execute(collision_check).await?;
+    let mut has_collisions = false;
+    while let Some(row) = stream.next().await? {
+        let new_key: String = row.get("new_key").unwrap_or_default();
+        let cnt: i64 = row.get("cnt").unwrap_or(0);
+        warn!(new_key, cnt, "COLLISION detected in canonical_key migration — aborting");
+        has_collisions = true;
+    }
+
+    if has_collisions {
+        warn!("canonical_key migration aborted due to collisions — resolve manually");
+        return Ok(());
+    }
+
+    // Step 1: Rewrite canonical_value for social sources to include domain
+    let social_rewrites = [
+        ("instagram", "instagram.com/", "instagram.com/"),
+        ("reddit", "reddit.com/r/", "reddit.com/"),
+        ("twitter", "x.com/", "x.com/"),
+        ("tiktok", "tiktok.com/", "tiktok.com/"),
+    ];
+
+    for (source_type, prefix, guard) in &social_rewrites {
+        let q = query(
+            "MATCH (s:Source)
+             WHERE s.source_type = $source_type
+               AND NOT s.canonical_value STARTS WITH $guard
+             SET s.canonical_value = $prefix + s.canonical_value
+             RETURN count(s) AS updated",
+        )
+        .param("source_type", *source_type)
+        .param("prefix", *prefix)
+        .param("guard", *guard);
+
+        match g.execute(q).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(source_type, updated, "Rewrote canonical_value with domain prefix");
+                    }
+                }
+            }
+            Err(e) => warn!(source_type, "canonical_value rewrite failed: {e}"),
+        }
+    }
+
+    // Step 2: Rewrite all canonical_keys to new format (city:canonical_value)
+    let rewrite_keys = query(
+        "MATCH (s:Source)
+         WHERE s.source_type IS NOT NULL
+           AND s.canonical_key CONTAINS ':' + s.source_type + ':'
+         SET s.canonical_key = s.city + ':' + s.canonical_value
+         RETURN count(s) AS updated",
+    );
+    match g.execute(rewrite_keys).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                info!(updated, "Rewrote canonical_keys to city:value format");
+            }
+        }
+        Err(e) => warn!("canonical_key rewrite failed: {e}"),
+    }
+
+    // Step 3: Fix GoFundMe bootstrap sources (url should be null for query sources)
+    let fix_gofundme = query(
+        "MATCH (s:Source)
+         WHERE s.source_type = 'web_query'
+           AND s.url IS NOT NULL AND s.url <> ''
+           AND NOT (s.url STARTS WITH 'http://' OR s.url STARTS WITH 'https://')
+         SET s.url = null
+         RETURN count(s) AS updated",
+    );
+    match g.execute(fix_gofundme).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                if updated > 0 {
+                    info!(updated, "Fixed non-URL values stored in Source.url");
+                }
+            }
+        }
+        Err(e) => warn!("GoFundMe url fix failed (non-fatal): {e}"),
+    }
+
+    info!("canonical_key migration complete");
     Ok(())
 }

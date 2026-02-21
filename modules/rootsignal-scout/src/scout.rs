@@ -4,9 +4,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, DiscoveryMethod, SourceNode, SourceType,
+    is_web_query, scraping_strategy, RegionNode, DiscoveryMethod, ScrapingStrategy, SourceNode,
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
@@ -15,6 +16,7 @@ use crate::embedder::TextEmbedder;
 use crate::extractor::{Extractor, SignalExtractor};
 use crate::expansion::Expansion;
 use crate::metrics::Metrics;
+use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::{RunContext, ScrapePhase};
 use crate::scraper::{
     self, NoopSocialScraper, PageScraper, SerperSearcher, SocialScraper, WebSearcher,
@@ -42,6 +44,7 @@ pub struct ScoutStats {
     pub expansion_queries_collected: u32,
     pub expansion_sources_created: u32,
     pub expansion_deferred_expanded: u32,
+    pub expansion_social_topics_queued: u32,
 }
 
 impl std::fmt::Display for ScoutStats {
@@ -97,6 +100,13 @@ impl std::fmt::Display for ScoutStats {
                 "  Deferred expanded: {}",
                 self.expansion_deferred_expanded
             )?;
+            if self.expansion_social_topics_queued > 0 {
+                writeln!(
+                    f,
+                    "  Social topics:     {}",
+                    self.expansion_social_topics_queued
+                )?;
+            }
         }
         Ok(())
     }
@@ -111,7 +121,7 @@ pub struct Scout {
     searcher: Arc<dyn WebSearcher>,
     social: Box<dyn SocialScraper>,
     anthropic_api_key: String,
-    city_node: CityNode,
+    region: RegionNode,
     budget: BudgetTracker,
     cancelled: Arc<AtomicBool>,
 }
@@ -123,11 +133,11 @@ impl Scout {
         voyage_api_key: &str,
         serper_api_key: &str,
         apify_api_key: &str,
-        city_node: CityNode,
+        region: RegionNode,
         daily_budget_cents: u64,
         cancelled: Arc<AtomicBool>,
     ) -> Result<Self> {
-        info!(city = city_node.name.as_str(), "Initializing scout");
+        info!(region = region.name.as_str(), "Initializing scout");
         let social: Box<dyn SocialScraper> = if apify_api_key.is_empty() {
             warn!("APIFY_API_KEY not set, skipping social media scraping");
             Box::new(NoopSocialScraper)
@@ -146,16 +156,16 @@ impl Scout {
             writer: GraphWriter::new(graph_client),
             extractor: Box::new(Extractor::new(
                 anthropic_api_key,
-                city_node.name.as_str(),
-                city_node.center_lat,
-                city_node.center_lng,
+                region.name.as_str(),
+                region.center_lat,
+                region.center_lng,
             )),
             embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
             scraper,
             searcher: Arc::new(SerperSearcher::new(serper_api_key)),
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            city_node,
+            region,
             budget: BudgetTracker::new(daily_budget_cents),
             cancelled,
         })
@@ -170,7 +180,7 @@ impl Scout {
         searcher: Arc<dyn WebSearcher>,
         social: Box<dyn SocialScraper>,
         anthropic_api_key: &str,
-        city_node: CityNode,
+        region: RegionNode,
     ) -> Self {
         Self {
             graph_client: graph_client.clone(),
@@ -181,7 +191,7 @@ impl Scout {
             searcher,
             social,
             anthropic_api_key: anthropic_api_key.to_string(),
-            city_node,
+            region,
             budget: BudgetTracker::new(0), // Unlimited for tests
             cancelled: Arc::new(AtomicBool::new(false)),
         }
@@ -198,21 +208,21 @@ impl Scout {
 
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
-        // Acquire per-city lock
-        let city_slug = &self.city_node.slug;
+        // Acquire per-city lock (slugified to match reset/check operations)
+        let city_slug = rootsignal_common::slugify(&self.region.name);
         if !self
             .writer
-            .acquire_scout_lock(city_slug)
+            .acquire_scout_lock(&city_slug)
             .await
             .context("Failed to check scout lock")?
         {
-            anyhow::bail!("Another scout run is in progress for {}", city_slug);
+            anyhow::bail!("Another scout run is in progress for {}", self.region.name);
         }
 
         let result = self.run_inner().await;
 
         // Always release lock
-        if let Err(e) = self.writer.release_scout_lock(city_slug).await {
+        if let Err(e) = self.writer.release_scout_lock(&city_slug).await {
             error!("Failed to release scout lock: {e}");
         }
 
@@ -220,12 +230,22 @@ impl Scout {
     }
 
     async fn run_inner(&self) -> Result<ScoutStats> {
+        let run_id = Uuid::new_v4().to_string();
+        info!(run_id = run_id.as_str(), "Scout run started");
+
+        let mut run_log = RunLog::new(run_id.clone(), self.region.name.clone());
+
         // ================================================================
         // 1. Reap expired signals
         // ================================================================
         info!("Reaping expired signals...");
         match self.writer.reap_expired().await {
             Ok(reap) => {
+                run_log.log(EventKind::ReapExpired {
+                    gatherings: reap.gatherings,
+                    needs: reap.needs,
+                    stale: reap.stale,
+                });
                 if reap.gatherings + reap.needs + reap.stale > 0 {
                     info!(
                         gatherings = reap.gatherings,
@@ -241,7 +261,7 @@ impl Scout {
         // ================================================================
         // 2. Load sources + Schedule
         // ================================================================
-        let all_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
+        let mut all_sources = match self.writer.get_active_sources().await {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -259,6 +279,31 @@ impl Scout {
                 Vec::new()
             }
         };
+
+        // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
+        // Covers regions created before bootstrapper existed, regions that were reset,
+        // or any other state where sources were lost.
+        if all_sources.is_empty() {
+            info!("No sources found — running cold-start bootstrap");
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+                &self.writer,
+                &*self.searcher,
+                &self.anthropic_api_key,
+                self.region.clone(),
+            );
+            match bootstrapper.run().await {
+                Ok(n) => {
+                    run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
+                    info!(sources = n, "Bootstrap created seed sources");
+                }
+                Err(e) => warn!(error = %e, "Bootstrap failed"),
+            }
+            all_sources = self
+                .writer
+                .get_active_sources()
+                .await
+                .unwrap_or_default();
+        }
 
         let now_schedule = Utc::now();
         let scheduler = crate::scheduler::SourceScheduler::new();
@@ -295,7 +340,7 @@ impl Scout {
                 if !scheduled_keys.contains(&s.canonical_key) {
                     return false;
                 }
-                if s.source_type != SourceType::WebQuery {
+                if !is_web_query(&s.canonical_value) {
                     return true;
                 }
                 wq_scheduled_keys.contains(&s.canonical_key)
@@ -312,7 +357,8 @@ impl Scout {
             self.scraper.clone(),
             self.searcher.clone(),
             &*self.social,
-            &self.city_node,
+            &self.region,
+            run_id.clone(),
         );
 
         // ================================================================
@@ -325,25 +371,19 @@ impl Scout {
             .copied()
             .collect();
 
-        phase.run_web(&phase_a_sources, &mut ctx).await;
+        phase.run_web(&phase_a_sources, &mut ctx, &mut run_log).await;
 
         // Phase A social: tension + mixed social sources
         let phase_a_social: Vec<&SourceNode> = scheduled_sources
             .iter()
             .filter(|s| {
-                matches!(
-                    s.source_type,
-                    SourceType::Instagram
-                        | SourceType::Facebook
-                        | SourceType::Reddit
-                        | SourceType::Twitter
-                        | SourceType::TikTok
-                ) && tension_phase_keys.contains(&s.canonical_key)
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && tension_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();
         if !phase_a_social.is_empty() {
-            phase.run_social(&phase_a_social, &mut ctx).await;
+            phase.run_social(&phase_a_social, &mut ctx, &mut run_log).await;
         }
 
         self.check_cancelled()?;
@@ -354,8 +394,8 @@ impl Scout {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.city_node.slug,
-            &self.city_node.name,
+            &self.region.name,
+            &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         )
@@ -373,7 +413,7 @@ impl Scout {
         info!("=== Phase B: Find Responses ===");
 
         // Reload sources to pick up fresh discovery sources from mid-run
-        let fresh_sources = match self.writer.get_active_sources(&self.city_node.slug).await {
+        let fresh_sources = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to reload sources for Phase B");
@@ -404,39 +444,36 @@ impl Scout {
                 count = phase_b_sources.len(),
                 "Phase B sources (response + fresh discovery)"
             );
-            phase.run_web(&phase_b_sources, &mut ctx).await;
+            phase.run_web(&phase_b_sources, &mut ctx, &mut run_log).await;
         }
 
         // Phase B social: response social sources
         let phase_b_social: Vec<&SourceNode> = scheduled_sources
             .iter()
             .filter(|s| {
-                matches!(
-                    s.source_type,
-                    SourceType::Instagram
-                        | SourceType::Facebook
-                        | SourceType::Reddit
-                        | SourceType::Twitter
-                        | SourceType::TikTok
-                ) && response_phase_keys.contains(&s.canonical_key)
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && response_phase_keys.contains(&s.canonical_key)
             })
             .copied()
             .collect();
         if !phase_b_social.is_empty() {
-            phase.run_social(&phase_b_social, &mut ctx).await;
+            phase.run_social(&phase_b_social, &mut ctx, &mut run_log).await;
         }
 
         self.check_cancelled()?;
 
         // Topic discovery — search social media to find new accounts
+        // Merge expansion-derived social topics with LLM-generated topics
+        let mut all_social_topics = social_topics;
+        all_social_topics.extend(ctx.social_expansion_topics.drain(..));
         phase
-            .discover_from_topics(&social_topics, &mut ctx)
+            .discover_from_topics(&all_social_topics, &mut ctx, &mut run_log)
             .await;
 
         // ================================================================
         // 6. Source metrics + weight updates
         // ================================================================
-        let metrics = Metrics::new(&self.writer, &self.city_node.slug);
+        let metrics = Metrics::new(&self.writer, &self.region.name);
         metrics.update(&all_sources, &ctx, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
@@ -448,22 +485,9 @@ impl Scout {
         // 7. Synthesis — similarity edges + parallel finders
         // ================================================================
 
-        // Build similarity edges (Leiden removed — StoryWeaver is the sole story creator)
-        info!("Building similarity edges...");
-        let similarity = SimilarityBuilder::new(self.graph_client.clone());
-        similarity.clear_edges().await.unwrap_or_else(|e| {
-            warn!(error = %e, "Failed to clear similarity edges");
-            0
-        });
-        match similarity.build_edges().await {
-            Ok(edges) => info!(edges, "Similarity edges built"),
-            Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
-        }
-
-        self.check_cancelled()?;
-
-        // Parallel synthesis — run independent finders concurrently.
-        info!("Starting parallel synthesis (response mapping, tension linker, response finder, gathering finder, investigation)...");
+        // Parallel synthesis — similarity edges + finders run concurrently.
+        // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
+        info!("Starting parallel synthesis (similarity edges, response mapping, tension linker, response finder, gathering finder, investigation)...");
 
         let run_response_mapping = self
             .budget
@@ -481,16 +505,28 @@ impl Scout {
             OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
         );
 
-        let (rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+        let (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+            async {
+                info!("Building similarity edges...");
+                let similarity = SimilarityBuilder::new(self.graph_client.clone());
+                similarity.clear_edges().await.unwrap_or_else(|e| {
+                    warn!(error = %e, "Failed to clear similarity edges");
+                    0
+                });
+                match similarity.build_edges().await {
+                    Ok(edges) => info!(edges, "Similarity edges built"),
+                    Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
+                }
+            },
             async {
                 if run_response_mapping {
                     info!("Starting response mapping...");
                     let response_mapper = rootsignal_graph::response::ResponseMapper::new(
                         self.graph_client.clone(),
                         &self.anthropic_api_key,
-                        self.city_node.center_lat,
-                        self.city_node.center_lng,
-                        self.city_node.radius_km,
+                        self.region.center_lat,
+                        self.region.center_lng,
+                        self.region.radius_km,
                     );
                     match response_mapper.map_responses().await {
                         Ok(rm_stats) => info!("{rm_stats}"),
@@ -509,8 +545,9 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let tl_stats = tension_linker.run().await;
                     info!("{tl_stats}");
@@ -527,8 +564,9 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let rf_stats = response_finder.run().await;
                     info!("{rf_stats}");
@@ -545,8 +583,9 @@ impl Scout {
                         self.scraper.clone(),
                         &*self.embedder,
                         &self.anthropic_api_key,
-                        self.city_node.clone(),
+                        self.region.clone(),
                         self.cancelled.clone(),
+                        run_id.clone(),
                     );
                     let gf_stats = gathering_finder.run().await;
                     info!("{gf_stats}");
@@ -561,7 +600,7 @@ impl Scout {
                         &self.writer,
                         &*self.searcher,
                         &self.anthropic_api_key,
-                        &self.city_node,
+                        &self.region,
                         self.cancelled.clone(),
                     );
                     let investigation_stats = investigator.run().await;
@@ -572,7 +611,7 @@ impl Scout {
             },
         );
 
-        let _ = (rm_result, tl_result, rf_result, gf_result, inv_result);
+        let _ = (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result);
 
         info!("Parallel synthesis complete");
 
@@ -585,9 +624,9 @@ impl Scout {
         let weaver = rootsignal_graph::StoryWeaver::new(
             self.graph_client.clone(),
             &self.anthropic_api_key,
-            self.city_node.center_lat,
-            self.city_node.center_lng,
-            self.city_node.radius_km,
+            self.region.center_lat,
+            self.region.center_lng,
+            self.region.radius_km,
         );
         let has_weave_budget = self
             .budget
@@ -602,8 +641,8 @@ impl Scout {
         // ================================================================
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
-        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.city_node.slug);
-        expansion.run(&mut ctx).await;
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);
+        expansion.run(&mut ctx, &mut run_log).await;
 
         self.check_cancelled()?;
 
@@ -612,19 +651,33 @@ impl Scout {
         // ================================================================
         let end_discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.city_node.slug,
-            &self.city_node.name,
+            &self.region.name,
+            &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
         )
         .with_embedder(&*self.embedder);
-        let (end_discovery_stats, _end_social_topics) = end_discoverer.run().await;
+        let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
+        }
+        if !end_social_topics.is_empty() {
+            info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
+            phase.discover_from_topics(&end_social_topics, &mut ctx, &mut run_log).await;
         }
 
         // Log final budget status
         self.budget.log_status();
+
+        run_log.log(EventKind::BudgetCheckpoint {
+            spent_cents: self.budget.total_spent(),
+            remaining_cents: self.budget.remaining(),
+        });
+
+        // Save run log to disk
+        if let Err(e) = run_log.save(&ctx.stats) {
+            warn!(error = %e, "Failed to save scout run log");
+        }
 
         info!("{}", ctx.stats);
         Ok(ctx.stats)

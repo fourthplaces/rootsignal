@@ -4,27 +4,27 @@ import { gql } from "@apollo/client";
 const SIGNAL_FIELDS = `
   ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     startsAt endsAt actionUrl organizer isRecurring
   }
   ... on GqlAidSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     actionUrl availability isOngoing
   }
   ... on GqlNeedSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     urgency whatNeeded actionUrl goal
   }
   ... on GqlNoticeSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     severity category effectiveDate sourceAuthority
   }
   ... on GqlTensionSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     severity category whatWouldHelp
   }
 `;
@@ -39,8 +39,8 @@ export const ME = gql`
 `;
 
 export const ADMIN_DASHBOARD = gql`
-  query AdminDashboard($city: String!) {
-    adminDashboard(city: $city) {
+  query AdminDashboard($region: String!) {
+    adminDashboard(region: $region) {
       totalSignals
       totalStories
       totalActors
@@ -48,8 +48,8 @@ export const ADMIN_DASHBOARD = gql`
       activeSources
       totalTensions
       scoutStatuses {
-        cityName
-        citySlug
+        regionName
+        regionSlug
         lastScouted
         sourcesDue
         running
@@ -101,7 +101,7 @@ export const ADMIN_DASHBOARD = gql`
         emptyRuns
       }
       extractionYield {
-        sourceType
+        sourceLabel
         extracted
         survived
         corroborated
@@ -117,45 +117,13 @@ export const ADMIN_DASHBOARD = gql`
   }
 `;
 
-export const ADMIN_CITIES = gql`
-  query AdminCities {
-    adminCities {
-      slug
-      name
-      centerLat
-      centerLng
-      radiusKm
-      active
-      lastScoutCompletedAt
-      scoutRunning
-      sourcesDue
-    }
-  }
-`;
-
-export const ADMIN_CITY = gql`
-  query AdminCity($slug: String!) {
-    adminCity(slug: $slug) {
-      slug
-      name
-      centerLat
-      centerLng
-      radiusKm
-      active
-      lastScoutCompletedAt
-      scoutRunning
-      sourcesDue
-    }
-  }
-`;
-
-export const ADMIN_CITY_SOURCES = gql`
-  query AdminCitySources($citySlug: String!) {
-    adminCitySources(citySlug: $citySlug) {
+export const ADMIN_REGION_SOURCES = gql`
+  query AdminRegionSources($regionSlug: String!) {
+    adminRegionSources(regionSlug: $regionSlug) {
       id
       url
       canonicalValue
-      sourceType
+      sourceLabel
       weight
       qualityPenalty
       effectiveWeight
@@ -168,14 +136,20 @@ export const ADMIN_CITY_SOURCES = gql`
   }
 `;
 
-export const ADMIN_SCOUT_STATUS = gql`
-  query AdminScoutStatus($citySlug: String!) {
-    adminScoutStatus(citySlug: $citySlug) {
-      cityName
-      citySlug
-      lastScouted
-      sourcesDue
-      running
+export const ADMIN_SCOUT_TASKS = gql`
+  query AdminScoutTasks($status: String, $limit: Int) {
+    adminScoutTasks(status: $status, limit: $limit) {
+      id
+      centerLat
+      centerLng
+      radiusKm
+      context
+      geoTerms
+      priority
+      source
+      status
+      createdAt
+      completedAt
     }
   }
 `;
@@ -290,14 +264,13 @@ export const STORY_DETAIL = gql`
 `;
 
 export const ACTORS = gql`
-  query Actors($city: String!, $limit: Int) {
-    actors(city: $city, limit: $limit) {
+  query Actors($region: String!, $limit: Int) {
+    actors(region: $region, limit: $limit) {
       id
       name
       actorType
       description
       signalCount
-      city
     }
   }
 `;
@@ -307,6 +280,122 @@ export const ALL_TAGS = gql`
     tags(limit: $limit) {
       slug
       name
+    }
+  }
+`;
+
+export const ADMIN_SCOUT_RUNS = gql`
+  query AdminScoutRuns($region: String!, $limit: Int) {
+    adminScoutRuns(region: $region, limit: $limit) {
+      runId
+      region
+      startedAt
+      finishedAt
+      stats {
+        urlsScraped
+        urlsUnchanged
+        urlsFailed
+        signalsExtracted
+        signalsDeduplicated
+        signalsStored
+        socialMediaPosts
+        expansionQueriesCollected
+        expansionSourcesCreated
+      }
+    }
+  }
+`;
+
+export const ADMIN_SCOUT_RUN = gql`
+  query AdminScoutRun($runId: String!) {
+    adminScoutRun(runId: $runId) {
+      runId
+      region
+      startedAt
+      finishedAt
+      stats {
+        urlsScraped
+        urlsUnchanged
+        urlsFailed
+        signalsExtracted
+        signalsDeduplicated
+        signalsStored
+        socialMediaPosts
+        expansionQueriesCollected
+        expansionSourcesCreated
+      }
+      events {
+        seq
+        ts
+        type
+        query
+        url
+        provider
+        platform
+        identifier
+        signalType
+        title
+        resultCount
+        postCount
+        items
+        contentBytes
+        contentChars
+        signalsExtracted
+        impliedQueries
+        similarity
+        confidence
+        success
+        action
+        nodeId
+        matchedId
+        existingId
+        sourceUrl
+        newSourceUrl
+        canonicalKey
+        gatherings
+        needs
+        stale
+        sourcesCreated
+        spentCents
+        remainingCents
+        topics
+        postsFound
+      }
+    }
+  }
+`;
+
+export const SUPERVISOR_FINDINGS = gql`
+  query SupervisorFindings($region: String!, $status: String, $limit: Int) {
+    supervisorFindings(region: $region, status: $status, limit: $limit) {
+      id
+      issueType
+      severity
+      targetId
+      targetLabel
+      description
+      suggestedAction
+      status
+      createdAt
+      resolvedAt
+    }
+  }
+`;
+
+export const SUPERVISOR_SUMMARY = gql`
+  query SupervisorSummary($region: String!) {
+    supervisorSummary(region: $region) {
+      totalOpen
+      totalResolved
+      totalDismissed
+      countByType {
+        label
+        count
+      }
+      countBySeverity {
+        label
+        count
+      }
     }
   }
 `;

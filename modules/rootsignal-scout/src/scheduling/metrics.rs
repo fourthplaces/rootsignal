@@ -7,19 +7,19 @@
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
-use rootsignal_common::{SourceNode, SourceType};
+use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::scrape_phase::RunContext;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
-    city_slug: &'a str,
+    _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
-    pub fn new(writer: &'a GraphWriter, city_slug: &'a str) -> Self {
-        Self { writer, city_slug }
+    pub fn new(writer: &'a GraphWriter, region_slug: &'a str) -> Self {
+        Self { writer, _region_slug: region_slug }
     }
 
     /// Update source metrics, weights, cadences, and deactivate dead sources.
@@ -91,7 +91,7 @@ impl<'a> Metrics<'a> {
             } else {
                 source.consecutive_empty_runs
             };
-            let cadence = if source.source_type == SourceType::WebQuery {
+            let cadence = if is_web_query(&source.canonical_value) {
                 crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
             } else {
                 crate::scheduler::cadence_hours_for_weight(new_weight)
@@ -108,7 +108,7 @@ impl<'a> Metrics<'a> {
         // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
         match self
             .writer
-            .deactivate_dead_sources(self.city_slug, 10)
+            .deactivate_dead_sources(10)
             .await
         {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
@@ -119,7 +119,7 @@ impl<'a> Metrics<'a> {
         // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
         match self
             .writer
-            .deactivate_dead_web_queries(self.city_slug)
+            .deactivate_dead_web_queries()
             .await
         {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
@@ -128,7 +128,7 @@ impl<'a> Metrics<'a> {
         }
 
         // Source stats
-        match self.writer.get_source_stats(self.city_slug).await {
+        match self.writer.get_source_stats().await {
             Ok(ss) => {
                 info!(
                     total = ss.total,

@@ -12,7 +12,7 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole};
 use rootsignal_graph::{query, GraphClient, GraphWriter};
 
 /// Spin up a fresh Neo4j container and run migrations.
@@ -151,7 +151,6 @@ async fn create_actor_and_link(
             actor_type: 'org',
             domains: [],
             social_urls: [],
-            city: 'twincities',
             description: 'Test actor',
             signal_count: 1,
             first_seen: datetime($now),
@@ -612,6 +611,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("First scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev1, signal_id)
@@ -627,6 +627,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("Second scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev2, signal_id)
@@ -642,6 +643,7 @@ async fn same_source_no_duplicate_evidence() {
         snippet: Some("Third scrape".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev3, signal_id)
@@ -699,6 +701,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source A".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_a, signal_id)
@@ -714,6 +717,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source B".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_b, signal_id)
@@ -729,6 +733,7 @@ async fn cross_source_creates_new_evidence() {
         snippet: Some("Source C".to_string()),
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_c, signal_id)
@@ -780,6 +785,7 @@ async fn same_source_does_not_inflate_corroboration() {
         snippet: None,
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev, signal_id)
@@ -801,6 +807,7 @@ async fn same_source_does_not_inflate_corroboration() {
             snippet: None,
             relevance: None,
             evidence_confidence: None,
+            channel_type: None,
         };
         writer
             .create_evidence(&ev, signal_id)
@@ -858,6 +865,7 @@ async fn same_source_does_not_inflate_corroboration() {
         snippet: None,
         relevance: None,
         evidence_confidence: None,
+        channel_type: None,
     };
     writer
         .create_evidence(&ev_cross, signal_id)
@@ -1275,12 +1283,10 @@ async fn source_last_scraped_round_trip() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "test-city:web:https://example.org".to_string(),
+        canonical_key: "https://example.org".to_string(),
         canonical_value: "https://example.org".to_string(),
         url: Some("https://example.org".to_string()),
-        source_type: SourceType::Web,
         discovery_method: DiscoveryMethod::Curated,
-        city: "test-city".to_string(),
         created_at: Utc::now(),
         last_scraped: None,
         last_produced_signal: None,
@@ -1298,7 +1304,7 @@ async fn source_last_scraped_round_trip() {
     };
 
     writer
-        .upsert_source(&source)
+        .upsert_source(&source, "test-city")
         .await
         .expect("upsert_source failed");
 
@@ -2451,8 +2457,6 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
             id: $id,
             canonical_key: $key,
             canonical_value: $query,
-            url: $query,
-            source_type: 'web_query',
             discovery_method: 'curated',
             city: $city,
             created_at: datetime($now),
@@ -2468,7 +2472,7 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
         })",
     )
     .param("id", id.to_string())
-    .param("key", format!("{city}:web_query:{query_text}"))
+    .param("key", format!("{city}:{query_text}"))
     .param("query", query_text)
     .param("city", city)
     .param("now", now)
@@ -3009,12 +3013,10 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let source = SourceNode {
         id: Uuid::new_v4(),
-        canonical_key: "twincities:web_query:emergency housing Minneapolis".to_string(),
+        canonical_key: "emergency housing Minneapolis".to_string(),
         canonical_value: "emergency housing Minneapolis".to_string(),
         url: None,
-        source_type: SourceType::WebQuery,
         discovery_method: DiscoveryMethod::SignalExpansion,
-        city: "twincities".to_string(),
         created_at: Utc::now(),
         last_scraped: None,
         last_produced_signal: None,
@@ -3032,7 +3034,7 @@ async fn signal_expansion_source_created_with_correct_method() {
     };
 
     writer
-        .upsert_source(&source)
+        .upsert_source(&source, "twincities")
         .await
         .expect("upsert_source failed");
 

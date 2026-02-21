@@ -113,6 +113,7 @@ pub enum StoryCategory {
     Governance,
     Stewardship,
     Community,
+    Environment,
 }
 
 impl std::fmt::Display for StoryCategory {
@@ -124,6 +125,7 @@ impl std::fmt::Display for StoryCategory {
             StoryCategory::Governance => write!(f, "governance"),
             StoryCategory::Stewardship => write!(f, "stewardship"),
             StoryCategory::Community => write!(f, "community"),
+            StoryCategory::Environment => write!(f, "environment"),
         }
     }
 }
@@ -175,7 +177,6 @@ pub struct ActorNode {
     pub entity_id: String,
     pub domains: Vec<String>,
     pub social_urls: Vec<String>,
-    pub city: String,
     pub description: String,
     pub signal_count: u32,
     pub first_seen: DateTime<Utc>,
@@ -214,6 +215,9 @@ pub struct NodeMeta {
     /// Implied search queries from this signal for expansion discovery.
     /// Only populated during extraction; cleared after expansion processing.
     pub implied_queries: Vec<String>,
+    /// Number of distinct channel types with external entity evidence (1-4).
+    #[serde(default = "default_channel_diversity")]
+    pub channel_diversity: u32,
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
@@ -274,6 +278,8 @@ pub struct EvidenceNode {
     pub snippet: Option<String>,
     pub relevance: Option<String>,
     pub evidence_confidence: Option<f32>,
+    #[serde(default)]
+    pub channel_type: Option<ChannelType>,
 }
 
 // --- Sum type ---
@@ -372,6 +378,7 @@ pub struct StoryNode {
     pub drawn_to_count: u32,
     pub gap_score: i32,
     pub gap_velocity: f64,
+    pub channel_diversity: u32,
 }
 
 /// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
@@ -387,20 +394,150 @@ pub struct ClusterSnapshot {
     pub run_at: DateTime<Utc>,
 }
 
-// --- City Node (graph-backed city configuration) ---
+// --- Scout Scope (geographic context for a scout run) ---
 
+/// The geographic context passed through the scout pipeline.
+/// Defines where scout looks — center point, radius, and search terms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CityNode {
-    pub id: Uuid,
-    pub name: String,
-    pub slug: String,
+pub struct ScoutScope {
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
+    pub name: String,
     pub geo_terms: Vec<String>,
-    pub active: bool,
+}
+
+impl ScoutScope {
+    /// Compute bounding box from center + radius.
+    pub fn bounding_box(&self) -> (f64, f64, f64, f64) {
+        let lat_delta = self.radius_km / 111.0;
+        let lng_delta = self.radius_km / (111.0 * self.center_lat.to_radians().cos());
+        (
+            self.center_lat - lat_delta,
+            self.center_lat + lat_delta,
+            self.center_lng - lng_delta,
+            self.center_lng + lng_delta,
+        )
+    }
+}
+
+/// Temporary aliases — will be removed once all callers migrate.
+pub type RegionNode = ScoutScope;
+pub type CityNode = ScoutScope;
+
+// --- Scout Task (ephemeral unit of work for the scout swarm) ---
+
+/// How a scout task was created.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScoutTaskSource {
+    /// Seeded from config/env vars (replaces old RegionNode)
+    Manual,
+    /// Created by signal clustering (feedback loop)
+    Beacon,
+    /// Created by Driver A (user search demand aggregation)
+    DriverA,
+    /// Created by Driver B (global news scanning)
+    DriverB,
+}
+
+impl std::fmt::Display for ScoutTaskSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Manual => write!(f, "manual"),
+            Self::Beacon => write!(f, "beacon"),
+            Self::DriverA => write!(f, "driver_a"),
+            Self::DriverB => write!(f, "driver_b"),
+        }
+    }
+}
+
+impl std::str::FromStr for ScoutTaskSource {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "manual" => Ok(Self::Manual),
+            "beacon" => Ok(Self::Beacon),
+            "driver_a" => Ok(Self::DriverA),
+            "driver_b" => Ok(Self::DriverB),
+            other => Err(format!("unknown ScoutTaskSource: {other}")),
+        }
+    }
+}
+
+/// Status of a scout task in the queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScoutTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Cancelled,
+}
+
+impl std::fmt::Display for ScoutTaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Running => write!(f, "running"),
+            Self::Completed => write!(f, "completed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+impl std::str::FromStr for ScoutTaskStatus {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(format!("unknown ScoutTaskStatus: {other}")),
+        }
+    }
+}
+
+/// An ephemeral unit of work for the scout swarm.
+/// Replaces RegionNode as the thing that tells scout where to look.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoutTask {
+    pub id: Uuid,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub context: String,
+    pub geo_terms: Vec<String>,
+    pub priority: f64,
+    pub source: ScoutTaskSource,
+    pub status: ScoutTaskStatus,
     pub created_at: DateTime<Utc>,
-    pub last_scout_completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl From<&ScoutTask> for ScoutScope {
+    fn from(task: &ScoutTask) -> Self {
+        ScoutScope {
+            center_lat: task.center_lat,
+            center_lng: task.center_lng,
+            radius_km: task.radius_km,
+            name: task.context.clone(),
+            geo_terms: task.geo_terms.clone(),
+        }
+    }
+}
+
+// --- Demand Signal (raw user search telemetry for Driver A) ---
+
+/// A raw demand signal recorded from a user search.
+/// Aggregated into ScoutTasks by the interval loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DemandSignal {
+    pub id: Uuid,
+    pub query: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub created_at: DateTime<Utc>,
 }
 
 // --- Place Node (fourth places — venues that attract gatherings) ---
@@ -451,103 +588,122 @@ pub struct TagNode {
     pub created_at: DateTime<Utc>,
 }
 
-// --- Source Types (for emergent source discovery) ---
+// --- Scraping Strategy (computed from URL, never stored) ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceType {
-    Web,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SocialPlatform {
     Instagram,
     Facebook,
     Reddit,
-    WebQuery,
-    TikTok,
     Twitter,
-    EventbriteQuery,
-    VolunteerMatchQuery,
+    TikTok,
     Bluesky,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrapingStrategy {
+    WebQuery,
+    WebPage,
     Rss,
+    Social(SocialPlatform),
+    HtmlListing { link_pattern: &'static str },
 }
 
-impl std::fmt::Display for SourceType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SourceType::Web => write!(f, "web"),
-            SourceType::Instagram => write!(f, "instagram"),
-            SourceType::Facebook => write!(f, "facebook"),
-            SourceType::Reddit => write!(f, "reddit"),
-            SourceType::WebQuery => write!(f, "web_query"),
-            SourceType::TikTok => write!(f, "tiktok"),
-            SourceType::Twitter => write!(f, "twitter"),
-            SourceType::EventbriteQuery => write!(f, "eventbrite_query"),
-            SourceType::VolunteerMatchQuery => write!(f, "volunteermatch_query"),
-            SourceType::Bluesky => write!(f, "bluesky"),
-            SourceType::Rss => write!(f, "rss"),
-        }
-    }
+/// Returns true if the value is a plain-text web query (not a URL).
+pub fn is_web_query(value: &str) -> bool {
+    !value.starts_with("http://") && !value.starts_with("https://")
 }
 
-impl SourceType {
-    pub fn from_str_loose(s: &str) -> Self {
-        match s {
-            "instagram" => Self::Instagram,
-            "facebook" => Self::Facebook,
-            "reddit" => Self::Reddit,
-            "web_query" | "tavily_query" => Self::WebQuery,
-            "tiktok" => Self::TikTok,
-            "twitter" => Self::Twitter,
-            "gofundme" | "gofundme_query" => Self::WebQuery,
-            "eventbrite_search" | "eventbrite_query" => Self::EventbriteQuery,
-            "volunteermatch_query" => Self::VolunteerMatchQuery,
-            "bluesky" => Self::Bluesky,
-            "rss" => Self::Rss,
-            _ => Self::Web,
+/// Derive scraping strategy from a source's value (URL or query text).
+pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
+    if is_web_query(value) {
+        return ScrapingStrategy::WebQuery;
+    }
+    let lower = value.to_lowercase();
+    if lower.contains("instagram.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Instagram);
+    }
+    if lower.contains("facebook.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Facebook);
+    }
+    if lower.contains("reddit.com") {
+        return ScrapingStrategy::Social(SocialPlatform::Reddit);
+    }
+    if lower.contains("tiktok.com") {
+        return ScrapingStrategy::Social(SocialPlatform::TikTok);
+    }
+    if lower.contains("twitter.com") || lower.contains("x.com/") {
+        return ScrapingStrategy::Social(SocialPlatform::Twitter);
+    }
+    if lower.contains("bsky.app") {
+        return ScrapingStrategy::Social(SocialPlatform::Bluesky);
+    }
+    if lower.contains("eventbrite.com") && lower.contains("/d/") {
+        return ScrapingStrategy::HtmlListing {
+            link_pattern: "eventbrite.com/e/",
+        };
+    }
+    if lower.contains("volunteermatch.org") && lower.contains("/search") {
+        return ScrapingStrategy::HtmlListing {
+            link_pattern: "volunteermatch.org/search/opp",
+        };
+    }
+    if lower.contains("/feed")
+        || lower.contains("/rss")
+        || lower.contains("/atom")
+        || lower.ends_with(".rss")
+        || lower.ends_with(".xml")
+    {
+        return ScrapingStrategy::Rss;
+    }
+    ScrapingStrategy::WebPage
+}
+
+/// Compute a canonical value from a source's raw value (URL or query text).
+/// Includes the domain for social sources to prevent key collisions.
+pub fn canonical_value(value: &str) -> String {
+    if is_web_query(value) {
+        return value.to_string();
+    }
+    let lower = value.to_lowercase();
+    if lower.contains("instagram.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value);
+        return format!("instagram.com/{}", handle);
+    }
+    if lower.contains("reddit.com") {
+        if let Some(idx) = value.find("/r/") {
+            let sub = value[idx + 3..]
+                .trim_end_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or(value);
+            return format!("reddit.com/r/{}", sub);
         }
     }
-
-    /// Infer SourceType from a URL based on known platform domains.
-    pub fn from_url(url: &str) -> Self {
-        if url.contains("instagram.com") {
-            Self::Instagram
-        } else if url.contains("facebook.com") {
-            Self::Facebook
-        } else if url.contains("reddit.com") {
-            Self::Reddit
-        } else if url.contains("tiktok.com") {
-            Self::TikTok
-        } else if url.contains("twitter.com") || url.contains("x.com") {
-            Self::Twitter
-        } else if url.contains("bsky.app") {
-            Self::Bluesky
-        } else if url.contains("eventbrite.com") {
-            Self::EventbriteQuery
-        } else if url.contains("volunteermatch.org") {
-            Self::VolunteerMatchQuery
-        } else if url.contains("/feed") || url.contains("/rss") || url.contains("/atom") || url.ends_with(".rss") || url.ends_with(".xml") {
-            Self::Rss
-        } else {
-            Self::Web
-        }
+    if lower.contains("tiktok.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value)
+            .trim_start_matches('@');
+        return format!("tiktok.com/{}", handle);
     }
-
-    /// Returns true if this source type produces URLs (queries) rather than content (pages).
-    pub fn is_query(&self) -> bool {
-        matches!(
-            self,
-            Self::WebQuery
-                | Self::EventbriteQuery
-                | Self::VolunteerMatchQuery
-        )
+    if lower.contains("twitter.com") || lower.contains("x.com") {
+        let handle = value
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(value)
+            .trim_start_matches('@');
+        return format!("x.com/{}", handle);
     }
-
-    /// For HTML-based query sources, returns the URL pattern that identifies individual item pages.
-    pub fn link_pattern(&self) -> Option<&'static str> {
-        match self {
-            Self::EventbriteQuery => Some("eventbrite.com/e/"),
-            Self::VolunteerMatchQuery => Some("volunteermatch.org/search/opp"),
-            _ => None,
-        }
-    }
+    // Everything else: full URL as canonical value
+    value.to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -620,19 +776,18 @@ impl SourceRole {
 }
 
 /// A tracked source in the graph — either curated (from seed list) or discovered.
-/// Identity is `canonical_key` = `city_slug:source_type:canonical_value`.
+/// Identity is `canonical_key` = `canonical_value` (region-independent).
+/// Regions link to sources via `:SCOUTS` relationships in the graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceNode {
     pub id: Uuid,
-    /// Unique identity: `city_slug:source_type:canonical_value`.
+    /// Unique identity: the canonical_value (URL/content hash). Region-independent.
     pub canonical_key: String,
     /// The handle/query/URL that identifies this source within its type.
     pub canonical_value: String,
     /// URL for web/social sources. None for query-type sources (WebQuery).
     pub url: Option<String>,
-    pub source_type: SourceType,
     pub discovery_method: DiscoveryMethod,
-    pub city: String,
     pub created_at: DateTime<Utc>,
     pub last_scraped: Option<DateTime<Utc>>,
     pub last_produced_signal: Option<DateTime<Utc>>,
@@ -655,6 +810,14 @@ pub struct SourceNode {
     pub scrape_count: u32,
 }
 
+impl SourceNode {
+    /// Returns the source's primary value: the URL if present, otherwise the canonical_value.
+    /// This is the single source of truth for "what is this source."
+    pub fn value(&self) -> &str {
+        self.url.as_deref().unwrap_or(&self.canonical_value)
+    }
+}
+
 /// A human-submitted link with an optional reason for investigation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmissionNode {
@@ -671,6 +834,99 @@ pub struct BlockedSource {
     pub url_pattern: String,
     pub blocked_at: DateTime<Utc>,
     pub reason: String,
+}
+
+// --- Channel Types ---
+
+/// The type of channel a piece of evidence came through.
+/// Used for channel diversity scoring — cross-channel corroboration is
+/// epistemologically stronger than same-channel repetition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    Press,
+    Social,
+    DirectAction,
+    CommunityMedia,
+}
+
+impl ChannelType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChannelType::Press => "press",
+            ChannelType::Social => "social",
+            ChannelType::DirectAction => "direct_action",
+            ChannelType::CommunityMedia => "community_media",
+        }
+    }
+}
+
+impl std::fmt::Display for ChannelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Classify a URL into a channel type based on domain patterns.
+/// No LLM needed — pure pattern matching.
+pub fn channel_type(url: &str) -> ChannelType {
+    let lower = url.to_lowercase();
+    let domain = extract_domain(&lower);
+
+    // Social platforms
+    let social_domains = [
+        "reddit.com",
+        "facebook.com",
+        "instagram.com",
+        "twitter.com",
+        "x.com",
+        "tiktok.com",
+        "nextdoor.com",
+        "threads.net",
+        "mastodon.social",
+        "bsky.app",
+        "linkedin.com",
+    ];
+    if social_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::Social;
+    }
+
+    // Direct action platforms (fundraising, volunteering, petitions, event ticketing)
+    let direct_action_domains = [
+        "gofundme.com",
+        "eventbrite.com",
+        "volunteermatch.org",
+        "change.org",
+        "givemn.org",
+        "givebutter.com",
+        "actionnetwork.org",
+        "mobilize.us",
+        "signupgenius.com",
+    ];
+    if direct_action_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::DirectAction;
+    }
+
+    // Community media (RSS feeds, community radio/TV, neighborhood newsletters)
+    if lower.contains("/feed") || lower.contains("/rss") || lower.contains(".rss") {
+        return ChannelType::CommunityMedia;
+    }
+    let community_media_domains = [
+        "patch.com",
+        "swnewsmedia.com",
+        "southwestjournal.com",
+        "tcdailyplanet.net",
+    ];
+    if community_media_domains.iter().any(|d| domain.contains(d)) {
+        return ChannelType::CommunityMedia;
+    }
+
+    // Default: press (news articles, org websites, government pages)
+    ChannelType::Press
+}
+
+fn default_channel_diversity() -> u32 {
+    1
 }
 
 // --- Entity Resolution ---
@@ -799,6 +1055,7 @@ mod tests {
             source_diversity: 1,
             external_ratio: 0.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         }
@@ -887,5 +1144,57 @@ mod tests {
         assert_eq!(req_json, "\"requires\"");
         assert_eq!(pref_json, "\"prefers\"");
         assert_eq!(off_json, "\"offers\"");
+    }
+
+    // --- channel_type tests ---
+
+    #[test]
+    fn channel_type_social_platforms() {
+        assert_eq!(channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"), ChannelType::Social);
+        assert_eq!(channel_type("https://facebook.com/lakestreetstories"), ChannelType::Social);
+        assert_eq!(channel_type("https://www.instagram.com/p/abc123"), ChannelType::Social);
+        assert_eq!(channel_type("https://x.com/user/status/123"), ChannelType::Social);
+        assert_eq!(channel_type("https://nextdoor.com/post/123"), ChannelType::Social);
+    }
+
+    #[test]
+    fn channel_type_direct_action() {
+        assert_eq!(channel_type("https://www.gofundme.com/f/help-family"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.eventbrite.com/e/community-event-123"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.volunteermatch.org/search/opp123"), ChannelType::DirectAction);
+        assert_eq!(channel_type("https://www.change.org/p/petition-name"), ChannelType::DirectAction);
+    }
+
+    #[test]
+    fn channel_type_community_media() {
+        assert_eq!(channel_type("https://example.com/feed"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://example.com/rss"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://patch.com/minnesota/minneapolis/story"), ChannelType::CommunityMedia);
+        assert_eq!(channel_type("https://swnewsmedia.com/article/123"), ChannelType::CommunityMedia);
+    }
+
+    #[test]
+    fn channel_type_press_default() {
+        assert_eq!(channel_type("https://startribune.com/article/123"), ChannelType::Press);
+        assert_eq!(channel_type("https://www.mprnews.org/story/abc"), ChannelType::Press);
+        assert_eq!(channel_type("https://citycouncil.gov/minutes"), ChannelType::Press);
+    }
+
+    #[test]
+    fn channel_type_display_and_as_str() {
+        assert_eq!(ChannelType::Press.as_str(), "press");
+        assert_eq!(ChannelType::Social.as_str(), "social");
+        assert_eq!(ChannelType::DirectAction.as_str(), "direct_action");
+        assert_eq!(ChannelType::CommunityMedia.as_str(), "community_media");
+        assert_eq!(format!("{}", ChannelType::Press), "press");
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        let ct = ChannelType::DirectAction;
+        let json = serde_json::to_string(&ct).unwrap();
+        assert_eq!(json, "\"direct_action\"");
+        let deserialized: ChannelType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ct);
     }
 }

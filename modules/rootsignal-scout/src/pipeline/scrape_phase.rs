@@ -16,14 +16,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, ActorType, CityNode, DiscoveryMethod, EvidenceNode, GeoPoint, GeoPrecision, Node,
-    NodeType, SourceNode, SourceRole, SourceType,
+    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode,
+    DiscoveryMethod, EvidenceNode, GeoPoint, GeoPrecision, Node, NodeType, ScrapingStrategy,
+    SocialPlatform as CommonSocialPlatform, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
 use crate::embedder::TextEmbedder;
 use crate::extractor::{ResourceTag, SignalExtractor};
 use crate::quality;
+use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
 use crate::scraper::{
     self, PageScraper, RssFetcher, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
@@ -44,6 +46,7 @@ pub(crate) struct RunContext {
     pub url_to_canonical_key: HashMap<String, String>,
     pub source_signal_counts: HashMap<String, u32>,
     pub expansion_queries: Vec<String>,
+    pub social_expansion_topics: Vec<String>,
     pub stats: ScoutStats,
     pub query_api_errors: HashSet<String>,
 }
@@ -63,6 +66,7 @@ impl RunContext {
             url_to_canonical_key,
             source_signal_counts: HashMap::new(),
             expansion_queries: Vec::new(),
+            social_expansion_topics: Vec::new(),
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
         }
@@ -182,7 +186,8 @@ pub(crate) struct ScrapePhase<'a> {
     scraper: Arc<dyn PageScraper>,
     searcher: Arc<dyn WebSearcher>,
     social: &'a dyn SocialScraper,
-    city_node: &'a CityNode,
+    region: &'a RegionNode,
+    run_id: String,
 }
 
 impl<'a> ScrapePhase<'a> {
@@ -193,7 +198,8 @@ impl<'a> ScrapePhase<'a> {
         scraper: Arc<dyn PageScraper>,
         searcher: Arc<dyn WebSearcher>,
         social: &'a dyn SocialScraper,
-        city_node: &'a CityNode,
+        region: &'a RegionNode,
+        run_id: String,
     ) -> Self {
         Self {
             writer,
@@ -202,7 +208,8 @@ impl<'a> ScrapePhase<'a> {
             scraper,
             searcher,
             social,
-            city_node,
+            region,
+            run_id,
         }
     }
 
@@ -214,15 +221,20 @@ impl<'a> ScrapePhase<'a> {
     ///
     /// Query API errors are inserted into `ctx.query_api_errors`. These queries
     /// should NOT be counted as empty scrapes — the query was never executed.
-    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext) {
+    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type.is_query())
+            .filter(|s| {
+                matches!(
+                    scraping_strategy(s.value()),
+                    ScrapingStrategy::WebQuery | ScrapingStrategy::HtmlListing { .. }
+                )
+            })
             .collect();
         let page_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type == SourceType::Web)
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::WebPage))
             .collect();
 
         let mut phase_urls: Vec<String> = Vec::new();
@@ -230,7 +242,7 @@ impl<'a> ScrapePhase<'a> {
         // Resolve query sources → URLs
         let api_queries: Vec<&&&SourceNode> = query_sources
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(s.value()))
             .collect();
         if !api_queries.is_empty() {
             info!(
@@ -256,6 +268,12 @@ impl<'a> ScrapePhase<'a> {
             for (canonical_key, query_str, result) in search_results {
                 match result {
                     Ok(results) => {
+                        run_log.log(EventKind::SearchQuery {
+                            query: query_str.clone(),
+                            provider: "serper".to_string(),
+                            result_count: results.len() as u32,
+                            canonical_key: canonical_key.clone(),
+                        });
                         // Map each resolved URL back to the query's canonical_key
                         // so scrape results get attributed to the originating query.
                         for r in &results {
@@ -284,10 +302,14 @@ impl<'a> ScrapePhase<'a> {
         // HTML-based queries
         let html_queries: Vec<&&&SourceNode> = query_sources
             .iter()
-            .filter(|s| s.source_type.link_pattern().is_some())
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::HtmlListing { .. }))
             .collect();
         for source in &html_queries {
-            if let (Some(url), Some(pattern)) = (&source.url, source.source_type.link_pattern()) {
+            let link_pattern = match scraping_strategy(source.value()) {
+                ScrapingStrategy::HtmlListing { link_pattern } => Some(link_pattern),
+                _ => None,
+            };
+            if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
                 match self.scraper.scrape_raw(url).await {
                     Ok(html) if !html.is_empty() => {
                         let links = scraper::extract_links_by_pattern(&html, url, pattern);
@@ -310,7 +332,7 @@ impl<'a> ScrapePhase<'a> {
         // RSS feeds — fetch feed XML, extract article URLs
         let rss_sources: Vec<&&SourceNode> = sources
             .iter()
-            .filter(|s| s.source_type == SourceType::Rss)
+            .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::Rss))
             .collect();
         if !rss_sources.is_empty() {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
@@ -319,6 +341,10 @@ impl<'a> ScrapePhase<'a> {
                 if let Some(ref feed_url) = source.url {
                     match fetcher.fetch_items(feed_url).await {
                         Ok(items) => {
+                            run_log.log(EventKind::ScrapeFeed {
+                                url: feed_url.clone(),
+                                items: items.len() as u32,
+                            });
                             // Ensure the RSS source gets a source_signal_counts entry
                             ctx.source_signal_counts
                                 .entry(source.canonical_key.clone())
@@ -342,15 +368,21 @@ impl<'a> ScrapePhase<'a> {
         phase_urls.sort();
         phase_urls.dedup();
 
-        // Filter blocked URLs
-        let mut allowed_urls = Vec::with_capacity(phase_urls.len());
-        for url in &phase_urls {
-            match self.writer.is_blocked(url).await {
-                Ok(true) => info!(url, "Skipping blocked URL"),
-                _ => allowed_urls.push(url.clone()),
+        // Filter blocked URLs (single batch query instead of N sequential checks)
+        let blocked = self
+            .writer
+            .blocked_urls(&phase_urls)
+            .await
+            .unwrap_or_default();
+        if !blocked.is_empty() {
+            for url in &blocked {
+                info!(url, "Skipping blocked URL");
             }
         }
-        let phase_urls = allowed_urls;
+        let phase_urls: Vec<String> = phase_urls
+            .into_iter()
+            .filter(|u| !blocked.contains(u))
+            .collect();
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         if phase_urls.is_empty() {
@@ -404,7 +436,7 @@ impl<'a> ScrapePhase<'a> {
                 }
             }
         }))
-        .buffer_unordered(3)
+        .buffer_unordered(6)
         .collect()
         .await;
 
@@ -424,15 +456,32 @@ impl<'a> ScrapePhase<'a> {
                     resource_tags,
                     signal_tags,
                 } => {
+                    run_log.log(EventKind::ScrapeUrl {
+                        url: url.clone(),
+                        strategy: "web".to_string(),
+                        success: true,
+                        content_bytes: content.len(),
+                    });
+
+                    // Count implied queries for logging
+                    let mut implied_q_count = 0u32;
                     // Collect implied queries from Tension + Need nodes for immediate expansion
                     for node in &nodes {
                         if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                             if let Some(meta) = node.meta() {
+                                implied_q_count += meta.implied_queries.len() as u32;
                                 ctx.expansion_queries
                                     .extend(meta.implied_queries.iter().cloned());
                             }
                         }
                     }
+
+                    run_log.log(EventKind::LlmExtraction {
+                        source_url: url.clone(),
+                        content_chars: content.len(),
+                        signals_extracted: nodes.len() as u32,
+                        implied_queries: implied_q_count,
+                    });
 
                     let signal_count_before = ctx.stats.signals_stored;
                     match self
@@ -444,6 +493,7 @@ impl<'a> ScrapePhase<'a> {
                             signal_tags,
                             ctx,
                             &known_urls,
+                            run_log,
                         )
                         .await
                     {
@@ -471,6 +521,12 @@ impl<'a> ScrapePhase<'a> {
                     ctx.source_signal_counts.entry(ck).or_default();
                 }
                 ScrapeOutcome::Failed => {
+                    run_log.log(EventKind::ScrapeUrl {
+                        url: url.clone(),
+                        strategy: "web".to_string(),
+                        success: false,
+                        content_bytes: 0,
+                    });
                     ctx.stats.urls_failed += 1;
                 }
             }
@@ -478,7 +534,7 @@ impl<'a> ScrapePhase<'a> {
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
-    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext) {
+    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
         type SocialResult = Option<(
             String,
             String,
@@ -493,11 +549,15 @@ impl<'a> ScrapePhase<'a> {
         let mut accounts: Vec<(String, String, SocialAccount)> = Vec::new(); // (canonical_key, source_url, account)
 
         for source in social_sources {
-            let (platform, identifier) = match source.source_type {
-                SourceType::Instagram => {
-                    (SocialPlatform::Instagram, source.canonical_value.clone())
+            let common_platform = match scraping_strategy(source.value()) {
+                ScrapingStrategy::Social(p) => p,
+                _ => continue,
+            };
+            let (platform, identifier) = match common_platform {
+                CommonSocialPlatform::Instagram => {
+                    (SocialPlatform::Instagram, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                SourceType::Facebook => {
+                CommonSocialPlatform::Facebook => {
                     let url = source
                         .url
                         .as_deref()
@@ -505,7 +565,7 @@ impl<'a> ScrapePhase<'a> {
                         .unwrap_or(&source.canonical_value);
                     (SocialPlatform::Facebook, url.to_string())
                 }
-                SourceType::Reddit => {
+                CommonSocialPlatform::Reddit => {
                     let url = source
                         .url
                         .as_deref()
@@ -520,11 +580,13 @@ impl<'a> ScrapePhase<'a> {
                     };
                     (SocialPlatform::Reddit, identifier)
                 }
-                SourceType::Twitter => {
-                    (SocialPlatform::Twitter, source.canonical_value.clone())
+                CommonSocialPlatform::Twitter => {
+                    (SocialPlatform::Twitter, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
                 }
-                SourceType::TikTok => (SocialPlatform::TikTok, source.canonical_value.clone()),
-                _ => continue,
+                CommonSocialPlatform::TikTok => {
+                    (SocialPlatform::TikTok, source.url.as_deref().unwrap_or(&source.canonical_value).to_string())
+                }
+                CommonSocialPlatform::Bluesky => continue, // Not yet supported by social scraper
             };
             let source_url = source
                 .url
@@ -686,6 +748,20 @@ impl<'a> ScrapePhase<'a> {
                 signal_tags,
                 post_count,
             ) = result;
+
+            run_log.log(EventKind::SocialScrape {
+                platform: "social".to_string(),
+                identifier: source_url.clone(),
+                post_count: post_count as u32,
+            });
+
+            run_log.log(EventKind::LlmExtraction {
+                source_url: source_url.clone(),
+                content_chars: combined_text.len(),
+                signals_extracted: nodes.len() as u32,
+                implied_queries: 0,
+            });
+
             // Collect implied queries from Tension/Need social signals
             for node in &nodes {
                 if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
@@ -706,6 +782,7 @@ impl<'a> ScrapePhase<'a> {
                     signal_tags,
                     ctx,
                     &known_city_urls,
+                    run_log,
                 )
                 .await
             {
@@ -720,10 +797,10 @@ impl<'a> ScrapePhase<'a> {
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
     /// across Instagram, X/Twitter, TikTok, and GoFundMe.
-    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext) {
-        const MAX_SOCIAL_SEARCHES: usize = 3;
-        const MAX_NEW_ACCOUNTS: usize = 5;
-        const POSTS_PER_SEARCH: u32 = 20;
+    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext, run_log: &mut RunLog) {
+        const MAX_SOCIAL_SEARCHES: usize = 6;
+        const MAX_NEW_ACCOUNTS: usize = 10;
+        const POSTS_PER_SEARCH: u32 = 30;
         const MAX_SITE_SEARCH_TOPICS: usize = 2;
         const SITE_SEARCH_RESULTS: usize = 5;
 
@@ -738,7 +815,7 @@ impl<'a> ScrapePhase<'a> {
         // Load existing sources for dedup across all platforms
         let existing_sources = self
             .writer
-            .get_active_sources(&self.city_node.slug)
+            .get_active_sources()
             .await
             .unwrap_or_default();
         let existing_canonical_values: HashSet<String> = existing_sources
@@ -755,12 +832,13 @@ impl<'a> ScrapePhase<'a> {
 
         // Search each social platform with the same topics
         let platforms = [
-            (SocialPlatform::Instagram, SourceType::Instagram),
-            (SocialPlatform::Twitter, SourceType::Twitter),
-            (SocialPlatform::TikTok, SourceType::TikTok),
+            SocialPlatform::Instagram,
+            SocialPlatform::Twitter,
+            SocialPlatform::TikTok,
+            SocialPlatform::Reddit,
         ];
 
-        for (platform, source_type) in &platforms {
+        for platform in &platforms {
             if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
                 break;
             }
@@ -769,6 +847,7 @@ impl<'a> ScrapePhase<'a> {
                 SocialPlatform::Instagram => "instagram",
                 SocialPlatform::Twitter => "x",
                 SocialPlatform::TikTok => "tiktok",
+                SocialPlatform::Reddit => "reddit",
                 _ => continue,
             };
 
@@ -791,6 +870,12 @@ impl<'a> ScrapePhase<'a> {
                 );
                 continue;
             }
+
+            run_log.log(EventKind::SocialTopicSearch {
+                platform: platform_name.to_string(),
+                topics: topic_strs.iter().map(|t| t.to_string()).collect(),
+                posts_found: discovered_posts.len() as u32,
+            });
 
             ctx.stats.discovery_posts_found += discovered_posts.len() as u32;
 
@@ -823,6 +908,9 @@ impl<'a> ScrapePhase<'a> {
                     SocialPlatform::Twitter => format!("https://x.com/{username}"),
                     SocialPlatform::TikTok => {
                         format!("https://www.tiktok.com/@{username}")
+                    }
+                    SocialPlatform::Reddit => {
+                        format!("https://www.reddit.com/user/{username}/")
                     }
                     _ => continue,
                 };
@@ -871,6 +959,7 @@ impl<'a> ScrapePhase<'a> {
                         result.signal_tags,
                         ctx,
                         &known_city_urls,
+                        run_log,
                     )
                     .await
                 {
@@ -880,9 +969,8 @@ impl<'a> ScrapePhase<'a> {
                 let produced = ctx.stats.signals_stored - signal_count_before;
 
                 // Create a Source node with correct platform type
-                let cv = sources::canonical_value_from_url(*source_type, &source_url);
-                let ck =
-                    sources::make_canonical_key(&self.city_node.slug, *source_type, &cv);
+                let cv = rootsignal_common::canonical_value(&source_url);
+                let ck = sources::make_canonical_key(&source_url);
                 let gap_context = format!(
                     "Topic: {}",
                     topics.first().map(|t| t.as_str()).unwrap_or("unknown")
@@ -892,9 +980,7 @@ impl<'a> ScrapePhase<'a> {
                     canonical_key: ck.clone(),
                     canonical_value: cv,
                     url: Some(source_url.clone()),
-                    source_type: *source_type,
                     discovery_method: DiscoveryMethod::HashtagDiscovery,
-                    city: self.city_node.slug.clone(),
                     created_at: Utc::now(),
                     last_scraped: Some(Utc::now()),
                     last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
@@ -935,7 +1021,7 @@ impl<'a> ScrapePhase<'a> {
         let site_sources: Vec<&SourceNode> = existing_sources
             .iter()
             .filter(|s| {
-                s.source_type == SourceType::WebQuery
+                is_web_query(&s.canonical_value)
                     && s.canonical_value.starts_with("site:")
             })
             .collect();
@@ -994,6 +1080,7 @@ impl<'a> ScrapePhase<'a> {
                             extracted.signal_tags,
                             ctx,
                             &known_city_urls,
+                            run_log,
                         )
                         .await
                     {
@@ -1023,6 +1110,7 @@ impl<'a> ScrapePhase<'a> {
         signal_tags: Vec<(Uuid, Vec<String>)>,
         ctx: &mut RunContext,
         known_city_urls: &HashSet<String>,
+        run_log: &mut RunLog,
     ) -> Result<()> {
         let url = sanitize_url(url);
         ctx.stats.signals_extracted += nodes.len() as u32;
@@ -1047,8 +1135,8 @@ impl<'a> ScrapePhase<'a> {
 
         // Strip fake city-center coordinates.
         // Safety net: if the LLM echoes the default city coords, remove them.
-        let center_lat = self.city_node.center_lat;
-        let center_lng = self.city_node.center_lng;
+        let center_lat = self.region.center_lat;
+        let center_lng = self.region.center_lng;
         for node in &mut nodes {
             let is_fake = node
                 .meta()
@@ -1072,10 +1160,10 @@ impl<'a> ScrapePhase<'a> {
         // 3. No coordinates, location_name matches a geo_term → accept
         // 4. No coordinates, no location_name match, source is city-local → accept with 0.8x confidence
         // 5. No coordinates, no match, source not city-local → reject
-        let geo_terms = &self.city_node.geo_terms;
-        let center_lat = self.city_node.center_lat;
-        let center_lng = self.city_node.center_lng;
-        let radius_km = self.city_node.radius_km;
+        let geo_terms = &self.region.geo_terms;
+        let center_lat = self.region.center_lat;
+        let center_lng = self.region.center_lng;
+        let radius_km = self.region.radius_km;
 
         // Determine if this source URL belongs to a city-local source
         let is_city_local = known_city_urls.contains(&url);
@@ -1218,6 +1306,12 @@ impl<'a> ScrapePhase<'a> {
             if let Some((existing_id, existing_url)) = global_matches.get(&key) {
                 if *existing_url != url {
                     // Cross-source: different URL confirms the same signal — real corroboration
+                    run_log.log(EventKind::SignalCorroborated {
+                        existing_id: existing_id.to_string(),
+                        signal_type: format!("{}", node.node_type()),
+                        new_source_url: url.clone(),
+                        similarity: 1.0,
+                    });
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
@@ -1236,6 +1330,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer
                         .create_evidence(&evidence, *existing_id)
@@ -1245,6 +1340,13 @@ impl<'a> ScrapePhase<'a> {
                 } else {
                     // Same-source re-scrape: signal already exists from this URL.
                     // Refresh to prove it's still active, but don't inflate corroboration.
+                    run_log.log(EventKind::SignalDeduplicated {
+                        signal_type: format!("{}", node.node_type()),
+                        title: node.title().to_string(),
+                        matched_id: existing_id.to_string(),
+                        similarity: 1.0,
+                        action: "refresh".to_string(),
+                    });
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
@@ -1262,6 +1364,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer
                         .create_evidence(&evidence, *existing_id)
@@ -1301,6 +1404,40 @@ impl<'a> ScrapePhase<'a> {
             }
         };
 
+        // Pre-compute resource tag embeddings in a single batch API call
+        let mut res_embed_texts: Vec<String> = Vec::new();
+        let mut res_embed_keys: Vec<(Uuid, usize)> = Vec::new(); // (meta_id, tag_index)
+        for node in &nodes {
+            if let Some(meta) = node.meta() {
+                if let Some(tags) = resource_map.get(&meta.id) {
+                    for (i, tag) in tags.iter().enumerate() {
+                        if tag.confidence >= 0.3 {
+                            res_embed_texts.push(format!(
+                                "{}: {}",
+                                tag.slug,
+                                tag.context.as_deref().unwrap_or("")
+                            ));
+                            res_embed_keys.push((meta.id, i));
+                        }
+                    }
+                }
+            }
+        }
+        let res_embeddings: HashMap<(Uuid, usize), Vec<f32>> = if !res_embed_texts.is_empty() {
+            match self.embedder.embed_batch(res_embed_texts).await {
+                Ok(embeds) => res_embed_keys
+                    .into_iter()
+                    .zip(embeds)
+                    .collect(),
+                Err(e) => {
+                    warn!(error = %e, "Resource tag batch embedding failed (non-fatal)");
+                    HashMap::new()
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
         // --- Layer 3: Vector dedup (in-memory cache + graph) with URL-aware threshold ---
 
         for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
@@ -1320,6 +1457,13 @@ impl<'a> ScrapePhase<'a> {
             {
                 let is_same_source = cached_url == url;
                 if is_same_source {
+                    run_log.log(EventKind::SignalDeduplicated {
+                        signal_type: format!("{}", node_type),
+                        title: node.title().to_string(),
+                        matched_id: cached_id.to_string(),
+                        similarity: sim,
+                        action: "refresh".to_string(),
+                    });
                     info!(
                         existing_id = %cached_id,
                         similarity = sim,
@@ -1339,12 +1483,19 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer.create_evidence(&evidence, cached_id).await?;
 
                     ctx.stats.signals_deduplicated += 1;
                     continue;
                 } else if sim >= 0.92 {
+                    run_log.log(EventKind::SignalCorroborated {
+                        existing_id: cached_id.to_string(),
+                        signal_type: format!("{}", cached_type),
+                        new_source_url: url.clone(),
+                        similarity: sim,
+                    });
                     info!(
                         existing_id = %cached_id,
                         similarity = sim,
@@ -1364,6 +1515,7 @@ impl<'a> ScrapePhase<'a> {
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
                         evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
                     };
                     self.writer.create_evidence(&evidence, cached_id).await?;
 
@@ -1373,19 +1525,19 @@ impl<'a> ScrapePhase<'a> {
             }
 
             // 3b: Check graph index (catches dupes from previous runs, city-scoped)
-            let lat_delta = self.city_node.radius_km / 111.0;
-            let lng_delta = self.city_node.radius_km
-                / (111.0 * self.city_node.center_lat.to_radians().cos());
+            let lat_delta = self.region.radius_km / 111.0;
+            let lng_delta = self.region.radius_km
+                / (111.0 * self.region.center_lat.to_radians().cos());
             match self
                 .writer
                 .find_duplicate(
                     &embedding,
                     node_type,
                     0.85,
-                    self.city_node.center_lat - lat_delta,
-                    self.city_node.center_lat + lat_delta,
-                    self.city_node.center_lng - lng_delta,
-                    self.city_node.center_lng + lng_delta,
+                    self.region.center_lat - lat_delta,
+                    self.region.center_lat + lat_delta,
+                    self.region.center_lng - lng_delta,
+                    self.region.center_lng + lng_delta,
                 )
                 .await
             {
@@ -1393,6 +1545,13 @@ impl<'a> ScrapePhase<'a> {
                     let dominated_url = sanitize_url(&dup.source_url);
                     let is_same_source = dominated_url == url;
                     if is_same_source {
+                        run_log.log(EventKind::SignalDeduplicated {
+                            signal_type: format!("{}", dup.node_type),
+                            title: node.title().to_string(),
+                            matched_id: dup.id.to_string(),
+                            similarity: dup.similarity,
+                            action: "refresh".to_string(),
+                        });
                         info!(
                             existing_id = %dup.id,
                             similarity = dup.similarity,
@@ -1412,6 +1571,7 @@ impl<'a> ScrapePhase<'a> {
                             snippet: node.meta().map(|m| m.summary.clone()),
                             relevance: None,
                             evidence_confidence: None,
+                            channel_type: Some(channel_type(&url)),
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1422,6 +1582,12 @@ impl<'a> ScrapePhase<'a> {
                         continue;
                     } else if dup.similarity >= 0.92 {
                         let cross_type = dup.node_type != node_type;
+                        run_log.log(EventKind::SignalCorroborated {
+                            existing_id: dup.id.to_string(),
+                            signal_type: format!("{}", dup.node_type),
+                            new_source_url: url.clone(),
+                            similarity: dup.similarity,
+                        });
                         info!(
                             existing_id = %dup.id,
                             similarity = dup.similarity,
@@ -1442,6 +1608,7 @@ impl<'a> ScrapePhase<'a> {
                             snippet: node.meta().map(|m| m.summary.clone()),
                             relevance: None,
                             evidence_confidence: None,
+                            channel_type: Some(channel_type(&url)),
                         };
                         self.writer.create_evidence(&evidence, dup.id).await?;
 
@@ -1460,7 +1627,15 @@ impl<'a> ScrapePhase<'a> {
             }
 
             // Create new node
-            let node_id = self.writer.create_node(&node, &embedding).await?;
+            let node_id = self.writer.create_node(&node, &embedding, "scraper", &self.run_id).await?;
+
+            run_log.log(EventKind::SignalCreated {
+                node_id: node_id.to_string(),
+                signal_type: format!("{}", node_type),
+                title: node.title().to_string(),
+                confidence: node.meta().map(|m| m.confidence as f64).unwrap_or(0.0),
+                source_url: url.clone(),
+            });
 
             // Add to in-memory cache so subsequent batches can find it immediately
             ctx.embed_cache
@@ -1474,6 +1649,7 @@ impl<'a> ScrapePhase<'a> {
                 snippet: node.meta().map(|m| m.summary.clone()),
                 relevance: None,
                 evidence_confidence: None,
+                channel_type: Some(channel_type(&url)),
             };
             self.writer.create_evidence(&evidence, node_id).await?;
 
@@ -1490,7 +1666,6 @@ impl<'a> ScrapePhase<'a> {
                                 entity_id: actor_name.to_lowercase().replace(' ', "-"),
                                 domains: vec![],
                                 social_urls: vec![],
-                                city: self.city_node.name.clone(),
                                 description: String::new(),
                                 signal_count: 0,
                                 first_seen: Utc::now(),
@@ -1521,16 +1696,11 @@ impl<'a> ScrapePhase<'a> {
             // Wire resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
             if let Some(meta) = node.meta() {
                 if let Some(tags) = resource_map.get(&meta.id) {
-                    for tag in tags.iter().filter(|t| t.confidence >= 0.3) {
+                    for (i, tag) in tags.iter().enumerate().filter(|(_, t)| t.confidence >= 0.3) {
                         let slug = rootsignal_common::slugify(&tag.slug);
-                        let embed_text =
-                            format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
-                        let res_embedding = match self.embedder.embed(&embed_text).await {
-                            Ok(e) => e,
-                            Err(e) => {
-                                warn!(error = %e, slug = slug.as_str(), "Resource embedding failed (non-fatal)");
-                                continue;
-                            }
+                        let res_embedding = match res_embeddings.get(&(meta.id, i)) {
+                            Some(e) => e.clone(),
+                            None => continue, // Embedding failed in batch, skip
                         };
                         let resource_id = match self
                             .writer

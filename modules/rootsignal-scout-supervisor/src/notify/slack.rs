@@ -54,14 +54,14 @@ impl NotifyBackend for SlackWebhook {
             "{emoji} *Scout Supervisor — {}*\n\
              *Type:* {}\n\
              *Target:* {} `{}`\n\
-             *City:* {}\n\n\
+             *Region:* {}\n\n\
              {}\n\n\
              *Suggested action:* {}",
             issue.severity,
             issue.issue_type,
             issue.target_label,
             issue.target_id,
-            issue.city,
+            issue.region,
             issue.description,
             issue.suggested_action,
         );
@@ -128,8 +128,8 @@ impl NotifyBackend for SlackWebhook {
         }
 
         lines.push(format!(
-            "_Checked {} signals, {} stories_",
-            stats.signals_checked, stats.stories_checked
+            "_Reviewed {} signals (passed={}, rejected={})_",
+            stats.signals_reviewed, stats.signals_passed, stats.signals_rejected
         ));
 
         let payload = json!({

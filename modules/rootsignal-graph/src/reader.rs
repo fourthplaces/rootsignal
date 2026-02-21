@@ -57,7 +57,8 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     WHERE n.lat <> 0.0
+                     WHERE n.review_status = 'live'
+                       AND n.lat <> 0.0
                        AND n.lat >= $min_lat AND n.lat <= $max_lat
                        AND n.lng >= $min_lng AND n.lng <= $max_lng
                        AND n.confidence >= $min_confidence
@@ -160,7 +161,8 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     WHERE n.confidence >= $min_confidence
+                     WHERE n.review_status = 'live'
+                       AND n.confidence >= $min_confidence
                        {expiry}
                      RETURN n, labels(n)[0] AS node_label, coalesce(s.type_diversity, 0) AS story_triangulation
                      ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
@@ -219,8 +221,8 @@ impl PublicGraphReader {
         status_filter: Option<&str>,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let cypher = match status_filter {
-            Some(_) => "MATCH (s:Story) WHERE s.status = $status RETURN s ORDER BY s.energy DESC LIMIT $limit",
-            None => "MATCH (s:Story) RETURN s ORDER BY s.energy DESC LIMIT $limit",
+            Some(_) => "MATCH (s:Story) WHERE s.review_status = 'live' AND s.status = $status RETURN s ORDER BY s.energy DESC LIMIT $limit",
+            None => "MATCH (s:Story) WHERE s.review_status = 'live' RETURN s ORDER BY s.energy DESC LIMIT $limit",
         };
 
         let mut q = query(cypher).param("limit", limit as i64);
@@ -566,7 +568,7 @@ impl PublicGraphReader {
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Story) WHERE s.category = $category
+            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.category = $category
              RETURN s ORDER BY s.energy DESC LIMIT $limit",
         )
         .param("category", category)
@@ -589,7 +591,7 @@ impl PublicGraphReader {
         limit: u32,
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Story) WHERE s.arc = $arc
+            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.arc = $arc
              RETURN s ORDER BY s.energy DESC LIMIT $limit",
         )
         .param("arc", arc)
@@ -607,20 +609,19 @@ impl PublicGraphReader {
 
     // --- Actor queries ---
 
-    /// List actors active in a city.
+    /// List actors active in a region.
     pub async fn actors_active_in_area(
         &self,
-        city: &str,
+        region_slug: &str,
         limit: u32,
     ) -> Result<Vec<rootsignal_common::ActorNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor)
-             WHERE a.city = $city
+            "MATCH (r:City {slug: $region_slug})-[:DISCOVERED]->(a:Actor)
              RETURN a
              ORDER BY a.last_active DESC
              LIMIT $limit",
         )
-        .param("city", city)
+        .param("region_slug", region_slug)
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
@@ -655,6 +656,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {id: $id})-[:ACTED_IN]->(n)<-[:CONTAINS]-(s:Story)
+             WHERE s.review_status = 'live'
              RETURN DISTINCT s
              ORDER BY s.energy DESC
              LIMIT $limit",
@@ -818,7 +820,8 @@ impl PublicGraphReader {
     ) -> Result<Vec<StoryNode>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.centroid_lat IS NOT NULL
+             WHERE s.review_status = 'live'
+               AND s.centroid_lat IS NOT NULL
                AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
                AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
                AND (s.arc IS NULL OR s.arc <> 'archived')
@@ -854,7 +857,8 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)
-             WHERE t.lat IS NOT NULL
+             WHERE t.review_status = 'live'
+               AND t.lat IS NOT NULL
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND NOT (t)<-[:CONTAINS]-(:Story)
@@ -917,6 +921,7 @@ impl PublicGraphReader {
                         "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
+                           AND node.review_status = 'live'
                            AND node.lat <> 0.0
                            AND node.lat >= $min_lat AND node.lat <= $max_lat
                            AND node.lng >= $min_lng AND node.lng <= $max_lng
@@ -998,11 +1003,13 @@ impl PublicGraphReader {
                 "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                  YIELD node, score
                  WHERE score >= $min_score
+                   AND node.review_status = 'live'
                    AND node.lat <> 0.0
                    AND node.lat >= $min_lat AND node.lat <= $max_lat
                    AND node.lng >= $min_lng AND node.lng <= $max_lng
                  WITH node, score
                  MATCH (s:Story)-[:CONTAINS]->(node)
+                 WHERE s.review_status = 'live'
                  RETURN s.id AS story_id, score, node.title AS signal_title";
 
             let q = query(cypher)
@@ -1039,7 +1046,7 @@ impl PublicGraphReader {
         let story_ids: Vec<String> = story_scores.keys().map(|id| id.to_string()).collect();
         let q = query(
             "MATCH (s:Story)
-             WHERE s.id IN $ids
+             WHERE s.review_status = 'live' AND s.id IN $ids
              RETURN s",
         )
         .param("ids", story_ids);
@@ -1189,7 +1196,8 @@ impl PublicGraphReader {
     pub async fn story_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.last_updated >= datetime() - duration('P30D')
+             WHERE s.review_status = 'live'
+               AND s.last_updated >= datetime() - duration('P30D')
              RETURN coalesce(s.arc, 'unknown') AS arc, count(s) AS cnt
              ORDER BY cnt DESC",
         );
@@ -1208,7 +1216,8 @@ impl PublicGraphReader {
     pub async fn story_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Story)
-             WHERE s.last_updated >= datetime() - duration('P30D')
+             WHERE s.review_status = 'live'
+               AND s.last_updated >= datetime() - duration('P30D')
              RETURN coalesce(s.category, 'uncategorized') AS category, count(s) AS cnt
              ORDER BY cnt DESC",
         );
@@ -1225,7 +1234,7 @@ impl PublicGraphReader {
 
     /// Total story count.
     pub async fn story_count(&self) -> Result<u64, neo4rs::Error> {
-        let q = query("MATCH (s:Story) RETURN count(s) AS cnt");
+        let q = query("MATCH (s:Story) WHERE s.review_status = 'live' RETURN count(s) AS cnt");
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
@@ -1249,7 +1258,7 @@ impl PublicGraphReader {
 
     /// Get a single story by ID (without signals).
     pub async fn get_story_by_id(&self, id: Uuid) -> Result<Option<StoryNode>, neo4rs::Error> {
-        let q = query("MATCH (s:Story {id: $id}) RETURN s").param("id", id.to_string());
+        let q = query("MATCH (s:Story {id: $id}) WHERE s.review_status = 'live' RETURN s").param("id", id.to_string());
         let mut stream = self.client.graph.execute(q).await?;
         match stream.next().await? {
             Some(row) => Ok(row_to_story(&row)),
@@ -1334,7 +1343,7 @@ impl PublicGraphReader {
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         let cypher = "MATCH (s:Story)-[:CONTAINS]->(n)
-             WHERE n.id IN $ids
+             WHERE s.review_status = 'live' AND n.id IN $ids
              RETURN n.id AS signal_id, s";
 
         let q = query(cypher).param("ids", id_strs);
@@ -1585,6 +1594,149 @@ impl PublicGraphReader {
         gaps.sort_by(|a, b| b.gap.cmp(&a.gap));
         Ok(gaps)
     }
+
+    // ========== Supervisor / Validation Issues ==========
+
+    /// List ValidationIssue nodes for a region, with optional status filter and limit.
+    pub async fn list_validation_issues(
+        &self,
+        region: &str,
+        status_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ValidationIssueRow>, neo4rs::Error> {
+        let cypher = if status_filter.is_some() {
+            "MATCH (v:ValidationIssue)
+             WHERE COALESCE(v.region, v.city) = $region AND v.status = $status
+             RETURN v
+             ORDER BY v.created_at DESC
+             LIMIT $limit"
+        } else {
+            "MATCH (v:ValidationIssue)
+             WHERE COALESCE(v.region, v.city) = $region
+             RETURN v
+             ORDER BY v.created_at DESC
+             LIMIT $limit"
+        };
+
+        let mut q = neo4rs::query(cypher)
+            .param("region", region.to_string())
+            .param("limit", limit);
+
+        if let Some(status) = status_filter {
+            q = q.param("status", status.to_string());
+        }
+
+        let mut stream = self.client.inner().execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            if let Ok(n) = row.get::<neo4rs::Node>("v") {
+                results.push(ValidationIssueRow::from_neo4j_node(&n));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Aggregate counts of ValidationIssues by type, severity, and status for a region.
+    pub async fn validation_issue_summary(
+        &self,
+        region: &str,
+    ) -> Result<ValidationIssueSummary, neo4rs::Error> {
+        let q = neo4rs::query(
+            "MATCH (v:ValidationIssue)
+             WHERE COALESCE(v.region, v.city) = $region
+             RETURN
+               sum(CASE WHEN v.status = 'open' THEN 1 ELSE 0 END) AS total_open,
+               sum(CASE WHEN v.status = 'resolved' THEN 1 ELSE 0 END) AS total_resolved,
+               sum(CASE WHEN v.status = 'dismissed' THEN 1 ELSE 0 END) AS total_dismissed,
+               v.issue_type AS issue_type,
+               v.severity AS severity,
+               v.status AS status,
+               count(v) AS cnt",
+        )
+        .param("region", region.to_string());
+
+        let mut stream = self.client.inner().execute(q).await?;
+
+        let mut total_open = 0i64;
+        let mut total_resolved = 0i64;
+        let mut total_dismissed = 0i64;
+        let mut count_by_type: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut count_by_severity: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+        while let Some(row) = stream.next().await? {
+            total_open = row.get::<i64>("total_open").unwrap_or(0);
+            total_resolved = row.get::<i64>("total_resolved").unwrap_or(0);
+            total_dismissed = row.get::<i64>("total_dismissed").unwrap_or(0);
+            let issue_type: String = row.get("issue_type").unwrap_or_default();
+            let severity: String = row.get("severity").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+
+            if !issue_type.is_empty() {
+                *count_by_type.entry(issue_type).or_insert(0) += cnt;
+            }
+            if !severity.is_empty() {
+                *count_by_severity.entry(severity).or_insert(0) += cnt;
+            }
+        }
+
+        Ok(ValidationIssueSummary {
+            total_open,
+            total_resolved,
+            total_dismissed,
+            count_by_type: count_by_type.into_iter().collect(),
+            count_by_severity: count_by_severity.into_iter().collect(),
+        })
+    }
+}
+
+/// A row from the ValidationIssue query.
+#[derive(Debug, Clone)]
+pub struct ValidationIssueRow {
+    pub id: String,
+    pub issue_type: String,
+    pub severity: String,
+    pub target_id: String,
+    pub target_label: String,
+    pub description: String,
+    pub suggested_action: String,
+    pub status: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+impl ValidationIssueRow {
+    fn from_neo4j_node(n: &neo4rs::Node) -> Self {
+        Self {
+            id: n.get("id").unwrap_or_default(),
+            issue_type: n.get("issue_type").unwrap_or_default(),
+            severity: n.get("severity").unwrap_or_default(),
+            target_id: n.get("target_id").unwrap_or_default(),
+            target_label: n.get("target_label").unwrap_or_default(),
+            description: n.get("description").unwrap_or_default(),
+            suggested_action: n.get("suggested_action").unwrap_or_default(),
+            status: n.get("status").unwrap_or_default(),
+            created_at: n.get::<String>("created_at").ok().and_then(|s| {
+                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
+                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+            }),
+            resolved_at: n.get::<String>("resolved_at").ok().and_then(|s| {
+                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
+                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+            }),
+        }
+    }
+}
+
+/// Summary counts for validation issues.
+#[derive(Debug, Clone)]
+pub struct ValidationIssueSummary {
+    pub total_open: i64,
+    pub total_resolved: i64,
+    pub total_dismissed: i64,
+    pub count_by_type: Vec<(String, i64)>,
+    pub count_by_severity: Vec<(String, i64)>,
 }
 
 /// A signal matched to a resource query with scoring.
@@ -1796,6 +1948,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
     let external_ratio: f64 = n.get("external_ratio").unwrap_or(0.0);
     let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
+    let channel_diversity: i64 = n.get("channel_diversity").unwrap_or(1);
 
     let meta = NodeMeta {
         id,
@@ -1820,6 +1973,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         source_diversity: source_diversity as u32,
         external_ratio: external_ratio as f32,
         cause_heat,
+        channel_diversity: channel_diversity as u32,
         mentioned_actors: Vec::new(),
         implied_queries: Vec::new(),
     };
@@ -2028,6 +2182,15 @@ pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
             let relevance: String = n.get("relevance").unwrap_or_default();
             let ev_conf: f64 = n.get("evidence_confidence").unwrap_or(0.0);
 
+            let channel_type_str: String = n.get("channel_type").unwrap_or_default();
+            let channel_type = match channel_type_str.as_str() {
+                "social" => Some(rootsignal_common::ChannelType::Social),
+                "direct_action" => Some(rootsignal_common::ChannelType::DirectAction),
+                "community_media" => Some(rootsignal_common::ChannelType::CommunityMedia),
+                "press" => Some(rootsignal_common::ChannelType::Press),
+                _ => None,
+            };
+
             Some(EvidenceNode {
                 id,
                 source_url,
@@ -2048,6 +2211,7 @@ pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
                 } else {
                     None
                 },
+                channel_type,
             })
         })
         .collect();
@@ -2162,6 +2326,10 @@ pub fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
         drawn_to_count: drawn_to_count as u32,
         gap_score: gap_score as i32,
         gap_velocity,
+        channel_diversity: {
+            let cd: i64 = n.get("channel_diversity").unwrap_or(1);
+            cd as u32
+        },
     })
 }
 
@@ -2206,7 +2374,6 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
     let entity_id: String = n.get("entity_id").unwrap_or_default();
     let domains: Vec<String> = n.get("domains").unwrap_or_default();
     let social_urls: Vec<String> = n.get("social_urls").unwrap_or_default();
-    let city: String = n.get("city").unwrap_or_default();
     let description: String = n.get("description").unwrap_or_default();
     let signal_count: i64 = n.get("signal_count").unwrap_or(0);
     let first_seen = parse_story_datetime(&n, "first_seen");
@@ -2220,7 +2387,6 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         entity_id,
         domains,
         social_urls,
-        city,
         description,
         signal_count: signal_count as u32,
         first_seen,

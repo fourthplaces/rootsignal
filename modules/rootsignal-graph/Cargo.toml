@@ -22,5 +22,6 @@ anyhow = { workspace = true }
 schemars = { workspace = true }
 url = "2"
 arc-swap = "1"
+geohash = { workspace = true }
 futures = { workspace = true }
 testcontainers = { workspace = true, optional = true }

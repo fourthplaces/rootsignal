@@ -62,6 +62,9 @@ spider_transformations = "2"
 # RSS/Atom feed parsing
 feed-rs = "2"
 
+# Geohash (spatial bucketing)
+geohash = "0.13"
+
 # Regex (PII detection)
 regex = "1"
 

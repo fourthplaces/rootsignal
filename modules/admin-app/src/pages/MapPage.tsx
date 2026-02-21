@@ -15,17 +15,17 @@ const TYPE_COLORS: Record<string, string> = {
   Tension: "#ef4444",
 };
 
-interface CityMapProps {
-  city: { centerLat: number; centerLng: number; radiusKm: number };
+interface RegionMapProps {
+  region: { centerLat: number; centerLng: number; radiusKm: number };
 }
 
-export function CityMap({ city }: CityMapProps) {
+export function RegionMap({ region }: RegionMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
 
   const { data: geoData } = useQuery(SIGNALS_NEAR_GEO_JSON, {
-    variables: { lat: city.centerLat, lng: city.centerLng, radiusKm: city.radiusKm },
+    variables: { lat: region.centerLat, lng: region.centerLng, radiusKm: region.radiusKm },
   });
 
   const geojson: FeatureCollection | null = geoData?.signalsNearGeoJson
@@ -39,7 +39,7 @@ export function CityMap({ city }: CityMapProps) {
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
-      center: [city.centerLng, city.centerLat],
+      center: [region.centerLng, region.centerLat],
       zoom: 12,
     });
 

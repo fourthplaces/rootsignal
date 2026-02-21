@@ -71,8 +71,8 @@ async fn run_scenario(
 
     // Build and run Scout — use scenario name in slug to isolate parallel tests
     let mut city_node = city_node_for(&world);
-    city_node.slug = format!("{}_{}", city_node.slug, scenario_name);
-    let city_slug = city_node.slug.clone();
+    city_node.name = format!("{}_{}", city_node.name, scenario_name);
+    let city_slug = city_node.name.clone();
 
     // Clean graph state for this test city (shared Neo4j may have leftover data)
     let writer = ctx.writer();
@@ -118,7 +118,7 @@ async fn run_scenario(
         .expect("Failed to clean sources");
 
     // Seed sources into Neo4j so the scout has something to schedule
-    seed_sources_from_world(&writer, &world, &city_node.slug).await;
+    seed_sources_from_world(&writer, &world, &city_node.name).await;
 
     let scout = ctx.sim_scout(sim.clone(), city_node);
     let stats = scout.run().await.expect("Scout run failed");

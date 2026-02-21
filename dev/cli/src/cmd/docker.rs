@@ -361,7 +361,7 @@ fn run_restart(ctx: &AppContext, services: Vec<String>, all: bool) -> Result<()>
     }
 
     let mut up_cmd = docker_compose(ctx);
-    up_cmd.args(["up", "-d"]);
+    up_cmd.args(["up", "--build", "-d"]);
     up_cmd.args(&services);
 
     let status = up_cmd

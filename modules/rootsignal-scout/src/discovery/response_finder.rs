@@ -12,9 +12,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AidNode, CityNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, SensitivityLevel, Severity, SourceNode, SourceRole, SourceType,
-    TensionNode, Urgency,
+    AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
+    NodeMeta, NodeType, RegionNode, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
 
@@ -245,13 +244,14 @@ pub struct ResponseFinder<'a> {
     searcher: Arc<dyn WebSearcher>,
     scraper: Arc<dyn PageScraper>,
     embedder: &'a dyn TextEmbedder,
-    city: CityNode,
-    city_slug: String,
+    region: RegionNode,
+    _region_slug: String,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
     cancelled: Arc<AtomicBool>,
+    run_id: String,
 }
 
 impl<'a> ResponseFinder<'a> {
@@ -261,25 +261,27 @@ impl<'a> ResponseFinder<'a> {
         scraper: Arc<dyn PageScraper>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        city: CityNode,
+        region: RegionNode,
         cancelled: Arc<AtomicBool>,
+        run_id: String,
     ) -> Self {
-        let lat_delta = city.radius_km / 111.0;
-        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
-        let city_slug = city.slug.clone();
+        let lat_delta = region.radius_km / 111.0;
+        let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
+        let region_slug = region.name.clone();
         Self {
             writer,
             anthropic_api_key: anthropic_api_key.to_string(),
             searcher,
             scraper,
             embedder,
-            min_lat: city.center_lat - lat_delta,
-            max_lat: city.center_lat + lat_delta,
-            min_lng: city.center_lng - lng_delta,
-            max_lng: city.center_lng + lng_delta,
-            city,
-            city_slug,
+            min_lat: region.center_lat - lat_delta,
+            max_lat: region.center_lat + lat_delta,
+            min_lng: region.center_lng - lng_delta,
+            max_lng: region.center_lng + lng_delta,
+            region,
+            _region_slug: region_slug,
             cancelled,
+            run_id,
         }
     }
 
@@ -371,7 +373,7 @@ impl<'a> ResponseFinder<'a> {
             .await
             .unwrap_or_default();
 
-        let system = investigation_system_prompt(&self.city.name);
+        let system = investigation_system_prompt(&self.region.name);
         let user = investigation_user_prompt(target, &existing);
 
         // Build a tracked agent for this investigation
@@ -647,17 +649,18 @@ impl<'a> ResponseFinder<'a> {
             freshness_score: 1.0,
             corroboration_count: 0,
             location: Some(GeoPoint {
-                lat: self.city.center_lat,
-                lng: self.city.center_lng,
+                lat: self.region.center_lat,
+                lng: self.region.center_lng,
                 precision: GeoPrecision::City,
             }),
-            location_name: Some(self.city.name.clone()),
+            location_name: Some(self.region.name.clone()),
             source_url: response.url.clone(),
             extracted_at: now,
             last_confirmed_active: now,
             source_diversity: 1,
             external_ratio: 1.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         };
@@ -696,7 +699,7 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.writer.create_node(&node, &embedding).await?;
+        let node_id = self.writer.create_node(&node, &embedding, "response_finder", &self.run_id).await?;
 
         info!(
             node_id = %node_id,
@@ -717,16 +720,16 @@ impl<'a> ResponseFinder<'a> {
         also_addresses: &[String],
         explanation: &str,
     ) -> Result<()> {
-        let lat_delta = self.city.radius_km / 111.0;
+        let lat_delta = self.region.radius_km / 111.0;
         let lng_delta =
-            self.city.radius_km / (111.0 * self.city.center_lat.to_radians().cos());
+            self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
         let active_tensions = self
             .writer
             .get_active_tensions(
-                self.city.center_lat - lat_delta,
-                self.city.center_lat + lat_delta,
-                self.city.center_lng - lng_delta,
-                self.city.center_lng + lng_delta,
+                self.region.center_lat - lat_delta,
+                self.region.center_lat + lat_delta,
+                self.region.center_lng - lng_delta,
+                self.region.center_lng + lng_delta,
             )
             .await?;
         if active_tensions.is_empty() {
@@ -822,17 +825,18 @@ impl<'a> ResponseFinder<'a> {
                 freshness_score: 1.0,
                 corroboration_count: 0,
                 location: Some(GeoPoint {
-                    lat: self.city.center_lat,
-                    lng: self.city.center_lng,
+                    lat: self.region.center_lat,
+                    lng: self.region.center_lng,
                     precision: GeoPrecision::City,
                 }),
-                location_name: Some(self.city.name.clone()),
+                location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 last_confirmed_active: now,
                 source_diversity: 1,
                 external_ratio: 1.0,
                 cause_heat: 0.0,
+                channel_diversity: 1,
                 mentioned_actors: vec![],
                 implied_queries: vec![],
             },
@@ -843,7 +847,7 @@ impl<'a> ResponseFinder<'a> {
 
         let tension_id = self
             .writer
-            .create_node(&Node::Tension(tension_node), &embedding)
+            .create_node(&Node::Tension(tension_node), &embedding, "response_finder", &self.run_id)
             .await?;
 
         info!(
@@ -864,7 +868,7 @@ impl<'a> ResponseFinder<'a> {
         stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+        let ck = sources::make_canonical_key(&cv);
         let gap_context = format!(
             "Response finder: response discovery for \"{}\"",
             target.title,
@@ -875,9 +879,7 @@ impl<'a> ResponseFinder<'a> {
             canonical_key: ck,
             canonical_value: cv,
             url: None,
-            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::GapAnalysis,
-            city: self.city_slug.clone(),
             created_at: Utc::now(),
             last_scraped: None,
             last_produced_signal: None,
@@ -1025,18 +1027,13 @@ mod tests {
     }
 
     #[test]
-    fn response_node_gets_city_center_coordinates() {
-        let city = CityNode {
-            id: Uuid::new_v4(),
+    fn response_node_gets_region_center_coordinates() {
+        let region = RegionNode {
             name: "Minneapolis".to_string(),
-            slug: "minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
             geo_terms: vec!["Minneapolis".to_string()],
-            active: true,
-            created_at: Utc::now(),
-            last_scout_completed_at: None,
         };
 
         let now = Utc::now();
@@ -1049,17 +1046,18 @@ mod tests {
             freshness_score: 1.0,
             corroboration_count: 0,
             location: Some(GeoPoint {
-                lat: city.center_lat,
-                lng: city.center_lng,
+                lat: region.center_lat,
+                lng: region.center_lng,
                 precision: GeoPrecision::City,
             }),
-            location_name: Some(city.name.clone()),
+            location_name: Some(region.name.clone()),
             source_url: "https://example.com/kyr".to_string(),
             extracted_at: now,
             last_confirmed_active: now,
             source_diversity: 1,
             external_ratio: 1.0,
             cause_heat: 0.0,
+            channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
         };

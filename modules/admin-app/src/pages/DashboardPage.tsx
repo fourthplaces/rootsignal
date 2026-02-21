@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery } from "@apollo/client";
 import { ADMIN_DASHBOARD } from "@/graphql/queries";
 import {
@@ -18,9 +17,9 @@ import {
 const COLORS = ["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ef4444", "#ec4899"];
 
 export function DashboardPage() {
-  const [city, setCity] = useState("twincities");
+  const region = "twincities";
   const { data, loading } = useQuery(ADMIN_DASHBOARD, {
-    variables: { city },
+    variables: { region },
   });
 
   if (loading) return <p className="text-muted-foreground">Loading dashboard...</p>;
@@ -32,17 +31,6 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Dashboard</h1>
-        <select
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          {d.scoutStatuses.map((s: { citySlug: string; cityName: string }) => (
-            <option key={s.citySlug} value={s.citySlug}>
-              {s.cityName}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Stat cards */}
@@ -55,7 +43,7 @@ export function DashboardPage() {
           { label: "Tensions", value: d.totalTensions },
           {
             label: "Scout",
-            value: d.scoutStatuses.find((s: { citySlug: string }) => s.citySlug === city)?.running
+            value: d.scoutStatuses.find((s: { regionSlug: string }) => s.regionSlug === region)?.running
               ? "Running"
               : "Idle",
           },
@@ -205,7 +193,7 @@ export function DashboardPage() {
         <h2 className="text-sm font-medium mb-4">Extraction Yield</h2>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={d.extractionYield}>
-            <XAxis dataKey="sourceType" tick={{ fontSize: 11 }} />
+            <XAxis dataKey="sourceLabel" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
             <Bar dataKey="extracted" fill="#8b5cf6" name="Extracted" />

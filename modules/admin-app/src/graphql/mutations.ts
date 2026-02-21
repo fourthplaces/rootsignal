@@ -24,18 +24,9 @@ export const LOGOUT = gql`
   }
 `;
 
-export const CREATE_CITY = gql`
-  mutation CreateCity($location: String!) {
-    createCity(location: $location) {
-      success
-      slug
-    }
-  }
-`;
-
 export const ADD_SOURCE = gql`
-  mutation AddSource($citySlug: String!, $url: String!, $reason: String) {
-    addSource(citySlug: $citySlug, url: $url, reason: $reason) {
+  mutation AddSource($url: String!, $reason: String) {
+    addSource(url: $url, reason: $reason) {
       success
       sourceId
     }
@@ -43,8 +34,8 @@ export const ADD_SOURCE = gql`
 `;
 
 export const RUN_SCOUT = gql`
-  mutation RunScout($citySlug: String!) {
-    runScout(citySlug: $citySlug) {
+  mutation RunScout($query: String!) {
+    runScout(query: $query) {
       success
       message
     }
@@ -52,8 +43,8 @@ export const RUN_SCOUT = gql`
 `;
 
 export const STOP_SCOUT = gql`
-  mutation StopScout($citySlug: String!) {
-    stopScout(citySlug: $citySlug) {
+  mutation StopScout {
+    stopScout {
       success
       message
     }
@@ -61,11 +52,31 @@ export const STOP_SCOUT = gql`
 `;
 
 export const RESET_SCOUT_LOCK = gql`
-  mutation ResetScoutLock($citySlug: String!) {
-    resetScoutLock(citySlug: $citySlug) {
+  mutation ResetScoutLock($query: String!) {
+    resetScoutLock(query: $query) {
       success
       message
     }
+  }
+`;
+
+export const CREATE_SCOUT_TASK = gql`
+  mutation CreateScoutTask(
+    $location: String!
+    $radiusKm: Float
+    $priority: Float
+  ) {
+    createScoutTask(
+      location: $location
+      radiusKm: $radiusKm
+      priority: $priority
+    )
+  }
+`;
+
+export const CANCEL_SCOUT_TASK = gql`
+  mutation CancelScoutTask($id: String!) {
+    cancelScoutTask(id: $id)
   }
 `;
 
@@ -94,10 +105,16 @@ export const MERGE_TAGS = gql`
 `;
 
 export const SUBMIT_SOURCE = gql`
-  mutation SubmitSource($url: String!, $description: String, $city: String) {
-    submitSource(url: $url, description: $description, city: $city) {
+  mutation SubmitSource($url: String!, $description: String, $region: String) {
+    submitSource(url: $url, description: $description, region: $region) {
       success
       sourceId
     }
+  }
+`;
+
+export const DISMISS_FINDING = gql`
+  mutation DismissFinding($id: String!) {
+    dismissFinding(id: $id)
   }
 `;

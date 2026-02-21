@@ -1,5 +1,6 @@
 import { useQuery } from "@apollo/client";
 import { SIGNAL_DETAIL } from "@/graphql/queries";
+import { LinkPreview } from "@/components/LinkPreview";
 
 interface SignalDetailProps {
   signalId: string;
@@ -48,14 +49,7 @@ export function SignalDetail({ signalId, onBack }: SignalDetailProps) {
           )}
 
           {signal.sourceUrl && (
-            <a
-              href={signal.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-xs text-primary hover:underline"
-            >
-              Source
-            </a>
+            <LinkPreview url={signal.sourceUrl} fallbackLabel="Source" />
           )}
 
           {signal.story && (
@@ -66,26 +60,25 @@ export function SignalDetail({ signalId, onBack }: SignalDetailProps) {
           )}
 
           {signal.evidence?.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-foreground mb-2">Evidence</h3>
-              <div className="space-y-2">
+            <details className="group">
+              <summary className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-foreground select-none list-none [&::-webkit-details-marker]:hidden">
+                <span className="transition-transform group-open:rotate-90">&#9656;</span>
+                Evidence
+                <span className="text-xs font-normal text-muted-foreground">
+                  ({signal.evidence.length})
+                </span>
+              </summary>
+              <div className="mt-2 space-y-2">
                 {signal.evidence.map((ev: Record<string, string>, i: number) => (
                   <div key={i} className="rounded border border-border p-2 text-xs">
                     {ev.snippet && (
                       <p className="text-muted-foreground mb-1">{ev.snippet}</p>
                     )}
-                    <a
-                      href={ev.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      {ev.sourceUrl}
-                    </a>
+                    <LinkPreview url={ev.sourceUrl} />
                   </div>
                 ))}
               </div>
-            </div>
+            </details>
           )}
         </div>
       )}

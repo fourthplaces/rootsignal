@@ -9,10 +9,11 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceType};
+use rootsignal_common::{DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::embedder::TextEmbedder;
+use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::RunContext;
 use crate::sources;
 
@@ -20,25 +21,26 @@ use crate::sources;
 
 const DEDUP_JACCARD_THRESHOLD: f64 = 0.6;
 const MAX_EXPANSION_QUERIES_PER_RUN: usize = 10;
+const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 
 // --- Expansion stage ---
 
 pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
     embedder: &'a dyn TextEmbedder,
-    city_slug: &'a str,
+    region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
         writer: &'a GraphWriter,
         embedder: &'a dyn TextEmbedder,
-        city_slug: &'a str,
+        region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
             embedder,
-            city_slug,
+            region_slug,
         }
     }
 
@@ -46,12 +48,12 @@ impl<'a> Expansion<'a> {
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
     /// 3. Create new WebQuery sources for surviving queries
-    pub async fn run(&self, ctx: &mut RunContext) {
+    pub async fn run(&self, ctx: &mut RunContext, run_log: &mut RunLog) {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         match self
             .writer
-            .get_recently_linked_signals_with_queries(self.city_slug)
+            .get_recently_linked_signals_with_queries(self.region_slug)
             .await
         {
             Ok(deferred) => {
@@ -76,7 +78,7 @@ impl<'a> Expansion<'a> {
 
         let existing = self
             .writer
-            .get_active_web_queries(self.city_slug)
+            .get_active_web_queries()
             .await
             .unwrap_or_default();
         let deduped: Vec<String> = ctx
@@ -99,7 +101,7 @@ impl<'a> Expansion<'a> {
             if let Ok(embedding) = self.embedder.embed(query_text).await {
                 match self
                     .writer
-                    .find_similar_query(&embedding, self.city_slug, 0.90)
+                    .find_similar_query(&embedding, 0.90)
                     .await
                 {
                     Ok(Some((existing_ck, sim))) => {
@@ -120,15 +122,13 @@ impl<'a> Expansion<'a> {
             }
 
             let cv = query_text.clone();
-            let ck = sources::make_canonical_key(self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&cv);
             let source = SourceNode {
                 id: Uuid::new_v4(),
                 canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::SignalExpansion,
-                city: self.city_slug.to_string(),
                 created_at: now_expansion,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -151,6 +151,10 @@ impl<'a> Expansion<'a> {
             };
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
+                    run_log.log(EventKind::ExpansionSourceCreated {
+                        canonical_key: ck.clone(),
+                        query: query_text.clone(),
+                    });
                     created += 1;
                     // Store embedding for future dedup
                     if let Ok(embedding) = self.embedder.embed(query_text).await {
@@ -165,11 +169,21 @@ impl<'a> Expansion<'a> {
             }
         }
         ctx.stats.expansion_sources_created = created;
+
+        // Social expansion: route deduped queries as social topics too.
+        // This creates the social flywheel — expansion from social-sourced
+        // tensions stays in the social channel instead of always going web.
+        let social_count = deduped.len().min(MAX_EXPANSION_SOCIAL_TOPICS);
+        ctx.social_expansion_topics
+            .extend(deduped[..social_count].iter().cloned());
+        ctx.stats.expansion_social_topics_queued = social_count as u32;
+
         info!(
             collected = ctx.expansion_queries.len(),
             created,
             deferred = ctx.stats.expansion_deferred_expanded,
             embedding_dupes = expansion_dupes_skipped,
+            social_topics = social_count,
             "Signal expansion complete"
         );
     }

@@ -8,21 +8,22 @@ use rootsignal_graph::GraphClient;
 /// Manages the SupervisorState node (watermark + calibrated thresholds).
 pub struct SupervisorState {
     client: GraphClient,
-    city: String,
+    region: String,
 }
 
 impl SupervisorState {
-    pub fn new(client: GraphClient, city: String) -> Self {
-        Self { client, city }
+    pub fn new(client: GraphClient, region: String) -> Self {
+        Self { client, region }
     }
 
     /// Read the last_run watermark. Returns None if no state exists (first boot).
     pub async fn last_run(&self) -> Result<Option<DateTime<Utc>>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:SupervisorState {city: $city})
+            "MATCH (s:SupervisorState)
+             WHERE COALESCE(s.region, s.city) = $region
              RETURN s.last_run AS last_run",
         )
-        .param("city", self.city.clone());
+        .param("region", self.region.clone());
 
         let mut stream = self.client.inner().execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -64,7 +65,7 @@ impl SupervisorState {
         let ts = rootsignal_graph::writer::format_datetime_pub(dt);
 
         let q = query(
-            "MERGE (s:SupervisorState {city: $city})
+            "MERGE (s:SupervisorState {region: $region})
              ON CREATE SET s.id = $id,
                            s.last_run = datetime($last_run),
                            s.min_confidence = 0.0,
@@ -72,7 +73,7 @@ impl SupervisorState {
                            s.version = 1
              ON MATCH SET s.last_run = datetime($last_run)",
         )
-        .param("city", self.city.clone())
+        .param("region", self.region.clone())
         .param("id", Uuid::new_v4().to_string())
         .param("last_run", ts);
 

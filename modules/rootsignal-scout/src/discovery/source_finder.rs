@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use ai_client::claude::Claude;
-use rootsignal_common::{DiscoveryMethod, SourceNode, SourceRole, SourceType};
+use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
     TensionResponseShape, UnmetTension,
@@ -49,7 +49,7 @@ pub struct DiscoveryBriefing {
     pub successes: Vec<SourceBrief>,
     pub failures: Vec<SourceBrief>,
     pub existing_queries: Vec<String>,
-    pub city_name: String,
+    pub region_name: String,
     pub gap_type_stats: Vec<GapTypeStats>,
     pub extraction_yield: Vec<ExtractionYield>,
     pub response_shapes: Vec<TensionResponseShape>,
@@ -241,7 +241,7 @@ impl DiscoveryBriefing {
                 };
                 out.push_str(&format!(
                     "- {}: {} extracted, {} survived ({}%), {} corroborated, {} contradicted\n",
-                    y.source_type,
+                    y.source_label,
                     y.extracted,
                     y.survived,
                     survival_pct,
@@ -251,7 +251,7 @@ impl DiscoveryBriefing {
                 if y.extracted >= 10 && survival_pct < 50 {
                     out.push_str(&format!(
                         "→ {} survival rate below 50% — signals from this source type are frequently reaped.\n",
-                        y.source_type,
+                        y.source_label,
                     ));
                 }
                 let contradiction_pct = if y.extracted > 0 {
@@ -262,7 +262,7 @@ impl DiscoveryBriefing {
                 if y.extracted >= 10 && contradiction_pct >= 20 {
                     out.push_str(&format!(
                         "→ {} has high contradiction rate ({}%) — evidence frequently disputes these signals.\n",
-                        y.source_type, contradiction_pct,
+                        y.source_label, contradiction_pct,
                     ));
                 }
             }
@@ -365,9 +365,12 @@ pub fn discovery_system_prompt(city_name: &str) -> String {
          \n\
          Generate 3-7 targeted web search queries. Prioritize:\n\
          1. RESPONSE RESOURCES for unmet tensions (highest priority)\n\
-         2. MISSING SIGNAL TYPES for stories with low type diversity\n\
-         3. EMERGING THREADS that deserve deeper investigation\n\
-         4. NOVEL ANGLES that existing sources aren't covering\n\
+         2. DEMAND SIGNALS — if tensions have few associated Needs, search for \
+people expressing needs related to those tensions (GoFundMe campaigns, \
+mutual aid requests, community forum posts, volunteer calls)\n\
+         3. MISSING SIGNAL TYPES for stories with low type diversity\n\
+         4. EMERGING THREADS that deserve deeper investigation\n\
+         5. NOVEL ANGLES that existing sources aren't covering\n\
          \n\
          Query quality guidelines:\n\
          - Include \"{city_name}\" or neighborhood names — local results only\n\
@@ -418,8 +421,8 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
     writer: &'a GraphWriter,
-    city_slug: String,
-    city_name: String,
+    region_slug: String,
+    region_name: String,
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
     embedder: Option<&'a dyn crate::embedder::TextEmbedder>,
@@ -433,8 +436,8 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 impl<'a> SourceFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        city_slug: &str,
-        city_name: &str,
+        region_slug: &str,
+        region_name: &str,
         anthropic_api_key: Option<&str>,
         budget: &'a BudgetTracker,
     ) -> Self {
@@ -443,8 +446,8 @@ impl<'a> SourceFinder<'a> {
             .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
             writer,
-            city_slug: city_slug.to_string(),
-            city_name: city_name.to_string(),
+            region_slug: region_slug.to_string(),
+            region_name: region_name.to_string(),
             claude,
             budget,
             embedder: None,
@@ -488,7 +491,7 @@ impl<'a> SourceFinder<'a> {
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
     async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
-        let actors = match self.writer.get_actors_with_domains(&self.city_slug).await {
+        let actors = match self.writer.get_actors_with_domains().await {
             Ok(a) => a,
             Err(e) => {
                 warn!(error = %e, "Failed to get actors for discovery");
@@ -496,7 +499,7 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        let existing = match self.writer.get_active_sources(&self.city_slug).await {
+        let existing = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get existing sources for dedup");
@@ -527,8 +530,8 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let cv = sources::canonical_value_from_url(SourceType::Web, &url);
-                let ck = sources::make_canonical_key(&self.city_slug, SourceType::Web, &cv);
+                let ck = sources::make_canonical_key(&url);
+                let cv = rootsignal_common::canonical_value(&url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
                     continue;
@@ -539,9 +542,8 @@ impl<'a> SourceFinder<'a> {
                     canonical_key: ck,
                     canonical_value: cv,
                     url: Some(url.clone()),
-                    source_type: SourceType::Web,
                     discovery_method: DiscoveryMethod::SignalReference,
-                    city: self.city_slug.clone(),
+
                     created_at: now,
                     last_scraped: None,
                     last_produced_signal: None,
@@ -577,9 +579,8 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source_type = SourceType::from_url(social_url);
-                let cv = sources::canonical_value_from_url(source_type, social_url);
-                let ck = sources::make_canonical_key(&self.city_slug, source_type, &cv);
+                let ck = sources::make_canonical_key(social_url);
+                let cv = rootsignal_common::canonical_value(social_url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
                     continue;
@@ -590,9 +591,8 @@ impl<'a> SourceFinder<'a> {
                     canonical_key: ck,
                     canonical_value: cv,
                     url: Some(social_url.clone()),
-                    source_type,
                     discovery_method: DiscoveryMethod::SignalReference,
-                    city: self.city_slug.clone(),
+
                     created_at: now,
                     last_scraped: None,
                     last_produced_signal: None,
@@ -636,7 +636,7 @@ impl<'a> SourceFinder<'a> {
         let claude = match &self.claude {
             Some(c) => c,
             None => {
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -648,7 +648,7 @@ impl<'a> SourceFinder<'a> {
                 .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
         {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
-            self.discover_from_gaps_mechanical(stats).await;
+            self.discover_from_gaps_mechanical(stats, social_topics).await;
             return;
         }
 
@@ -657,7 +657,7 @@ impl<'a> SourceFinder<'a> {
             Ok(b) => b,
             Err(e) => {
                 warn!(error = %e, "Failed to build discovery briefing, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -665,20 +665,20 @@ impl<'a> SourceFinder<'a> {
         // Cold-start check
         if briefing.is_cold_start() {
             info!("Cold start detected (< 3 tensions, 0 stories), using mechanical discovery");
-            self.discover_from_gaps_mechanical(stats).await;
+            self.discover_from_gaps_mechanical(stats, social_topics).await;
             return;
         }
 
         // LLM call
         let formatted = briefing.format_prompt();
-        let system = discovery_system_prompt(&self.city_name);
-        let user = discovery_user_prompt(&self.city_name, &formatted);
+        let system = discovery_system_prompt(&self.region_name);
+        let user = discovery_user_prompt(&self.region_name, &formatted);
 
         let plan: DiscoveryPlan = match claude.extract(HAIKU_MODEL, &system, &user).await {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats).await;
+                self.discover_from_gaps_mechanical(stats, social_topics).await;
                 return;
             }
         };
@@ -687,7 +687,7 @@ impl<'a> SourceFinder<'a> {
         self.budget.spend(OperationCost::CLAUDE_HAIKU_DISCOVERY);
 
         // Extract social topics from plan (for topic discovery pipeline)
-        const MAX_SOCIAL_TOPICS: usize = 5;
+        const MAX_SOCIAL_TOPICS: usize = 8;
         for st in plan.social_topics.iter().take(MAX_SOCIAL_TOPICS) {
             info!(
                 topic = st.topic.as_str(),
@@ -725,7 +725,6 @@ impl<'a> SourceFinder<'a> {
                             .writer
                             .find_similar_query(
                                 &embedding,
-                                &self.city_slug,
                                 QUERY_DEDUP_SIMILARITY_THRESHOLD,
                             )
                             .await
@@ -755,7 +754,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = dq.query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&cv);
 
             let gap_context = format!(
                 "Curiosity: {} | Gap: {} | Related: {}",
@@ -781,9 +780,7 @@ impl<'a> SourceFinder<'a> {
                 canonical_key: ck.clone(),
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
-                city: self.city_slug.clone(),
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -840,25 +837,25 @@ impl<'a> SourceFinder<'a> {
 
         let signal_counts = self
             .writer
-            .get_signal_type_counts(&self.city_slug)
+            .get_signal_type_counts(&self.region_slug)
             .await
             .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
 
         let (successes, failures) = self
             .writer
-            .get_discovery_performance(&self.city_slug)
+            .get_discovery_performance()
             .await
             .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
 
         let gap_type_stats = self
             .writer
-            .get_gap_type_stats(&self.city_slug)
+            .get_gap_type_stats(&self.region_slug)
             .await
             .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
 
         let extraction_yield = self
             .writer
-            .get_extraction_yield(&self.city_slug)
+            .get_extraction_yield(&self.region_slug)
             .await
             .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
 
@@ -871,12 +868,12 @@ impl<'a> SourceFinder<'a> {
         // Get existing WebQuery sources for dedup
         let existing = self
             .writer
-            .get_active_sources(&self.city_slug)
+            .get_active_sources()
             .await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
         let existing_queries: Vec<String> = existing
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(&s.canonical_value))
             .map(|s| s.canonical_value.clone())
             .collect();
 
@@ -887,7 +884,7 @@ impl<'a> SourceFinder<'a> {
             successes,
             failures,
             existing_queries,
-            city_name: self.city_name.clone(),
+            region_name: self.region_name.clone(),
             gap_type_stats,
             extraction_yield,
             response_shapes,
@@ -899,7 +896,11 @@ impl<'a> SourceFinder<'a> {
     ///
     /// Sorts tensions by engagement score (corroboration + source_diversity + cause_heat)
     /// so high-engagement tensions fill early query slots — but all tensions are eligible.
-    async fn discover_from_gaps_mechanical(&self, stats: &mut SourceFinderStats) {
+    async fn discover_from_gaps_mechanical(
+        &self,
+        stats: &mut SourceFinderStats,
+        social_topics: &mut Vec<String>,
+    ) {
         // Get tensions with engagement data, sorted by engagement within unmet-first grouping
         let mut tensions = match self.writer.get_unmet_tensions(20).await {
             Ok(t) => t,
@@ -924,7 +925,7 @@ impl<'a> SourceFinder<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let existing = match self.writer.get_active_sources(&self.city_slug).await {
+        let existing = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get sources for gap analysis");
@@ -934,7 +935,7 @@ impl<'a> SourceFinder<'a> {
 
         let existing_queries: HashSet<String> = existing
             .iter()
-            .filter(|s| s.source_type == SourceType::WebQuery)
+            .filter(|s| is_web_query(&s.canonical_value))
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
 
@@ -948,7 +949,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
-            let query = format!("{} resources services {}", help_text, self.city_slug);
+            let query = format!("{} resources services {}", help_text, self.region_slug);
             let query_lower = query.to_lowercase();
 
             // Skip if we already have a similar query
@@ -961,7 +962,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&self.city_slug, SourceType::WebQuery, &cv);
+            let ck = sources::make_canonical_key(&cv);
 
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
@@ -971,9 +972,7 @@ impl<'a> SourceFinder<'a> {
                 canonical_key: ck,
                 canonical_value: cv,
                 url: None,
-                source_type: SourceType::WebQuery,
                 discovery_method: DiscoveryMethod::GapAnalysis,
-                city: self.city_slug.clone(),
                 created_at: now,
                 last_scraped: None,
                 last_produced_signal: None,
@@ -1003,6 +1002,13 @@ impl<'a> SourceFinder<'a> {
                 }
                 Err(e) => warn!(error = %e, "Failed to create gap analysis source"),
             }
+        }
+
+        // Generate social topics from the same tensions — mechanical fallback parity
+        const MAX_MECHANICAL_SOCIAL_TOPICS: usize = 3;
+        for t in tensions.iter().take(MAX_MECHANICAL_SOCIAL_TOPICS) {
+            let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
+            social_topics.push(format!("{} {}", help_text, self.region_name));
         }
     }
 }
@@ -1156,7 +1162,7 @@ mod tests {
                 "affordable housing programs Minneapolis".to_string(),
                 "food shelf locations Minneapolis".to_string(),
             ],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1298,7 +1304,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1318,7 +1324,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1347,7 +1353,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1383,7 +1389,7 @@ mod tests {
             ],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1411,7 +1417,7 @@ mod tests {
                 false,
             )],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1432,7 +1438,7 @@ mod tests {
             successes: vec![make_source_brief("good query", 10, 0.7, 0, "worked", true)],
             failures: vec![make_source_brief("bad query", 0, 0.2, 8, "failed", false)],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1466,7 +1472,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1510,7 +1516,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1772,7 +1778,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            city_name: "Minneapolis".to_string(),
+            region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1865,14 +1871,14 @@ mod tests {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![
             ExtractionYield {
-                source_type: "web".to_string(),
+                source_label: "web".to_string(),
                 extracted: 142,
                 survived: 118,
                 corroborated: 23,
                 contradicted: 2,
             },
             ExtractionYield {
-                source_type: "web_query".to_string(),
+                source_label: "web_query".to_string(),
                 extracted: 67,
                 survived: 31,
                 corroborated: 4,
@@ -1898,7 +1904,7 @@ mod tests {
     fn briefing_extraction_yield_annotates_low_survival() {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![ExtractionYield {
-            source_type: "web_query".to_string(),
+            source_label: "web_query".to_string(),
             extracted: 67,
             survived: 31,
             corroborated: 4,
@@ -1915,7 +1921,7 @@ mod tests {
     fn briefing_extraction_yield_annotates_high_contradiction() {
         let mut briefing = make_briefing();
         briefing.extraction_yield = vec![ExtractionYield {
-            source_type: "web_query".to_string(),
+            source_label: "web_query".to_string(),
             extracted: 50,
             survived: 40,
             corroborated: 4,

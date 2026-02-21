@@ -1,13 +1,15 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use neo4rs::query;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, NeedNode, CityNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
+    ActorNode, NeedNode, ClusterSnapshot, DemandSignal, DiscoveryMethod, GatheringNode, EvidenceNode,
     AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
-    SourceType, StoryNode, TensionNode, NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS,
-    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    StoryNode, TensionNode, ScoutTask, ScoutTaskSource, ScoutTaskStatus,
+    NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -23,13 +25,23 @@ impl GraphWriter {
     }
 
     /// Create a typed node in the graph. Returns the node's UUID.
-    pub async fn create_node(&self, node: &Node, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    ///
+    /// `created_by` identifies which scout module produced this signal (e.g. "scraper",
+    /// "tension_linker", "response_finder", "gathering_finder").
+    /// `scout_run_id` is the UUID for this scout run, used for provenance tracking.
+    pub async fn create_node(
+        &self,
+        node: &Node,
+        embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
+    ) -> Result<Uuid, neo4rs::Error> {
         match node {
-            Node::Gathering(n) => self.create_gathering(n, embedding).await,
-            Node::Aid(n) => self.create_aid(n, embedding).await,
-            Node::Need(n) => self.create_need(n, embedding).await,
-            Node::Notice(n) => self.create_notice(n, embedding).await,
-            Node::Tension(n) => self.create_tension(n, embedding).await,
+            Node::Gathering(n) => self.create_gathering(n, embedding, created_by, scout_run_id).await,
+            Node::Aid(n) => self.create_aid(n, embedding, created_by, scout_run_id).await,
+            Node::Need(n) => self.create_need(n, embedding, created_by, scout_run_id).await,
+            Node::Notice(n) => self.create_notice(n, embedding, created_by, scout_run_id).await,
+            Node::Tension(n) => self.create_tension(n, embedding, created_by, scout_run_id).await,
             Node::Evidence(_) => {
                 return Err(neo4rs::Error::UnsupportedVersion(
                     "Evidence nodes should use create_evidence() directly".to_string(),
@@ -38,7 +50,35 @@ impl GraphWriter {
         }
     }
 
-    async fn create_gathering(&self, n: &GatheringNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    /// Create a node without an embedding (for news scanner and other non-search pipelines).
+    pub async fn upsert_node(
+        &self,
+        node: &Node,
+        created_by: &str,
+    ) -> Result<Uuid, neo4rs::Error> {
+        let empty_embedding: Vec<f32> = Vec::new();
+        let run_id = Uuid::new_v4().to_string();
+        self.create_node(node, &empty_embedding, created_by, &run_id).await
+    }
+
+    /// Check if a Source node with the given URL already exists in the graph.
+    pub async fn source_exists(&self, url: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "OPTIONAL MATCH (s:Source {url: $url})
+             RETURN count(s) > 0 AS exists",
+        )
+        .param("url", url);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let exists: bool = row.get("exists").unwrap_or(false);
+            Ok(exists)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn create_gathering(&self, n: &GatheringNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (e:Gathering {
                 id: $id,
@@ -63,7 +103,11 @@ impl GraphWriter {
                 implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN e.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -99,7 +143,10 @@ impl GraphWriter {
         .param("organizer", n.organizer.clone().unwrap_or_default())
         .param("is_recurring", n.is_recurring)
         .param("implied_queries", n.meta.implied_queries.clone())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -108,7 +155,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_aid(&self, n: &AidNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_aid(&self, n: &AidNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (g:Aid {
                 id: $id,
@@ -131,7 +178,11 @@ impl GraphWriter {
                 implied_queries: CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN g.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -155,7 +206,10 @@ impl GraphWriter {
         .param("availability", n.availability.as_deref().unwrap_or(""))
         .param("is_ongoing", n.is_ongoing)
         .param("implied_queries", n.meta.implied_queries.clone())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -164,7 +218,7 @@ impl GraphWriter {
         Ok(n.meta.id)
     }
 
-    async fn create_need(&self, n: &NeedNode, embedding: &[f32]) -> Result<Uuid, neo4rs::Error> {
+    async fn create_need(&self, n: &NeedNode, embedding: &[f32], created_by: &str, scout_run_id: &str) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (n:Need {
                 id: $id,
@@ -187,7 +241,11 @@ impl GraphWriter {
                 goal: $goal,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN n.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -213,7 +271,10 @@ impl GraphWriter {
         .param("what_needed", n.what_needed.as_deref().unwrap_or(""))
         .param("action_url", n.action_url.clone().unwrap_or_default())
         .param("goal", n.goal.clone().unwrap_or_default())
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -226,6 +287,8 @@ impl GraphWriter {
         &self,
         n: &NoticeNode,
         embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
     ) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (nc:Notice {
@@ -249,7 +312,11 @@ impl GraphWriter {
                 source_authority: $source_authority,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN nc.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -283,7 +350,10 @@ impl GraphWriter {
             "source_authority",
             n.source_authority.clone().unwrap_or_default(),
         )
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -296,6 +366,8 @@ impl GraphWriter {
         &self,
         n: &TensionNode,
         embedding: &[f32],
+        created_by: &str,
+        scout_run_id: &str,
     ) -> Result<Uuid, neo4rs::Error> {
         let q = query(
             "CREATE (t:Tension {
@@ -318,7 +390,11 @@ impl GraphWriter {
                 what_would_help: $what_would_help,
                 lat: $lat,
                 lng: $lng,
-                embedding: $embedding
+                embedding: $embedding,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged',
+                created_by: $created_by,
+                scout_run_id: $scout_run_id
             }) RETURN t.id AS id",
         )
         .param("id", n.meta.id.to_string())
@@ -346,7 +422,10 @@ impl GraphWriter {
             "what_would_help",
             n.what_would_help.as_deref().unwrap_or(""),
         )
-        .param("embedding", embedding_to_f64(embedding));
+        .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
+        .param("created_by", created_by)
+        .param("scout_run_id", scout_run_id);
 
         let q = add_location_params(q, &n.meta);
         let mut stream = self.client.graph.execute(q).await?;
@@ -384,7 +463,8 @@ impl GraphWriter {
                 ev.content_hash = $content_hash,
                 ev.snippet = $snippet,
                 ev.relevance = $relevance,
-                ev.evidence_confidence = $evidence_confidence
+                ev.evidence_confidence = $evidence_confidence,
+                ev.channel_type = $channel_type
             ON MATCH SET
                 ev.retrieved_at = datetime($retrieved_at),
                 ev.content_hash = $content_hash",
@@ -398,6 +478,10 @@ impl GraphWriter {
         .param(
             "evidence_confidence",
             evidence.evidence_confidence.unwrap_or(0.0) as f64,
+        )
+        .param(
+            "channel_type",
+            evidence.channel_type.map(|ct| ct.as_str()).unwrap_or("press"),
         )
         .param("signal_id", signal_node_id.to_string());
 
@@ -686,18 +770,24 @@ impl GraphWriter {
             .compute_source_diversity(node_id, node_type, entity_mappings)
             .await?;
 
+        // Recompute channel diversity from all evidence nodes
+        let channel_diversity = self
+            .compute_channel_diversity(node_id, node_type, entity_mappings)
+            .await?;
+
         let q = query(&format!(
             "MATCH (n:{} {{id: $id}})
-             SET n.source_diversity = $diversity, n.external_ratio = $ratio",
+             SET n.source_diversity = $diversity, n.external_ratio = $ratio, n.channel_diversity = $channel_diversity",
             label
         ))
         .param("id", node_id.to_string())
         .param("diversity", diversity as i64)
-        .param("ratio", external_ratio as f64);
+        .param("ratio", external_ratio as f64)
+        .param("channel_diversity", channel_diversity as i64);
 
         self.client.graph.run(q).await?;
 
-        info!(%node_id, %label, diversity, external_ratio, "Corroborated existing signal");
+        info!(%node_id, %label, diversity, external_ratio, channel_diversity, "Corroborated existing signal");
         Ok(())
     }
 
@@ -754,6 +844,60 @@ impl GraphWriter {
             Ok((diversity, external_ratio))
         } else {
             Ok((1, 0.0))
+        }
+    }
+
+    /// Compute channel diversity for a signal from its evidence nodes.
+    /// Entity-gated: only distinct (entity, channel_type) pairs count, and only
+    /// channels with at least one *external* entity (different from the originating
+    /// entity) are counted.
+    pub async fn compute_channel_diversity(
+        &self,
+        node_id: Uuid,
+        node_type: NodeType,
+        entity_mappings: &[rootsignal_common::EntityMappingOwned],
+    ) -> Result<u32, neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
+            NodeType::Need => "Need",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(1),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{label} {{id: $id}})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             RETURN n.source_url AS self_url,
+                    collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
+        ))
+        .param("id", node_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let self_url: String = row.get("self_url").unwrap_or_default();
+            let evidence: Vec<neo4rs::BoltMap> = row.get("evidence").unwrap_or_default();
+
+            let self_entity = rootsignal_common::resolve_entity(&self_url, entity_mappings);
+
+            // Collect (entity, channel_type) pairs
+            let mut channels_with_external: HashSet<String> = HashSet::new();
+            for ev in &evidence {
+                let url: String = ev.get::<String>("url").unwrap_or_default();
+                let channel: String = ev.get::<String>("channel").unwrap_or_else(|_| "press".to_string());
+                if url.is_empty() {
+                    continue;
+                }
+                let entity = rootsignal_common::resolve_entity(&url, entity_mappings);
+                if entity != self_entity {
+                    channels_with_external.insert(channel);
+                }
+            }
+
+            Ok(channels_with_external.len().max(1) as u32)
+        } else {
+            Ok(1)
         }
     }
 
@@ -918,26 +1062,14 @@ impl GraphWriter {
         Ok(false)
     }
 
-    /// Stamp the city's last_scout_completed_at to now.
-    pub async fn set_city_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
-        self.client
-            .graph
-            .run(
-                query("MATCH (c:City {slug: $slug}) SET c.last_scout_completed_at = datetime()")
-                    .param("slug", slug),
-            )
-            .await?;
-        Ok(())
-    }
-
     /// Count sources that are overdue for scraping.
-    pub async fn count_due_sources(&self, city: &str) -> Result<u32, neo4rs::Error> {
+    pub async fn count_due_sources(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN count(s) AS due"
-        ).param("city", city);
+        );
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -987,7 +1119,7 @@ impl GraphWriter {
 
         let q = query(
             "UNWIND $slugs AS slug
-             OPTIONAL MATCH (s:Source {city: slug, active: true})
+             OPTIONAL MATCH (s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN slug, count(s) AS due",
@@ -1059,7 +1191,9 @@ impl GraphWriter {
                 event_count: $event_count,
                 drawn_to_count: $drawn_to_count,
                 gap_score: $gap_score,
-                gap_velocity: $gap_velocity
+                gap_velocity: $gap_velocity,
+                channel_diversity: $channel_diversity,
+                review_status: 'staged'
             })",
         )
         .param("id", story.id.to_string())
@@ -1084,7 +1218,8 @@ impl GraphWriter {
         .param("event_count", story.event_count as i64)
         .param("drawn_to_count", story.drawn_to_count as i64)
         .param("gap_score", story.gap_score as i64)
-        .param("gap_velocity", story.gap_velocity);
+        .param("gap_velocity", story.gap_velocity)
+        .param("channel_diversity", story.channel_diversity as i64);
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
@@ -1325,203 +1460,282 @@ impl GraphWriter {
         Ok(None)
     }
 
-    // --- City operations ---
+    // --- ScoutTask operations ---
 
-    /// Create or update a City node. MERGE on slug for idempotency.
-    pub async fn upsert_city(&self, city: &CityNode) -> Result<(), neo4rs::Error> {
+    /// Create or update a ScoutTask node. MERGE on id for idempotency.
+    pub async fn upsert_scout_task(&self, task: &ScoutTask) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MERGE (c:City {slug: $slug})
-             ON CREATE SET
-                c.id = $id,
-                c.name = $name,
-                c.center_lat = $center_lat,
-                c.center_lng = $center_lng,
-                c.radius_km = $radius_km,
-                c.geo_terms = $geo_terms,
-                c.active = $active,
-                c.created_at = datetime($created_at)
-             ON MATCH SET
-                c.name = $name,
-                c.center_lat = $center_lat,
-                c.center_lng = $center_lng,
-                c.radius_km = $radius_km,
-                c.geo_terms = $geo_terms,
-                c.active = $active",
+            "MERGE (t:ScoutTask {id: $id})
+             SET t.center_lat = $center_lat,
+                 t.center_lng = $center_lng,
+                 t.radius_km = $radius_km,
+                 t.context = $context,
+                 t.geo_terms = $geo_terms,
+                 t.priority = $priority,
+                 t.source = $source,
+                 t.status = $status,
+                 t.created_at = datetime($created_at)",
         )
-        .param("id", city.id.to_string())
-        .param("slug", city.slug.as_str())
-        .param("name", city.name.as_str())
-        .param("center_lat", city.center_lat)
-        .param("center_lng", city.center_lng)
-        .param("radius_km", city.radius_km)
-        .param("geo_terms", city.geo_terms.clone())
-        .param("active", city.active)
-        .param("created_at", format_datetime(&city.created_at));
+        .param("id", task.id.to_string())
+        .param("center_lat", task.center_lat)
+        .param("center_lng", task.center_lng)
+        .param("radius_km", task.radius_km)
+        .param("context", task.context.as_str())
+        .param("geo_terms", task.geo_terms.clone())
+        .param("priority", task.priority)
+        .param("source", task.source.to_string())
+        .param("status", task.status.to_string())
+        .param("created_at", format_datetime(&task.created_at));
 
         self.client.graph.run(q).await?;
-        info!(
-            slug = city.slug.as_str(),
-            name = city.name.as_str(),
-            "City node upserted"
-        );
+        info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
         Ok(())
     }
 
-    /// Get a City node by slug. Returns None if not found.
-    pub async fn get_city(&self, slug: &str) -> Result<Option<CityNode>, neo4rs::Error> {
+    /// Get a ScoutTask by id.
+    pub async fn get_scout_task(&self, id: &str) -> Result<Option<ScoutTask>, neo4rs::Error> {
         let q = query(
-            "MATCH (c:City {slug: $slug})
-             RETURN c.id AS id, c.name AS name, c.slug AS slug,
-                    c.center_lat AS center_lat, c.center_lng AS center_lng,
-                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at,
-                    c.last_scout_completed_at AS last_scout_completed_at",
+            "MATCH (t:ScoutTask {id: $id})
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at",
         )
-        .param("slug", slug);
+        .param("id", id);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => return Ok(None),
-            };
-
-            let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at =
-                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .map(|ndt| ndt.and_utc())
-                    .unwrap_or_else(|_| Utc::now());
-
-            let last_scout_completed_at = {
-                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
-                if s.is_empty() {
-                    None
-                } else {
-                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
-                        .map(|ndt| ndt.and_utc())
-                        .ok()
-                }
-            };
-
-            Ok(Some(CityNode {
-                id,
-                name: row.get("name").unwrap_or_default(),
-                slug: row.get("slug").unwrap_or_default(),
-                center_lat: row.get("center_lat").unwrap_or(0.0),
-                center_lng: row.get("center_lng").unwrap_or(0.0),
-                radius_km: row.get("radius_km").unwrap_or(0.0),
-                geo_terms: row.get("geo_terms").unwrap_or_default(),
-                active: row.get("active").unwrap_or(true),
-                created_at,
-                last_scout_completed_at,
-            }))
+            Ok(Some(row_to_scout_task(&row)))
         } else {
             Ok(None)
         }
     }
 
-    /// List all cities, ordered by name.
-    pub async fn list_cities(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (c:City)
-             RETURN c.id AS id, c.name AS name, c.slug AS slug,
-                    c.center_lat AS center_lat, c.center_lng AS center_lng,
-                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at,
-                    c.last_scout_completed_at AS last_scout_completed_at
-             ORDER BY c.name",
-        );
+    /// List scout tasks, optionally filtered by status. Ordered by priority descending.
+    pub async fn list_scout_tasks(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
+        let cypher = if status.is_some() {
+            "MATCH (t:ScoutTask {status: $status})
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at
+             ORDER BY t.priority DESC
+             LIMIT $limit"
+        } else {
+            "MATCH (t:ScoutTask)
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at
+             ORDER BY t.priority DESC
+             LIMIT $limit"
+        };
 
-        let mut cities = Vec::new();
+        let mut q = query(cypher).param("limit", limit as i64);
+        if let Some(s) = status {
+            q = q.param("status", s);
+        }
+
+        let mut tasks = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-
-            let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at =
-                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .map(|ndt| ndt.and_utc())
-                    .unwrap_or_else(|_| Utc::now());
-
-            let last_scout_completed_at = {
-                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
-                if s.is_empty() {
-                    None
-                } else {
-                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
-                        .map(|ndt| ndt.and_utc())
-                        .ok()
-                }
-            };
-
-            cities.push(CityNode {
-                id,
-                name: row.get("name").unwrap_or_default(),
-                slug: row.get("slug").unwrap_or_default(),
-                center_lat: row.get("center_lat").unwrap_or(0.0),
-                center_lng: row.get("center_lng").unwrap_or(0.0),
-                radius_km: row.get("radius_km").unwrap_or(0.0),
-                geo_terms: row.get("geo_terms").unwrap_or_default(),
-                active: row.get("active").unwrap_or(true),
-                created_at,
-                last_scout_completed_at,
-            });
+            tasks.push(row_to_scout_task(&row));
         }
-
-        Ok(cities)
+        Ok(tasks)
     }
 
-    /// Batch count of sources and signals per city.
-    /// Accepts city tuples of (slug, center_lat, center_lng, radius_km).
-    /// Signal counts use geographic bounding box on signal lat/lng.
-    /// Returns Vec<(slug, source_count, signal_count)>.
-    pub async fn get_city_counts(
-        &self,
-        cities: &[(String, f64, f64, f64)],
-    ) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
-        let mut results = Vec::new();
-        for (slug, lat, lng, radius_km) in cities {
-            // Source count by slug
-            let sq = query(
-                "MATCH (src:Source {city: $city, active: true})
-                 RETURN count(src) AS cnt",
-            )
-            .param("city", slug.as_str());
-            let mut stream = self.client.graph.execute(sq).await?;
-            let source_count: i64 = match stream.next().await? {
-                Some(row) => row.get("cnt").unwrap_or(0),
-                None => 0,
-            };
+    /// Cancel a scout task by setting its status to "cancelled".
+    pub async fn cancel_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             WHERE t.status IN ['pending', 'running']
+             SET t.status = 'cancelled'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
 
-            // Signal count by bounding box
-            let lat_delta = radius_km / 111.0;
-            let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
-            let nq = query(
-                "MATCH (n)
-                 WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-                   AND n.lat <> 0.0
-                   AND n.lat >= $min_lat AND n.lat <= $max_lat
-                   AND n.lng >= $min_lng AND n.lng <= $max_lng
-                 RETURN count(n) AS cnt",
-            )
-            .param("min_lat", lat - lat_delta)
-            .param("max_lat", lat + lat_delta)
-            .param("min_lng", lng - lng_delta)
-            .param("max_lng", lng + lng_delta);
-            let mut stream = self.client.graph.execute(nq).await?;
-            let signal_count: i64 = match stream.next().await? {
-                Some(row) => row.get("cnt").unwrap_or(0),
-                None => 0,
-            };
-
-            results.push((slug.clone(), source_count as u32, signal_count as u32));
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
         }
-        Ok(results)
+    }
+
+    /// Mark a scout task as completed.
+    pub async fn complete_scout_task(&self, id: &str) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             SET t.status = 'completed', t.completed_at = datetime()",
+        )
+        .param("id", id);
+
+        self.client.graph.run(q).await
+    }
+
+    /// Claim a pending scout task by context (location name), setting status to running.
+    /// Returns the task id if found, None otherwise.
+    pub async fn claim_scout_task_by_context(&self, context: &str) -> Result<Option<String>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {status: 'pending'})
+             WHERE t.context = $context
+             SET t.status = 'running'
+             RETURN t.id AS id
+             LIMIT 1",
+        )
+        .param("context", context);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            if id.is_empty() { Ok(None) } else { Ok(Some(id)) }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Claim a scout task by setting its status from pending → running.
+    pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id, status: 'pending'})
+             SET t.status = 'running'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // --- Demand Signal operations (Driver A) ---
+
+    /// Store a raw demand signal from a user search.
+    pub async fn upsert_demand_signal(&self, signal: &DemandSignal) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (d:DemandSignal {id: $id})
+             SET d.query = $query,
+                 d.center_lat = $center_lat,
+                 d.center_lng = $center_lng,
+                 d.radius_km = $radius_km,
+                 d.created_at = datetime($created_at)",
+        )
+        .param("id", signal.id.to_string())
+        .param("query", signal.query.as_str())
+        .param("center_lat", signal.center_lat)
+        .param("center_lng", signal.center_lng)
+        .param("radius_km", signal.radius_km)
+        .param("created_at", format_datetime(&signal.created_at));
+
+        self.client.graph.run(q).await?;
+        info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
+        Ok(())
+    }
+
+    /// Aggregate recent demand signals into ScoutTasks.
+    /// Buckets by geohash-5 (~5km cells), creates tasks for cells with ≥ 2 signals.
+    /// Deletes consumed demand signals.
+    pub async fn aggregate_demand(&self) -> Result<Vec<ScoutTask>, neo4rs::Error> {
+        // Fetch recent demand signals (last 24h)
+        let q = query(
+            "MATCH (d:DemandSignal)
+             WHERE d.created_at > datetime() - duration('P1D')
+             RETURN d.id AS id, d.query AS query,
+                    d.center_lat AS center_lat, d.center_lng AS center_lng,
+                    d.radius_km AS radius_km",
+        );
+
+        let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let q_text: String = row.get("query").unwrap_or_default();
+            let lat: f64 = row.get("center_lat").unwrap_or(0.0);
+            let lng: f64 = row.get("center_lng").unwrap_or(0.0);
+            let radius: f64 = row.get("radius_km").unwrap_or(30.0);
+            signals.push((id, q_text, lat, lng, radius));
+        }
+
+        if signals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Bucket by truncated lat/lng (~5km grid cells)
+        // Using 0.05 degree resolution ≈ 5km
+        use std::collections::HashMap;
+        let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
+        for sig in &signals {
+            let lat_cell = (sig.2 / 0.05).round() as i64;
+            let lng_cell = (sig.3 / 0.05).round() as i64;
+            cells.entry((lat_cell, lng_cell)).or_default().push(sig);
+        }
+
+        let mut tasks = Vec::new();
+        let mut consumed_ids = Vec::new();
+
+        for ((_lat_cell, _lng_cell), cell_signals) in &cells {
+            if cell_signals.len() < 2 {
+                continue;
+            }
+
+            // Compute centroid
+            let n = cell_signals.len() as f64;
+            let avg_lat: f64 = cell_signals.iter().map(|s| s.2).sum::<f64>() / n;
+            let avg_lng: f64 = cell_signals.iter().map(|s| s.3).sum::<f64>() / n;
+            let avg_radius: f64 = cell_signals.iter().map(|s| s.4).sum::<f64>() / n;
+
+            // Collect unique query terms for context
+            let queries: Vec<&str> = cell_signals.iter().map(|s| s.1.as_str()).collect();
+            let context = queries.join("; ");
+
+            let task = ScoutTask {
+                id: Uuid::new_v4(),
+                center_lat: avg_lat,
+                center_lng: avg_lng,
+                radius_km: avg_radius.min(100.0),
+                context,
+                geo_terms: queries.iter().map(|q| q.to_string()).collect(),
+                priority: 0.5,
+                source: ScoutTaskSource::DriverA,
+                status: ScoutTaskStatus::Pending,
+                created_at: chrono::Utc::now(),
+                completed_at: None,
+            };
+
+            self.upsert_scout_task(&task).await?;
+            tasks.push(task);
+
+            // Mark these signals as consumed
+            for sig in cell_signals {
+                consumed_ids.push(sig.0.clone());
+            }
+        }
+
+        // Delete consumed demand signals
+        if !consumed_ids.is_empty() {
+            let q = query(
+                "UNWIND $ids AS id
+                 MATCH (d:DemandSignal {id: id})
+                 DELETE d",
+            )
+            .param("ids", consumed_ids);
+            self.client.graph.run(q).await?;
+        }
+
+        info!(tasks = tasks.len(), "Demand aggregation complete");
+        Ok(tasks)
     }
 
     // --- Source operations (emergent source discovery) ---
@@ -1535,9 +1749,7 @@ impl GraphWriter {
                 s.id = $id,
                 s.canonical_value = $canonical_value,
                 s.url = $url,
-                s.source_type = $source_type,
                 s.discovery_method = $discovery_method,
-                s.city = $city,
                 s.created_at = datetime($created_at),
                 s.signals_produced = $signals_produced,
                 s.signals_corroborated = $signals_corroborated,
@@ -1557,9 +1769,7 @@ impl GraphWriter {
         .param("canonical_key", source.canonical_key.as_str())
         .param("canonical_value", source.canonical_value.as_str())
         .param("url", source.url.clone().unwrap_or_default())
-        .param("source_type", source.source_type.to_string())
         .param("discovery_method", source.discovery_method.to_string())
-        .param("city", source.city.as_str())
         .param("created_at", format_datetime(&source.created_at))
         .param("signals_produced", source.signals_produced as i64)
         .param("signals_corroborated", source.signals_corroborated as i64)
@@ -1605,14 +1815,13 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Get all active sources for a city (by slug).
-    pub async fn get_active_sources(&self, city: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
+    /// Get all active sources.
+    pub async fn get_active_sources(&self) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (s:Source {active: true})
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
-                    s.source_type AS source_type,
-                    s.discovery_method AS discovery_method, s.city AS city,
+                    s.discovery_method AS discovery_method,
                     s.created_at AS created_at, s.last_scraped AS last_scraped,
                     s.last_produced_signal AS last_produced_signal,
                     s.signals_produced AS signals_produced,
@@ -1624,8 +1833,7 @@ impl GraphWriter {
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
                     s.scrape_count AS scrape_count",
-        )
-        .param("city", city);
+        );
 
         let mut sources = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1635,9 +1843,6 @@ impl GraphWriter {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-
-            let source_type_str: String = row.get("source_type").unwrap_or_default();
-            let source_type = SourceType::from_str_loose(&source_type_str);
 
             let discovery_str: String = row.get("discovery_method").unwrap_or_default();
             let discovery_method = match discovery_str.as_str() {
@@ -1665,9 +1870,7 @@ impl GraphWriter {
                 canonical_key: row.get("canonical_key").unwrap_or_default(),
                 canonical_value: row.get("canonical_value").unwrap_or_default(),
                 url: if url.is_empty() { None } else { Some(url) },
-                source_type,
                 discovery_method,
-                city: row.get("city").unwrap_or_default(),
                 created_at,
                 last_scraped,
                 last_produced_signal,
@@ -1773,21 +1976,19 @@ impl GraphWriter {
     }
 
     /// Deactivate sources that have had too many consecutive empty runs.
-    /// Protects curated and human-submitted sources. Scoped to a single city.
+    /// Protects curated and human-submitted sources.
     pub async fn deactivate_dead_sources(
         &self,
-        city: &str,
         max_empty_runs: u32,
     ) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true, city: $city})
+            "MATCH (s:Source {active: true})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated",
         )
-        .param("city", city)
         .param("max", max_empty_runs as i64);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -1804,18 +2005,18 @@ impl GraphWriter {
     /// - 3+ total scrapes (gave it a fair chance)
     /// - 0 signals ever produced (never contributed anything)
     /// Protects curated and human-submitted sources.
-    pub async fn deactivate_dead_web_queries(&self, city: &str) -> Result<u32, neo4rs::Error> {
+    pub async fn deactivate_dead_web_queries(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {active: true, city: $city, source_type: 'web_query'})
-             WHERE s.consecutive_empty_runs >= 5
+            "MATCH (s:Source {active: true})
+             WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
+               AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
                AND s.signals_produced = 0
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated",
-        )
-        .param("city", city);
+        );
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -1825,13 +2026,13 @@ impl GraphWriter {
         }
     }
 
-    /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
-    pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
+    /// Get all active WebQuery canonical_values (used for expansion dedup).
+    pub async fn get_active_web_queries(&self) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true, source_type: 'web_query'})
+            "MATCH (s:Source {active: true})
+             WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
              RETURN s.canonical_value AS query",
-        )
-        .param("city", city);
+        );
 
         let mut queries = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1846,25 +2047,24 @@ impl GraphWriter {
 
     /// Find an existing active WebQuery source with a semantically similar embedding.
     /// Uses the `source_query_embedding` vector index. Returns the canonical_key and
-    /// similarity score of the best match above `threshold`, scoped to the given city.
+    /// similarity score of the best match above `threshold`.
     pub async fn find_similar_query(
         &self,
         embedding: &[f32],
-        city: &str,
         threshold: f64,
     ) -> Result<Option<(String, f64)>, neo4rs::Error> {
-        // Neo4j vector search returns top-K results; we filter by city + active + threshold.
+        // Neo4j vector search returns top-K results; we filter by active + threshold.
         let q = query(
             "CALL db.index.vector.queryNodes('source_query_embedding', 5, $embedding)
              YIELD node, score
-             WHERE node.city = $city AND node.active = true AND node.source_type = 'web_query'
+             WHERE node.active = true
+               AND NOT (node.canonical_value STARTS WITH 'http://' OR node.canonical_value STARTS WITH 'https://')
                AND score >= $threshold
              RETURN node.canonical_key AS canonical_key, score
              ORDER BY score DESC
              LIMIT 1",
         )
         .param("embedding", embedding.to_vec())
-        .param("city", city)
         .param("threshold", threshold);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -2011,16 +2211,40 @@ impl GraphWriter {
         Ok(stream.next().await?.is_some())
     }
 
-    /// Get source-level stats for reporting.
-    pub async fn get_source_stats(&self, city: &str) -> Result<SourceStats, neo4rs::Error> {
+    /// Return the subset of `urls` that match a blocked source pattern.
+    pub async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>, neo4rs::Error> {
+        if urls.is_empty() {
+            return Ok(HashSet::new());
+        }
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (b:BlockedSource)
+             WITH collect(b.url_pattern) AS patterns
+             UNWIND $urls AS url
+             WITH url, patterns
+             WHERE any(p IN patterns WHERE url CONTAINS p OR p = url)
+             RETURN url",
+        )
+        .param("urls", urls.to_vec());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        let mut blocked = HashSet::new();
+        while let Some(row) = stream.next().await? {
+            if let Ok(url) = row.get::<String>("url") {
+                blocked.insert(url);
+            }
+        }
+        Ok(blocked)
+    }
+
+    /// Get source-level stats for reporting.
+    pub async fn get_source_stats(&self) -> Result<SourceStats, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source)
              RETURN count(s) AS total,
                     count(CASE WHEN s.active THEN 1 END) AS active,
                     count(CASE WHEN s.discovery_method = 'curated' THEN 1 END) AS curated,
                     count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
-        )
-        .param("city", city);
+        );
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -2038,7 +2262,10 @@ impl GraphWriter {
     // --- Actor operations ---
 
     /// Create or update an Actor node. MERGE on entity_id for idempotency.
-    pub async fn upsert_actor(&self, actor: &ActorNode) -> Result<(), neo4rs::Error> {
+    pub async fn upsert_actor(
+        &self,
+        actor: &ActorNode,
+    ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MERGE (a:Actor {entity_id: $entity_id})
              ON CREATE SET
@@ -2047,7 +2274,6 @@ impl GraphWriter {
                 a.actor_type = $actor_type,
                 a.domains = $domains,
                 a.social_urls = $social_urls,
-                a.city = $city,
                 a.description = $description,
                 a.signal_count = $signal_count,
                 a.first_seen = datetime($first_seen),
@@ -2064,7 +2290,6 @@ impl GraphWriter {
         .param("actor_type", actor.actor_type.to_string())
         .param("domains", actor.domains.clone())
         .param("social_urls", actor.social_urls.clone())
-        .param("city", actor.city.as_str())
         .param("description", actor.description.as_str())
         .param("signal_count", actor.signal_count as i64)
         .param("first_seen", format_datetime(&actor.first_seen))
@@ -2223,10 +2448,9 @@ impl GraphWriter {
     /// Get actors with their domains, social URLs, and dominant signal role for source discovery.
     pub async fn get_actors_with_domains(
         &self,
-        city: &str,
     ) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor {city: $city})
+            "MATCH (a:Actor)
              WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
@@ -2238,8 +2462,7 @@ impl GraphWriter {
                       WHEN tension_signals > response_signals THEN 'tension'
                       ELSE 'mixed'
                     END AS dominant_role",
-        )
-        .param("city", city);
+        );
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2388,11 +2611,10 @@ impl GraphWriter {
     /// Returns (successes, failures) filtered to gap_analysis/tension_seed discovery methods.
     pub async fn get_discovery_performance(
         &self,
-        city: &str,
     ) -> Result<(Vec<SourceBrief>, Vec<SourceBrief>), neo4rs::Error> {
         // Top 5 successful: active, signals_produced > 0, ordered by weight DESC
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND s.signals_produced > 0
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2400,8 +2622,7 @@ impl GraphWriter {
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.weight DESC
              LIMIT 5",
-        )
-        .param("city", city);
+        );
 
         let mut successes = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2425,7 +2646,7 @@ impl GraphWriter {
 
         // Bottom 5 failures: deactivated or 3+ consecutive empty runs
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (s:Source)
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND (s.active = false OR s.consecutive_empty_runs >= 3)
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2433,8 +2654,7 @@ impl GraphWriter {
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.consecutive_empty_runs DESC
              LIMIT 5",
-        )
-        .param("city", city);
+        );
 
         let mut failures = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -3271,7 +3491,17 @@ impl GraphWriter {
         let q = query(
             "MATCH (s:Source {city: $city})
              WHERE s.active = true
-             RETURN s.source_type AS st, s.signals_produced AS sp,
+             WITH s,
+                  CASE
+                    WHEN NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
+                      THEN 'search'
+                    WHEN s.canonical_value STARTS WITH 'https://'
+                      THEN split(replace(substring(s.canonical_value, 8), 'www.', ''), '/')[0]
+                    WHEN s.canonical_value STARTS WITH 'http://'
+                      THEN split(replace(substring(s.canonical_value, 7), 'www.', ''), '/')[0]
+                    ELSE split(s.canonical_value, '/')[0]
+                  END AS st
+             RETURN st, s.signals_produced AS sp,
                     s.signals_corroborated AS sc, s.url AS url",
         )
         .param("city", city);
@@ -3294,7 +3524,7 @@ impl GraphWriter {
         }
 
         let mut results = Vec::new();
-        for (source_type, (extracted, corroborated, urls)) in &type_map {
+        for (source_label, (extracted, corroborated, urls)) in &type_map {
             // Count survived signals (still in graph) per source type via source_url
             let mut survived = 0u32;
             if !urls.is_empty() {
@@ -3334,7 +3564,7 @@ impl GraphWriter {
             }
 
             results.push(ExtractionYield {
-                source_type: source_type.clone(),
+                source_label: source_label.clone(),
                 extracted: *extracted,
                 survived,
                 corroborated: *corroborated,
@@ -4238,6 +4468,26 @@ impl GraphWriter {
 
         self.client.graph.run(q3).await
     }
+
+
+
+    // ========== Supervisor / Validation Issues ==========
+
+    /// Dismiss a validation issue by ID.
+    pub async fn dismiss_validation_issue(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (v:ValidationIssue {id: $id})
+             WHERE v.status = 'open'
+             SET v.status = 'dismissed',
+                 v.resolved_at = datetime(),
+                 v.resolution = 'dismissed by admin'
+             RETURN v.id AS id",
+        )
+        .param("id", id.to_string());
+
+        let mut stream = self.client.inner().execute(q).await?;
+        Ok(stream.next().await?.is_some())
+    }
 }
 
 /// Stats from resource consolidation batch job.
@@ -4335,10 +4585,10 @@ pub struct GapTypeStats {
     pub avg_weight: f64,
 }
 
-/// Extraction yield metrics grouped by source_type.
+/// Extraction yield metrics grouped by source label (derived from URL domain).
 #[derive(Debug, Clone)]
 pub struct ExtractionYield {
-    pub source_type: String,
+    pub source_label: String,
     pub extracted: u32,    // from Source.signals_produced
     pub survived: u32,     // count of signals still in graph
     pub corroborated: u32, // from Source.signals_corroborated
@@ -4534,6 +4784,27 @@ fn format_datetime(dt: &DateTime<Utc>) -> String {
 /// Public version of format_datetime for use by other modules (e.g. story_weaver.rs).
 pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
     format_datetime(dt)
+}
+
+/// Parse a neo4rs Row (with aliased columns) into a ScoutTask.
+pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
+    let id_str: String = row.get("id").unwrap_or_default();
+    let source_str: String = row.get("source").unwrap_or_default();
+    let status_str: String = row.get("status").unwrap_or_default();
+
+    ScoutTask {
+        id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
+        center_lat: row.get("center_lat").unwrap_or(0.0),
+        center_lng: row.get("center_lng").unwrap_or(0.0),
+        radius_km: row.get("radius_km").unwrap_or(0.0),
+        context: row.get("context").unwrap_or_default(),
+        geo_terms: row.get("geo_terms").unwrap_or_default(),
+        priority: row.get("priority").unwrap_or(0.0),
+        source: source_str.parse().unwrap_or(ScoutTaskSource::Manual),
+        status: status_str.parse().unwrap_or(ScoutTaskStatus::Pending),
+        created_at: row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now),
+        completed_at: row_datetime_opt(row, "completed_at"),
+    }
 }
 
 // Backwards-compatible aliases

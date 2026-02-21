@@ -9,7 +9,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, EvidenceNode};
+use rootsignal_common::{RegionNode, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::scraper::WebSearcher;
@@ -22,7 +22,7 @@ pub struct Investigator<'a> {
     writer: &'a GraphWriter,
     searcher: &'a dyn WebSearcher,
     claude: Claude,
-    city: String,
+    region: String,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -116,20 +116,20 @@ impl<'a> Investigator<'a> {
         writer: &'a GraphWriter,
         searcher: &'a dyn WebSearcher,
         anthropic_api_key: &str,
-        city: &CityNode,
+        region: &RegionNode,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
-        let lat_delta = city.radius_km / 111.0;
-        let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
+        let lat_delta = region.radius_km / 111.0;
+        let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
             writer,
             searcher,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
-            city: city.name.clone(),
-            min_lat: city.center_lat - lat_delta,
-            max_lat: city.center_lat + lat_delta,
-            min_lng: city.center_lng - lng_delta,
-            max_lng: city.center_lng + lng_delta,
+            region: region.name.clone(),
+            min_lat: region.center_lat - lat_delta,
+            max_lat: region.center_lat + lat_delta,
+            min_lng: region.center_lng - lng_delta,
+            max_lng: region.center_lng + lng_delta,
             cancelled,
         }
     }
@@ -234,7 +234,7 @@ impl<'a> Investigator<'a> {
 
         let user_prompt = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}\nCity: {}",
-            target.node_type, target.title, target.summary, target.source_url, self.city,
+            target.node_type, target.title, target.summary, target.source_url, self.region,
         );
 
         let queries: InvestigationQueries = self
@@ -326,6 +326,7 @@ impl<'a> Investigator<'a> {
                 snippet: Some(item.snippet),
                 relevance: Some(relevance.clone()),
                 evidence_confidence: Some(item.confidence as f32),
+                channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 
             match self

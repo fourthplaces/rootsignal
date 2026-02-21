@@ -5,7 +5,7 @@ use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleOb
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, Node, NodeType};
+use rootsignal_common::{Node, NodeType};
 use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
@@ -319,16 +319,16 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// List actors in a city.
+    /// List actors in a region.
     async fn actors(
         &self,
         ctx: &Context<'_>,
-        city: String,
+        region: String,
         limit: Option<u32>,
     ) -> Result<Vec<GqlActor>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
-        let actors = reader.actors_active_in_area(&city, limit).await?;
+        let actors = reader.actors_active_in_area(&region, limit).await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 
@@ -341,9 +341,9 @@ impl QueryRoot {
 
     // ========== Admin queries (AdminGuard) ==========
 
-    /// Dashboard data for a city.
+    /// Dashboard data for a region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_dashboard(&self, ctx: &Context<'_>, city: String) -> Result<AdminDashboardData> {
+    async fn admin_dashboard(&self, ctx: &Context<'_>, region: String) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
 
@@ -362,7 +362,8 @@ impl QueryRoot {
             yield_data,
             gap_stats,
             sources,
-            all_cities,
+            due_sources,
+            scout_running,
         ) = tokio::join!(
             reader.total_count(),
             reader.story_count(),
@@ -374,36 +375,24 @@ impl QueryRoot {
             reader.story_count_by_arc(),
             reader.story_count_by_category(),
             writer.get_unmet_tensions(20),
-            writer.get_discovery_performance(&city),
-            writer.get_extraction_yield(&city),
-            writer.get_gap_type_stats(&city),
-            writer.get_active_sources(&city),
-            writer.list_cities(),
+            writer.get_discovery_performance(),
+            writer.get_extraction_yield(&region),
+            writer.get_gap_type_stats(&region),
+            writer.get_active_sources(),
+            writer.count_due_sources(),
+            writer.is_scout_running(&region),
         );
 
         let sources = sources.unwrap_or_default();
         let (top_sources, bottom_sources) = discovery.unwrap_or_default();
-        let all_cities = all_cities.unwrap_or_default();
 
-        // Build scout status for each city using batch queries (2 queries instead of 2N)
-        let city_slugs: Vec<String> = all_cities.iter().map(|c| c.slug.clone()).collect();
-        let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&city_slugs),
-            writer.batch_due_sources(&city_slugs),
-        );
-        let running_map = running_map.unwrap_or_default();
-        let due_map = due_map.unwrap_or_default();
-
-        let mut scout_statuses = Vec::new();
-        for c in &all_cities {
-            scout_statuses.push(CityScoutStatus {
-                city_name: c.name.clone(),
-                city_slug: c.slug.clone(),
-                last_scouted: c.last_scout_completed_at,
-                sources_due: *due_map.get(&c.slug).unwrap_or(&0),
-                running: *running_map.get(&c.slug).unwrap_or(&false),
-            });
-        }
+        let scout_statuses = vec![RegionScoutStatus {
+            region_name: region.clone(),
+            region_slug: region.clone(),
+            last_scouted: None,
+            sources_due: due_sources.unwrap_or(0),
+            running: scout_running.unwrap_or(false),
+        }];
 
         let by_type = by_type.unwrap_or_default();
         let signal_volume = signal_volume.unwrap_or_default();
@@ -501,7 +490,7 @@ impl QueryRoot {
                 .unwrap_or_default()
                 .iter()
                 .map(|y| AdminYieldRow {
-                    source_type: y.source_type.clone(),
+                    source_label: y.source_label.clone(),
                     extracted: y.extracted,
                     survived: y.survived,
                     corroborated: y.corroborated,
@@ -521,55 +510,14 @@ impl QueryRoot {
         })
     }
 
-    /// List all cities with metadata.
+    /// List active sources with schedule preview.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_cities(&self, ctx: &Context<'_>) -> Result<Vec<AdminCity>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let cities = writer.list_cities().await?;
-
-        let city_slugs: Vec<String> = cities.iter().map(|c| c.slug.clone()).collect();
-        let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&city_slugs),
-            writer.batch_due_sources(&city_slugs),
-        );
-        let running_map = running_map.unwrap_or_default();
-        let due_map = due_map.unwrap_or_default();
-
-        let results = cities
-            .iter()
-            .map(|c| {
-                let running = *running_map.get(&c.slug).unwrap_or(&false);
-                let due = *due_map.get(&c.slug).unwrap_or(&0);
-                AdminCity::from_city_node(c, running, due)
-            })
-            .collect();
-        Ok(results)
-    }
-
-    /// Get city detail.
-    #[graphql(guard = "AdminGuard")]
-    async fn admin_city(&self, ctx: &Context<'_>, slug: String) -> Result<Option<AdminCity>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let city = writer.get_city(&slug).await?;
-        match city {
-            Some(c) => {
-                let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
-                let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
-                Ok(Some(AdminCity::from_city_node(&c, running, due)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// List active sources for a city with schedule preview.
-    #[graphql(guard = "AdminGuard")]
-    async fn admin_city_sources(
+    async fn admin_region_sources(
         &self,
         ctx: &Context<'_>,
-        city_slug: String,
     ) -> Result<Vec<AdminSource>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let sources = writer.get_active_sources(&city_slug).await?;
+        let sources = writer.get_active_sources().await?;
         Ok(sources
             .iter()
             .map(|s| {
@@ -577,11 +525,12 @@ impl QueryRoot {
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
                     rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
                 });
+                let source_label = source_label_from_value(s.value());
                 AdminSource {
                     id: s.id,
                     url: s.url.clone().unwrap_or_default(),
                     canonical_value: s.canonical_value.clone(),
-                    source_type: s.source_type.to_string(),
+                    source_label,
                     weight: s.weight,
                     quality_penalty: s.quality_penalty,
                     effective_weight,
@@ -595,25 +544,170 @@ impl QueryRoot {
             .collect())
     }
 
-    /// Scout status for a specific city.
+    /// Scout status for a specific region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_status(
         &self,
         ctx: &Context<'_>,
-        city_slug: String,
-    ) -> Result<CityScoutStatus> {
+        region_slug: String,
+    ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let city = writer.get_city(&city_slug).await?;
-        let running = writer.is_scout_running(&city_slug).await.unwrap_or(false);
-        let due = writer.count_due_sources(&city_slug).await.unwrap_or(0);
+        let running = writer.is_scout_running(&region_slug).await.unwrap_or(false);
+        let due = writer.count_due_sources().await.unwrap_or(0);
 
-        Ok(CityScoutStatus {
-            city_name: city.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            city_slug,
-            last_scouted: city.and_then(|c| c.last_scout_completed_at),
+        Ok(RegionScoutStatus {
+            region_name: region_slug.clone(),
+            region_slug,
+            last_scouted: None,
             sources_due: due,
             running,
         })
+    }
+
+    /// List supervisor validation findings for a region.
+    #[graphql(guard = "AdminGuard")]
+    async fn supervisor_findings(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+        status: Option<String>,
+        limit: Option<i32>,
+    ) -> Result<Vec<SupervisorFinding>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(100).min(500) as i64;
+        let rows = reader
+            .list_validation_issues(&region, status.as_deref(), limit)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| SupervisorFinding {
+                id: r.id,
+                issue_type: r.issue_type,
+                severity: r.severity,
+                target_id: r.target_id,
+                target_label: r.target_label,
+                description: r.description,
+                suggested_action: r.suggested_action,
+                status: r.status,
+                created_at: r.created_at,
+                resolved_at: r.resolved_at,
+            })
+            .collect())
+    }
+
+    /// List recent scout runs for a region (reads JSON files from disk).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_runs(
+        &self,
+        _ctx: &Context<'_>,
+        region: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRun>> {
+        let limit = limit.unwrap_or(20).min(100) as usize;
+        let dir = rootsignal_scout::run_log::data_dir()
+            .join("scout-runs")
+            .join(&region);
+
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries: Vec<_> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .collect();
+
+        // Sort by modified time descending (most recent first)
+        entries.sort_by(|a, b| {
+            b.metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                .cmp(
+                    &a.metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                )
+        });
+
+        let mut runs = Vec::new();
+        for entry in entries.into_iter().take(limit) {
+            let content = std::fs::read_to_string(entry.path())?;
+            if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
+                runs.push(ScoutRun::from(run));
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Get a single scout run by run_id (searches all region dirs).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Option<ScoutRun>> {
+        let base = rootsignal_scout::run_log::data_dir().join("scout-runs");
+        if !base.exists() {
+            return Ok(None);
+        }
+        for region_dir in std::fs::read_dir(&base)?.filter_map(|e| e.ok()) {
+            if !region_dir.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let path = region_dir.path().join(format!("{run_id}.json"));
+            if path.exists() {
+                let content = std::fs::read_to_string(&path)?;
+                if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
+                    return Ok(Some(ScoutRun::from(run)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Aggregate summary of supervisor findings for a region.
+    #[graphql(guard = "AdminGuard")]
+    async fn supervisor_summary(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+    ) -> Result<SupervisorSummary> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let summary = reader.validation_issue_summary(&region).await?;
+
+        Ok(SupervisorSummary {
+            total_open: summary.total_open,
+            total_resolved: summary.total_resolved,
+            total_dismissed: summary.total_dismissed,
+            count_by_type: summary
+                .count_by_type
+                .into_iter()
+                .map(|(label, count)| FindingCount { label, count })
+                .collect(),
+            count_by_severity: summary
+                .count_by_severity
+                .into_iter()
+                .map(|(label, count)| FindingCount { label, count })
+                .collect(),
+        })
+    }
+
+    /// List scout tasks, optionally filtered by status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_tasks(
+        &self,
+        ctx: &Context<'_>,
+        status: Option<String>,
+        limit: Option<i32>,
+    ) -> Result<Vec<GqlScoutTask>> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let lim = limit.unwrap_or(50).min(200) as u32;
+        let tasks = writer
+            .list_scout_tasks(status.as_deref(), lim)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
+        Ok(tasks.into_iter().map(GqlScoutTask::from).collect())
     }
 }
 
@@ -633,7 +727,7 @@ pub struct AdminDashboardData {
     pub total_sources: u64,
     pub active_sources: u64,
     pub total_tensions: u64,
-    pub scout_statuses: Vec<CityScoutStatus>,
+    pub scout_statuses: Vec<RegionScoutStatus>,
     pub signal_volume_by_day: Vec<DayVolume>,
     pub count_by_type: Vec<TypeCount>,
     pub story_count_by_arc: Vec<LabelCount>,
@@ -648,9 +742,9 @@ pub struct AdminDashboardData {
 }
 
 #[derive(SimpleObject)]
-pub struct CityScoutStatus {
-    pub city_name: String,
-    pub city_slug: String,
+pub struct RegionScoutStatus {
+    pub region_name: String,
+    pub region_slug: String,
     pub last_scouted: Option<DateTime<Utc>>,
     pub sources_due: u32,
     pub running: bool,
@@ -696,7 +790,7 @@ pub struct AdminSourceRow {
 
 #[derive(SimpleObject)]
 pub struct AdminYieldRow {
-    pub source_type: String,
+    pub source_label: String,
     pub extracted: u32,
     pub survived: u32,
     pub corroborated: u32,
@@ -712,44 +806,11 @@ pub struct AdminGapRow {
 }
 
 #[derive(SimpleObject)]
-pub struct AdminCity {
-    pub id: Uuid,
-    pub slug: String,
-    pub name: String,
-    pub center_lat: f64,
-    pub center_lng: f64,
-    pub radius_km: f64,
-    pub active: bool,
-    pub created_at: DateTime<Utc>,
-    pub last_scout_completed_at: Option<DateTime<Utc>>,
-    pub scout_running: bool,
-    pub sources_due: u32,
-}
-
-impl AdminCity {
-    fn from_city_node(c: &CityNode, running: bool, due: u32) -> Self {
-        Self {
-            id: c.id,
-            slug: c.slug.clone(),
-            name: c.name.clone(),
-            center_lat: c.center_lat,
-            center_lng: c.center_lng,
-            radius_km: c.radius_km,
-            active: c.active,
-            created_at: c.created_at,
-            last_scout_completed_at: c.last_scout_completed_at,
-            scout_running: running,
-            sources_due: due,
-        }
-    }
-}
-
-#[derive(SimpleObject)]
 pub struct AdminSource {
     pub id: Uuid,
     pub url: String,
     pub canonical_value: String,
-    pub source_type: String,
+    pub source_label: String,
     pub weight: f64,
     pub quality_penalty: f64,
     pub effective_weight: f64,
@@ -760,7 +821,216 @@ pub struct AdminSource {
     pub active: bool,
 }
 
+// ========== Scout Run Types ==========
+
+/// JSON shape on disk (deserialization target).
+#[derive(serde::Deserialize)]
+struct ScoutRunJson {
+    run_id: String,
+    region: String,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    stats: ScoutRunStatsJson,
+    events: Vec<ScoutRunEventJson>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScoutRunStatsJson {
+    urls_scraped: Option<u32>,
+    urls_unchanged: Option<u32>,
+    urls_failed: Option<u32>,
+    signals_extracted: Option<u32>,
+    signals_deduplicated: Option<u32>,
+    signals_stored: Option<u32>,
+    social_media_posts: Option<u32>,
+    expansion_queries_collected: Option<u32>,
+    expansion_sources_created: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScoutRunEventJson {
+    seq: u32,
+    ts: DateTime<Utc>,
+    #[serde(rename = "type")]
+    event_type: String,
+    // Flat optional fields that vary by event type
+    query: Option<String>,
+    url: Option<String>,
+    provider: Option<String>,
+    platform: Option<String>,
+    identifier: Option<String>,
+    signal_type: Option<String>,
+    title: Option<String>,
+    result_count: Option<u32>,
+    post_count: Option<u32>,
+    items: Option<u32>,
+    content_bytes: Option<u64>,
+    content_chars: Option<u64>,
+    signals_extracted: Option<u32>,
+    implied_queries: Option<u32>,
+    similarity: Option<f64>,
+    confidence: Option<f64>,
+    success: Option<bool>,
+    action: Option<String>,
+    node_id: Option<String>,
+    matched_id: Option<String>,
+    existing_id: Option<String>,
+    source_url: Option<String>,
+    new_source_url: Option<String>,
+    canonical_key: Option<String>,
+    gatherings: Option<u64>,
+    needs: Option<u64>,
+    stale: Option<u64>,
+    sources_created: Option<u64>,
+    spent_cents: Option<u64>,
+    remaining_cents: Option<u64>,
+    topics: Option<Vec<String>>,
+    posts_found: Option<u32>,
+}
+
+/// GraphQL output type for a scout run.
+#[derive(SimpleObject)]
+struct ScoutRun {
+    run_id: String,
+    region: String,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    stats: ScoutRunStats,
+    events: Vec<ScoutRunEvent>,
+}
+
+#[derive(SimpleObject)]
+struct ScoutRunStats {
+    urls_scraped: u32,
+    urls_unchanged: u32,
+    urls_failed: u32,
+    signals_extracted: u32,
+    signals_deduplicated: u32,
+    signals_stored: u32,
+    social_media_posts: u32,
+    expansion_queries_collected: u32,
+    expansion_sources_created: u32,
+}
+
+#[derive(SimpleObject)]
+struct ScoutRunEvent {
+    seq: u32,
+    ts: DateTime<Utc>,
+    #[graphql(name = "type")]
+    event_type: String,
+    query: Option<String>,
+    url: Option<String>,
+    provider: Option<String>,
+    platform: Option<String>,
+    identifier: Option<String>,
+    signal_type: Option<String>,
+    title: Option<String>,
+    result_count: Option<u32>,
+    post_count: Option<u32>,
+    items: Option<u32>,
+    content_bytes: Option<u64>,
+    content_chars: Option<u64>,
+    signals_extracted: Option<u32>,
+    implied_queries: Option<u32>,
+    similarity: Option<f64>,
+    confidence: Option<f64>,
+    success: Option<bool>,
+    action: Option<String>,
+    node_id: Option<String>,
+    matched_id: Option<String>,
+    existing_id: Option<String>,
+    source_url: Option<String>,
+    new_source_url: Option<String>,
+    canonical_key: Option<String>,
+    gatherings: Option<u64>,
+    needs: Option<u64>,
+    stale: Option<u64>,
+    sources_created: Option<u64>,
+    spent_cents: Option<u64>,
+    remaining_cents: Option<u64>,
+    topics: Option<Vec<String>>,
+    posts_found: Option<u32>,
+}
+
+impl From<ScoutRunJson> for ScoutRun {
+    fn from(j: ScoutRunJson) -> Self {
+        Self {
+            run_id: j.run_id,
+            region: j.region,
+            started_at: j.started_at,
+            finished_at: j.finished_at,
+            stats: ScoutRunStats {
+                urls_scraped: j.stats.urls_scraped.unwrap_or(0),
+                urls_unchanged: j.stats.urls_unchanged.unwrap_or(0),
+                urls_failed: j.stats.urls_failed.unwrap_or(0),
+                signals_extracted: j.stats.signals_extracted.unwrap_or(0),
+                signals_deduplicated: j.stats.signals_deduplicated.unwrap_or(0),
+                signals_stored: j.stats.signals_stored.unwrap_or(0),
+                social_media_posts: j.stats.social_media_posts.unwrap_or(0),
+                expansion_queries_collected: j.stats.expansion_queries_collected.unwrap_or(0),
+                expansion_sources_created: j.stats.expansion_sources_created.unwrap_or(0),
+            },
+            events: j.events.into_iter().map(ScoutRunEvent::from).collect(),
+        }
+    }
+}
+
+impl From<ScoutRunEventJson> for ScoutRunEvent {
+    fn from(j: ScoutRunEventJson) -> Self {
+        Self {
+            seq: j.seq,
+            ts: j.ts,
+            event_type: j.event_type,
+            query: j.query,
+            url: j.url,
+            provider: j.provider,
+            platform: j.platform,
+            identifier: j.identifier,
+            signal_type: j.signal_type,
+            title: j.title,
+            result_count: j.result_count,
+            post_count: j.post_count,
+            items: j.items,
+            content_bytes: j.content_bytes,
+            content_chars: j.content_chars,
+            signals_extracted: j.signals_extracted,
+            implied_queries: j.implied_queries,
+            similarity: j.similarity,
+            confidence: j.confidence,
+            success: j.success,
+            action: j.action,
+            node_id: j.node_id,
+            matched_id: j.matched_id,
+            existing_id: j.existing_id,
+            source_url: j.source_url,
+            new_source_url: j.new_source_url,
+            canonical_key: j.canonical_key,
+            gatherings: j.gatherings,
+            needs: j.needs,
+            stale: j.stale,
+            sources_created: j.sources_created,
+            spent_cents: j.spent_cents,
+            remaining_cents: j.remaining_cents,
+            topics: j.topics,
+            posts_found: j.posts_found,
+        }
+    }
+}
+
 // ========== Helpers ==========
+
+fn source_label_from_value(value: &str) -> String {
+    if rootsignal_common::is_web_query(value) {
+        return "search".to_string();
+    }
+    // Extract domain from URL or canonical value (e.g. "instagram.com/handle" → "instagram.com")
+    let without_scheme = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(value);
+    let domain = without_scheme.split('/').next().unwrap_or(value);
+    domain.strip_prefix("www.").unwrap_or(domain).to_string()
+}
 
 fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
     let features: Vec<serde_json::Value> = nodes

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use tracing::info;
 
-use rootsignal_common::{SourceNode, SourceRole, SourceType};
+use rootsignal_common::{is_web_query, SourceNode, SourceRole};
 
 /// Determines which sources to scrape this run based on weight, cadence, and exploration policy.
 pub struct SourceScheduler {
@@ -259,7 +259,7 @@ pub fn schedule_web_queries(
     // Filter to active web query sources only
     let web_queries: Vec<&SourceNode> = sources
         .iter()
-        .filter(|s| s.source_type == SourceType::WebQuery && s.active)
+        .filter(|s| is_web_query(&s.canonical_value) && s.active)
         .collect();
 
     if web_queries.is_empty() {
@@ -497,18 +497,16 @@ pub fn compute_weight(
 mod tests {
     use super::*;
     use chrono::Duration;
-    use rootsignal_common::{DiscoveryMethod, SourceType};
+    use rootsignal_common::DiscoveryMethod;
     use uuid::Uuid;
 
     fn make_source(weight: f64, last_scraped: Option<DateTime<Utc>>) -> SourceNode {
         SourceNode {
             id: Uuid::new_v4(),
-            canonical_key: format!("test:web:{}", Uuid::new_v4()),
-            canonical_value: "test".to_string(),
+            canonical_key: format!("test:{}", Uuid::new_v4()),
+            canonical_value: "https://example.com".to_string(),
             url: Some("https://example.com".to_string()),
-            source_type: SourceType::Web,
             discovery_method: DiscoveryMethod::Curated,
-            city: "test".to_string(),
             created_at: Utc::now(),
             last_scraped,
             last_produced_signal: None,
@@ -775,12 +773,10 @@ mod tests {
     ) -> SourceNode {
         SourceNode {
             id: Uuid::new_v4(),
-            canonical_key: format!("test:web_query:{}", Uuid::new_v4()),
+            canonical_key: format!("test:{}", Uuid::new_v4()),
             canonical_value: "test query".to_string(),
             url: None,
-            source_type: SourceType::WebQuery,
             discovery_method: DiscoveryMethod::GapAnalysis,
-            city: "test".to_string(),
             created_at: Utc::now(),
             last_scraped,
             last_produced_signal: None,
@@ -891,7 +887,9 @@ mod tests {
     fn wq_schedule_skips_non_web_query() {
         let now = Utc::now();
         let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
-        source.source_type = SourceType::Web;
+        // Make it a URL source (not a web query) so it gets filtered out
+        source.canonical_value = "https://example.com".to_string();
+        source.url = Some("https://example.com".to_string());
         let result = schedule_web_queries(&[source], 50, now);
         assert!(
             result.scheduled.is_empty(),

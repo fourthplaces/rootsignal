@@ -56,6 +56,7 @@ fn parse_category(s: &str) -> StoryCategory {
         "crisis" => StoryCategory::Crisis,
         "governance" => StoryCategory::Governance,
         "stewardship" => StoryCategory::Stewardship,
+        "environment" => StoryCategory::Environment,
         _ => StoryCategory::Community,
     }
 }
@@ -141,7 +142,7 @@ Write a story synthesis as structured JSON. The synthesis should:
 3. narrative: 3-6 sentences giving fuller context. Connect the signals into a coherent story.
 4. action_guidance: A list of specific actions someone can take. Include action_urls from the signals where applicable.
 5. key_entities: Names of organizations, groups, or individuals mentioned across the signals.
-6. category: One of: resource, gathering, crisis, governance, stewardship, community
+6. category: One of: resource, gathering, crisis, governance, stewardship, community, environment
 
 Write for community members, not journalists. Be specific, not generic.
 GROUNDING: Only include facts present in the signals above. Do not invent details, organizations, or events not mentioned. Use source URLs to verify claims."#,
