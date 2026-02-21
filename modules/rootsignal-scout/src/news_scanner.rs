@@ -6,8 +6,10 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
+use rootsignal_archive::Archive;
+
 use crate::pipeline::extractor::{Extractor, SignalExtractor};
-use crate::pipeline::scraper::{PageScraper, RssFetcher};
+use crate::pipeline::scraper::PageScraper;
 use crate::scheduling::budget::BudgetTracker;
 
 /// Hardcoded seed list of global/national RSS feeds for Driver B.
@@ -42,7 +44,7 @@ const NEWS_FEEDS: &[&str] = &[
 
 /// News scanner that fetches global RSS feeds, extracts signals, and stores them.
 pub struct NewsScanner {
-    rss: RssFetcher,
+    archive: Option<Arc<Archive>>,
     extractor: Box<dyn SignalExtractor>,
     scraper: Arc<dyn PageScraper>,
     writer: GraphWriter,
@@ -79,12 +81,19 @@ impl NewsScanner {
         let _ = voyage_api_key; // reserved for future embedding use
 
         Ok(Self {
-            rss: RssFetcher::new(),
+            archive: None,
             extractor,
             scraper,
             writer,
             budget: BudgetTracker::new(daily_budget_cents),
         })
+    }
+
+    pub fn with_archive(mut self, archive: Arc<Archive>) -> Self {
+        // Use archive as the page scraper too
+        self.scraper = archive.clone();
+        self.archive = Some(archive);
+        self
     }
 
     /// Scan all news feeds, extract signals, store them.
@@ -95,10 +104,26 @@ impl NewsScanner {
         // 1. Fetch all feeds
         let mut all_urls: Vec<(String, Option<String>)> = Vec::new();
         for feed_url in NEWS_FEEDS {
-            match self.rss.fetch_items(feed_url).await {
+            let feed_result = if let Some(ref archive) = self.archive {
+                archive.fetch(feed_url).await
+                    .map(|resp| match resp.content {
+                        rootsignal_archive::Content::Feed(items) => items
+                            .into_iter()
+                            .map(|i| (i.url, i.title))
+                            .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    })
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            } else {
+                crate::pipeline::scraper::RssFetcher::new()
+                    .fetch_items(feed_url)
+                    .await
+                    .map(|items| items.into_iter().map(|i| (i.url, i.title)).collect())
+            };
+            match feed_result {
                 Ok(items) => {
-                    for item in items {
-                        all_urls.push((item.url, item.title));
+                    for (url, title) in items {
+                        all_urls.push((url, title));
                     }
                 }
                 Err(e) => {

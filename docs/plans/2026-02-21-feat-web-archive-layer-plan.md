@@ -417,24 +417,24 @@ Constructed from environment variables in `scout::main.rs`, same as today but pa
 
 ### Functional Requirements
 
-- [ ] `archive.fetch(url)` fetches a web page and returns `Content::Page` with both `raw_html` and `markdown`
-- [ ] `archive.fetch(query)` runs a Serper search and returns `Content::SearchResults`
-- [ ] `archive.fetch(rss_url)` fetches and parses an RSS feed, returns `Content::Feed`
-- [ ] `archive.fetch(social_url)` detects platform and returns `Content::SocialPosts`
-- [ ] `archive.search_social(platform, topics, limit)` searches social platform by topics
-- [ ] Every `fetch()` call records the interaction to Postgres
-- [ ] Failed fetches are recorded with error information
-- [ ] `Replay::fetch(target)` returns the most recent archived content for that target
-- [ ] `Replay::fetch(target)` returns `Err(NotFound)` for unarchived targets
+- [x] `archive.fetch(url)` fetches a web page and returns `Content::Page` with both `raw_html` and `markdown`
+- [x] `archive.fetch(query)` runs a Serper search and returns `Content::SearchResults`
+- [x] `archive.fetch(rss_url)` fetches and parses an RSS feed, returns `Content::Feed`
+- [x] `archive.fetch(social_url)` detects platform and returns `Content::SocialPosts`
+- [x] `archive.search_social(platform, topics, limit)` searches social platform by topics
+- [x] Every `fetch()` call records the interaction to Postgres
+- [x] Failed fetches are recorded with error information
+- [x] `Replay::fetch(target)` returns the most recent archived content for that target
+- [x] `Replay::fetch(target)` returns `Err(NotFound)` for unarchived targets
 - [ ] Scout produces identical signals before and after the migration (same extraction, same dedup)
 
 ### Non-Functional Requirements
 
-- [ ] Archive is `Send + Sync` — callers can drive concurrency via `buffer_unordered`
-- [ ] Chrome concurrency limit (`MAX_CONCURRENT_CHROME = 2`) preserved
-- [ ] Postgres write failure does not fail the fetch — logs warning, returns content
-- [ ] `cargo check --workspace` passes with no warnings
-- [ ] No direct web access from scout — all fetching goes through archive
+- [x] Archive is `Send + Sync` — callers can drive concurrency via `buffer_unordered`
+- [x] Chrome concurrency limit (`MAX_CONCURRENT_CHROME = 2`) preserved
+- [x] Postgres write failure does not fail the fetch — logs warning, returns content
+- [x] `cargo check --workspace` passes with no warnings
+- [x] No direct web access from scout — all fetching goes through archive (via bridge traits)
 
 ## Dependencies & Risks
 

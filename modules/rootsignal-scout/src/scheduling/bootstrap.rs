@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use chrono::Utc;
 use tracing::{info, warn};
@@ -6,7 +8,9 @@ use uuid::Uuid;
 use rootsignal_common::{RegionNode, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
-use crate::scraper::{RssFetcher, WebSearcher};
+use rootsignal_archive::Archive;
+
+use crate::scraper::WebSearcher;
 use crate::sources;
 
 /// Handles cold-start bootstrapping for a brand-new city.
@@ -15,6 +19,7 @@ use crate::sources;
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
     _searcher: &'a dyn WebSearcher,
+    archive: Option<Arc<Archive>>,
     anthropic_api_key: String,
     region: RegionNode,
 }
@@ -29,9 +34,15 @@ impl<'a> Bootstrapper<'a> {
         Self {
             writer,
             _searcher: searcher,
+            archive: None,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
         }
+    }
+
+    pub fn with_archive(mut self, archive: Arc<Archive>) -> Self {
+        self.archive = Some(archive);
+        self
     }
 
     /// Run the cold start bootstrap. Returns number of sources discovered.
@@ -307,22 +318,23 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
                     count = outlets.len(),
                     "Discovered news outlets for {}", city_name
                 );
-                let fetcher = RssFetcher::new();
                 for (name, feed_url) in outlets {
                     // Validate the feed URL is reachable by attempting a fetch
-                    match fetcher.fetch_items(&feed_url).await {
-                        Ok(_) => {
-                            let mut source = make_url(
-                                &feed_url,
-                                SourceRole::Mixed,
-                            );
-                            source.canonical_value = name.clone();
-                            source.gap_context = Some(format!("Outlet: {name}"));
-                            sources.push(source);
-                        }
-                        Err(e) => {
-                            warn!(outlet = name.as_str(), feed_url = feed_url.as_str(), error = %e, "RSS feed unreachable, skipping");
-                        }
+                    let reachable = if let Some(ref archive) = self.archive {
+                        archive.fetch(&feed_url).await.is_ok()
+                    } else {
+                        crate::scraper::RssFetcher::new().fetch_items(&feed_url).await.is_ok()
+                    };
+                    if reachable {
+                        let mut source = make_url(
+                            &feed_url,
+                            SourceRole::Mixed,
+                        );
+                        source.canonical_value = name.clone();
+                        source.gap_context = Some(format!("Outlet: {name}"));
+                        sources.push(source);
+                    } else {
+                        warn!(outlet = name.as_str(), feed_url = feed_url.as_str(), "RSS feed unreachable, skipping");
                     }
                 }
             }

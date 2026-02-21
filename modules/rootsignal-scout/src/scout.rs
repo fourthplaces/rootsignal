@@ -119,6 +119,9 @@ pub struct Scout {
     scraper: Arc<dyn PageScraper>,
     searcher: Arc<dyn WebSearcher>,
     social: Arc<dyn SocialScraper>,
+    /// Concrete archive for direct access (RSS feeds, etc.).
+    /// None in test paths that use fixture trait objects.
+    archive: Option<Arc<Archive>>,
     anthropic_api_key: String,
     region: RegionNode,
     budget: BudgetTracker,
@@ -176,7 +179,8 @@ impl Scout {
             embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
             scraper: archive.clone(),
             searcher: archive.clone(),
-            social: archive,
+            social: archive.clone(),
+            archive: Some(archive),
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
             budget: BudgetTracker::new(daily_budget_cents),
@@ -203,6 +207,7 @@ impl Scout {
             scraper,
             searcher,
             social,
+            archive: None,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
             budget: BudgetTracker::new(0), // Unlimited for tests
@@ -298,12 +303,15 @@ impl Scout {
         // or any other state where sources were lost.
         if all_sources.is_empty() {
             info!("No sources found — running cold-start bootstrap");
-            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+            let mut bootstrapper = crate::bootstrap::Bootstrapper::new(
                 &self.writer,
                 &*self.searcher,
                 &self.anthropic_api_key,
                 self.region.clone(),
             );
+            if let Some(ref archive) = self.archive {
+                bootstrapper = bootstrapper.with_archive(archive.clone());
+            }
             match bootstrapper.run().await {
                 Ok(n) => {
                     run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
@@ -370,6 +378,7 @@ impl Scout {
             self.scraper.clone(),
             self.searcher.clone(),
             &*self.social,
+            self.archive.clone(),
             &self.region,
             run_id.clone(),
         );
