@@ -329,6 +329,17 @@ impl Node {
         }
     }
 
+    pub fn meta_mut(&mut self) -> Option<&mut NodeMeta> {
+        match self {
+            Node::Gathering(n) => Some(&mut n.meta),
+            Node::Aid(n) => Some(&mut n.meta),
+            Node::Need(n) => Some(&mut n.meta),
+            Node::Notice(n) => Some(&mut n.meta),
+            Node::Tension(n) => Some(&mut n.meta),
+            Node::Evidence(_) => None,
+        }
+    }
+
     pub fn title(&self) -> &str {
         match self {
             Node::Gathering(n) => &n.meta.title,

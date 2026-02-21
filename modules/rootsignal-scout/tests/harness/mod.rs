@@ -59,6 +59,7 @@ impl TestContext {
     /// Spin up Neo4j and validate API keys are present.
     /// Returns `None` if keys are missing (test should be skipped).
     pub async fn try_new() -> Option<Self> {
+        dotenv_load();
         let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
         let voyage_key = std::env::var("VOYAGE_API_KEY").ok()?;
 
@@ -362,5 +363,29 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
             .upsert_source(&source)
             .await
             .expect("Failed to upsert social source");
+    }
+}
+
+/// Load `.env` from the workspace root (two levels up from CARGO_MANIFEST_DIR).
+/// Only sets vars that aren't already in the environment.
+fn dotenv_load() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(".env");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                if std::env::var(key.trim()).is_err() {
+                    unsafe { std::env::set_var(key.trim(), value.trim()) };
+                }
+            }
+        }
     }
 }
