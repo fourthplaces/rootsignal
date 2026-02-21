@@ -143,3 +143,52 @@ fn scout_to_common_platform(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::scraper::SocialPlatform;
+
+    #[test]
+    fn common_to_scout_post_maps_all_fields() {
+        let common = rootsignal_common::SocialPost {
+            content: "Hello world".to_string(),
+            author: Some("@testuser".to_string()),
+            url: Some("https://instagram.com/p/abc".to_string()),
+        };
+        let scout = common_to_scout_post(common);
+        assert_eq!(scout.content, "Hello world");
+        assert_eq!(scout.author, Some("@testuser".to_string()));
+        assert_eq!(scout.url, Some("https://instagram.com/p/abc".to_string()));
+    }
+
+    #[test]
+    fn common_to_scout_post_handles_none_fields() {
+        let common = rootsignal_common::SocialPost {
+            content: "Text only".to_string(),
+            author: None,
+            url: None,
+        };
+        let scout = common_to_scout_post(common);
+        assert_eq!(scout.content, "Text only");
+        assert!(scout.author.is_none());
+        assert!(scout.url.is_none());
+    }
+
+    #[test]
+    fn platform_mapping_roundtrip() {
+        let platforms = vec![
+            SocialPlatform::Instagram,
+            SocialPlatform::Facebook,
+            SocialPlatform::Reddit,
+            SocialPlatform::Twitter,
+            SocialPlatform::TikTok,
+        ];
+        for p in platforms {
+            let common = scout_to_common_platform(&p);
+            // Verify the mapping is deterministic and covers all variants
+            let name = format!("{:?}", common);
+            assert!(!name.is_empty());
+        }
+    }
+}

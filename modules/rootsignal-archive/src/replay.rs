@@ -142,3 +142,147 @@ fn platform_str(platform: &SocialPlatform) -> &'static str {
         SocialPlatform::Bluesky => "bluesky",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_interaction(kind: &str) -> StoredInteraction {
+        StoredInteraction {
+            id: Uuid::new_v4(),
+            run_id: Uuid::new_v4(),
+            city_slug: "minneapolis".to_string(),
+            kind: kind.to_string(),
+            target: "https://example.com".to_string(),
+            target_raw: "https://example.com".to_string(),
+            fetcher: "test".to_string(),
+            raw_html: None,
+            markdown: None,
+            response_json: None,
+            raw_bytes: None,
+            content_hash: "abc123".to_string(),
+            fetched_at: Utc::now(),
+            duration_ms: 100,
+            error: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn reconstruct_page() {
+        let mut i = make_interaction("page");
+        i.raw_html = Some("<h1>Hello</h1>".to_string());
+        i.markdown = Some("# Hello".to_string());
+
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::Page(page) => {
+                assert_eq!(page.raw_html, "<h1>Hello</h1>");
+                assert_eq!(page.markdown, "# Hello");
+            }
+            other => panic!("Expected Content::Page, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn reconstruct_search_results() {
+        let results = vec![rootsignal_common::SearchResult {
+            url: "https://example.com".to_string(),
+            title: "Example".to_string(),
+            snippet: "A snippet".to_string(),
+        }];
+        let mut i = make_interaction("search");
+        i.response_json = Some(serde_json::to_value(&results).unwrap());
+
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::SearchResults(r) => {
+                assert_eq!(r.len(), 1);
+                assert_eq!(r[0].title, "Example");
+            }
+            other => panic!("Expected Content::SearchResults, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn reconstruct_social_posts() {
+        let posts = vec![rootsignal_common::SocialPost {
+            content: "Hello from insta".to_string(),
+            author: Some("@user".to_string()),
+            url: Some("https://instagram.com/p/123".to_string()),
+        }];
+        let mut i = make_interaction("social");
+        i.response_json = Some(serde_json::to_value(&posts).unwrap());
+
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::SocialPosts(p) => {
+                assert_eq!(p.len(), 1);
+                assert_eq!(p[0].content, "Hello from insta");
+            }
+            other => panic!("Expected Content::SocialPosts, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn reconstruct_feed() {
+        let items = vec![rootsignal_common::FeedItem {
+            url: "https://example.com/article".to_string(),
+            title: Some("Article Title".to_string()),
+            pub_date: None,
+        }];
+        let mut i = make_interaction("feed");
+        i.response_json = Some(serde_json::to_value(&items).unwrap());
+
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::Feed(f) => {
+                assert_eq!(f.len(), 1);
+                assert_eq!(f[0].url, "https://example.com/article");
+            }
+            other => panic!("Expected Content::Feed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn reconstruct_raw_for_unknown_kind() {
+        let mut i = make_interaction("something_new");
+        i.raw_html = Some("raw body text".to_string());
+
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::Raw(text) => assert_eq!(text, "raw body text"),
+            other => panic!("Expected Content::Raw, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn error_interaction_preserved() {
+        let mut i = make_interaction("page");
+        i.error = Some("connection timed out".to_string());
+
+        // interaction_to_response doesn't check error — that's Replay::fetch's job.
+        // Just verify it doesn't panic.
+        let resp = interaction_to_response(i).unwrap();
+        assert!(matches!(resp.content, Content::Page(_)));
+    }
+
+    #[test]
+    fn missing_json_returns_empty_collections() {
+        // Search with no response_json should return empty vec, not error
+        let i = make_interaction("search");
+        let resp = interaction_to_response(i).unwrap();
+        match resp.content {
+            Content::SearchResults(r) => assert!(r.is_empty()),
+            other => panic!("Expected empty Content::SearchResults, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn content_hash_preserved() {
+        let i = make_interaction("page");
+        let resp = interaction_to_response(i).unwrap();
+        assert_eq!(resp.content_hash, "abc123");
+    }
+}
