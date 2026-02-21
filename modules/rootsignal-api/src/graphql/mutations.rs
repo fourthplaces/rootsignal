@@ -597,10 +597,17 @@ impl MutationRoot {
                 writer,
                 config_clone.daily_budget_cents,
             ) {
-                Ok(scanner) => match scanner.scan().await {
-                    Ok(locations) => info!(count = locations.len(), "News scan complete"),
-                    Err(e) => warn!(error = %e, "News scan failed"),
-                },
+                Ok(scanner) => {
+                    // Wire through archive if DATABASE_URL is available
+                    let scanner = match create_archive_for_news_scan(&config_clone).await {
+                        Some(archive) => scanner.with_archive(archive),
+                        None => scanner,
+                    };
+                    match scanner.scan().await {
+                        Ok(locations) => info!(count = locations.len(), "News scan complete"),
+                        Err(e) => warn!(error = %e, "News scan failed"),
+                    }
+                }
                 Err(e) => warn!(error = %e, "Failed to create news scanner"),
             }
         });
@@ -756,6 +763,39 @@ async fn run_scout(
     Ok(())
 }
 
+/// Create an Archive for news scanning. Returns None if DATABASE_URL is not set.
+async fn create_archive_for_news_scan(
+    config: &rootsignal_common::Config,
+) -> Option<std::sync::Arc<rootsignal_archive::Archive>> {
+    let database_url = std::env::var("DATABASE_URL").ok()?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&database_url)
+        .await
+        .ok()?;
+    let archive_config = rootsignal_archive::ArchiveConfig {
+        page_backend: match std::env::var("BROWSERLESS_URL") {
+            Ok(url) => {
+                let token = std::env::var("BROWSERLESS_TOKEN").ok();
+                rootsignal_archive::PageBackend::Browserless { base_url: url, token }
+            }
+            Err(_) => rootsignal_archive::PageBackend::Chrome,
+        },
+        serper_api_key: config.serper_api_key.clone(),
+        apify_api_key: if config.apify_api_key.is_empty() {
+            None
+        } else {
+            Some(config.apify_api_key.clone())
+        },
+    };
+    Some(std::sync::Arc::new(rootsignal_archive::Archive::new(
+        pool,
+        archive_config,
+        uuid::Uuid::new_v4(),
+        "news-scanner".to_string(),
+    )))
+}
+
 /// Run the supervisor after a successful scout run. Non-fatal on error.
 async fn run_supervisor(
     client: &GraphClient,
@@ -813,10 +853,16 @@ pub fn start_scout_interval(
                     rootsignal_graph::GraphWriter::new(client.clone()),
                     config.daily_budget_cents,
                 ) {
-                    Ok(scanner) => match scanner.scan().await {
-                        Ok(locations) => info!(count = locations.len(), "News scan produced signals"),
-                        Err(e) => warn!(error = %e, "News scan failed"),
-                    },
+                    Ok(scanner) => {
+                        let scanner = match create_archive_for_news_scan(&config).await {
+                            Some(archive) => scanner.with_archive(archive),
+                            None => scanner,
+                        };
+                        match scanner.scan().await {
+                            Ok(locations) => info!(count = locations.len(), "News scan produced signals"),
+                            Err(e) => warn!(error = %e, "News scan failed"),
+                        }
+                    }
                     Err(e) => warn!(error = %e, "Failed to create news scanner"),
                 }
 
