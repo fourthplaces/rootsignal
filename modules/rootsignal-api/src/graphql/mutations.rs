@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    CityNode, Config, DiscoveryMethod, SourceNode, SourceRole, SubmissionNode,
+    Config, DiscoveryMethod, ScoutScope, SourceNode, SourceRole, SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -55,12 +55,6 @@ struct LogoutResult {
 }
 
 #[derive(SimpleObject)]
-struct CreateCityResult {
-    success: bool,
-    slug: Option<String>,
-}
-
-#[derive(SimpleObject)]
 struct AddSourceResult {
     success: bool,
     source_id: Option<String>,
@@ -78,15 +72,6 @@ struct SubmitSourceResult {
     source_id: Option<String>,
 }
 
-#[derive(SimpleObject)]
-struct ResetRegionResult {
-    success: bool,
-    message: Option<String>,
-    deleted_signals: u64,
-    deleted_stories: u64,
-    deleted_actors: u64,
-    deleted_sources: u64,
-}
 
 /// Test phone number — only available in debug builds.
 #[cfg(debug_assertions)]
@@ -196,84 +181,11 @@ impl MutationRoot {
 
     // ========== Admin mutations (AdminGuard) ==========
 
-    /// Create a new city by geocoding a location string.
-    #[graphql(guard = "AdminGuard")]
-    async fn create_city(&self, ctx: &Context<'_>, location: String) -> Result<CreateCityResult> {
-        let location = location.trim().to_string();
-        if location.is_empty() {
-            return Err("Location cannot be empty".into());
-        }
-
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let config = ctx.data_unchecked::<Arc<Config>>();
-        let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
-
-        // Geocode
-        let (lat, lon, display_name) = geocode_location(&location)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
-
-        // Derive slug
-        let slug: String = location
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>()
-            .split('-')
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("-");
-
-        let geo_terms: Vec<String> = location
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let city = CityNode {
-            id: Uuid::new_v4(),
-            name: display_name,
-            slug: slug.clone(),
-            center_lat: lat,
-            center_lng: lon,
-            radius_km: 30.0,
-            geo_terms,
-            active: true,
-            created_at: chrono::Utc::now(),
-            last_scout_completed_at: None,
-        };
-
-        writer
-            .upsert_city(&city)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create city: {e}")))?;
-
-        // Run cold-start bootstrapper (non-fatal)
-        let bootstrap_writer = GraphWriter::new((**graph_client).clone());
-        let searcher = rootsignal_scout::scraper::SerperSearcher::new(&config.serper_api_key);
-        let bootstrapper = rootsignal_scout::bootstrap::Bootstrapper::new(
-            &bootstrap_writer,
-            &searcher,
-            &config.anthropic_api_key,
-            city,
-        );
-        match bootstrapper.run().await {
-            Ok(n) => info!(sources = n, slug = slug.as_str(), "Bootstrap complete"),
-            Err(e) => warn!(error = %e, "Bootstrap failed (non-fatal)"),
-        }
-
-        Ok(CreateCityResult {
-            success: true,
-            slug: Some(slug),
-        })
-    }
-
-    /// Add a source to a region.
+    /// Add a source.
     #[graphql(guard = "AdminGuard")]
     async fn add_source(
         &self,
         ctx: &Context<'_>,
-        region_slug: String,
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
@@ -317,11 +229,11 @@ impl MutationRoot {
         };
 
         writer
-            .upsert_source(&source, &region_slug)
+            .upsert_source(&source)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
-        info!(url, region = region_slug.as_str(), "Source added by admin");
+        info!(url, "Source added by admin");
 
         Ok(AddSourceResult {
             success: true,
@@ -398,38 +310,6 @@ impl MutationRoot {
         })
     }
 
-    /// Reset all derived data for a region (signals, stories, actors, sources, locks).
-    /// The next scout run will bootstrap from scratch.
-    #[graphql(guard = "AdminGuard")]
-    async fn reset_region(
-        &self,
-        ctx: &Context<'_>,
-        region_slug: String,
-    ) -> Result<ResetRegionResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
-        info!(region = region_slug.as_str(), "Region reset requested");
-
-        let stats = writer
-            .reset_region(&region_slug)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Region reset failed: {e}")))?;
-
-        cache_store.reload(&ctx.data_unchecked::<Arc<GraphClient>>()).await;
-
-        Ok(ResetRegionResult {
-            success: true,
-            message: Some(format!(
-                "Reset complete: {} signals, {} stories, {} actors, {} sources deleted",
-                stats.deleted_signals, stats.deleted_stories, stats.deleted_actors, stats.deleted_sources
-            )),
-            deleted_signals: stats.deleted_signals,
-            deleted_stories: stats.deleted_stories,
-            deleted_actors: stats.deleted_actors,
-            deleted_sources: stats.deleted_sources,
-        })
-    }
-
     /// Public source submission (rate-limited, no auth required).
     async fn submit_source(
         &self,
@@ -490,7 +370,7 @@ impl MutationRoot {
         };
 
         writer
-            .upsert_source(&source, &region)
+            .upsert_source(&source)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -574,6 +454,51 @@ impl MutationRoot {
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to dismiss finding: {e}")))?;
         Ok(dismissed)
+    }
+
+    /// Create a new scout task (manual demand signal).
+    #[graphql(guard = "AdminGuard")]
+    async fn create_scout_task(
+        &self,
+        ctx: &Context<'_>,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+        context: String,
+        geo_terms: Option<Vec<String>>,
+        priority: Option<f64>,
+    ) -> Result<String> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let task = rootsignal_common::ScoutTask {
+            id: Uuid::new_v4(),
+            center_lat,
+            center_lng,
+            radius_km,
+            context,
+            geo_terms: geo_terms.unwrap_or_default(),
+            priority: priority.unwrap_or(1.0),
+            source: rootsignal_common::ScoutTaskSource::Manual,
+            status: rootsignal_common::ScoutTaskStatus::Pending,
+            created_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        let id = task.id.to_string();
+        writer
+            .upsert_scout_task(&task)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create scout task: {e}")))?;
+        Ok(id)
+    }
+
+    /// Cancel a scout task.
+    #[graphql(guard = "AdminGuard")]
+    async fn cancel_scout_task(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let cancelled = writer
+            .cancel_scout_task(&id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to cancel scout task: {e}")))?;
+        Ok(cancelled)
     }
 }
 
@@ -666,22 +591,20 @@ async fn run_scout(
     region_slug: &str,
     cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
-    let writer = rootsignal_graph::GraphWriter::new(client.clone());
-
-    let region = writer
-        .get_region(region_slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Region '{}' not found in graph", region_slug))?;
+    let region = ScoutScope {
+        center_lat: config.region_lat.unwrap_or(44.9778),
+        center_lng: config.region_lng.unwrap_or(-93.2650),
+        radius_km: config.region_radius_km.unwrap_or(30.0),
+        name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
+        geo_terms: config.region_name.as_deref()
+            .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_else(|| vec![config.region.clone()]),
+    };
 
     info!(region = region_slug, "Scout run starting");
 
     // Save region geo bounds before moving region into Scout
-    let lat_delta = region.radius_km / 111.0;
-    let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-    let min_lat = region.center_lat - lat_delta;
-    let max_lat = region.center_lat + lat_delta;
-    let min_lng = region.center_lng - lng_delta;
-    let max_lng = region.center_lng + lng_delta;
+    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
     let scout = Scout::new(
         client.clone(),
@@ -699,8 +622,6 @@ async fn run_scout(
 
     compute_cause_heat(client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
 
-    writer.set_region_scout_completed(region_slug).await?;
-
     Ok(())
 }
 
@@ -710,17 +631,14 @@ async fn run_supervisor(
     config: &rootsignal_common::Config,
     region_slug: &str,
 ) {
-    let writer = rootsignal_graph::GraphWriter::new(client.clone());
-    let region = match writer.get_region(region_slug).await {
-        Ok(Some(r)) => r,
-        Ok(None) => {
-            warn!(region = region_slug, "Supervisor: region not found, skipping");
-            return;
-        }
-        Err(e) => {
-            warn!(region = region_slug, error = %e, "Supervisor: failed to load region, skipping");
-            return;
-        }
+    let region = ScoutScope {
+        center_lat: config.region_lat.unwrap_or(44.9778),
+        center_lng: config.region_lng.unwrap_or(-93.2650),
+        radius_km: config.region_radius_km.unwrap_or(30.0),
+        name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
+        geo_terms: config.region_name.as_deref()
+            .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_else(|| vec![config.region.clone()]),
     };
 
     let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
@@ -748,48 +666,35 @@ pub fn start_scout_interval(
     cache_store: Arc<CacheStore>,
 ) {
     use std::sync::atomic::AtomicBool;
-    info!(interval_hours, "Starting multi-region scout interval loop");
+    info!(interval_hours, "Starting scout interval loop");
+
+    let region_slug = config.region.clone();
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
             let writer = rootsignal_graph::GraphWriter::new(client.clone());
             loop {
-                let regions = match writer.list_regions().await {
-                    Ok(c) => c.into_iter().filter(|c| c.active).collect::<Vec<_>>(),
+                match writer.is_scout_running(&region_slug).await {
+                    Ok(true) => {
+                        info!(region = region_slug.as_str(), "Scout interval: already running, skipping");
+                    }
                     Err(e) => {
-                        tracing::error!(error = %e, "Scout interval: failed to list regions");
-                        Vec::new()
+                        warn!(region = region_slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
                     }
-                };
-
-                let num_regions = regions.len().max(1);
-
-                for region in &regions {
-                    match writer.is_scout_running(&region.slug).await {
-                        Ok(true) => {
-                            info!(region = region.slug.as_str(), "Scout interval: already running, skipping");
-                            continue;
+                    Ok(false) => {
+                        info!(region = region_slug.as_str(), "Scout interval: starting run");
+                        let cancel = Arc::new(AtomicBool::new(false));
+                        if let Err(e) = run_scout(&client, &config, &region_slug, cancel).await {
+                            tracing::error!(region = region_slug.as_str(), error = %e, "Scout interval run failed");
+                        } else {
+                            run_supervisor(&client, &config, &region_slug).await;
+                            cache_store.reload(&client).await;
                         }
-                        Err(e) => {
-                            warn!(region = region.slug.as_str(), error = %e, "Scout interval: lock check failed, skipping");
-                            continue;
-                        }
-                        Ok(false) => {}
                     }
-
-                    info!(region = region.slug.as_str(), "Scout interval: starting run");
-                    let cancel = Arc::new(AtomicBool::new(false));
-                    if let Err(e) = run_scout(&client, &config, &region.slug, cancel).await {
-                        tracing::error!(region = region.slug.as_str(), error = %e, "Scout interval run failed");
-                    } else {
-                        run_supervisor(&client, &config, &region.slug).await;
-                        cache_store.reload(&client).await;
-                    }
-                    break;
                 }
 
-                let sleep_secs = ((interval_hours * 3600) / num_regions as u64).max(30 * 60);
+                let sleep_secs = (interval_hours * 3600).max(30 * 60);
                 info!(sleep_minutes = sleep_secs / 60, "Scout interval: sleeping until next run");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }

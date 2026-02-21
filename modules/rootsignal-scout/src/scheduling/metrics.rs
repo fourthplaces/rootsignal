@@ -14,12 +14,12 @@ use crate::scrape_phase::RunContext;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
-    region_slug: &'a str,
+    _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(writer: &'a GraphWriter, region_slug: &'a str) -> Self {
-        Self { writer, region_slug }
+        Self { writer, _region_slug: region_slug }
     }
 
     /// Update source metrics, weights, cadences, and deactivate dead sources.
@@ -108,7 +108,7 @@ impl<'a> Metrics<'a> {
         // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
         match self
             .writer
-            .deactivate_dead_sources(self.region_slug, 10)
+            .deactivate_dead_sources(10)
             .await
         {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
@@ -119,7 +119,7 @@ impl<'a> Metrics<'a> {
         // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
         match self
             .writer
-            .deactivate_dead_web_queries(self.region_slug)
+            .deactivate_dead_web_queries()
             .await
         {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
@@ -128,7 +128,7 @@ impl<'a> Metrics<'a> {
         }
 
         // Source stats
-        match self.writer.get_source_stats(self.region_slug).await {
+        match self.writer.get_source_stats().await {
             Ok(ss) => {
                 info!(
                     total = ss.total,

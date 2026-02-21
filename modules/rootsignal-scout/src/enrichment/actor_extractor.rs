@@ -88,7 +88,7 @@ async fn run_actor_extraction_inner(
     writer: &GraphWriter,
     client: &GraphClient,
     anthropic_api_key: &str,
-    region_slug: &str,
+    _region_slug: &str,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -200,7 +200,7 @@ async fn run_actor_extraction_inner(
                         last_active: Utc::now(),
                         typical_roles: vec![],
                     };
-                    if let Err(e) = writer.upsert_actor(&actor, region_slug).await {
+                    if let Err(e) = writer.upsert_actor(&actor).await {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");
                         continue;
                     }

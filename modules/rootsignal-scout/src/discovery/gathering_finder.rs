@@ -300,7 +300,7 @@ impl<'a> GatheringFinder<'a> {
 
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-        let region_slug = region.slug.clone();
+        let region_slug = region.name.clone();
         Self {
             writer,
             claude,
@@ -805,7 +805,7 @@ impl<'a> GatheringFinder<'a> {
             scrape_count: 0,
         };
 
-        self.writer.upsert_source(&source, &self.region_slug).await?;
+        self.writer.upsert_source(&source).await?;
         stats.future_sources_created += 1;
 
         info!(
@@ -951,16 +951,11 @@ mod tests {
     #[test]
     fn gathering_node_uses_region_center_coordinates() {
         let region = RegionNode {
-            id: Uuid::new_v4(),
             name: "Minneapolis".to_string(),
-            slug: "minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
             geo_terms: vec!["Minneapolis".to_string()],
-            active: true,
-            created_at: Utc::now(),
-            last_scout_completed_at: None,
         };
 
         let now = Utc::now();

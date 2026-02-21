@@ -7,7 +7,7 @@ use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use rootsignal_common::{Config, Node, NodeType, RegionNode, StoryNode};
+use rootsignal_common::{Config, Node, NodeType, ScoutScope, StoryNode};
 use rootsignal_graph::{
     cause_heat::compute_cause_heat,
     migrate::{backfill_source_canonical_keys, backfill_source_diversity, migrate},
@@ -15,7 +15,7 @@ use rootsignal_graph::{
     reader::{node_type_label, row_to_node, row_to_story},
     GraphClient, GraphWriter,
 };
-use rootsignal_scout::{bootstrap, scout::Scout, scraper::SerperSearcher};
+use rootsignal_scout::scout::Scout;
 
 #[derive(Parser)]
 #[command(about = "Run the Root Signal scout for a region")]
@@ -78,65 +78,31 @@ async fn main() -> Result<()> {
     // Run migrations
     migrate(&client).await?;
 
-    // Load or seed RegionNode from graph
-    let writer = GraphWriter::new(client.clone());
-    let region = match writer.get_city(&config.region).await? {
-        Some(node) => {
-            info!(
-                slug = node.slug.as_str(),
-                name = node.name.as_str(),
-                "Loaded region from graph"
-            );
-            node
-        }
-        None => {
-            // Cold start — create from env vars + bootstrap
-            let region_name = config.region_name.as_deref().unwrap_or(&config.region);
-            let center_lat = config
-                .region_lat
-                .expect("REGION_LAT required for cold start (no region in graph)");
-            let center_lng = config
-                .region_lng
-                .expect("REGION_LNG required for cold start (no region in graph)");
-            let radius_km = config.region_radius_km.unwrap_or(30.0);
+    // Construct ScoutScope from env vars
+    let region_name = config.region_name.as_deref().unwrap_or(&config.region);
+    let center_lat = config
+        .region_lat
+        .expect("REGION_LAT required");
+    let center_lng = config
+        .region_lng
+        .expect("REGION_LNG required");
+    let radius_km = config.region_radius_km.unwrap_or(30.0);
 
-            info!(
-                slug = config.region.as_str(),
-                name = region_name,
-                lat = center_lat,
-                lng = center_lng,
-                radius_km,
-                "Cold start: creating RegionNode from env vars"
-            );
-
-            let node = RegionNode {
-                id: uuid::Uuid::new_v4(),
-                name: region_name.to_string(),
-                slug: config.region.clone(),
-                center_lat,
-                center_lng,
-                radius_km,
-                geo_terms: vec![region_name.to_string()],
-                active: true,
-                created_at: chrono::Utc::now(),
-                last_scout_completed_at: None,
-            };
-            writer.upsert_city(&node).await?;
-
-            // Run cold start bootstrapper to generate seed sources
-            let searcher = SerperSearcher::new(&config.serper_api_key);
-            let bootstrapper = bootstrap::Bootstrapper::new(
-                &writer,
-                &searcher,
-                &config.anthropic_api_key,
-                node.clone(),
-            );
-            let sources_created = bootstrapper.run().await?;
-            info!(sources_created, "Cold start bootstrap complete");
-
-            node
-        }
+    let region = ScoutScope {
+        center_lat,
+        center_lng,
+        radius_km,
+        name: region_name.to_string(),
+        geo_terms: vec![region_name.to_string()],
     };
+
+    info!(
+        name = region.name.as_str(),
+        lat = center_lat,
+        lng = center_lng,
+        radius_km,
+        "Constructed ScoutScope from env vars"
+    );
 
     // Backfill canonical keys on existing Source nodes (idempotent migration)
     backfill_source_canonical_keys(&client).await?;
@@ -145,13 +111,8 @@ async fn main() -> Result<()> {
     backfill_source_diversity(&client, &[]).await?;
 
     // Save region geo bounds before moving region into Scout
-    let region_slug = region.slug.clone();
-    let lat_delta = region.radius_km / 111.0;
-    let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-    let min_lat = region.center_lat - lat_delta;
-    let max_lat = region.center_lat + lat_delta;
-    let min_lng = region.center_lng - lng_delta;
-    let max_lng = region.center_lng + lng_delta;
+    let region_name_key = region.name.clone();
+    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
     // Create and run scout
     let scout = Scout::new(
@@ -183,7 +144,7 @@ async fn main() -> Result<()> {
         &writer_ref,
         &client,
         &config.anthropic_api_key,
-        &region_slug,
+        &region_name_key,
         min_lat,
         max_lat,
         min_lng,
@@ -200,19 +161,24 @@ async fn main() -> Result<()> {
 
 /// Dump all stories and signals for a city as raw JSON to stdout.
 async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
-    // Load city node to get geo bounds
-    let writer = GraphWriter::new(client.clone());
-    let city = writer
-        .get_city(city_slug)
-        .await?
-        .with_context(|| format!("City '{}' not found in graph", city_slug))?;
+    // Construct geo bounds from env vars (same as main scout flow)
+    let config = Config::scout_from_env();
+    let center_lat = config
+        .region_lat
+        .context("REGION_LAT required for dump")?;
+    let center_lng = config
+        .region_lng
+        .context("REGION_LNG required for dump")?;
+    let radius_km = config.region_radius_km.unwrap_or(30.0);
 
-    let lat_delta = city.radius_km / 111.0;
-    let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
-    let min_lat = city.center_lat - lat_delta;
-    let max_lat = city.center_lat + lat_delta;
-    let min_lng = city.center_lng - lng_delta;
-    let max_lng = city.center_lng + lng_delta;
+    let scope = ScoutScope {
+        center_lat,
+        center_lng,
+        radius_km,
+        name: city_slug.to_string(),
+        geo_terms: vec![city_slug.to_string()],
+    };
+    let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
     // Fetch all stories in the city's bounding box
     let story_q = query(

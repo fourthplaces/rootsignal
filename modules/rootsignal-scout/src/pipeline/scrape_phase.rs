@@ -815,7 +815,7 @@ impl<'a> ScrapePhase<'a> {
         // Load existing sources for dedup across all platforms
         let existing_sources = self
             .writer
-            .get_active_sources(&self.region.slug)
+            .get_active_sources()
             .await
             .unwrap_or_default();
         let existing_canonical_values: HashSet<String> = existing_sources
@@ -999,7 +999,7 @@ impl<'a> ScrapePhase<'a> {
 
                 *ctx.source_signal_counts.entry(ck).or_default() += produced;
 
-                match self.writer.upsert_source(&source, &self.region.slug).await {
+                match self.writer.upsert_source(&source).await {
                     Ok(()) => {
                         new_accounts += 1;
                         info!(
@@ -1672,7 +1672,7 @@ impl<'a> ScrapePhase<'a> {
                                 last_active: Utc::now(),
                                 typical_roles: vec![],
                             };
-                            if let Err(e) = self.writer.upsert_actor(&actor, &self.region.slug).await {
+                            if let Err(e) = self.writer.upsert_actor(&actor).await {
                                 warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
                                 continue;
                             }

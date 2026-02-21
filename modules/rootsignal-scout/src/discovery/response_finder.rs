@@ -245,7 +245,7 @@ pub struct ResponseFinder<'a> {
     scraper: Arc<dyn PageScraper>,
     embedder: &'a dyn TextEmbedder,
     region: RegionNode,
-    region_slug: String,
+    _region_slug: String,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -267,7 +267,7 @@ impl<'a> ResponseFinder<'a> {
     ) -> Self {
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-        let region_slug = region.slug.clone();
+        let region_slug = region.name.clone();
         Self {
             writer,
             anthropic_api_key: anthropic_api_key.to_string(),
@@ -279,7 +279,7 @@ impl<'a> ResponseFinder<'a> {
             min_lng: region.center_lng - lng_delta,
             max_lng: region.center_lng + lng_delta,
             region,
-            region_slug,
+            _region_slug: region_slug,
             cancelled,
             run_id,
         }
@@ -899,7 +899,7 @@ impl<'a> ResponseFinder<'a> {
             scrape_count: 0,
         };
 
-        self.writer.upsert_source(&source, &self.region_slug).await?;
+        self.writer.upsert_source(&source).await?;
         stats.future_sources_created += 1;
 
         info!(
@@ -1029,16 +1029,11 @@ mod tests {
     #[test]
     fn response_node_gets_region_center_coordinates() {
         let region = RegionNode {
-            id: Uuid::new_v4(),
             name: "Minneapolis".to_string(),
-            slug: "minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
             geo_terms: vec!["Minneapolis".to_string()],
-            active: true,
-            created_at: Utc::now(),
-            last_scout_completed_at: None,
         };
 
         let now = Utc::now();

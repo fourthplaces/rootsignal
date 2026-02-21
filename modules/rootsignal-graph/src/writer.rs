@@ -6,10 +6,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, NeedNode, CityNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
+    ActorNode, NeedNode, ClusterSnapshot, DiscoveryMethod, GatheringNode, EvidenceNode,
     AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
-    StoryNode, TensionNode, NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS,
-    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    StoryNode, TensionNode, ScoutTask, ScoutTaskSource, ScoutTaskStatus,
+    NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -1034,26 +1034,14 @@ impl GraphWriter {
         Ok(false)
     }
 
-    /// Stamp the city's last_scout_completed_at to now.
-    pub async fn set_city_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
-        self.client
-            .graph
-            .run(
-                query("MATCH (c:City {slug: $slug}) SET c.last_scout_completed_at = datetime()")
-                    .param("slug", slug),
-            )
-            .await?;
-        Ok(())
-    }
-
     /// Count sources that are overdue for scraping.
-    pub async fn count_due_sources(&self, city: &str) -> Result<u32, neo4rs::Error> {
+    pub async fn count_due_sources(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN count(s) AS due"
-        ).param("region", city);
+        );
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1103,7 +1091,7 @@ impl GraphWriter {
 
         let q = query(
             "UNWIND $slugs AS slug
-             OPTIONAL MATCH (r:City {slug: slug})-[:SCOUTS]->(s:Source {active: true})
+             OPTIONAL MATCH (s:Source {active: true})
              WHERE s.last_scraped IS NULL
                 OR datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H') < datetime()
              RETURN slug, count(s) AS due",
@@ -1444,211 +1432,132 @@ impl GraphWriter {
         Ok(None)
     }
 
-    // --- City operations ---
+    // --- ScoutTask operations ---
 
-    /// Create or update a City node. MERGE on slug for idempotency.
-    pub async fn upsert_city(&self, city: &CityNode) -> Result<(), neo4rs::Error> {
+    /// Create or update a ScoutTask node. MERGE on id for idempotency.
+    pub async fn upsert_scout_task(&self, task: &ScoutTask) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MERGE (c:City {slug: $slug})
-             ON CREATE SET
-                c.id = $id,
-                c.name = $name,
-                c.center_lat = $center_lat,
-                c.center_lng = $center_lng,
-                c.radius_km = $radius_km,
-                c.geo_terms = $geo_terms,
-                c.active = $active,
-                c.created_at = datetime($created_at)
-             ON MATCH SET
-                c.name = $name,
-                c.center_lat = $center_lat,
-                c.center_lng = $center_lng,
-                c.radius_km = $radius_km,
-                c.geo_terms = $geo_terms,
-                c.active = $active",
+            "MERGE (t:ScoutTask {id: $id})
+             SET t.center_lat = $center_lat,
+                 t.center_lng = $center_lng,
+                 t.radius_km = $radius_km,
+                 t.context = $context,
+                 t.geo_terms = $geo_terms,
+                 t.priority = $priority,
+                 t.source = $source,
+                 t.status = $status,
+                 t.created_at = datetime($created_at)",
         )
-        .param("id", city.id.to_string())
-        .param("slug", city.slug.as_str())
-        .param("name", city.name.as_str())
-        .param("center_lat", city.center_lat)
-        .param("center_lng", city.center_lng)
-        .param("radius_km", city.radius_km)
-        .param("geo_terms", city.geo_terms.clone())
-        .param("active", city.active)
-        .param("created_at", format_datetime(&city.created_at));
+        .param("id", task.id.to_string())
+        .param("center_lat", task.center_lat)
+        .param("center_lng", task.center_lng)
+        .param("radius_km", task.radius_km)
+        .param("context", task.context.as_str())
+        .param("geo_terms", task.geo_terms.clone())
+        .param("priority", task.priority)
+        .param("source", task.source.to_string())
+        .param("status", task.status.to_string())
+        .param("created_at", format_datetime(&task.created_at));
 
         self.client.graph.run(q).await?;
-        info!(
-            slug = city.slug.as_str(),
-            name = city.name.as_str(),
-            "City node upserted"
-        );
+        info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
         Ok(())
     }
 
-    /// Get a City node by slug. Returns None if not found.
-    pub async fn get_city(&self, slug: &str) -> Result<Option<CityNode>, neo4rs::Error> {
+    /// Get a ScoutTask by id.
+    pub async fn get_scout_task(&self, id: &str) -> Result<Option<ScoutTask>, neo4rs::Error> {
         let q = query(
-            "MATCH (c:City {slug: $slug})
-             RETURN c.id AS id, c.name AS name, c.slug AS slug,
-                    c.center_lat AS center_lat, c.center_lng AS center_lng,
-                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at,
-                    c.last_scout_completed_at AS last_scout_completed_at",
+            "MATCH (t:ScoutTask {id: $id})
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at",
         )
-        .param("slug", slug);
+        .param("id", id);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => return Ok(None),
-            };
-
-            let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at =
-                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .map(|ndt| ndt.and_utc())
-                    .unwrap_or_else(|_| Utc::now());
-
-            let last_scout_completed_at = {
-                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
-                if s.is_empty() {
-                    None
-                } else {
-                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
-                        .map(|ndt| ndt.and_utc())
-                        .ok()
-                }
-            };
-
-            Ok(Some(CityNode {
-                id,
-                name: row.get("name").unwrap_or_default(),
-                slug: row.get("slug").unwrap_or_default(),
-                center_lat: row.get("center_lat").unwrap_or(0.0),
-                center_lng: row.get("center_lng").unwrap_or(0.0),
-                radius_km: row.get("radius_km").unwrap_or(0.0),
-                geo_terms: row.get("geo_terms").unwrap_or_default(),
-                active: row.get("active").unwrap_or(true),
-                created_at,
-                last_scout_completed_at,
-            }))
+            Ok(Some(row_to_scout_task(&row)))
         } else {
             Ok(None)
         }
     }
 
-    /// List all active cities, ordered by name.
-    pub async fn list_cities(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (c:City {active: true})
-             RETURN c.id AS id, c.name AS name, c.slug AS slug,
-                    c.center_lat AS center_lat, c.center_lng AS center_lng,
-                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
-                    c.active AS active, c.created_at AS created_at,
-                    c.last_scout_completed_at AS last_scout_completed_at
-             ORDER BY c.name",
-        );
+    /// List scout tasks, optionally filtered by status. Ordered by priority descending.
+    pub async fn list_scout_tasks(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
+        let cypher = if status.is_some() {
+            "MATCH (t:ScoutTask {status: $status})
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at
+             ORDER BY t.priority DESC
+             LIMIT $limit"
+        } else {
+            "MATCH (t:ScoutTask)
+             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
+                    t.radius_km AS radius_km, t.context AS context,
+                    t.geo_terms AS geo_terms, t.priority AS priority,
+                    t.source AS source, t.status AS status,
+                    t.created_at AS created_at, t.completed_at AS completed_at
+             ORDER BY t.priority DESC
+             LIMIT $limit"
+        };
 
-        let mut cities = Vec::new();
+        let mut q = query(cypher).param("limit", limit as i64);
+        if let Some(s) = status {
+            q = q.param("status", s);
+        }
+
+        let mut tasks = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-
-            let created_at_str: String = row.get("created_at").unwrap_or_default();
-            let created_at =
-                chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .map(|ndt| ndt.and_utc())
-                    .unwrap_or_else(|_| Utc::now());
-
-            let last_scout_completed_at = {
-                let s: String = row.get("last_scout_completed_at").unwrap_or_default();
-                if s.is_empty() {
-                    None
-                } else {
-                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
-                        .map(|ndt| ndt.and_utc())
-                        .ok()
-                }
-            };
-
-            cities.push(CityNode {
-                id,
-                name: row.get("name").unwrap_or_default(),
-                slug: row.get("slug").unwrap_or_default(),
-                center_lat: row.get("center_lat").unwrap_or(0.0),
-                center_lng: row.get("center_lng").unwrap_or(0.0),
-                radius_km: row.get("radius_km").unwrap_or(0.0),
-                geo_terms: row.get("geo_terms").unwrap_or_default(),
-                active: row.get("active").unwrap_or(true),
-                created_at,
-                last_scout_completed_at,
-            });
+            tasks.push(row_to_scout_task(&row));
         }
-
-        Ok(cities)
+        Ok(tasks)
     }
 
-    /// Batch count of sources and signals per city.
-    /// Accepts city tuples of (slug, center_lat, center_lng, radius_km).
-    /// Signal counts use geographic bounding box on signal lat/lng.
-    /// Returns Vec<(slug, source_count, signal_count)>.
-    pub async fn get_city_counts(
-        &self,
-        cities: &[(String, f64, f64, f64)],
-    ) -> Result<Vec<(String, u32, u32)>, neo4rs::Error> {
-        let mut results = Vec::new();
-        for (slug, lat, lng, radius_km) in cities {
-            // Source count by slug
-            let sq = query(
-                "MATCH (r:City {slug: $city})-[:SCOUTS]->(src:Source {active: true})
-                 RETURN count(src) AS cnt",
-            )
-            .param("city", slug.as_str());
-            let mut stream = self.client.graph.execute(sq).await?;
-            let source_count: i64 = match stream.next().await? {
-                Some(row) => row.get("cnt").unwrap_or(0),
-                None => 0,
-            };
+    /// Cancel a scout task by setting its status to "cancelled".
+    pub async fn cancel_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             WHERE t.status IN ['pending', 'running']
+             SET t.status = 'cancelled'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
 
-            // Signal count by bounding box
-            let lat_delta = radius_km / 111.0;
-            let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
-            let nq = query(
-                "MATCH (n)
-                 WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-                   AND n.lat <> 0.0
-                   AND n.lat >= $min_lat AND n.lat <= $max_lat
-                   AND n.lng >= $min_lng AND n.lng <= $max_lng
-                 RETURN count(n) AS cnt",
-            )
-            .param("min_lat", lat - lat_delta)
-            .param("max_lat", lat + lat_delta)
-            .param("min_lng", lng - lng_delta)
-            .param("max_lng", lng + lng_delta);
-            let mut stream = self.client.graph.execute(nq).await?;
-            let signal_count: i64 = match stream.next().await? {
-                Some(row) => row.get("cnt").unwrap_or(0),
-                None => 0,
-            };
-
-            results.push((slug.clone(), source_count as u32, signal_count as u32));
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
         }
-        Ok(results)
+    }
+
+    /// Mark a scout task as completed.
+    pub async fn complete_scout_task(&self, id: &str) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             SET t.status = 'completed', t.completed_at = datetime()",
+        )
+        .param("id", id);
+
+        self.client.graph.run(q).await
     }
 
     // --- Source operations (emergent source discovery) ---
 
-    /// Create or update a Source node in the graph and link it to a region via `:SCOUTS`.
+    /// Create or update a Source node in the graph.
     /// Uses MERGE on canonical_key to be idempotent (safe for seeding curated sources every run).
-    /// Sources are region-independent; the `:SCOUTS` relationship tracks which region discovered them.
-    pub async fn upsert_source(&self, source: &SourceNode, region_slug: &str) -> Result<(), neo4rs::Error> {
+    pub async fn upsert_source(&self, source: &SourceNode) -> Result<(), neo4rs::Error> {
         let q = query(
             "MERGE (s:Source {canonical_key: $canonical_key})
              ON CREATE SET
@@ -1669,10 +1578,7 @@ impl GraphWriter {
                 s.scrape_count = $scrape_count
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
-                s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END
-             WITH s
-             MATCH (r:City {slug: $region_slug})
-             MERGE (r)-[:SCOUTS]->(s)"
+                s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
         )
         .param("id", source.id.to_string())
         .param("canonical_key", source.canonical_key.as_str())
@@ -1689,8 +1595,7 @@ impl GraphWriter {
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("quality_penalty", source.quality_penalty)
         .param("source_role", source.source_role.to_string())
-        .param("scrape_count", source.scrape_count as i64)
-        .param("region_slug", region_slug);
+        .param("scrape_count", source.scrape_count as i64);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1725,10 +1630,10 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Get all active sources for a region (by slug), via `:SCOUTS` relationship.
-    pub async fn get_active_sources(&self, region: &str) -> Result<Vec<SourceNode>, neo4rs::Error> {
+    /// Get all active sources.
+    pub async fn get_active_sources(&self) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
                     s.discovery_method AS discovery_method,
@@ -1743,8 +1648,7 @@ impl GraphWriter {
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
                     s.scrape_count AS scrape_count",
-        )
-        .param("region", region);
+        );
 
         let mut sources = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1887,21 +1791,19 @@ impl GraphWriter {
     }
 
     /// Deactivate sources that have had too many consecutive empty runs.
-    /// Protects curated and human-submitted sources. Scoped to a single city.
+    /// Protects curated and human-submitted sources.
     pub async fn deactivate_dead_sources(
         &self,
-        city: &str,
         max_empty_runs: u32,
     ) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated",
         )
-        .param("region", city)
         .param("max", max_empty_runs as i64);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -1918,9 +1820,9 @@ impl GraphWriter {
     /// - 3+ total scrapes (gave it a fair chance)
     /// - 0 signals ever produced (never contributed anything)
     /// Protects curated and human-submitted sources.
-    pub async fn deactivate_dead_web_queries(&self, city: &str) -> Result<u32, neo4rs::Error> {
+    pub async fn deactivate_dead_web_queries(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
                AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
@@ -1929,8 +1831,7 @@ impl GraphWriter {
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
              RETURN count(s) AS deactivated",
-        )
-        .param("region", city);
+        );
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -1940,14 +1841,13 @@ impl GraphWriter {
         }
     }
 
-    /// Get all active WebQuery canonical_values for a city (used for expansion dedup).
-    pub async fn get_active_web_queries(&self, city: &str) -> Result<Vec<String>, neo4rs::Error> {
+    /// Get all active WebQuery canonical_values (used for expansion dedup).
+    pub async fn get_active_web_queries(&self) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
              RETURN s.canonical_value AS query",
-        )
-        .param("region", city);
+        );
 
         let mut queries = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -1962,18 +1862,17 @@ impl GraphWriter {
 
     /// Find an existing active WebQuery source with a semantically similar embedding.
     /// Uses the `source_query_embedding` vector index. Returns the canonical_key and
-    /// similarity score of the best match above `threshold`, scoped to the given city.
+    /// similarity score of the best match above `threshold`.
     pub async fn find_similar_query(
         &self,
         embedding: &[f32],
-        city: &str,
         threshold: f64,
     ) -> Result<Option<(String, f64)>, neo4rs::Error> {
-        // Neo4j vector search returns top-K results; we filter by city + active + threshold.
+        // Neo4j vector search returns top-K results; we filter by active + threshold.
         let q = query(
             "CALL db.index.vector.queryNodes('source_query_embedding', 5, $embedding)
              YIELD node, score
-             WHERE node.active = true AND EXISTS { MATCH (:City {slug: $region})-[:SCOUTS]->(node) }
+             WHERE node.active = true
                AND NOT (node.canonical_value STARTS WITH 'http://' OR node.canonical_value STARTS WITH 'https://')
                AND score >= $threshold
              RETURN node.canonical_key AS canonical_key, score
@@ -1981,7 +1880,6 @@ impl GraphWriter {
              LIMIT 1",
         )
         .param("embedding", embedding.to_vec())
-        .param("region", city)
         .param("threshold", threshold);
 
         let mut stream = self.client.graph.execute(q).await?;
@@ -2154,15 +2052,14 @@ impl GraphWriter {
     }
 
     /// Get source-level stats for reporting.
-    pub async fn get_source_stats(&self, city: &str) -> Result<SourceStats, neo4rs::Error> {
+    pub async fn get_source_stats(&self) -> Result<SourceStats, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source)
+            "MATCH (s:Source)
              RETURN count(s) AS total,
                     count(CASE WHEN s.active THEN 1 END) AS active,
                     count(CASE WHEN s.discovery_method = 'curated' THEN 1 END) AS curated,
                     count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
-        )
-        .param("region", city);
+        );
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -2180,11 +2077,9 @@ impl GraphWriter {
     // --- Actor operations ---
 
     /// Create or update an Actor node. MERGE on entity_id for idempotency.
-    /// Links the actor to the given region via a `:DISCOVERED` relationship.
     pub async fn upsert_actor(
         &self,
         actor: &ActorNode,
-        region_slug: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MERGE (a:Actor {entity_id: $entity_id})
@@ -2202,10 +2097,7 @@ impl GraphWriter {
              ON MATCH SET
                 a.name = $name,
                 a.last_active = datetime($last_active),
-                a.signal_count = a.signal_count + 1
-             WITH a
-             MATCH (r:City {slug: $region_slug})
-             MERGE (r)-[:DISCOVERED]->(a)",
+                a.signal_count = a.signal_count + 1",
         )
         .param("id", actor.id.to_string())
         .param("entity_id", actor.entity_id.as_str())
@@ -2217,8 +2109,7 @@ impl GraphWriter {
         .param("signal_count", actor.signal_count as i64)
         .param("first_seen", format_datetime(&actor.first_seen))
         .param("last_active", format_datetime(&actor.last_active))
-        .param("typical_roles", actor.typical_roles.clone())
-        .param("region_slug", region_slug);
+        .param("typical_roles", actor.typical_roles.clone());
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -2372,10 +2263,9 @@ impl GraphWriter {
     /// Get actors with their domains, social URLs, and dominant signal role for source discovery.
     pub async fn get_actors_with_domains(
         &self,
-        region_slug: &str,
     ) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region_slug})-[:DISCOVERED]->(a:Actor)
+            "MATCH (a:Actor)
              WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
@@ -2387,8 +2277,7 @@ impl GraphWriter {
                       WHEN tension_signals > response_signals THEN 'tension'
                       ELSE 'mixed'
                     END AS dominant_role",
-        )
-        .param("region_slug", region_slug);
+        );
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2537,11 +2426,10 @@ impl GraphWriter {
     /// Returns (successes, failures) filtered to gap_analysis/tension_seed discovery methods.
     pub async fn get_discovery_performance(
         &self,
-        city: &str,
     ) -> Result<(Vec<SourceBrief>, Vec<SourceBrief>), neo4rs::Error> {
         // Top 5 successful: active, signals_produced > 0, ordered by weight DESC
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source {active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND s.signals_produced > 0
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2549,8 +2437,7 @@ impl GraphWriter {
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.weight DESC
              LIMIT 5",
-        )
-        .param("region", city);
+        );
 
         let mut successes = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2574,7 +2461,7 @@ impl GraphWriter {
 
         // Bottom 5 failures: deactivated or 3+ consecutive empty runs
         let q = query(
-            "MATCH (r:City {slug: $region})-[:SCOUTS]->(s:Source)
+            "MATCH (s:Source)
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND (s.active = false OR s.consecutive_empty_runs >= 3)
              RETURN s.canonical_value AS cv, s.signals_produced AS sp,
@@ -2582,8 +2469,7 @@ impl GraphWriter {
                     s.gap_context AS gc, s.active AS active
              ORDER BY s.consecutive_empty_runs DESC
              LIMIT 5",
-        )
-        .param("region", city);
+        );
 
         let mut failures = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -4398,178 +4284,7 @@ impl GraphWriter {
         self.client.graph.run(q3).await
     }
 
-    // --- Region aliases (delegate to city-named functions during migration) ---
 
-    /// Alias for `upsert_city` during city→region migration.
-    pub async fn upsert_region(&self, city: &CityNode) -> Result<(), neo4rs::Error> {
-        self.upsert_city(city).await
-    }
-
-    /// Alias for `get_city` during city→region migration.
-    pub async fn get_region(&self, slug: &str) -> Result<Option<CityNode>, neo4rs::Error> {
-        self.get_city(slug).await
-    }
-
-    /// Alias for `list_cities` during city→region migration.
-    pub async fn list_regions(&self) -> Result<Vec<CityNode>, neo4rs::Error> {
-        self.list_cities().await
-    }
-
-    /// Alias for `set_city_scout_completed` during city→region migration.
-    pub async fn set_region_scout_completed(&self, slug: &str) -> Result<(), neo4rs::Error> {
-        self.set_city_scout_completed(slug).await
-    }
-
-    /// Delete all derived data for a region so the next scout run bootstraps from scratch.
-    /// Useful for testing, bad scout runs, prompt changes, or migration recovery.
-    pub async fn reset_region(&self, slug: &str) -> Result<ResetRegionStats, neo4rs::Error> {
-        let g = &self.client.graph;
-        let mut stats = ResetRegionStats::default();
-
-        info!(region = slug, "Resetting region: deleting all derived data");
-
-        // 1. Delete signals + evidence sourced from this region's sources
-        let delete_signals = query(
-            "MATCH (c:City {slug: $slug})-[:SCOUTS]->(src:Source)
-             WITH collect(src.url) AS source_urls
-             UNWIND source_urls AS url
-             MATCH (sig)
-             WHERE (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
-               AND sig.source_url = url
-             OPTIONAL MATCH (sig)-[:SOURCED_FROM]->(ev:Evidence)
-             DETACH DELETE ev
-             WITH sig
-             DETACH DELETE sig
-             RETURN count(sig) AS deleted",
-        )
-        .param("slug", slug);
-        match g.execute(delete_signals).await {
-            Ok(mut stream) => {
-                if let Some(row) = stream.next().await? {
-                    stats.deleted_signals = row.get("deleted").unwrap_or(0) as u64;
-                }
-            }
-            Err(e) => warn!(region = slug, "Reset: signal deletion failed: {e}"),
-        }
-
-        // Also delete geo-bounded signals (signals that fall within region bbox but may have different source_url)
-        let region_node = self.get_region(slug).await?;
-        if let Some(region) = &region_node {
-            let lat_delta = region.radius_km / 111.0;
-            let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-            let delete_geo_signals = query(
-                "MATCH (sig)
-                 WHERE (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
-                   AND sig.lat >= $min_lat AND sig.lat <= $max_lat
-                   AND sig.lng >= $min_lng AND sig.lng <= $max_lng
-                 OPTIONAL MATCH (sig)-[:SOURCED_FROM]->(ev:Evidence)
-                 DETACH DELETE ev
-                 WITH sig
-                 DETACH DELETE sig
-                 RETURN count(sig) AS deleted",
-            )
-            .param("slug", slug)
-            .param("min_lat", region.center_lat - lat_delta)
-            .param("max_lat", region.center_lat + lat_delta)
-            .param("min_lng", region.center_lng - lng_delta)
-            .param("max_lng", region.center_lng + lng_delta);
-            match g.execute(delete_geo_signals).await {
-                Ok(mut stream) => {
-                    if let Some(row) = stream.next().await? {
-                        let geo_deleted: u64 = row.get("deleted").unwrap_or(0) as u64;
-                        stats.deleted_signals += geo_deleted;
-                    }
-                }
-                Err(e) => warn!(region = slug, "Reset: geo-signal deletion failed: {e}"),
-            }
-        }
-
-        // 2. Delete orphaned stories (no remaining :CONTAINS edges)
-        let delete_stories = query(
-            "MATCH (s:Story)
-             WHERE NOT (s)-[:CONTAINS]->()
-             DETACH DELETE s
-             RETURN count(s) AS deleted",
-        );
-        match g.execute(delete_stories).await {
-            Ok(mut stream) => {
-                if let Some(row) = stream.next().await? {
-                    stats.deleted_stories = row.get("deleted").unwrap_or(0) as u64;
-                }
-            }
-            Err(e) => warn!(region = slug, "Reset: story deletion failed: {e}"),
-        }
-
-        // 3. Delete actors discovered by this region
-        let delete_actors = query(
-            "MATCH (c:City {slug: $slug})-[:DISCOVERED]->(a:Actor)
-             DETACH DELETE a
-             RETURN count(a) AS deleted",
-        )
-        .param("slug", slug);
-        match g.execute(delete_actors).await {
-            Ok(mut stream) => {
-                if let Some(row) = stream.next().await? {
-                    stats.deleted_actors = row.get("deleted").unwrap_or(0) as u64;
-                }
-            }
-            Err(e) => warn!(region = slug, "Reset: actor deletion failed: {e}"),
-        }
-
-        // 4. Delete sources scouted by this region
-        let delete_sources = query(
-            "MATCH (c:City {slug: $slug})-[:SCOUTS]->(s:Source)
-             DETACH DELETE s
-             RETURN count(s) AS deleted",
-        )
-        .param("slug", slug);
-        match g.execute(delete_sources).await {
-            Ok(mut stream) => {
-                if let Some(row) = stream.next().await? {
-                    stats.deleted_sources = row.get("deleted").unwrap_or(0) as u64;
-                }
-            }
-            Err(e) => warn!(region = slug, "Reset: source deletion failed: {e}"),
-        }
-
-        // 5. Delete scout lock
-        let delete_lock = query("MATCH (lock:ScoutLock {city: $slug}) DELETE lock")
-            .param("slug", slug);
-        match g.run(delete_lock).await {
-            Ok(_) => {}
-            Err(e) => warn!(region = slug, "Reset: lock deletion failed: {e}"),
-        }
-
-        // 6. Delete submissions
-        let delete_submissions = query(
-            "MATCH (sub:Submission {city: $slug})
-             DELETE sub
-             RETURN count(sub) AS deleted",
-        )
-        .param("slug", slug);
-        match g.execute(delete_submissions).await {
-            Ok(mut stream) => {
-                if let Some(row) = stream.next().await? {
-                    let deleted: i64 = row.get("deleted").unwrap_or(0);
-                    if deleted > 0 {
-                        info!(region = slug, deleted, "Deleted submissions");
-                    }
-                }
-            }
-            Err(e) => warn!(region = slug, "Reset: submission deletion failed: {e}"),
-        }
-
-        info!(
-            region = slug,
-            signals = stats.deleted_signals,
-            stories = stats.deleted_stories,
-            actors = stats.deleted_actors,
-            sources = stats.deleted_sources,
-            "Region reset complete"
-        );
-
-        Ok(stats)
-    }
 
     // ========== Supervisor / Validation Issues ==========
 
@@ -4588,15 +4303,6 @@ impl GraphWriter {
         let mut stream = self.client.inner().execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
-}
-
-/// Stats from a region reset operation.
-#[derive(Debug, Default)]
-pub struct ResetRegionStats {
-    pub deleted_signals: u64,
-    pub deleted_stories: u64,
-    pub deleted_actors: u64,
-    pub deleted_sources: u64,
 }
 
 /// Stats from resource consolidation batch job.
@@ -4893,6 +4599,27 @@ fn format_datetime(dt: &DateTime<Utc>) -> String {
 /// Public version of format_datetime for use by other modules (e.g. story_weaver.rs).
 pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
     format_datetime(dt)
+}
+
+/// Parse a neo4rs Row (with aliased columns) into a ScoutTask.
+pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
+    let id_str: String = row.get("id").unwrap_or_default();
+    let source_str: String = row.get("source").unwrap_or_default();
+    let status_str: String = row.get("status").unwrap_or_default();
+
+    ScoutTask {
+        id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
+        center_lat: row.get("center_lat").unwrap_or(0.0),
+        center_lng: row.get("center_lng").unwrap_or(0.0),
+        radius_km: row.get("radius_km").unwrap_or(0.0),
+        context: row.get("context").unwrap_or_default(),
+        geo_terms: row.get("geo_terms").unwrap_or_default(),
+        priority: row.get("priority").unwrap_or(0.0),
+        source: source_str.parse().unwrap_or(ScoutTaskSource::Manual),
+        status: status_str.parse().unwrap_or(ScoutTaskStatus::Pending),
+        created_at: row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now),
+        completed_at: row_datetime_opt(row, "completed_at"),
+    }
 }
 
 // Backwards-compatible aliases

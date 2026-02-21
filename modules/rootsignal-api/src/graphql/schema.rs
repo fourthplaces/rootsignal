@@ -5,7 +5,7 @@ use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleOb
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{CityNode, Node, NodeType};
+use rootsignal_common::{Node, NodeType};
 use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
@@ -362,7 +362,8 @@ impl QueryRoot {
             yield_data,
             gap_stats,
             sources,
-            all_cities,
+            due_sources,
+            scout_running,
         ) = tokio::join!(
             reader.total_count(),
             reader.story_count(),
@@ -374,36 +375,24 @@ impl QueryRoot {
             reader.story_count_by_arc(),
             reader.story_count_by_category(),
             writer.get_unmet_tensions(20),
-            writer.get_discovery_performance(&region),
+            writer.get_discovery_performance(),
             writer.get_extraction_yield(&region),
             writer.get_gap_type_stats(&region),
-            writer.get_active_sources(&region),
-            writer.list_regions(),
+            writer.get_active_sources(),
+            writer.count_due_sources(),
+            writer.is_scout_running(&region),
         );
 
         let sources = sources.unwrap_or_default();
         let (top_sources, bottom_sources) = discovery.unwrap_or_default();
-        let all_regions = all_cities.unwrap_or_default();
 
-        // Build scout status for each region using batch queries (2 queries instead of 2N)
-        let region_slugs: Vec<String> = all_regions.iter().map(|c| c.slug.clone()).collect();
-        let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&region_slugs),
-            writer.batch_due_sources(&region_slugs),
-        );
-        let running_map = running_map.unwrap_or_default();
-        let due_map = due_map.unwrap_or_default();
-
-        let mut scout_statuses = Vec::new();
-        for c in &all_regions {
-            scout_statuses.push(RegionScoutStatus {
-                region_name: c.name.clone(),
-                region_slug: c.slug.clone(),
-                last_scouted: c.last_scout_completed_at,
-                sources_due: *due_map.get(&c.slug).unwrap_or(&0),
-                running: *running_map.get(&c.slug).unwrap_or(&false),
-            });
-        }
+        let scout_statuses = vec![RegionScoutStatus {
+            region_name: region.clone(),
+            region_slug: region.clone(),
+            last_scouted: None,
+            sources_due: due_sources.unwrap_or(0),
+            running: scout_running.unwrap_or(false),
+        }];
 
         let by_type = by_type.unwrap_or_default();
         let signal_volume = signal_volume.unwrap_or_default();
@@ -521,55 +510,14 @@ impl QueryRoot {
         })
     }
 
-    /// List all regions with metadata.
-    #[graphql(guard = "AdminGuard")]
-    async fn admin_regions(&self, ctx: &Context<'_>) -> Result<Vec<AdminRegion>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let regions = writer.list_regions().await?;
-
-        let region_slugs: Vec<String> = regions.iter().map(|c| c.slug.clone()).collect();
-        let (running_map, due_map) = tokio::join!(
-            writer.batch_scout_running(&region_slugs),
-            writer.batch_due_sources(&region_slugs),
-        );
-        let running_map = running_map.unwrap_or_default();
-        let due_map = due_map.unwrap_or_default();
-
-        let results = regions
-            .iter()
-            .map(|c| {
-                let running = *running_map.get(&c.slug).unwrap_or(&false);
-                let due = *due_map.get(&c.slug).unwrap_or(&0);
-                AdminRegion::from_region_node(c, running, due)
-            })
-            .collect();
-        Ok(results)
-    }
-
-    /// Get region detail.
-    #[graphql(guard = "AdminGuard")]
-    async fn admin_region(&self, ctx: &Context<'_>, slug: String) -> Result<Option<AdminRegion>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let region = writer.get_region(&slug).await?;
-        match region {
-            Some(c) => {
-                let running = writer.is_scout_running(&c.slug).await.unwrap_or(false);
-                let due = writer.count_due_sources(&c.slug).await.unwrap_or(0);
-                Ok(Some(AdminRegion::from_region_node(&c, running, due)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// List active sources for a region with schedule preview.
+    /// List active sources with schedule preview.
     #[graphql(guard = "AdminGuard")]
     async fn admin_region_sources(
         &self,
         ctx: &Context<'_>,
-        region_slug: String,
     ) -> Result<Vec<AdminSource>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let sources = writer.get_active_sources(&region_slug).await?;
+        let sources = writer.get_active_sources().await?;
         Ok(sources
             .iter()
             .map(|s| {
@@ -604,14 +552,13 @@ impl QueryRoot {
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let region = writer.get_region(&region_slug).await?;
         let running = writer.is_scout_running(&region_slug).await.unwrap_or(false);
-        let due = writer.count_due_sources(&region_slug).await.unwrap_or(0);
+        let due = writer.count_due_sources().await.unwrap_or(0);
 
         Ok(RegionScoutStatus {
-            region_name: region.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            region_name: region_slug.clone(),
             region_slug,
-            last_scouted: region.and_then(|c| c.last_scout_completed_at),
+            last_scouted: None,
             sources_due: due,
             running,
         })
@@ -745,6 +692,23 @@ impl QueryRoot {
                 .collect(),
         })
     }
+
+    /// List scout tasks, optionally filtered by status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_tasks(
+        &self,
+        ctx: &Context<'_>,
+        status: Option<String>,
+        limit: Option<i32>,
+    ) -> Result<Vec<GqlScoutTask>> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let lim = limit.unwrap_or(50).min(200) as u32;
+        let tasks = writer
+            .list_scout_tasks(status.as_deref(), lim)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
+        Ok(tasks.into_iter().map(GqlScoutTask::from).collect())
+    }
 }
 
 // ========== Admin GQL Types ==========
@@ -839,39 +803,6 @@ pub struct AdminGapRow {
     pub total: u32,
     pub successful: u32,
     pub avg_weight: f64,
-}
-
-#[derive(SimpleObject)]
-pub struct AdminRegion {
-    pub id: Uuid,
-    pub slug: String,
-    pub name: String,
-    pub center_lat: f64,
-    pub center_lng: f64,
-    pub radius_km: f64,
-    pub active: bool,
-    pub created_at: DateTime<Utc>,
-    pub last_scout_completed_at: Option<DateTime<Utc>>,
-    pub scout_running: bool,
-    pub sources_due: u32,
-}
-
-impl AdminRegion {
-    fn from_region_node(c: &CityNode, running: bool, due: u32) -> Self {
-        Self {
-            id: c.id,
-            slug: c.slug.clone(),
-            name: c.name.clone(),
-            center_lat: c.center_lat,
-            center_lng: c.center_lng,
-            radius_km: c.radius_km,
-            active: c.active,
-            created_at: c.created_at,
-            last_scout_completed_at: c.last_scout_completed_at,
-            scout_running: running,
-            sources_due: due,
-        }
-    }
 }
 
 #[derive(SimpleObject)]

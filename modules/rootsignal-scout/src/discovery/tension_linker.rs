@@ -671,16 +671,11 @@ mod tests {
     fn tension_node_gets_region_center_coordinates() {
         // Verify that a DiscoveredTension produces a TensionNode with region-center lat/lng.
         let region = RegionNode {
-            id: Uuid::new_v4(),
             name: "Minneapolis".to_string(),
-            slug: "minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
             geo_terms: vec!["Minneapolis".to_string()],
-            active: true,
-            created_at: Utc::now(),
-            last_scout_completed_at: None,
         };
 
         let tension = DiscoveredTension {

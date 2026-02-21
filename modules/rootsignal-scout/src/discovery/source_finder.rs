@@ -488,7 +488,7 @@ impl<'a> SourceFinder<'a> {
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
     async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
-        let actors = match self.writer.get_actors_with_domains(&self.region_slug).await {
+        let actors = match self.writer.get_actors_with_domains().await {
             Ok(a) => a,
             Err(e) => {
                 warn!(error = %e, "Failed to get actors for discovery");
@@ -496,7 +496,7 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        let existing = match self.writer.get_active_sources(&self.region_slug).await {
+        let existing = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get existing sources for dedup");
@@ -557,7 +557,7 @@ impl<'a> SourceFinder<'a> {
                     scrape_count: 0,
                 };
 
-                match self.writer.upsert_source(&source, &self.region_slug).await {
+                match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
                         info!(
@@ -606,7 +606,7 @@ impl<'a> SourceFinder<'a> {
                     scrape_count: 0,
                 };
 
-                match self.writer.upsert_source(&source, &self.region_slug).await {
+                match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
                         info!(
@@ -722,7 +722,6 @@ impl<'a> SourceFinder<'a> {
                             .writer
                             .find_similar_query(
                                 &embedding,
-                                &self.region_slug,
                                 QUERY_DEDUP_SIMILARITY_THRESHOLD,
                             )
                             .await
@@ -795,7 +794,7 @@ impl<'a> SourceFinder<'a> {
                 scrape_count: 0,
             };
 
-            match self.writer.upsert_source(&source, &self.region_slug).await {
+            match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     stats.gap_sources += 1;
                     info!(
@@ -841,7 +840,7 @@ impl<'a> SourceFinder<'a> {
 
         let (successes, failures) = self
             .writer
-            .get_discovery_performance(&self.region_slug)
+            .get_discovery_performance()
             .await
             .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
 
@@ -866,7 +865,7 @@ impl<'a> SourceFinder<'a> {
         // Get existing WebQuery sources for dedup
         let existing = self
             .writer
-            .get_active_sources(&self.region_slug)
+            .get_active_sources()
             .await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
         let existing_queries: Vec<String> = existing
@@ -923,7 +922,7 @@ impl<'a> SourceFinder<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let existing = match self.writer.get_active_sources(&self.region_slug).await {
+        let existing = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get sources for gap analysis");
@@ -988,7 +987,7 @@ impl<'a> SourceFinder<'a> {
                 scrape_count: 0,
             };
 
-            match self.writer.upsert_source(&source, &self.region_slug).await {
+            match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     gap_count += 1;
                     stats.gap_sources += 1;

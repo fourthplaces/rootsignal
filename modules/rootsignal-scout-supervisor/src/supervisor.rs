@@ -28,7 +28,7 @@ impl Supervisor {
         anthropic_api_key: String,
         notifier: Box<dyn NotifyBackend>,
     ) -> Self {
-        let state = SupervisorState::new(client.clone(), region.slug.clone());
+        let state = SupervisorState::new(client.clone(), region.name.clone());
         let issues = IssueStore::new(client.clone());
         Self {
             client,
@@ -113,9 +113,9 @@ impl Supervisor {
 
                 // Feedback loop: save report + create GitHub issue if rejections exist
                 if output.signals_rejected > 0 {
-                    match report::save_report(&self.region.slug, &output) {
+                    match report::save_report(&self.region.name, &output) {
                         Ok(report_path) => {
-                            match report::create_github_issue(&self.region.slug, &output, &report_path) {
+                            match report::create_github_issue(&self.region.name, &output, &report_path) {
                                 Ok(Some(_url)) => {
                                     stats.github_issue_created = true;
                                 }

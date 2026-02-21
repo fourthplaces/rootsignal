@@ -28,9 +28,7 @@ use sim_adapter::{SimPageAdapter, SimSearchAdapter, SimSocialAdapter};
 /// Default test city node (Twin Cities).
 fn default_city_node() -> CityNode {
     CityNode {
-        id: uuid::Uuid::new_v4(),
         name: "Twin Cities (Minneapolis-St. Paul, Minnesota)".to_string(),
-        slug: "twincities".to_string(),
         center_lat: 44.9778,
         center_lng: -93.2650,
         radius_km: 30.0,
@@ -45,9 +43,6 @@ fn default_city_node() -> CityNode {
             "MN".to_string(),
             "Mpls".to_string(),
         ],
-        active: true,
-        created_at: chrono::Utc::now(),
-        last_scout_completed_at: None,
     }
 }
 
@@ -261,19 +256,14 @@ impl<'a> ScoutBuilder<'a> {
 /// Convert a simweb World geography to a CityNode for Scout.
 pub fn city_node_for(world: &World) -> CityNode {
     CityNode {
-        id: uuid::Uuid::new_v4(),
         name: format!(
             "{}, {}",
             world.geography.city, world.geography.state_or_region
         ),
-        slug: world.geography.city.to_lowercase().replace(' ', "-"),
         center_lat: world.geography.center_lat,
         center_lng: world.geography.center_lng,
         radius_km: 30.0,
         geo_terms: world.geography.local_terms.clone(),
-        active: true,
-        created_at: chrono::Utc::now(),
-        last_scout_completed_at: None,
     }
 }
 
@@ -326,7 +316,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
         };
 
         writer
-            .upsert_source(&source, city_slug)
+            .upsert_source(&source)
             .await
             .expect("Failed to upsert site source");
     }
@@ -369,7 +359,7 @@ pub async fn seed_sources_from_world(writer: &GraphWriter, world: &World, city_s
         };
 
         writer
-            .upsert_source(&source, city_slug)
+            .upsert_source(&source)
             .await
             .expect("Failed to upsert social source");
     }

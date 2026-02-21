@@ -361,7 +361,7 @@ pub async fn review_batch(
                     .unwrap_or("unknown");
 
                 issues.push(ValidationIssue::new(
-                    &region.slug,
+                    &region.name,
                     IssueType::from_llm_str(reason),
                     Severity::Warning,
                     signal_id,

@@ -72,7 +72,7 @@ impl<'a> Bootstrapper<'a> {
                 source_role: role.clone(),
                 scrape_count: 0,
             };
-            match self.writer.upsert_source(&source, &self.region.slug).await {
+            match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
             }
@@ -81,7 +81,7 @@ impl<'a> Bootstrapper<'a> {
         // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
         let platform_sources = self.generate_platform_sources().await;
         for source in &platform_sources {
-            match self.writer.upsert_source(source, &self.region.slug).await {
+            match self.writer.upsert_source(source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => {
                     let label = source.url.as_deref().unwrap_or(&source.canonical_value);
@@ -169,7 +169,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
     /// Eventbrite/VolunteerMatch/GoFundMe are query sources — they produce URLs, not content.
     /// Reddit subreddits are discovered via LLM rather than guessed from the city slug.
     async fn generate_platform_sources(&self) -> Vec<SourceNode> {
-        let _slug = &self.region.slug;
+        let _slug = &self.region.name;
         let city_name = &self.region.name;
         let city_name_encoded = city_name.replace(' ', "+");
         let now = Utc::now();

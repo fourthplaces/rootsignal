@@ -392,25 +392,132 @@ pub struct ClusterSnapshot {
     pub run_at: DateTime<Utc>,
 }
 
-// --- Region Node (graph-backed region configuration) ---
+// --- Scout Scope (geographic context for a scout run) ---
 
-/// An operational sandbox for scout's attention — defines where scout looks.
-/// Drives scheduling, locks, metrics, and bootstrap. The Neo4j label is still
-/// `:City` (renamed in Phase 2).
-pub type CityNode = RegionNode;
-
+/// The geographic context passed through the scout pipeline.
+/// Defines where scout looks — center point, radius, and search terms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegionNode {
-    pub id: Uuid,
-    pub name: String,
-    pub slug: String,
+pub struct ScoutScope {
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
+    pub name: String,
     pub geo_terms: Vec<String>,
-    pub active: bool,
+}
+
+impl ScoutScope {
+    /// Compute bounding box from center + radius.
+    pub fn bounding_box(&self) -> (f64, f64, f64, f64) {
+        let lat_delta = self.radius_km / 111.0;
+        let lng_delta = self.radius_km / (111.0 * self.center_lat.to_radians().cos());
+        (
+            self.center_lat - lat_delta,
+            self.center_lat + lat_delta,
+            self.center_lng - lng_delta,
+            self.center_lng + lng_delta,
+        )
+    }
+}
+
+/// Temporary aliases — will be removed once all callers migrate.
+pub type RegionNode = ScoutScope;
+pub type CityNode = ScoutScope;
+
+// --- Scout Task (ephemeral unit of work for the scout swarm) ---
+
+/// How a scout task was created.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScoutTaskSource {
+    /// Seeded from config/env vars (replaces old RegionNode)
+    Manual,
+    /// Created by signal clustering (feedback loop)
+    Beacon,
+    /// Created by Driver B (global news scanning)
+    DriverB,
+}
+
+impl std::fmt::Display for ScoutTaskSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Manual => write!(f, "manual"),
+            Self::Beacon => write!(f, "beacon"),
+            Self::DriverB => write!(f, "driver_b"),
+        }
+    }
+}
+
+impl std::str::FromStr for ScoutTaskSource {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "manual" => Ok(Self::Manual),
+            "beacon" => Ok(Self::Beacon),
+            "driver_b" => Ok(Self::DriverB),
+            other => Err(format!("unknown ScoutTaskSource: {other}")),
+        }
+    }
+}
+
+/// Status of a scout task in the queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScoutTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Cancelled,
+}
+
+impl std::fmt::Display for ScoutTaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Running => write!(f, "running"),
+            Self::Completed => write!(f, "completed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+impl std::str::FromStr for ScoutTaskStatus {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(format!("unknown ScoutTaskStatus: {other}")),
+        }
+    }
+}
+
+/// An ephemeral unit of work for the scout swarm.
+/// Replaces RegionNode as the thing that tells scout where to look.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoutTask {
+    pub id: Uuid,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub radius_km: f64,
+    pub context: String,
+    pub geo_terms: Vec<String>,
+    pub priority: f64,
+    pub source: ScoutTaskSource,
+    pub status: ScoutTaskStatus,
     pub created_at: DateTime<Utc>,
-    pub last_scout_completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl From<&ScoutTask> for ScoutScope {
+    fn from(task: &ScoutTask) -> Self {
+        ScoutScope {
+            center_lat: task.center_lat,
+            center_lng: task.center_lng,
+            radius_km: task.radius_km,
+            name: task.context.clone(),
+            geo_terms: task.geo_terms.clone(),
+        }
+    }
 }
 
 // --- Place Node (fourth places — venues that attract gatherings) ---

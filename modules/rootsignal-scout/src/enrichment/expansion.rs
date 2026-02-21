@@ -78,7 +78,7 @@ impl<'a> Expansion<'a> {
 
         let existing = self
             .writer
-            .get_active_web_queries(self.region_slug)
+            .get_active_web_queries()
             .await
             .unwrap_or_default();
         let deduped: Vec<String> = ctx
@@ -101,7 +101,7 @@ impl<'a> Expansion<'a> {
             if let Ok(embedding) = self.embedder.embed(query_text).await {
                 match self
                     .writer
-                    .find_similar_query(&embedding, self.region_slug, 0.90)
+                    .find_similar_query(&embedding, 0.90)
                     .await
                 {
                     Ok(Some((existing_ck, sim))) => {
@@ -149,7 +149,7 @@ impl<'a> Expansion<'a> {
                 source_role: rootsignal_common::SourceRole::Response,
                 scrape_count: 0,
             };
-            match self.writer.upsert_source(&source, self.region_slug).await {
+            match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     run_log.log(EventKind::ExpansionSourceCreated {
                         canonical_key: ck.clone(),

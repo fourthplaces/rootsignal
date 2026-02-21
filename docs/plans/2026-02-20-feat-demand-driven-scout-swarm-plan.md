@@ -166,27 +166,25 @@ CREATE CONSTRAINT scouttask_id IF NOT EXISTS FOR (t:ScoutTask) REQUIRE t.id IS U
 
 ### The ScoutScope Bridge
 
-**Architecture insight:** Introduce a `ScoutScope` struct as an
-intermediate abstraction. This lets Phase 1 refactor all pipeline
-stages from `&RegionNode` to `&ScoutScope`, and Phase 2 simply adds
-`From<&ScoutTask>` for `ScoutScope`. No double-refactor needed.
+`ScoutScope` is the geographic context passed through the scout
+pipeline. It replaces `RegionNode` entirely (no bridge — direct
+replacement).
 
 ```rust
 pub struct ScoutScope {
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
-    pub context: String,      // LLM-friendly name (replaces region.name)
+    pub context: String,      // LLM-friendly name (e.g., "Twin Cities, MN")
     pub geo_terms: Vec<String>,
 }
 
-impl From<&RegionNode> for ScoutScope { ... }
-// Phase 2 adds: impl From<&ScoutTask> for ScoutScope { ... }
+impl From<&ScoutTask> for ScoutScope { ... }
 ```
 
 This is the minimal interface that scout pipeline stages need from
-their geographic context. 16 files reference `RegionNode` — refactoring
-them to `ScoutScope` once is cleaner than refactoring them twice.
+their geographic context. ~16 files reference `RegionNode` — all
+get refactored to `ScoutScope` in one pass.
 
 ### Clustering: Signals → Hotspots
 
@@ -459,7 +457,7 @@ From security review:
 | Demand manipulation (future Driver A) | HIGH | Per-IP rate limiting, per-cycle cap on DriverA tasks, demand channel separate from search UI |
 | Budget exhaustion | MEDIUM-HIGH | Separate Driver B budget, global ceiling, per-source budget cap |
 | RSS feed injection / XML attacks | MEDIUM | Hardened XML parser (no XXE), per-feed size limits (5MB), feed validation |
-| Canonical key migration data integrity | MEDIUM | Collision detection query, dual-read phase, maintenance window with backup |
+| Canonical key cleanup corrupts data | LOW | App not launched — clean break, no migration path needed |
 
 ## Performance Notes
 
@@ -504,9 +502,8 @@ on feeds. Cheap pre-filter. Can cut LLM calls by 70-80%.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Colon over-match corrupts existing sources | HIGH (active bug) | High | Fix immediately: add `canonical_key <> canonical_value` guard |
-| `cleanup_off_geo_signals` deletes global signals | HIGH (active bug) | Critical | Remove before Phase 2 ships |
-| Source cold-start gap (new sources have no signals) | Medium | Medium | `discovered_in_geohash` field on SourceNode |
+| Colon over-match corrupts existing sources | HIGH (active bug) | High | Fix immediately in Phase 1a |
+| `cleanup_off_geo_signals` deletes signals | HIGH (active bug) | Critical | Delete entirely in Phase 1a |
 | Feedback loop creates runaway tasks | Medium | High | Global budget ceiling + exponential backoff per cell |
 | News feeds produce low-quality signals | Medium | Medium | Supervisor quality gate + quarantine for non-curated sources |
 | Clustering parameters need tuning | High | Low | Start conservative, geohash-5 + 3 signal threshold |

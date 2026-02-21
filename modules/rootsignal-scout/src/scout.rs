@@ -209,7 +209,7 @@ impl Scout {
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
         // Acquire per-city lock
-        let city_slug = &self.region.slug;
+        let city_slug = &self.region.name;
         if !self
             .writer
             .acquire_scout_lock(city_slug)
@@ -233,7 +233,7 @@ impl Scout {
         let run_id = Uuid::new_v4().to_string();
         info!(run_id = run_id.as_str(), "Scout run started");
 
-        let mut run_log = RunLog::new(run_id.clone(), self.region.slug.clone());
+        let mut run_log = RunLog::new(run_id.clone(), self.region.name.clone());
 
         // ================================================================
         // 1. Reap expired signals
@@ -261,7 +261,7 @@ impl Scout {
         // ================================================================
         // 2. Load sources + Schedule
         // ================================================================
-        let mut all_sources = match self.writer.get_active_sources(&self.region.slug).await {
+        let mut all_sources = match self.writer.get_active_sources().await {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -300,7 +300,7 @@ impl Scout {
             }
             all_sources = self
                 .writer
-                .get_active_sources(&self.region.slug)
+                .get_active_sources()
                 .await
                 .unwrap_or_default();
         }
@@ -394,7 +394,7 @@ impl Scout {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.region.slug,
+            &self.region.name,
             &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
@@ -413,7 +413,7 @@ impl Scout {
         info!("=== Phase B: Find Responses ===");
 
         // Reload sources to pick up fresh discovery sources from mid-run
-        let fresh_sources = match self.writer.get_active_sources(&self.region.slug).await {
+        let fresh_sources = match self.writer.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to reload sources for Phase B");
@@ -473,7 +473,7 @@ impl Scout {
         // ================================================================
         // 6. Source metrics + weight updates
         // ================================================================
-        let metrics = Metrics::new(&self.writer, &self.region.slug);
+        let metrics = Metrics::new(&self.writer, &self.region.name);
         metrics.update(&all_sources, &ctx, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
@@ -641,7 +641,7 @@ impl Scout {
         // ================================================================
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
-        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.slug);
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);
         expansion.run(&mut ctx, &mut run_log).await;
 
         self.check_cancelled()?;
@@ -651,7 +651,7 @@ impl Scout {
         // ================================================================
         let end_discoverer = crate::source_finder::SourceFinder::new(
             &self.writer,
-            &self.region.slug,
+            &self.region.name,
             &self.region.name,
             Some(self.anthropic_api_key.as_str()),
             &self.budget,
