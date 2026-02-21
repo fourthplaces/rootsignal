@@ -474,26 +474,34 @@ impl MutationRoot {
         Ok(dismissed)
     }
 
-    /// Create a new scout task (manual demand signal).
+    /// Create a new scout task (manual demand signal). Geocodes the location server-side.
     #[graphql(guard = "AdminGuard")]
     async fn create_scout_task(
         &self,
         ctx: &Context<'_>,
-        center_lat: f64,
-        center_lng: f64,
-        radius_km: f64,
-        context: String,
-        geo_terms: Option<Vec<String>>,
+        location: String,
+        radius_km: Option<f64>,
         priority: Option<f64>,
     ) -> Result<String> {
+        let (lat, lng, display_name) = geocode_location(&location)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+
+        // Extract geo_terms from the display_name (comma-separated parts)
+        let geo_terms: Vec<String> = display_name
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let task = rootsignal_common::ScoutTask {
             id: Uuid::new_v4(),
-            center_lat,
-            center_lng,
-            radius_km,
-            context,
-            geo_terms: geo_terms.unwrap_or_default(),
+            center_lat: lat,
+            center_lng: lng,
+            radius_km: radius_km.unwrap_or(30.0),
+            context: display_name,
+            geo_terms,
             priority: priority.unwrap_or(1.0),
             source: rootsignal_common::ScoutTaskSource::Manual,
             status: rootsignal_common::ScoutTaskStatus::Pending,
@@ -678,11 +686,30 @@ fn spawn_scout_run(
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
+            let writer = GraphWriter::new(client.clone());
+            let context = scope.name.clone();
+
+            // Claim matching ScoutTask (pending → running)
+            let task_id = match writer.claim_scout_task_by_context(&context).await {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to claim scout task");
+                    None
+                }
+            };
+
             if let Err(e) = run_scout(&client, &config, &region_slug, scope.clone(), cancel).await {
                 tracing::error!(error = %e, "Scout run failed");
             } else {
                 run_supervisor(&client, &config, &region_slug, scope).await;
                 cache_store.reload(&client).await;
+            }
+
+            // Mark task as completed
+            if let Some(id) = task_id {
+                if let Err(e) = writer.complete_scout_task(&id).await {
+                    tracing::warn!(error = %e, "Failed to complete scout task");
+                }
             }
         });
     });

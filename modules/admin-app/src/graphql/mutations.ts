@@ -62,19 +62,13 @@ export const RESET_SCOUT_LOCK = gql`
 
 export const CREATE_SCOUT_TASK = gql`
   mutation CreateScoutTask(
-    $centerLat: Float!
-    $centerLng: Float!
-    $radiusKm: Float!
-    $context: String!
-    $geoTerms: [String!]
+    $location: String!
+    $radiusKm: Float
     $priority: Float
   ) {
     createScoutTask(
-      centerLat: $centerLat
-      centerLng: $centerLng
+      location: $location
       radiusKm: $radiusKm
-      context: $context
-      geoTerms: $geoTerms
       priority: $priority
     )
   }

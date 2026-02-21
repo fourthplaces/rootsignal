@@ -208,21 +208,21 @@ impl Scout {
 
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
-        // Acquire per-city lock
-        let city_slug = &self.region.name;
+        // Acquire per-city lock (slugified to match reset/check operations)
+        let city_slug = rootsignal_common::slugify(&self.region.name);
         if !self
             .writer
-            .acquire_scout_lock(city_slug)
+            .acquire_scout_lock(&city_slug)
             .await
             .context("Failed to check scout lock")?
         {
-            anyhow::bail!("Another scout run is in progress for {}", city_slug);
+            anyhow::bail!("Another scout run is in progress for {}", self.region.name);
         }
 
         let result = self.run_inner().await;
 
         // Always release lock
-        if let Err(e) = self.writer.release_scout_lock(city_slug).await {
+        if let Err(e) = self.writer.release_scout_lock(&city_slug).await {
             error!("Failed to release scout lock: {e}");
         }
 

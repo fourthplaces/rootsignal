@@ -1581,6 +1581,27 @@ impl GraphWriter {
         self.client.graph.run(q).await
     }
 
+    /// Claim a pending scout task by context (location name), setting status to running.
+    /// Returns the task id if found, None otherwise.
+    pub async fn claim_scout_task_by_context(&self, context: &str) -> Result<Option<String>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {status: 'pending'})
+             WHERE t.context = $context
+             SET t.status = 'running'
+             RETURN t.id AS id
+             LIMIT 1",
+        )
+        .param("context", context);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            if id.is_empty() { Ok(None) } else { Ok(Some(id)) }
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Claim a scout task by setting its status from pending → running.
     pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
         let q = query(

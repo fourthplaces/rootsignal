@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
@@ -9,51 +9,17 @@ import {
 import {
   ADD_SOURCE,
   RUN_SCOUT,
-  STOP_SCOUT,
   RESET_SCOUT_LOCK,
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
 } from "@/graphql/mutations";
-import { RegionMap } from "./MapPage";
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
-const DEFAULT_SCOPE = { centerLat: 44.9778, centerLng: -93.265, radiusKm: 30 };
-
-type Tab = "runs" | "sources" | "map" | "tasks" | "controls";
+type Tab = "runs" | "sources" | "tasks";
 const TABS: { key: Tab; label: string }[] = [
   { key: "runs", label: "Runs" },
   { key: "sources", label: "Sources" },
-  { key: "map", label: "Map" },
   { key: "tasks", label: "Tasks" },
-  { key: "controls", label: "Controls" },
 ];
-
-type GeocodedPlace = {
-  name: string;
-  lat: number;
-  lng: number;
-  geoTerms: string[];
-};
-
-async function geocodeCity(query: string): Promise<GeocodedPlace | null> {
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?types=place,locality,region&limit=1&access_token=${MAPBOX_TOKEN}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const feature = data.features?.[0];
-  if (!feature) return null;
-  const [lng, lat] = feature.center;
-  const terms: string[] = [];
-  if (feature.text) terms.push(feature.text);
-  if (feature.context) {
-    for (const c of feature.context) {
-      if (c.id?.startsWith("region") || c.id?.startsWith("place")) {
-        terms.push(c.text);
-      }
-    }
-  }
-  return { name: feature.place_name ?? query, lat, lng, geoTerms: terms };
-}
 
 type ScoutRunStats = {
   urlsScraped: number;
@@ -142,46 +108,27 @@ export function ScoutPage() {
   const [createTask] = useMutation(CREATE_SCOUT_TASK);
   const [cancelTask] = useMutation(CANCEL_SCOUT_TASK);
   const [showCreateTask, setShowCreateTask] = useState(false);
-  const [cityInput, setCityInput] = useState("");
-  const [geocoded, setGeocoded] = useState<GeocodedPlace | null>(null);
-  const [geocoding, setGeocoding] = useState(false);
-  const [geocodeError, setGeocodeError] = useState<string | null>(null);
-  const [taskRadiusKm, setTaskRadiusKm] = useState("30");
-  const [taskPriority, setTaskPriority] = useState("1.0");
-
-  const handleGeocode = useCallback(async () => {
-    if (!cityInput.trim()) return;
-    setGeocoding(true);
-    setGeocodeError(null);
-    const result = await geocodeCity(cityInput.trim());
-    setGeocoding(false);
-    if (result) {
-      setGeocoded(result);
-    } else {
-      setGeocodeError("Could not find that location.");
-      setGeocoded(null);
-    }
-  }, [cityInput]);
+  const [taskLocation, setTaskLocation] = useState("");
+  const [taskCreating, setTaskCreating] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!geocoded) return;
-    await createTask({
-      variables: {
-        centerLat: geocoded.lat,
-        centerLng: geocoded.lng,
-        radiusKm: parseFloat(taskRadiusKm),
-        context: geocoded.name,
-        geoTerms: geocoded.geoTerms.length > 0 ? geocoded.geoTerms : undefined,
-        priority: parseFloat(taskPriority),
-      },
-    });
-    setShowCreateTask(false);
-    setCityInput("");
-    setGeocoded(null);
-    setTaskRadiusKm("30");
-    setTaskPriority("1.0");
-    refetchTasks();
+    if (!taskLocation.trim()) return;
+    setTaskCreating(true);
+    setTaskError(null);
+    try {
+      await createTask({
+        variables: { location: taskLocation.trim() },
+      });
+      setShowCreateTask(false);
+      setTaskLocation("");
+      refetchTasks();
+    } catch (err: unknown) {
+      setTaskError(err instanceof Error ? err.message : "Failed to create task");
+    } finally {
+      setTaskCreating(false);
+    }
   };
 
   const handleCancelTask = async (id: string) => {
@@ -189,25 +136,17 @@ export function ScoutPage() {
     refetchTasks();
   };
 
-  // --- Controls ---
+  // --- Task actions ---
   const [runScout] = useMutation(RUN_SCOUT);
-  const [stopScout] = useMutation(STOP_SCOUT);
   const [resetLock] = useMutation(RESET_SCOUT_LOCK);
-  const [scoutQuery, setScoutQuery] = useState("");
-  const [controlMsg, setControlMsg] = useState<string | null>(null);
 
-  const handleControl = async (action: "run" | "stop" | "reset") => {
-    setControlMsg(null);
-    let result;
-    if (action === "run") result = await runScout({ variables: { query: scoutQuery } });
-    else if (action === "stop") result = await stopScout();
-    else result = await resetLock({ variables: { query: scoutQuery } });
-    const msg =
-      result.data?.runScout?.message ??
-      result.data?.stopScout?.message ??
-      result.data?.resetScoutLock?.message ??
-      "Done";
-    setControlMsg(msg);
+  const handleRunTask = async (context: string) => {
+    await runScout({ variables: { query: context } });
+    refetchTasks();
+  };
+
+  const handleResetTask = async (context: string) => {
+    await resetLock({ variables: { query: context } });
   };
 
   return (
@@ -364,9 +303,6 @@ export function ScoutPage() {
         </div>
       )}
 
-      {/* Map tab */}
-      {tab === "map" && <RegionMap region={DEFAULT_SCOPE} />}
-
       {/* Tasks tab */}
       {tab === "tasks" && (
         <div>
@@ -381,73 +317,26 @@ export function ScoutPage() {
           </div>
 
           {showCreateTask && (
-            <form onSubmit={handleCreateTask} className="mb-4 space-y-3 max-w-lg">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={cityInput}
-                  onChange={(e) => { setCityInput(e.target.value); setGeocoded(null); setGeocodeError(null); }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !geocoded) { e.preventDefault(); handleGeocode(); } }}
-                  placeholder="City (e.g. Austin, TX)"
-                  className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={handleGeocode}
-                  disabled={geocoding || !cityInput.trim()}
-                  className="px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
-                >
-                  {geocoding ? "Looking up..." : "Look up"}
-                </button>
-              </div>
-
-              {geocodeError && (
-                <p className="text-sm text-red-400">{geocodeError}</p>
-              )}
-
-              {geocoded && (
-                <>
-                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                    <p className="font-medium">{geocoded.name}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {geocoded.lat.toFixed(4)}, {geocoded.lng.toFixed(4)}
-                      {geocoded.geoTerms.length > 0 && (
-                        <> &middot; {geocoded.geoTerms.join(", ")}</>
-                      )}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs text-muted-foreground">Radius (km)</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={taskRadiusKm}
-                        onChange={(e) => setTaskRadiusKm(e.target.value)}
-                        className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground">Priority</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={taskPriority}
-                        onChange={(e) => setTaskPriority(e.target.value)}
-                        className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-                  >
-                    Create Task
-                  </button>
-                </>
-              )}
+            <form onSubmit={handleCreateTask} className="mb-4 flex gap-2 max-w-lg">
+              <input
+                type="text"
+                value={taskLocation}
+                onChange={(e) => { setTaskLocation(e.target.value); setTaskError(null); }}
+                placeholder="Location (e.g. Austin, TX)"
+                className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
+                required
+              />
+              <button
+                type="submit"
+                disabled={taskCreating || !taskLocation.trim()}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
+              >
+                {taskCreating ? "Creating..." : "Create"}
+              </button>
             </form>
+          )}
+          {taskError && (
+            <p className="text-sm text-red-400 mb-4">{taskError}</p>
           )}
 
           {tasksLoading ? (
@@ -497,14 +386,30 @@ export function ScoutPage() {
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                         {formatDate(t.createdAt)}
                       </td>
-                      <td className="px-4 py-2 text-right">
-                        {(t.status === "pending" || t.status === "running") && (
+                      <td className="px-4 py-2 text-right flex gap-1 justify-end">
+                        {t.status === "pending" && (
                           <button
-                            onClick={() => handleCancelTask(t.id)}
+                            onClick={() => handleRunTask(t.context)}
                             className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
                           >
-                            Cancel
+                            Run
                           </button>
+                        )}
+                        {(t.status === "pending" || t.status === "running") && (
+                          <>
+                            <button
+                              onClick={() => handleResetTask(t.context)}
+                              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                            >
+                              Reset Lock
+                            </button>
+                            <button
+                              onClick={() => handleCancelTask(t.id)}
+                              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                            >
+                              Cancel
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -516,46 +421,6 @@ export function ScoutPage() {
         </div>
       )}
 
-      {/* Controls tab */}
-      {tab === "controls" && (
-        <div className="space-y-4 max-w-md">
-          <div>
-            <label className="text-xs text-muted-foreground">Where should we scout?</label>
-            <input
-              type="text"
-              value={scoutQuery}
-              onChange={(e) => setScoutQuery(e.target.value)}
-              placeholder="Austin, TX"
-              className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-            />
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => handleControl("run")}
-              disabled={!scoutQuery.trim()}
-              className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
-            >
-              Run Scout
-            </button>
-            <button
-              onClick={() => handleControl("stop")}
-              className="px-4 py-2 rounded-md border border-border text-sm hover:bg-accent"
-            >
-              Stop Scout
-            </button>
-            <button
-              onClick={() => handleControl("reset")}
-              disabled={!scoutQuery.trim()}
-              className="px-4 py-2 rounded-md border border-border text-sm text-muted-foreground hover:bg-accent disabled:opacity-50"
-            >
-              Reset Lock
-            </button>
-          </div>
-          {controlMsg && (
-            <p className="text-sm text-muted-foreground">{controlMsg}</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
