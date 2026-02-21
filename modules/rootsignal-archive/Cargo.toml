@@ -1,0 +1,27 @@
+[package]
+name = "rootsignal-archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rootsignal-common = { workspace = true }
+apify-client = { workspace = true }
+browserless-client = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+spider_transformations = { workspace = true }
+feed-rs = { workspace = true }
+regex = { workspace = true }
+sqlx = { workspace = true }
+url = "2"
+tempfile = "3"
+rand = "0.9"
