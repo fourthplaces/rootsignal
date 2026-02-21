@@ -3,14 +3,18 @@
 //! Fakes the *data sources* (web pages, search results, social posts).
 //! Uses real Claude, real Voyage embeddings, real Neo4j.
 
+pub mod archive_seed;
 pub mod audit;
 pub mod queries;
 pub mod sim_adapter;
 
 use std::sync::Arc;
 
-use rootsignal_archive::FetchBackend;
-use rootsignal_common::{CityNode, DiscoveryMethod, SearchResult, SocialPost, SourceNode, SourceRole};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use rootsignal_archive::{FetchBackend, Replay, Seeder};
+use rootsignal_common::{ScoutScope, DiscoveryMethod, SearchResult, SocialPost, SourceNode, SourceRole};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
 use rootsignal_scout::embedder::Embedder;
@@ -25,9 +29,9 @@ use simweb::{SimulatedWeb, World};
 
 use sim_adapter::SimArchive;
 
-/// Default test city node (Twin Cities).
-fn default_city_node() -> CityNode {
-    CityNode {
+/// Default test scope (Twin Cities).
+fn default_scope() -> ScoutScope {
+    ScoutScope {
         name: "Twin Cities (Minneapolis-St. Paul, Minnesota)".to_string(),
         center_lat: 44.9778,
         center_lng: -93.2650,
@@ -53,6 +57,7 @@ pub struct TestContext {
     client: GraphClient,
     anthropic_key: String,
     voyage_key: String,
+    pg_pool: Option<PgPool>,
 }
 
 impl TestContext {
@@ -74,6 +79,33 @@ impl TestContext {
             client,
             anthropic_key,
             voyage_key,
+            pg_pool: None,
+        })
+    }
+
+    /// Spin up Neo4j + Postgres. Returns `None` if keys or DATABASE_URL are missing.
+    pub async fn try_new_with_pg() -> Option<Self> {
+        dotenv_load();
+        let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
+        let voyage_key = std::env::var("VOYAGE_API_KEY").ok()?;
+        let database_url = std::env::var("DATABASE_URL").ok()?;
+
+        let (container, client) = neo4j_container().await;
+
+        rootsignal_graph::migrate::migrate(&client)
+            .await
+            .expect("Migration failed");
+
+        let pg_pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to Postgres");
+
+        Some(Self {
+            _container: Box::new(container),
+            client,
+            anthropic_key,
+            voyage_key,
+            pg_pool: Some(pg_pool),
         })
     }
 
@@ -92,19 +124,37 @@ impl TestContext {
         &self.anthropic_key
     }
 
-    /// Capture the current extractor prompt template (with `{city_name}` / `{today}` placeholders).
+    /// Create a Seeder for writing archived content into Postgres.
+    /// Panics if no Postgres pool is available (use `try_new_with_pg`).
+    pub async fn seeder(&self, region_slug: &str) -> (Seeder, Uuid) {
+        let pool = self.pg_pool.clone().expect("No Postgres pool — use try_new_with_pg()");
+        let run_id = Uuid::new_v4();
+        let seeder = Seeder::new(pool, run_id, region_slug)
+            .await
+            .expect("Failed to create Seeder");
+        (seeder, run_id)
+    }
+
+    /// Create a Replay backend for reading archived content from Postgres.
+    /// Panics if no Postgres pool is available (use `try_new_with_pg`).
+    pub fn replay(&self, run_id: Uuid) -> Arc<dyn FetchBackend> {
+        let pool = self.pg_pool.clone().expect("No Postgres pool — use try_new_with_pg()");
+        Arc::new(Replay::for_run(pool, run_id))
+    }
+
+    /// Capture the current extractor prompt template (with `{region_name}` / `{today}` placeholders).
     pub fn baseline_extractor_prompt() -> String {
-        extractor::build_system_prompt("{city_name}", 0.0, 0.0, &[])
+        extractor::build_system_prompt("{region_name}", 0.0, 0.0, &[])
     }
 
     /// Create a Scout wired to a SimulatedWeb, using a genome's extractor prompt.
     pub fn sim_scout_with_genome(
         &self,
         sim: Arc<SimulatedWeb>,
-        city_node: CityNode,
+        scope: ScoutScope,
         genome: &simweb::ScoutGenome,
     ) -> Scout {
-        let prompt = genome.render_extractor_prompt(&city_node.name);
+        let prompt = genome.render_extractor_prompt(&scope.name);
         let archive: Arc<dyn FetchBackend> = Arc::new(SimArchive::new(sim));
         Scout::new_for_test(
             self.client.clone(),
@@ -112,25 +162,25 @@ impl TestContext {
             Box::new(Embedder::new(&self.voyage_key)),
             archive,
             &self.anthropic_key,
-            city_node,
+            scope,
         )
     }
 
     /// Create a Scout wired to a SimulatedWeb for fuzzy integration tests.
-    pub fn sim_scout(&self, sim: Arc<SimulatedWeb>, city_node: CityNode) -> Scout {
+    pub fn sim_scout(&self, sim: Arc<SimulatedWeb>, scope: ScoutScope) -> Scout {
         let archive: Arc<dyn FetchBackend> = Arc::new(SimArchive::new(sim));
         Scout::new_for_test(
             self.client.clone(),
             Box::new(Extractor::new(
                 &self.anthropic_key,
-                &city_node.name,
-                city_node.center_lat,
-                city_node.center_lng,
+                &scope.name,
+                scope.center_lat,
+                scope.center_lng,
             )),
             Box::new(Embedder::new(&self.voyage_key)),
             archive,
             &self.anthropic_key,
-            city_node,
+            scope,
         )
     }
 
@@ -138,7 +188,7 @@ impl TestContext {
     pub fn scout(&self) -> ScoutBuilder<'_> {
         ScoutBuilder {
             ctx: self,
-            city_node: default_city_node(),
+            scope: default_scope(),
             archive_override: None,
             pages: std::collections::HashMap::new(),
             search_results: Vec::new(),
@@ -152,7 +202,7 @@ impl TestContext {
 /// Builder for configuring what data a scout run sees.
 pub struct ScoutBuilder<'a> {
     ctx: &'a TestContext,
-    city_node: CityNode,
+    scope: ScoutScope,
     archive_override: Option<Arc<dyn FetchBackend>>,
     pages: std::collections::HashMap<String, String>,
     search_results: Vec<SearchResult>,
@@ -167,8 +217,8 @@ enum SearcherKind {
 }
 
 impl<'a> ScoutBuilder<'a> {
-    pub fn with_city(mut self, city_node: CityNode) -> Self {
-        self.city_node = city_node;
+    pub fn with_city(mut self, scope: ScoutScope) -> Self {
+        self.scope = scope;
         self
     }
 
@@ -221,7 +271,7 @@ impl<'a> ScoutBuilder<'a> {
 
     /// Build the Scout and run a full cycle. Returns stats.
     pub async fn run(self) -> ScoutStats {
-        let city_node = self.city_node;
+        let scope = self.scope;
 
         let default_content = self.pages.get("*").cloned().unwrap_or_default();
 
@@ -260,26 +310,26 @@ impl<'a> ScoutBuilder<'a> {
             self.ctx.client.clone(),
             Box::new(Extractor::new(
                 &self.ctx.anthropic_key,
-                &city_node.name,
-                city_node.center_lat,
-                city_node.center_lng,
+                &scope.name,
+                scope.center_lat,
+                scope.center_lng,
             )),
             Box::new(Embedder::new(&self.ctx.voyage_key)),
             archive,
             &self.ctx.anthropic_key,
-            city_node,
+            scope,
         );
 
         scout.run().await.expect("Scout run failed")
     }
 }
 
-/// Convert a simweb World geography to a CityNode for Scout.
-pub fn city_node_for(world: &World) -> CityNode {
-    CityNode {
+/// Convert a simweb World geography to a ScoutScope.
+pub fn scope_for(world: &World) -> ScoutScope {
+    ScoutScope {
         name: format!(
             "{}, {}",
-            world.geography.city, world.geography.state_or_region
+            world.geography.name, world.geography.state_or_region
         ),
         center_lat: world.geography.center_lat,
         center_lng: world.geography.center_lng,

@@ -1036,11 +1036,11 @@ async fn deduplicate_evidence_migration() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: City proximity signal lookup (list_recent_for_city)
+// Test: Bbox proximity signal lookup (list_recent_in_bbox)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn city_proximity_signal_lookup() {
+async fn bbox_proximity_signal_lookup() {
     let (_container, client) = setup().await;
 
     let now = neo4j_dt(&Utc::now());
@@ -1149,9 +1149,9 @@ async fn city_proximity_signal_lookup() {
     // Query via PublicGraphReader with Minneapolis center + 50km radius
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
     let results = reader
-        .list_recent_for_city(44.9778, -93.2650, 50.0, 100)
+        .list_recent_in_bbox(44.9778, -93.2650, 50.0, 100)
         .await
-        .expect("list_recent_for_city failed");
+        .expect("list_recent_in_bbox failed");
 
     let titles: Vec<&str> = results
         .iter()
@@ -1184,11 +1184,11 @@ async fn city_proximity_signal_lookup() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: City proximity story lookup (top_stories_for_city)
+// Test: Bbox proximity story lookup (top_stories_in_bbox)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn city_proximity_story_lookup() {
+async fn bbox_proximity_story_lookup() {
     let (_container, client) = setup().await;
 
     let now = neo4j_dt(&Utc::now());
@@ -1249,9 +1249,9 @@ async fn city_proximity_story_lookup() {
     // Query stories near Minneapolis center, 50km radius
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
     let results = reader
-        .top_stories_for_city(44.9778, -93.2650, 50.0, 100)
+        .top_stories_in_bbox(44.9778, -93.2650, 50.0, 100)
         .await
-        .expect("top_stories_for_city failed");
+        .expect("top_stories_in_bbox failed");
 
     let headlines: Vec<&str> = results.iter().map(|s| s.headline.as_str()).collect();
 
@@ -1304,7 +1304,7 @@ async fn source_last_scraped_round_trip() {
     };
 
     writer
-        .upsert_source(&source, "test-city")
+        .upsert_source(&source)
         .await
         .expect("upsert_source failed");
 
@@ -1318,7 +1318,7 @@ async fn source_last_scraped_round_trip() {
     // Read back via get_active_sources — the bug caused last_scraped to be None
     // because row.get::<String>() silently failed on Neo4j DateTime types
     let sources = writer
-        .get_active_sources("test-city")
+        .get_active_sources()
         .await
         .expect("get_active_sources failed");
     assert_eq!(sources.len(), 1, "should find 1 source");
@@ -1573,7 +1573,7 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
 }
 
 #[tokio::test]
-async fn merge_duplicate_tensions_preserves_cross_city_signals() {
+async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -1615,14 +1615,14 @@ async fn merge_duplicate_tensions_preserves_cross_city_signals() {
         .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
         .expect("merge failed");
-    assert_eq!(merged, 0, "Cross-city tensions must not be merged");
+    assert_eq!(merged, 0, "Cross-region tensions must not be merged");
 
     // Both tensions survive
     let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
     let mut stream = client.inner().execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
-    assert_eq!(count, 2, "Both city tensions should survive");
+    assert_eq!(count, 2, "Both region tensions should survive");
 }
 
 // =============================================================================
@@ -2310,7 +2310,7 @@ async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
 }
 
 #[tokio::test]
-async fn get_existing_gathering_signals_filters_by_city() {
+async fn get_existing_gathering_signals_filters_by_bbox() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
@@ -2449,7 +2449,7 @@ async fn create_aid_with_implied_queries(
 }
 
 /// Helper: create a WebQuery source node.
-async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &str, active: bool) {
+async fn create_web_query_source(client: &GraphClient, _region: &str, query_text: &str, active: bool) {
     let now = neo4j_dt(&Utc::now());
     let id = Uuid::new_v4();
     let q = query(
@@ -2458,7 +2458,6 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
             canonical_key: $key,
             canonical_value: $query,
             discovery_method: 'curated',
-            city: $city,
             created_at: datetime($now),
             signals_produced: 0,
             signals_corroborated: 0,
@@ -2472,9 +2471,8 @@ async fn create_web_query_source(client: &GraphClient, city: &str, query_text: &
         })",
     )
     .param("id", id.to_string())
-    .param("key", format!("{city}:{query_text}"))
+    .param("key", query_text)
     .param("query", query_text)
-    .param("city", city)
     .param("now", now)
     .param("active", active);
 
@@ -2742,7 +2740,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // First call: should collect the queries
     let queries = writer
-        .get_recently_linked_signals_with_queries("twincities")
+        .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
     assert_eq!(queries.len(), 2, "Should collect 2 implied queries");
@@ -2751,7 +2749,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // Second call: should return empty — queries were cleared after first collection
     let queries_again = writer
-        .get_recently_linked_signals_with_queries("twincities")
+        .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
     assert_eq!(
@@ -2805,7 +2803,7 @@ async fn recently_linked_signals_ignores_cold_tensions() {
     client.inner().run(q).await.expect("edge failed");
 
     let queries = writer
-        .get_recently_linked_signals_with_queries("twincities")
+        .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
     assert_eq!(
@@ -2864,7 +2862,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
         .expect("create_drawn_to failed");
 
     let collected = writer
-        .get_recently_linked_signals_with_queries("twincities")
+        .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
     assert_eq!(
@@ -2919,7 +2917,7 @@ async fn active_web_queries_filters_inactive() {
     );
     assert!(
         !queries.iter().any(|q| q.contains("NYC")),
-        "Should not include other city queries"
+        "Should not include other region queries"
     );
 }
 

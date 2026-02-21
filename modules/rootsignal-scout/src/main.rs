@@ -21,7 +21,7 @@ use rootsignal_scout::scout::Scout;
 #[derive(Parser)]
 #[command(about = "Run the Root Signal scout for a region")]
 struct Cli {
-    /// Region slug (e.g. "minneapolis"). Overrides CITY env var.
+    /// Region slug (e.g. "minneapolis"). Overrides REGION env var.
     region: Option<String>,
 
     /// Dump raw graph data (stories + signals) as JSON to stdout instead of running the scout.
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
     // Load .env from workspace root (doesn't override existing env vars)
     dotenv_load();
 
-    // Load config, with optional CLI city override
+    // Load config, with optional CLI region override
     let cli = Cli::parse();
     let mut config = Config::scout_from_env();
     if let Some(region) = cli.region {
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     .await?;
 
     if cli.dump {
-        return dump_city(&client, &config.region).await;
+        return dump_region(&client, &config.region).await;
     }
 
     config.log_redacted();
@@ -170,8 +170,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Dump all stories and signals for a city as raw JSON to stdout.
-async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
+/// Dump all stories and signals for a region as raw JSON to stdout.
+async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
     // Construct geo bounds from env vars (same as main scout flow)
     let config = Config::scout_from_env();
     let center_lat = config
@@ -186,12 +186,12 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
         center_lat,
         center_lng,
         radius_km,
-        name: city_slug.to_string(),
-        geo_terms: vec![city_slug.to_string()],
+        name: region_slug.to_string(),
+        geo_terms: vec![region_slug.to_string()],
     };
     let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
-    // Fetch all stories in the city's bounding box
+    // Fetch all stories in the region's bounding box
     let story_q = query(
         "MATCH (s:Story)
          WHERE s.centroid_lat IS NOT NULL
@@ -274,7 +274,7 @@ async fn dump_city(client: &GraphClient, city_slug: &str) -> Result<()> {
     }
 
     let output = DumpOutput {
-        region: city_slug.to_string(),
+        region: region_slug.to_string(),
         stories,
         ungrouped_signals: ungrouped,
     };

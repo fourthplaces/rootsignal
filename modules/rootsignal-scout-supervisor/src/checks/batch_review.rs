@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use ai_client::claude::Claude;
-use rootsignal_common::CityNode;
+use rootsignal_common::ScoutScope;
 use rootsignal_graph::GraphClient;
 
 use super::triage::Suspect;
@@ -34,7 +34,7 @@ pub struct Verdict {
     pub signal_id: String,
     /// "pass" or "reject"
     pub decision: String,
-    /// If rejected: category (e.g. "cross_city_contamination")
+    /// If rejected: category (e.g. "cross_region_contamination")
     pub rejection_reason: Option<String>,
     /// If rejected: human-readable explanation
     pub explanation: Option<String>,
@@ -93,7 +93,7 @@ pub struct BatchReviewOutput {
 
 pub async fn fetch_staged_signals(
     client: &GraphClient,
-    region: &CityNode,
+    region: &ScoutScope,
 ) -> Result<Vec<SignalForReview>> {
     let g = client.inner();
 
@@ -200,11 +200,11 @@ pub fn annotate_triage_flags(signals: &mut [SignalForReview], suspects: &[Suspec
 // Build prompts
 // =============================================================================
 
-fn build_system_prompt(region: &CityNode) -> String {
+fn build_system_prompt(region: &ScoutScope) -> String {
     format!(
         r#"You are a data quality gate for a community signal mapping system.
 
-You are reviewing staged signals from a scout run in {city_name} (center: {lat}, {lng}, radius: {radius}km).
+You are reviewing staged signals from a scout run in {region_name} (center: {lat}, {lng}, radius: {radius}km).
 
 Signal types:
 - Gathering: time-bound community events
@@ -224,9 +224,9 @@ YOUR TWO TASKS:
 
 1. For EACH signal, decide: pass or reject.
 
-Pass signals that describe real, observable community activity in or near {city_name}, are correctly classified, have credible sources, and contain specific information.
+Pass signals that describe real, observable community activity in or near {region_name}, are correctly classified, have credible sources, and contain specific information.
 
-Reject signals that reference a different city, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.
+Reject signals that reference a different region, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.
 
 When rejecting, provide rejection_reason (short category) and explanation.
 
@@ -237,7 +237,7 @@ When rejecting, provide rejection_reason (short category) and explanation.
 - suggested_fix: What should a developer change in the module's code to prevent this? Be specific (e.g., "add source URL validation in the investigator's evidence gathering step").
 
 Most signals from well-configured sources should pass. Be a fair but firm gate."#,
-        city_name = region.name,
+        region_name = region.name,
         lat = region.center_lat,
         lng = region.center_lng,
         radius = region.radius_km,
@@ -282,7 +282,7 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
 pub async fn review_batch(
     client: &GraphClient,
     api_key: &str,
-    region: &CityNode,
+    region: &ScoutScope,
     suspects: &[Suspect],
 ) -> Result<BatchReviewOutput> {
     // 1. Fetch staged signals

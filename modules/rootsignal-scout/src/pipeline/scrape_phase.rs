@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, RegionNode,
+    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ScoutScope,
     DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
     SocialPlatform, SocialPost, SourceNode, SourceRole,
 };
@@ -71,10 +71,10 @@ impl RunContext {
         }
     }
 
-    /// Rebuild known_city_urls from current URL map state.
+    /// Rebuild known URLs from current URL map state.
     /// Must be called before each social scrape to capture
     /// URLs resolved during the preceding web scrape.
-    pub fn known_city_urls(&self) -> HashSet<String> {
+    pub fn known_urls(&self) -> HashSet<String> {
         self.url_to_canonical_key.keys().cloned().collect()
     }
 }
@@ -172,7 +172,7 @@ pub(crate) struct ScrapePhase<'a> {
     extractor: &'a dyn SignalExtractor,
     embedder: &'a dyn TextEmbedder,
     archive: Arc<dyn FetchBackend>,
-    region: &'a RegionNode,
+    region: &'a ScoutScope,
     run_id: String,
 }
 
@@ -182,7 +182,7 @@ impl<'a> ScrapePhase<'a> {
         extractor: &'a dyn SignalExtractor,
         embedder: &'a dyn TextEmbedder,
         archive: Arc<dyn FetchBackend>,
-        region: &'a RegionNode,
+        region: &'a ScoutScope,
         run_id: String,
     ) -> Self {
         Self {
@@ -441,7 +441,7 @@ impl<'a> ScrapePhase<'a> {
 
         // Process results
         let now = Utc::now();
-        let known_urls = ctx.known_city_urls();
+        let known_urls = ctx.known_urls();
         for (url, outcome) in pipeline_results {
             let ck = ctx
                 .url_to_canonical_key
@@ -739,7 +739,7 @@ impl<'a> ScrapePhase<'a> {
 
         let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
-        let known_city_urls = ctx.known_city_urls();
+        let known_urls = ctx.known_urls();
         for result in results.into_iter().flatten() {
             let (
                 canonical_key,
@@ -783,7 +783,7 @@ impl<'a> ScrapePhase<'a> {
                     resource_tags,
                     signal_tags,
                     ctx,
-                    &known_city_urls,
+                    &known_urls,
                     run_log,
                 )
                 .await
@@ -812,7 +812,7 @@ impl<'a> ScrapePhase<'a> {
 
         info!(topics = ?topics, "Starting social topic discovery...");
 
-        let known_city_urls = ctx.known_city_urls();
+        let known_urls = ctx.known_urls();
 
         // Load existing sources for dedup across all platforms
         let existing_sources = self
@@ -962,7 +962,7 @@ impl<'a> ScrapePhase<'a> {
                         result.resource_tags,
                         result.signal_tags,
                         ctx,
-                        &known_city_urls,
+                        &known_urls,
                         run_log,
                     )
                     .await
@@ -1050,7 +1050,7 @@ impl<'a> ScrapePhase<'a> {
                 info!(query, count = results.len(), "Site-scoped search results");
 
                 for result in &results {
-                    if known_city_urls.contains(&result.url) {
+                    if known_urls.contains(&result.url) {
                         continue;
                     }
 
@@ -1084,7 +1084,7 @@ impl<'a> ScrapePhase<'a> {
                             extracted.resource_tags,
                             extracted.signal_tags,
                             ctx,
-                            &known_city_urls,
+                            &known_urls,
                             run_log,
                         )
                         .await
@@ -1114,7 +1114,7 @@ impl<'a> ScrapePhase<'a> {
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         signal_tags: Vec<(Uuid, Vec<String>)>,
         ctx: &mut RunContext,
-        known_city_urls: &HashSet<String>,
+        known_urls: &HashSet<String>,
         run_log: &mut RunLog,
     ) -> Result<()> {
         let url = sanitize_url(url);
@@ -1139,16 +1139,16 @@ impl<'a> ScrapePhase<'a> {
         }
 
         // Geographic filtering: reject off-geography signals and backfill
-        // city-center coordinates on survivors that lack coords.
+        // region-center coordinates on survivors that lack coords.
         let geo_config = geo_filter::GeoFilterConfig {
             center_lat: self.region.center_lat,
             center_lng: self.region.center_lng,
             radius_km: self.region.radius_km,
             geo_terms: &self.region.geo_terms,
         };
-        let is_city_local = known_city_urls.contains(&url);
+        let is_known_source = known_urls.contains(&url);
         let before_geo = nodes.len();
-        let (nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config, is_city_local);
+        let (nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config, is_known_source);
         ctx.stats.geo_filtered += geo_stats.filtered;
         let geo_filtered = before_geo - nodes.len();
         if geo_filtered > 0 {
@@ -1444,7 +1444,7 @@ impl<'a> ScrapePhase<'a> {
                 }
             }
 
-            // 3b: Check graph index (catches dupes from previous runs, city-scoped)
+            // 3b: Check graph index (catches dupes from previous runs, region-scoped)
             let lat_delta = self.region.radius_km / 111.0;
             let lng_delta = self.region.radius_km
                 / (111.0 * self.region.center_lat.to_radians().cos());

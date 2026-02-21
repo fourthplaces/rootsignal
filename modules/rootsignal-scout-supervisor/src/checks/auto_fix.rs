@@ -9,8 +9,8 @@ use crate::types::AutoFixStats;
 /// These are idempotent and safe to run concurrently with the scout.
 pub async fn run_auto_fixes(
     client: &GraphClient,
-    city_center_lat: f64,
-    city_center_lng: f64,
+    center_lat: f64,
+    center_lng: f64,
 ) -> Result<AutoFixStats, neo4rs::Error> {
     let mut stats = AutoFixStats::default();
 
@@ -19,7 +19,7 @@ pub async fn run_auto_fixes(
     stats.actors_merged = fix_duplicate_actors(client).await?;
     stats.empty_signals_deleted = fix_empty_signals(client).await?;
     stats.fake_coords_nulled =
-        fix_fake_city_center_coords(client, city_center_lat, city_center_lng).await?;
+        fix_fake_center_coords(client, center_lat, center_lng).await?;
 
     info!("{stats}");
     Ok(stats)
@@ -164,10 +164,10 @@ async fn fix_empty_signals(client: &GraphClient) -> Result<u64, neo4rs::Error> {
     Ok(deleted)
 }
 
-/// Null out coordinates that are suspiciously close to the city center.
+/// Null out coordinates that are suspiciously close to the scope center.
 /// The scout strips coords within 0.01 degrees; we catch anything within 0.02
 /// that slipped through (e.g., LLM echoed a slightly offset default).
-async fn fix_fake_city_center_coords(
+async fn fix_fake_center_coords(
     client: &GraphClient,
     center_lat: f64,
     center_lng: f64,
@@ -192,7 +192,7 @@ async fn fix_fake_city_center_coords(
         if let Some(row) = stream.next().await? {
             let n: i64 = row.get("nulled").unwrap_or(0);
             if n > 0 {
-                info!(label, nulled = n, "Nulled fake city-center coordinates");
+                info!(label, nulled = n, "Nulled fake center coordinates");
             }
             nulled += n as u64;
         }

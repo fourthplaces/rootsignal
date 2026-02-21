@@ -18,7 +18,7 @@ pub struct World {
 /// Geographic context for the simulated world.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Geography {
-    pub city: String,
+    pub name: String,
     pub state_or_region: String,
     pub country: String,
     pub local_terms: Vec<String>,

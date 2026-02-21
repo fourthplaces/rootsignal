@@ -4,14 +4,14 @@ use tracing::info;
 use crate::GraphClient;
 
 /// Cosine similarity threshold for creating SIMILAR_TO edges.
-/// Single-city deployments use cosine only (geo/temporal add noise).
+/// Single-region deployments use cosine only (geo/temporal add noise).
 const SIMILARITY_THRESHOLD: f64 = 0.65;
 
 /// Batch size for UNWIND edge creation.
 const EDGE_BATCH_SIZE: usize = 500;
 
 /// Builds SIMILAR_TO weighted edges between signal nodes based on cosine similarity.
-/// For single-city deployments, uses cosine similarity only.
+/// For single-region deployments, uses cosine similarity only.
 pub struct SimilarityBuilder {
     client: GraphClient,
 }

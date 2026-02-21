@@ -494,12 +494,12 @@ async fn load_story_tag_edges(
     Ok(edges)
 }
 
-/// Load (:City)-[:DISCOVERED]->(:Actor) edges as (region_slug, actor_id) pairs.
+/// Load Actor nodes with region property as (region_slug, actor_id) pairs.
 async fn load_region_actor_edges(
     client: &GraphClient,
 ) -> Result<Vec<(String, Uuid)>, neo4rs::Error> {
-    let cypher = "MATCH (r:City)-[:DISCOVERED]->(a:Actor)
-         RETURN r.slug AS region_slug, a.id AS actor_id";
+    let cypher = "MATCH (a:Actor) WHERE a.region IS NOT NULL
+         RETURN a.region AS region_slug, a.id AS actor_id";
     let q = query(cypher);
     let mut edges = Vec::new();
     let mut stream = client.graph.execute(q).await?;

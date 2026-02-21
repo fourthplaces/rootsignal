@@ -398,7 +398,7 @@ impl MutationRoot {
                 id: Uuid::new_v4(),
                 url: url.clone(),
                 reason: Some(reason),
-                city: region.clone(),
+                region: region.clone(),
                 submitted_at: now,
             };
             if let Err(e) = writer.upsert_submission(&submission, &canonical_key).await {

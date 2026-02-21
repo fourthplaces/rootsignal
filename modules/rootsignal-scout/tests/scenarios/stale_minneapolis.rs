@@ -132,7 +132,7 @@ pub fn world() -> World {
             "community garden".to_string(),
         ],
         geography: Geography {
-            city: "Minneapolis".to_string(),
+            name: "Minneapolis".to_string(),
             state_or_region: "Minnesota".to_string(),
             country: "US".to_string(),
             local_terms: vec![

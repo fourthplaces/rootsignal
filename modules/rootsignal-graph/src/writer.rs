@@ -574,7 +574,7 @@ impl GraphWriter {
         };
 
         // Over-fetch 10 from vector index, then bbox-filter to find the best
-        // local match. This prevents cross-city deduplication.
+        // local match. This prevents cross-region deduplication.
         let q = query(&format!(
             "CALL db.index.vector.queryNodes('{}', 10, $embedding)
              YIELD node, score AS similarity
@@ -1008,26 +1008,26 @@ impl GraphWriter {
         Ok(deleted)
     }
 
-    /// Acquire a per-city scout lock. Returns false if a scout is already running for this city.
+    /// Acquire a per-region scout lock. Returns false if a scout is already running for this region.
     /// Cleans up stale locks (>30 min) from killed containers.
     /// Uses a single atomic query to avoid TOCTOU race between check and create.
-    pub async fn acquire_scout_lock(&self, city: &str) -> Result<bool, neo4rs::Error> {
-        // Delete stale locks older than 30 minutes for this city
+    pub async fn acquire_scout_lock(&self, region: &str) -> Result<bool, neo4rs::Error> {
+        // Delete stale locks older than 30 minutes for this region
         self.client
             .graph
             .run(query(
-                "MATCH (lock:ScoutLock {city: $city}) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
-            ).param("city", city))
+                "MATCH (lock:ScoutLock {region: $region}) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
+            ).param("region", region))
             .await?;
 
-        // Atomic check-and-create: only creates if no lock exists for this city
+        // Atomic check-and-create: only creates if no lock exists for this region
         let q = query(
-            "OPTIONAL MATCH (existing:ScoutLock {city: $city})
+            "OPTIONAL MATCH (existing:ScoutLock {region: $region})
              WITH existing WHERE existing IS NULL
-             CREATE (lock:ScoutLock {city: $city, started_at: datetime()})
+             CREATE (lock:ScoutLock {region: $region, started_at: datetime()})
              RETURN lock IS NOT NULL AS acquired",
         )
-        .param("city", city);
+        .param("region", region);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1039,20 +1039,20 @@ impl GraphWriter {
         Ok(false)
     }
 
-    /// Release the per-city scout lock.
-    pub async fn release_scout_lock(&self, city: &str) -> Result<(), neo4rs::Error> {
+    /// Release the per-region scout lock.
+    pub async fn release_scout_lock(&self, region: &str) -> Result<(), neo4rs::Error> {
         self.client
             .graph
-            .run(query("MATCH (lock:ScoutLock {city: $city}) DELETE lock").param("city", city))
+            .run(query("MATCH (lock:ScoutLock {region: $region}) DELETE lock").param("region", region))
             .await?;
         Ok(())
     }
 
-    /// Check if a scout is currently running for a city (read-only, no acquire/release dance).
-    pub async fn is_scout_running(&self, city: &str) -> Result<bool, neo4rs::Error> {
+    /// Check if a scout is currently running for a region (read-only, no acquire/release dance).
+    pub async fn is_scout_running(&self, region: &str) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "OPTIONAL MATCH (lock:ScoutLock {city: $city}) WHERE lock.started_at >= datetime() - duration('PT30M') RETURN lock IS NOT NULL AS running"
-        ).param("city", city);
+            "OPTIONAL MATCH (lock:ScoutLock {region: $region}) WHERE lock.started_at >= datetime() - duration('PT30M') RETURN lock IS NOT NULL AS running"
+        ).param("region", region);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1079,7 +1079,7 @@ impl GraphWriter {
         Ok(0)
     }
 
-    /// Batch check scout running status for multiple cities in a single query.
+    /// Batch check scout running status for multiple regions in a single query.
     pub async fn batch_scout_running(
         &self,
         slugs: &[String],
@@ -1091,7 +1091,7 @@ impl GraphWriter {
 
         let q = query(
             "UNWIND $slugs AS slug
-             OPTIONAL MATCH (lock:ScoutLock {city: slug})
+             OPTIONAL MATCH (lock:ScoutLock {region: slug})
              WHERE lock.started_at >= datetime() - duration('PT30M')
              RETURN slug, lock IS NOT NULL AS running",
         )
@@ -1137,15 +1137,12 @@ impl GraphWriter {
     }
 
     /// Get the earliest time a source becomes due for scraping.
-    pub async fn next_source_due(
-        &self,
-        city: &str,
-    ) -> Result<Option<chrono::DateTime<Utc>>, neo4rs::Error> {
+    pub async fn next_source_due(&self) -> Result<Option<chrono::DateTime<Utc>>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city, active: true})
+            "MATCH (s:Source {active: true})
              WHERE s.last_scraped IS NOT NULL
              RETURN min(datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H')) AS next_due"
-        ).param("city", city);
+        );
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1797,7 +1794,7 @@ impl GraphWriter {
                 id: $id,
                 url: $url,
                 reason: $reason,
-                city: $city,
+                region: $region,
                 submitted_at: datetime($submitted_at)
             })
             WITH sub
@@ -1807,7 +1804,7 @@ impl GraphWriter {
         .param("id", submission.id.to_string())
         .param("url", submission.url.as_str())
         .param("reason", submission.reason.clone().unwrap_or_default())
-        .param("city", submission.city.as_str())
+        .param("region", submission.region.as_str())
         .param("submitted_at", format_datetime(&submission.submitted_at))
         .param("canonical_key", source_canonical_key);
 
@@ -2102,7 +2099,6 @@ impl GraphWriter {
     /// to prevent replay on subsequent runs.
     pub async fn get_recently_linked_signals_with_queries(
         &self,
-        _city: &str,
     ) -> Result<Vec<String>, neo4rs::Error> {
         // Find Aid/Gathering signals with implied_queries that are linked to heated tensions
         let q = query(
@@ -2574,7 +2570,6 @@ impl GraphWriter {
     /// Aggregate counts of each active signal type. Reveals systemic imbalances.
     pub async fn get_signal_type_counts(
         &self,
-        _city: &str,
     ) -> Result<SignalTypeCounts, neo4rs::Error> {
         let mut counts = SignalTypeCounts::default();
 
@@ -2982,7 +2977,7 @@ impl GraphWriter {
     }
 
     /// Get existing tension titles+summaries for the curiosity loop's context window,
-    /// scoped to a geographic bounding box so the LLM only sees city-local tensions.
+    /// scoped to a geographic bounding box so the LLM only sees region-local tensions.
     pub async fn get_tension_landscape(
         &self,
         min_lat: f64,
@@ -3423,16 +3418,15 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Get gap_type strategy stats for discovery sources in a city.
+    /// Get gap_type strategy stats for discovery sources.
     /// Parses gap_type from gap_context ("... | Gap: <type> | ...") in Rust.
-    pub async fn get_gap_type_stats(&self, city: &str) -> Result<Vec<GapTypeStats>, neo4rs::Error> {
+    pub async fn get_gap_type_stats(&self) -> Result<Vec<GapTypeStats>, neo4rs::Error> {
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (s:Source)
              WHERE s.discovery_method IN ['gap_analysis', 'tension_seed']
                AND s.gap_context IS NOT NULL
              RETURN s.gap_context AS gc, s.signals_produced AS sp, s.weight AS weight",
-        )
-        .param("city", city);
+        );
 
         let mut map: std::collections::HashMap<String, (u32, u32, f64)> =
             std::collections::HashMap::new();
@@ -3482,14 +3476,11 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Get extraction yield metrics grouped by source_type for a city.
-    pub async fn get_extraction_yield(
-        &self,
-        city: &str,
-    ) -> Result<Vec<ExtractionYield>, neo4rs::Error> {
+    /// Get extraction yield metrics grouped by source domain.
+    pub async fn get_extraction_yield(&self) -> Result<Vec<ExtractionYield>, neo4rs::Error> {
         // Base metrics from Source nodes
         let q = query(
-            "MATCH (s:Source {city: $city})
+            "MATCH (s:Source)
              WHERE s.active = true
              WITH s,
                   CASE
@@ -3503,8 +3494,7 @@ impl GraphWriter {
                   END AS st
              RETURN st, s.signals_produced AS sp,
                     s.signals_corroborated AS sc, s.url AS url",
-        )
-        .param("city", city);
+        );
 
         let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> =
             std::collections::HashMap::new();
@@ -3816,16 +3806,16 @@ impl GraphWriter {
     }
 
     /// Fetch existing gravity signals for a tension (gatherings wired via DRAWN_TO),
-    /// filtered to signals within `radius_km` of the given city center.
+    /// filtered to signals within `radius_km` of the given center point.
     pub async fn get_existing_gathering_signals(
         &self,
         tension_id: Uuid,
-        city_lat: f64,
-        city_lng: f64,
+        center_lat: f64,
+        center_lng: f64,
         radius_km: f64,
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let lat_delta = radius_km / 111.0;
-        let lng_delta = radius_km / (111.0 * city_lat.to_radians().cos());
+        let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         let q = query(
             "MATCH (r)-[rel:DRAWN_TO]->(t:Tension {id: $id})
              WHERE (r:Aid OR r:Gathering OR r:Need)
@@ -3835,10 +3825,10 @@ impl GraphWriter {
              LIMIT 5",
         )
         .param("id", tension_id.to_string())
-        .param("lat_min", city_lat - lat_delta)
-        .param("lat_max", city_lat + lat_delta)
-        .param("lng_min", city_lng - lng_delta)
-        .param("lng_max", city_lng + lng_delta);
+        .param("lat_min", center_lat - lat_delta)
+        .param("lat_max", center_lat + lat_delta)
+        .param("lng_min", center_lng - lng_delta)
+        .param("lng_max", center_lng + lng_delta);
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -3908,12 +3898,11 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Find or create a Place node, deduplicating on (slug, city).
+    /// Find or create a Place node, deduplicating on slug.
     /// Returns the Place's UUID (existing or newly created).
     pub async fn find_or_create_place(
         &self,
         name: &str,
-        city: &str,
         lat: f64,
         lng: f64,
     ) -> Result<Uuid, neo4rs::Error> {
@@ -3922,7 +3911,7 @@ impl GraphWriter {
         let now = format_datetime(&Utc::now());
 
         let q = query(
-            "MERGE (p:Place {slug: $slug, city: $city})
+            "MERGE (p:Place {slug: $slug})
              ON CREATE SET
                  p.id = $id,
                  p.name = $name,
@@ -3933,7 +3922,6 @@ impl GraphWriter {
              RETURN p.id AS place_id",
         )
         .param("slug", slug.as_str())
-        .param("city", city)
         .param("id", new_id.to_string())
         .param("name", name)
         .param("lat", lat)

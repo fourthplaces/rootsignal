@@ -262,7 +262,7 @@ Return JSON array of mutations.";
              - Extract the specific resources, services, gatherings, and needs that RESPOND to those tensions\n\
              - Distinguish genuine community responses from noise, spam, or off-topic content\n\n\
              Each mutation must be a COMPLETE modified prompt (not a diff).\n\
-             Keep {{city_name}} and {{today}} as template variables.\n\n\
+             Keep {{region_name}} and {{today}} as template variables.\n\n\
              Return JSON array: [{{\"reasoning\": \"why this change improves tension-response extraction\", \
              \"prompt\": \"full prompt text\"}}]"
         );

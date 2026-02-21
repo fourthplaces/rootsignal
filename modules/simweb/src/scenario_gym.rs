@@ -175,7 +175,7 @@ mod tests {
             social_profiles: vec![],
             topics: vec![],
             geography: Geography {
-                city: "TestCity".to_string(),
+                name: "TestCity".to_string(),
                 state_or_region: "TS".to_string(),
                 country: "US".to_string(),
                 local_terms: vec![],

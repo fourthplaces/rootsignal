@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Validates a scout run against Milestone 2 quality gates.
-# Usage: ./scripts/validate-city-run.sh [city_name] [expected_lat] [expected_lng] [geo_radius_deg]
+# Usage: ./scripts/validate-region-run.sh [region_name] [expected_lat] [expected_lng] [geo_radius_deg]
 #
 # Checks:
 #   1. Signal count >= 50 (kill-test pre-launch minimum)
 #   2. 4+ signal types present (Event, Give, Ask, Notice)
 
 #   4. 0 exact duplicates (same title+type)
-#   5. Geo-accuracy: >80% of signals with coords within radius of city center
+#   5. Geo-accuracy: >80% of signals with coords within radius of region center
 #   6. Zero PII in titles/summaries (emails, phone numbers)
 #   7. Evidence trail (every signal has SOURCED_FROM evidence)
 
 set -euo pipefail
 
-CITY="${1:-all}"
+REGION="${1:-all}"
 EXPECTED_LAT="${2:-0}"
 EXPECTED_LNG="${3:-0}"
 GEO_RADIUS="${4:-2.0}"  # degrees (~130 miles, generous for metro areas)
@@ -55,8 +55,8 @@ check_gte() {
 }
 
 echo "============================================"
-echo "  Root Signal — City Run Validation"
-echo "  City: $CITY"
+echo "  Root Signal — Region Run Validation"
+echo "  Region: $REGION"
 echo "============================================"
 echo ""
 
@@ -93,11 +93,11 @@ if [ "$EXPECTED_LAT" != "0" ]; then
     TOTAL_WITH_GEO="${TOTAL_WITH_GEO:-0}"
 
     if [ "$TOTAL_WITH_GEO" -gt 0 ]; then
-        NEAR_CITY=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND n.lat IS NOT NULL AND abs(n.lat - $EXPECTED_LAT) < $GEO_RADIUS AND abs(n.lng - $EXPECTED_LNG) < $GEO_RADIUS RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
-        NEAR_CITY="${NEAR_CITY:-0}"
-        PCT=$((NEAR_CITY * 100 / TOTAL_WITH_GEO))
-        check_gte "Geo-accuracy >= 80% near city center" "$PCT" 80
-        echo "    ($NEAR_CITY / $TOTAL_WITH_GEO signals within ${GEO_RADIUS}° of ($EXPECTED_LAT, $EXPECTED_LNG))"
+        NEAR_CENTER=$(run_query "MATCH (n) WHERE (n:Event OR n:Give OR n:Ask OR n:Notice) AND n.lat IS NOT NULL AND abs(n.lat - $EXPECTED_LAT) < $GEO_RADIUS AND abs(n.lng - $EXPECTED_LNG) < $GEO_RADIUS RETURN count(n) AS c;" | grep -oE '[0-9]+' | head -1)
+        NEAR_CENTER="${NEAR_CENTER:-0}"
+        PCT=$((NEAR_CENTER * 100 / TOTAL_WITH_GEO))
+        check_gte "Geo-accuracy >= 80% near region center" "$PCT" 80
+        echo "    ($NEAR_CENTER / $TOTAL_WITH_GEO signals within ${GEO_RADIUS}° of ($EXPECTED_LAT, $EXPECTED_LNG))"
     else
         echo "  WARN: No signals have geo coordinates"
         WARN=$((WARN + 1))

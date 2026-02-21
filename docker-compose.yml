@@ -55,7 +55,7 @@ services:
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       SERPER_API_KEY: ${SERPER_API_KEY:-}
       APIFY_API_KEY: ${APIFY_API_KEY:-}
-      CITY: ${CITY:-twincities}
+      REGION: ${REGION:-${CITY:-twincities}}
       BROWSERLESS_URL: http://browserless:3000
 
   admin-app:
@@ -113,7 +113,7 @@ services:
       VOYAGE_API_KEY: ${VOYAGE_API_KEY}
       SERPER_API_KEY: ${SERPER_API_KEY}
       APIFY_API_KEY: ${APIFY_API_KEY:-}
-      CITY: ${CITY:-twincities}
+      REGION: ${REGION:-${CITY:-twincities}}
       BROWSERLESS_URL: http://browserless:3000
       RUST_LOG: info,html5ever=off
     command: ["cargo", "run", "--bin", "scout"]

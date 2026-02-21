@@ -331,7 +331,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     drop_constraint_if_exists(g, "source_url_unique").await;
 
     let source_indexes = [
-        "CREATE INDEX source_city IF NOT EXISTS FOR (s:Source) ON (s.city)",
         "CREATE INDEX source_active IF NOT EXISTS FOR (s:Source) ON (s.active)",
         "CREATE INDEX source_url IF NOT EXISTS FOR (s:Source) ON (s.url)",
         "CREATE INDEX source_type IF NOT EXISTS FOR (s:Source) ON (s.source_type)",
@@ -360,11 +359,11 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     let supervisor_indexes = [
         "CREATE INDEX validationissue_status IF NOT EXISTS FOR (v:ValidationIssue) ON (v.status)",
-        "CREATE INDEX validationissue_city IF NOT EXISTS FOR (v:ValidationIssue) ON (v.city)",
+        "CREATE INDEX validationissue_region IF NOT EXISTS FOR (v:ValidationIssue) ON (v.region)",
         "CREATE INDEX validationissue_target_id IF NOT EXISTS FOR (v:ValidationIssue) ON (v.target_id)",
-        "CREATE INDEX extractionrule_city IF NOT EXISTS FOR (r:ExtractionRule) ON (r.city)",
+        "CREATE INDEX extractionrule_region IF NOT EXISTS FOR (r:ExtractionRule) ON (r.region)",
         "CREATE INDEX extractionrule_approved IF NOT EXISTS FOR (r:ExtractionRule) ON (r.approved)",
-        "CREATE INDEX supervisorstate_city IF NOT EXISTS FOR (s:SupervisorState) ON (s.city)",
+        "CREATE INDEX supervisorstate_region IF NOT EXISTS FOR (s:SupervisorState) ON (s.region)",
     ];
 
     for idx in &supervisor_indexes {
@@ -386,10 +385,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     .await?;
     g.run(query(
         "CREATE INDEX place_slug IF NOT EXISTS FOR (p:Place) ON (p.slug)",
-    ))
-    .await?;
-    g.run(query(
-        "CREATE INDEX place_city IF NOT EXISTS FOR (p:Place) ON (p.city)",
     ))
     .await?;
     info!("Place constraints and indexes created");
@@ -457,7 +452,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     deactivate_orphaned_web_queries(client).await?;
 
     // NOTE: cleanup_off_geo_signals and deactivate_duplicate_cities removed
-    // as part of RegionNode deletion (demand-driven scout swarm).
+    // as part of city concept removal (demand-driven scout swarm).
 
     // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
     cleanup_leiden_stories(client).await?;
@@ -515,6 +510,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Channel diversity backfill and indexes ---
     backfill_channel_diversity(client).await?;
+
+    // --- Remove city concept: drop legacy indexes and properties ---
+    remove_city_concept(client).await?;
 
     info!("Schema migration complete");
     Ok(())
@@ -1160,7 +1158,8 @@ async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Erro
 /// prefixes to social source canonical_values to prevent collisions.
 ///
 /// Old format: `city:source_type:canonical_value` (e.g. `twincities:instagram:lakestreetstories`)
-/// New format: `city:canonical_value` (e.g. `twincities:instagram.com/lakestreetstories`)
+/// Intermediate format: `city:canonical_value` (e.g. `twincities:instagram.com/lakestreetstories`)
+/// Final format (after remove_city_concept): just `canonical_value`
 ///
 /// Idempotent — skips sources whose canonical_value already contains a domain prefix.
 async fn migrate_canonical_keys_remove_source_type(
@@ -1293,5 +1292,118 @@ async fn migrate_canonical_keys_remove_source_type(
     }
 
     info!("canonical_key migration complete");
+    Ok(())
+}
+
+/// Remove the city concept from the graph: drop city indexes, rewrite canonical_keys
+/// to remove city prefix, rename city→region on ScoutLock/ValidationIssue/SupervisorState,
+/// and delete :City nodes.
+async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    // Guard: check if migration is needed
+    let check = query("MATCH (s:Source) WHERE s.city IS NOT NULL RETURN count(s) AS cnt");
+    let mut stream = g.execute(check).await?;
+    let needs_migration = match stream.next().await? {
+        Some(row) => row.get::<i64>("cnt").unwrap_or(0) > 0,
+        None => false,
+    };
+
+    if !needs_migration {
+        info!("remove_city_concept: already complete, skipping");
+        return Ok(());
+    }
+
+    info!("Removing city concept from graph...");
+
+    // Step 1: Drop legacy city indexes
+    let city_index_drops = [
+        "DROP INDEX source_city IF EXISTS",
+        "DROP INDEX validationissue_city IF EXISTS",
+        "DROP INDEX extractionrule_city IF EXISTS",
+        "DROP INDEX supervisorstate_city IF EXISTS",
+        "DROP INDEX place_city IF EXISTS",
+    ];
+    for d in &city_index_drops {
+        match g.run(query(d)).await {
+            Ok(_) => {}
+            Err(e) => warn!("City index drop failed (non-fatal): {e}"),
+        }
+    }
+    info!("Dropped legacy city indexes");
+
+    // Step 2: Rewrite canonical_key from "city:canonical_value" → "canonical_value"
+    // Keep the one with more signals_produced if there are collisions
+    let rewrite = query(
+        "MATCH (s:Source) WHERE s.city IS NOT NULL AND s.canonical_key CONTAINS ':'
+         SET s.canonical_key = s.canonical_value
+         RETURN count(s) AS updated",
+    );
+    match g.execute(rewrite).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let updated: i64 = row.get("updated").unwrap_or(0);
+                info!(updated, "Rewrote canonical_keys to remove city prefix");
+            }
+        }
+        Err(e) => warn!("canonical_key rewrite failed: {e}"),
+    }
+
+    // Step 3: Rename city→region on ScoutLock nodes
+    let rename_lock = query(
+        "MATCH (lock:ScoutLock) WHERE lock.city IS NOT NULL
+         SET lock.region = lock.city REMOVE lock.city
+         RETURN count(lock) AS updated",
+    );
+    match g.execute(rename_lock).await {
+        Ok(mut s) => {
+            if let Some(row) = s.next().await? {
+                let u: i64 = row.get("updated").unwrap_or(0);
+                if u > 0 { info!(u, "Renamed ScoutLock.city → region"); }
+            }
+        }
+        Err(e) => warn!("ScoutLock rename failed (non-fatal): {e}"),
+    }
+
+    // Step 4: Copy city→region on ValidationIssue/ExtractionRule/SupervisorState (where region is null)
+    for label in &["ValidationIssue", "ExtractionRule", "SupervisorState"] {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.city IS NOT NULL AND n.region IS NULL \
+             SET n.region = n.city RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut s) => {
+                if let Some(row) = s.next().await? {
+                    let u: i64 = row.get("updated").unwrap_or(0);
+                    if u > 0 { info!(u, label, "Backfilled region from city"); }
+                }
+            }
+            Err(e) => warn!("Region backfill for {label} failed (non-fatal): {e}"),
+        }
+    }
+
+    // Step 5: Remove city property from all node types
+    for label in &["Source", "Place", "ScoutLock", "ValidationIssue", "ExtractionRule", "SupervisorState", "Submission"] {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.city IS NOT NULL REMOVE n.city RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut s) => {
+                if let Some(row) = s.next().await? {
+                    let u: i64 = row.get("updated").unwrap_or(0);
+                    if u > 0 { info!(u, label, "Removed city property"); }
+                }
+            }
+            Err(e) => warn!("Remove city from {label} failed (non-fatal): {e}"),
+        }
+    }
+
+    // Step 6: Delete :City nodes and their edges
+    match g.run(query("MATCH (c:City) DETACH DELETE c")).await {
+        Ok(_) => info!("Deleted :City nodes"),
+        Err(e) => warn!("Delete :City nodes failed (non-fatal): {e}"),
+    }
+
+    info!("City concept removal complete");
     Ok(())
 }

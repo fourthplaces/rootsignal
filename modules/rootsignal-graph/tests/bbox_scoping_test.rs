@@ -35,24 +35,18 @@ async fn connect() -> GraphClient {
         .expect("Failed to connect to Neo4j")
 }
 
-/// Load all city nodes from the graph.
-async fn get_cities(client: &GraphClient) -> Vec<(String, f64, f64, f64)> {
-    let q = query(
-        "MATCH (c:City) WHERE c.active = true
-         RETURN c.slug AS slug, c.center_lat AS lat, c.center_lng AS lng, c.radius_km AS radius",
-    );
-    let mut cities = Vec::new();
-    let mut stream = client.inner().execute(q).await.unwrap();
-    while let Ok(Some(row)) = stream.next().await {
-        let slug: String = row.get("slug").unwrap_or_default();
-        let lat: f64 = row.get("lat").unwrap_or(0.0);
-        let lng: f64 = row.get("lng").unwrap_or(0.0);
-        let radius: f64 = row.get("radius").unwrap_or(30.0);
-        if !slug.is_empty() {
-            cities.push((slug, lat, lng, radius));
+/// Load known regions for testing. Reads REGION env var or defaults to Twin Cities.
+fn get_regions() -> Vec<(String, f64, f64, f64)> {
+    let slug = std::env::var("REGION").unwrap_or_else(|_| "twincities".to_string());
+    // Default regions for diagnostic testing
+    match slug.as_str() {
+        "twincities" => vec![("twincities".into(), 44.9778, -93.2650, 30.0)],
+        "miami" => vec![("miami".into(), 25.7617, -80.1918, 25.0)],
+        other => {
+            eprintln!("Unknown region '{other}', using Twin Cities default");
+            vec![("twincities".into(), 44.9778, -93.2650, 30.0)]
         }
     }
-    cities
 }
 
 fn compute_bbox(center_lat: f64, center_lng: f64, radius_km: f64) -> (f64, f64, f64, f64) {
@@ -71,12 +65,12 @@ fn compute_bbox(center_lat: f64, center_lng: f64, radius_km: f64) -> (f64, f64, 
 async fn test_get_active_tensions_respects_bbox() {
     let client = connect().await;
     let writer = GraphWriter::new(client.clone());
-    let cities = get_cities(&client).await;
+    let regions = get_regions();
 
     println!("\n=== Testing get_active_tensions bbox scoping ===");
-    println!("Found {} active cities", cities.len());
+    println!("Found {} active regions", regions.len());
 
-    for (slug, lat, lng, radius) in &cities {
+    for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
 
         let tensions = writer
@@ -120,11 +114,11 @@ async fn test_get_active_tensions_respects_bbox() {
 async fn test_find_tension_hubs_respects_bbox() {
     let client = connect().await;
     let writer = GraphWriter::new(client.clone());
-    let cities = get_cities(&client).await;
+    let regions = get_regions();
 
     println!("\n=== Testing find_tension_hubs bbox scoping ===");
 
-    for (slug, lat, lng, radius) in &cities {
+    for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
 
         let hubs = writer
@@ -172,11 +166,11 @@ async fn test_find_tension_hubs_respects_bbox() {
 async fn test_find_story_growth_respects_bbox() {
     let client = connect().await;
     let writer = GraphWriter::new(client.clone());
-    let cities = get_cities(&client).await;
+    let regions = get_regions();
 
     println!("\n=== Testing find_story_growth bbox scoping ===");
 
-    for (slug, lat, lng, radius) in &cities {
+    for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
 
         let growths = writer
@@ -299,56 +293,33 @@ async fn test_no_off_geo_contamination_remains() {
 
 #[tokio::test]
 #[ignore]
-async fn test_list_all_cities() {
+async fn test_list_all_sources() {
     let client = connect().await;
 
-    println!("\n=== All City nodes in graph ===");
+    println!("\n=== Source nodes in graph (by region) ===");
     let q = query(
-        "MATCH (c:City)
-         RETURN c.slug AS slug, c.name AS name, c.center_lat AS lat, c.center_lng AS lng,
-                c.radius_km AS radius, c.active AS active, c.id AS id
-         ORDER BY c.slug",
+        "MATCH (s:Source)
+         WHERE s.active = true
+         RETURN s.region AS region, count(s) AS cnt
+         ORDER BY cnt DESC",
     );
     let mut stream = client.inner().execute(q).await.unwrap();
     while let Ok(Some(row)) = stream.next().await {
-        let slug: String = row.get("slug").unwrap_or_default();
-        let name: String = row.get("name").unwrap_or_default();
-        let lat: f64 = row.get("lat").unwrap_or(0.0);
-        let lng: f64 = row.get("lng").unwrap_or(0.0);
-        let radius: f64 = row.get("radius").unwrap_or(0.0);
-        let active: bool = row.get("active").unwrap_or(false);
-        let id: String = row.get("id").unwrap_or_default();
-        // Count sources for this city
-        let sq = query("MATCH (s:Source {city: $slug, active: true}) RETURN count(s) AS cnt")
-            .param("slug", slug.as_str());
-        let mut sstream = client.inner().execute(sq).await.unwrap();
-        let src_count: i64 = if let Ok(Some(r)) = sstream.next().await {
-            r.get("cnt").unwrap_or(0)
-        } else { 0 };
-
-        println!(
-            "  [{:>5}] {:<30} slug={:<25} ({:.4}, {:.4}) r={:.0}km  sources={}  id={}",
-            if active { "ON" } else { "off" },
-            name,
-            slug,
-            lat,
-            lng,
-            radius,
-            src_count,
-            id
-        );
+        let region: String = row.get("region").unwrap_or_else(|_| "(none)".to_string());
+        let cnt: i64 = row.get("cnt").unwrap_or(0);
+        println!("  {:<25} {} active sources", region, cnt);
     }
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_city_signal_assessment() {
+async fn test_region_signal_assessment() {
     let client = connect().await;
-    let cities = get_cities(&client).await;
+    let regions = get_regions();
 
-    println!("\n=== Comprehensive City Signal Assessment ===\n");
+    println!("\n=== Comprehensive Region Signal Assessment ===\n");
 
-    for (slug, lat, lng, radius) in &cities {
+    for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
 
         println!("--- {} (center: {:.4}, {:.4}, radius: {:.0}km) ---", slug, lat, lng, radius);
@@ -416,7 +387,7 @@ async fn test_city_signal_assessment() {
         let edge_cnt: i64 = if let Ok(Some(r)) = es.next().await { r.get("cnt").unwrap_or(0) } else { 0 };
         println!("  Response edges: {}", edge_cnt);
 
-        // Cross-geo edges (signals responding to tensions in other cities)
+        // Cross-geo edges (signals responding to tensions in other regions)
         let xq = query(
             "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
              WHERE sig.lat >= $min_lat AND sig.lat <= $max_lat
@@ -442,7 +413,7 @@ async fn test_city_signal_assessment() {
 
 #[tokio::test]
 #[ignore]
-async fn test_find_recent_signals_by_city() {
+async fn test_find_recent_signals_by_location() {
     let client = connect().await;
 
     println!("\n=== Recent signals (last 24h) by location ===\n");
@@ -463,11 +434,11 @@ async fn test_find_recent_signals_by_city() {
             let lat: f64 = row.get("lat").unwrap_or(0.0);
             let lng: f64 = row.get("lng").unwrap_or(0.0);
             let url: String = row.get("url").unwrap_or_default();
-            let city = if (lat - 25.76).abs() < 1.0 { "MIAMI" }
+            let region = if (lat - 25.76).abs() < 1.0 { "MIAMI" }
                 else if (lat - 31.90).abs() < 1.0 { "RAMALLAH" }
                 else if (lat - 44.98).abs() < 1.0 { "TWINCITIES" }
                 else { "OTHER" };
-            println!("  [{:>8}] [{:>10}] ({:.4}, {:.4}) {}", label, city, lat, lng, title.chars().take(60).collect::<String>());
+            println!("  [{:>8}] [{:>10}] ({:.4}, {:.4}) {}", label, region, lat, lng, title.chars().take(60).collect::<String>());
         }
     }
 }
@@ -642,13 +613,13 @@ async fn test_find_tension_linker_targets_respects_bbox() {
 #[ignore]
 async fn test_response_mapper_bbox_scoping() {
     let client = connect().await;
-    let cities = get_cities(&client).await;
+    let regions = get_regions();
 
     println!("\n=== Testing ResponseMapper bbox scoping ===");
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
 
-    for (slug, lat, lng, radius) in &cities {
+    for (slug, lat, lng, radius) in &regions {
         let mapper = rootsignal_graph::response::ResponseMapper::new(
             client.clone(),
             &api_key,

@@ -241,8 +241,8 @@ impl PublicGraphReader {
         Ok(results)
     }
 
-    /// List recent signals scoped to a city's geographic bounding box.
-    pub async fn list_recent_for_city(
+    /// List recent signals scoped to a geographic bounding box.
+    pub async fn list_recent_in_bbox(
         &self,
         lat: f64,
         lng: f64,
@@ -310,8 +310,8 @@ impl PublicGraphReader {
         Ok(all)
     }
 
-    /// Top stories by energy, scoped to a city's geographic bounding box (via story centroid).
-    pub async fn top_stories_for_city(
+    /// Top stories by energy, scoped to a geographic bounding box (via story centroid).
+    pub async fn top_stories_in_bbox(
         &self,
         lat: f64,
         lng: f64,
@@ -616,7 +616,7 @@ impl PublicGraphReader {
         limit: u32,
     ) -> Result<Vec<rootsignal_common::ActorNode>, neo4rs::Error> {
         let q = query(
-            "MATCH (r:City {slug: $region_slug})-[:DISCOVERED]->(a:Actor)
+            "MATCH (a:Actor {region: $region_slug})
              RETURN a
              ORDER BY a.last_active DESC
              LIMIT $limit",
@@ -1606,13 +1606,13 @@ impl PublicGraphReader {
     ) -> Result<Vec<ValidationIssueRow>, neo4rs::Error> {
         let cypher = if status_filter.is_some() {
             "MATCH (v:ValidationIssue)
-             WHERE COALESCE(v.region, v.city) = $region AND v.status = $status
+             WHERE v.region = $region AND v.status = $status
              RETURN v
              ORDER BY v.created_at DESC
              LIMIT $limit"
         } else {
             "MATCH (v:ValidationIssue)
-             WHERE COALESCE(v.region, v.city) = $region
+             WHERE v.region = $region
              RETURN v
              ORDER BY v.created_at DESC
              LIMIT $limit"
@@ -1645,7 +1645,7 @@ impl PublicGraphReader {
     ) -> Result<ValidationIssueSummary, neo4rs::Error> {
         let q = neo4rs::query(
             "MATCH (v:ValidationIssue)
-             WHERE COALESCE(v.region, v.city) = $region
+             WHERE v.region = $region
              RETURN
                sum(CASE WHEN v.status = 'open' THEN 1 ELSE 0 END) AS total_open,
                sum(CASE WHEN v.status = 'resolved' THEN 1 ELSE 0 END) AS total_resolved,

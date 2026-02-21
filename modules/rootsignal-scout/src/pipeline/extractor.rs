@@ -245,7 +245,7 @@ impl Extractor {
                     let precision = match signal.geo_precision.as_deref() {
                         Some("exact") => GeoPrecision::Exact,
                         Some("neighborhood") => GeoPrecision::Neighborhood,
-                        _ => GeoPrecision::City,
+                        _ => GeoPrecision::Approximate,
                     };
                     Some(GeoPoint {
                         lat,
@@ -491,7 +491,7 @@ Do NOT classify news reportage as a Need based on the urgency of the topic alone
 ## Location
 - Extract the most specific location possible from the content
 - Only provide latitude/longitude if you can identify a SPECIFIC place (building, park, intersection, venue)
-- If the signal is city-wide or you can't determine a specific location, omit latitude/longitude entirely (null)
+- If the signal is region-wide or you can't determine a specific location, omit latitude/longitude entirely (null)
 - Also provide location_name: the place name as text (e.g. "YWCA Midtown", "Lake Nokomis", "City Hall")
 - geo_precision: "exact" for specific addresses/buildings, "neighborhood" for areas
 

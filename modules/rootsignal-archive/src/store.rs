@@ -17,7 +17,7 @@ pub(crate) struct ArchiveStore {
 pub(crate) struct StoredInteraction {
     pub id: Uuid,
     pub run_id: Uuid,
-    pub city_slug: String,
+    pub region_slug: String,
     pub kind: String,
     pub target: String,
     pub target_raw: String,
@@ -37,7 +37,7 @@ pub(crate) struct StoredInteraction {
 /// Parameters for inserting a new web interaction.
 pub(crate) struct InsertInteraction {
     pub run_id: Uuid,
-    pub city_slug: String,
+    pub region_slug: String,
     pub kind: String,
     pub target: String,
     pub target_raw: String,
@@ -73,7 +73,7 @@ impl ArchiveStore {
         let result = sqlx::query_scalar::<_, Uuid>(
             r#"
             INSERT INTO web_interactions
-                (run_id, city_slug, kind, target, target_raw, fetcher,
+                (run_id, region_slug, kind, target, target_raw, fetcher,
                  raw_html, markdown, response_json, raw_bytes,
                  content_hash, duration_ms, error, metadata, semantics)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
@@ -81,7 +81,7 @@ impl ArchiveStore {
             "#,
         )
         .bind(&i.run_id)
-        .bind(&i.city_slug)
+        .bind(&i.region_slug)
         .bind(&i.kind)
         .bind(&i.target)
         .bind(&i.target_raw)
@@ -175,23 +175,23 @@ impl ArchiveStore {
         Ok(row)
     }
 
-    /// City + time range query.
-    pub(crate) async fn by_city_and_range(
+    /// Region + time range query.
+    pub(crate) async fn by_region_and_range(
         &self,
-        city: &str,
+        region: &str,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<StoredInteraction>> {
         let rows = sqlx::query_as::<_, StoredInteraction>(
             r#"
             SELECT * FROM web_interactions
-            WHERE city_slug = $1
+            WHERE region_slug = $1
               AND fetched_at >= $2
               AND fetched_at < $3
             ORDER BY fetched_at DESC
             "#,
         )
-        .bind(city)
+        .bind(region)
         .bind(from)
         .bind(to)
         .fetch_all(&self.pool)

@@ -16,7 +16,7 @@ use rootsignal_scout::quality;
 
 const SUBREDDIT_URL: &str = "https://www.reddit.com/r/Minneapolis/";
 
-// City config (from graph)
+// Region config
 const CENTER_LAT: f64 = 44.9773;
 const CENTER_LNG: f64 = -93.2655;
 const RADIUS_KM: f64 = 30.0;
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         pool,
         archive_config,
         uuid::Uuid::new_v4(),
-        "minneapolis".to_string(),
+        "minneapolis".to_string(), // region_slug
     ));
 
     // ================================================================
@@ -228,7 +228,7 @@ async fn main() -> Result<()> {
     println!("║  STAGE 4: Geo-Filter                                       ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
-    let is_city_local = true;
+    let is_known_source = true;
     let mut geo_passed = Vec::new();
     let mut geo_killed = Vec::new();
 
@@ -270,9 +270,9 @@ async fn main() -> Result<()> {
                     node.meta().unwrap().title
                 );
                 geo_passed.push(node);
-            } else if is_city_local {
+            } else if is_known_source {
                 println!(
-                    "  ~ PASS with 0.8x penalty (city-local, no geo_term match) loc=\"{}\" \"{}\"",
+                    "  ~ PASS with 0.8x penalty (known source, no geo_term match) loc=\"{}\" \"{}\"",
                     loc_name,
                     node.meta().unwrap().title
                 );

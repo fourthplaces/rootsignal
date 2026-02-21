@@ -9,7 +9,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{RegionNode, EvidenceNode};
+use rootsignal_common::{ScoutScope, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
@@ -116,7 +116,7 @@ impl<'a> Investigator<'a> {
         writer: &'a GraphWriter,
         archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
-        region: &RegionNode,
+        region: &ScoutScope,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
         let lat_delta = region.radius_km / 111.0;

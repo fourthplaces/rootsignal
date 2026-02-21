@@ -44,3 +44,4 @@ clap = { version = "4", features = ["derive"] }
 [dev-dependencies]
 rootsignal-graph = { workspace = true, features = ["test-utils"] }
 simweb = { workspace = true }
+testcontainers = { workspace = true }

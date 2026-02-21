@@ -20,7 +20,7 @@ impl SupervisorState {
     pub async fn last_run(&self) -> Result<Option<DateTime<Utc>>, neo4rs::Error> {
         let q = query(
             "MATCH (s:SupervisorState)
-             WHERE COALESCE(s.region, s.city) = $region
+             WHERE s.region = $region
              RETURN s.last_run AS last_run",
         )
         .param("region", self.region.clone());

@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, RegionNode, SensitivityLevel, SourceNode, SourceRole, Urgency,
+    NodeMeta, NodeType, ScoutScope, SensitivityLevel, SourceNode, SourceRole, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
@@ -269,7 +269,7 @@ pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
-    region: RegionNode,
+    region: ScoutScope,
     region_slug: String,
     min_lat: f64,
     max_lat: f64,
@@ -285,7 +285,7 @@ impl<'a> GatheringFinder<'a> {
         archive: Arc<dyn FetchBackend>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
@@ -518,7 +518,7 @@ impl<'a> GatheringFinder<'a> {
             _ => NodeType::Aid, // Default to Aid for unknown types
         };
 
-        // Check for duplicate (city-scoped)
+        // Check for duplicate (region-scoped)
         let existing = self
             .writer
             .find_duplicate(
@@ -594,7 +594,6 @@ impl<'a> GatheringFinder<'a> {
                     .writer
                     .find_or_create_place(
                         venue,
-                        &self.region_slug,
                         self.region.center_lat,
                         self.region.center_lng,
                     )
@@ -642,7 +641,7 @@ impl<'a> GatheringFinder<'a> {
             location: Some(GeoPoint {
                 lat: self.region.center_lat,
                 lng: self.region.center_lng,
-                precision: GeoPrecision::City,
+                precision: GeoPrecision::Approximate,
             }),
             location_name: Some(self.region.name.clone()),
             source_url: gathering.url.clone(),
@@ -950,7 +949,7 @@ mod tests {
 
     #[test]
     fn gathering_node_uses_region_center_coordinates() {
-        let region = RegionNode {
+        let region = ScoutScope {
             name: "Minneapolis".to_string(),
             center_lat: 44.9778,
             center_lng: -93.2650,
@@ -970,7 +969,7 @@ mod tests {
             location: Some(GeoPoint {
                 lat: region.center_lat,
                 lng: region.center_lng,
-                precision: GeoPrecision::City,
+                precision: GeoPrecision::Approximate,
             }),
             location_name: Some(region.name.clone()),
             source_url: "https://example.com/singing".to_string(),
@@ -996,6 +995,6 @@ mod tests {
         let loc = node.meta().unwrap().location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
         assert!((loc.lng - (-93.2650)).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::City);
+        assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 }

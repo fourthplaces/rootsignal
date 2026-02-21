@@ -30,7 +30,7 @@ pub struct SupervisorReport {
 }
 
 /// Save the supervisor report as JSON. Returns the file path.
-pub fn save_report(city_slug: &str, output: &BatchReviewOutput) -> Result<PathBuf> {
+pub fn save_report(region_slug: &str, output: &BatchReviewOutput) -> Result<PathBuf> {
     let scout_run_id = output
         .reviewed_signals
         .first()
@@ -38,13 +38,13 @@ pub fn save_report(city_slug: &str, output: &BatchReviewOutput) -> Result<PathBu
         .unwrap_or("unknown");
 
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    let dir = data_dir().join("supervisor-reports").join(city_slug);
+    let dir = data_dir().join("supervisor-reports").join(region_slug);
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join(format!("{date}-{scout_run_id}.json"));
 
     let report = SupervisorReport {
-        region: city_slug.to_string(),
+        region: region_slug.to_string(),
         run_date: date,
         scout_run_id: scout_run_id.to_string(),
         signals_reviewed: output.signals_reviewed,
@@ -68,7 +68,7 @@ pub fn save_report(city_slug: &str, output: &BatchReviewOutput) -> Result<PathBu
 /// Create a GitHub issue with the supervisor analysis.
 /// Uses `gh issue create` CLI. Returns the issue URL on success.
 pub fn create_github_issue(
-    city_slug: &str,
+    region_slug: &str,
     output: &BatchReviewOutput,
     report_path: &std::path::Path,
 ) -> Result<Option<String>> {
@@ -82,7 +82,7 @@ pub fn create_github_issue(
 
     let title = format!(
         "supervisor({}): {}",
-        city_slug,
+        region_slug,
         truncate(&analysis.pattern_summary, 60)
     );
 
@@ -118,7 +118,7 @@ pub fn create_github_issue(
     }
 
     let body = format!(
-        r#"## Supervisor Report: {city} — {date}
+        r#"## Supervisor Report: {region} — {date}
 
 ### Summary
 {pattern}
@@ -139,9 +139,9 @@ Full signal data dump: `{report_path}`
 1. Read the data dump to see the actual signals
 2. Check `modules/rootsignal-scout/src/{module}.rs`
 3. Look for the pattern described in "Root cause"
-4. Run `cargo run --bin scout -- {city}` to reproduce
-5. Run `cargo run --bin supervisor -- {city}` to verify fix"#,
-        city = city_slug,
+4. Run `cargo run --bin scout -- {region}` to reproduce
+5. Run `cargo run --bin supervisor -- {region}` to verify fix"#,
+        region = region_slug,
         date = Utc::now().format("%Y-%m-%d"),
         pattern = analysis.pattern_summary,
         module = analysis.suspected_module,

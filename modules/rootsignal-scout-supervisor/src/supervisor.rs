@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use rootsignal_common::CityNode;
+use rootsignal_common::ScoutScope;
 use rootsignal_graph::GraphClient;
 
 use crate::checks::{auto_fix, batch_review, echo, report, triage};
@@ -16,7 +16,7 @@ pub struct Supervisor {
     client: GraphClient,
     state: SupervisorState,
     issues: IssueStore,
-    region: CityNode,
+    region: ScoutScope,
     anthropic_api_key: String,
     notifier: Box<dyn NotifyBackend>,
 }
@@ -24,7 +24,7 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(
         client: GraphClient,
-        region: CityNode,
+        region: ScoutScope,
         anthropic_api_key: String,
         notifier: Box<dyn NotifyBackend>,
     ) -> Self {

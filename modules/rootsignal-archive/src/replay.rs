@@ -151,7 +151,7 @@ mod tests {
         StoredInteraction {
             id: Uuid::new_v4(),
             run_id: Uuid::new_v4(),
-            city_slug: "minneapolis".to_string(),
+            region_slug: "minneapolis".to_string(),
             kind: kind.to_string(),
             target: "https://example.com".to_string(),
             target_raw: "https://example.com".to_string(),

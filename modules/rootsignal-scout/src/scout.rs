@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    is_web_query, scraping_strategy, RegionNode, DiscoveryMethod, ScrapingStrategy, SourceNode,
+    is_web_query, scraping_strategy, ScoutScope, DiscoveryMethod, ScrapingStrategy, SourceNode,
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
@@ -117,7 +117,7 @@ pub struct Scout {
     embedder: Box<dyn TextEmbedder>,
     archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
-    region: RegionNode,
+    region: ScoutScope,
     budget: BudgetTracker,
     cancelled: Arc<AtomicBool>,
 }
@@ -130,13 +130,13 @@ impl Scout {
         voyage_api_key: &str,
         serper_api_key: &str,
         apify_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
         daily_budget_cents: u64,
         cancelled: Arc<AtomicBool>,
     ) -> Result<Self> {
         info!(region = region.name.as_str(), "Initializing scout");
 
-        let city_slug = rootsignal_common::slugify(&region.name);
+        let region_slug = rootsignal_common::slugify(&region.name);
         let archive_config = ArchiveConfig {
             page_backend: match std::env::var("BROWSERLESS_URL") {
                 Ok(url) => {
@@ -159,7 +159,7 @@ impl Scout {
             pool,
             archive_config,
             Uuid::new_v4(),
-            city_slug,
+            region_slug,
         ));
 
         Ok(Self {
@@ -187,7 +187,7 @@ impl Scout {
         embedder: Box<dyn TextEmbedder>,
         archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
-        region: RegionNode,
+        region: ScoutScope,
     ) -> Self {
         Self {
             graph_client: graph_client.clone(),
@@ -213,11 +213,11 @@ impl Scout {
 
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
-        // Acquire per-city lock (slugified to match reset/check operations)
-        let city_slug = rootsignal_common::slugify(&self.region.name);
+        // Acquire per-region lock (slugified to match reset/check operations)
+        let region_slug = rootsignal_common::slugify(&self.region.name);
         if !self
             .writer
-            .acquire_scout_lock(&city_slug)
+            .acquire_scout_lock(&region_slug)
             .await
             .context("Failed to check scout lock")?
         {
@@ -227,7 +227,7 @@ impl Scout {
         let result = self.run_inner().await;
 
         // Always release lock
-        if let Err(e) = self.writer.release_scout_lock(&city_slug).await {
+        if let Err(e) = self.writer.release_scout_lock(&region_slug).await {
             error!("Failed to release scout lock: {e}");
         }
 

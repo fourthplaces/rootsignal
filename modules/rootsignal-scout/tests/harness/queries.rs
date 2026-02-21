@@ -23,7 +23,7 @@ pub struct SignalGeoRow {
     pub geo_precision: Option<String>,
 }
 
-/// All signals with their geo coordinates, for verifying city-center backfill.
+/// All signals with their geo coordinates, for verifying region-center backfill.
 pub async fn all_signals_with_geo(client: &GraphClient) -> Vec<SignalGeoRow> {
     let mut results = Vec::new();
 
@@ -183,27 +183,27 @@ pub async fn tension_signals(client: &GraphClient) -> Vec<TensionRow> {
 }
 
 /// Serialize the full graph state (signals, tensions, stories, evidence) to JSON
-/// for passing to the judge. When `city_slug` is provided, only returns signals
-/// connected to sources for that city.
+/// for passing to the judge. When `region_slug` is provided, only returns signals
+/// connected to sources for that region.
 pub async fn serialize_graph_state(client: &GraphClient) -> String {
-    serialize_graph_state_for_city(client, None).await
+    serialize_graph_state_for_region(client, None).await
 }
 
-/// Serialize graph state scoped to a specific city's sources.
-pub async fn serialize_graph_state_for_city(
+/// Serialize graph state scoped to a specific region's sources.
+pub async fn serialize_graph_state_for_region(
     client: &GraphClient,
-    city_slug: Option<&str>,
+    region_slug: Option<&str>,
 ) -> String {
     let mut signals = all_signals(client).await;
     let mut tensions = tension_signals(client).await;
     let stories = stories_by_energy(client).await;
     let responds_to = responds_to_edges(client).await;
 
-    // If city_slug is given, filter to only signals connected to that city's sources
-    if let Some(slug) = city_slug {
-        let city_signal_ids = city_signal_ids(client, slug).await;
-        signals.retain(|s| city_signal_ids.contains(&s.id));
-        tensions.retain(|t| city_signal_ids.contains(&t.id));
+    // If region_slug is given, filter to only signals connected to that region's sources
+    if let Some(slug) = region_slug {
+        let region_signal_ids = region_signal_ids(client, slug).await;
+        signals.retain(|s| region_signal_ids.contains(&s.id));
+        tensions.retain(|t| region_signal_ids.contains(&t.id));
     }
 
     // Collect evidence for each signal
@@ -279,16 +279,16 @@ pub async fn responds_to_edges(client: &GraphClient) -> Vec<RespondsToEdge> {
     results
 }
 
-/// Get IDs of all signals connected via Evidence to sources for a given city.
+/// Get IDs of all signals connected via Evidence to sources for a given region.
 /// Evidence nodes have a `source_url` property that matches Source node URLs.
-async fn city_signal_ids(client: &GraphClient, city_slug: &str) -> std::collections::HashSet<Uuid> {
-    let cypher = "MATCH (s:Source {city: $slug}) WHERE s.url IS NOT NULL \
+async fn region_signal_ids(client: &GraphClient, region_slug: &str) -> std::collections::HashSet<Uuid> {
+    let cypher = "MATCH (s:Source {region: $slug}) WHERE s.url IS NOT NULL \
                   WITH collect(s.url) AS urls \
                   MATCH (n)-[:SOURCED_FROM]->(ev:Evidence) \
                   WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension) \
                   AND ev.source_url IN urls \
                   RETURN DISTINCT n.id AS id";
-    let q = query(cypher).param("slug", city_slug);
+    let q = query(cypher).param("slug", region_slug);
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let mut ids = std::collections::HashSet::new();
     while let Some(row) = stream.next().await.expect("row failed") {

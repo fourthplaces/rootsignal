@@ -199,7 +199,7 @@ pub struct Archive {
     feed_fetcher: RssFetcher,
     http_client: reqwest::Client,
     run_id: Uuid,
-    city_slug: String,
+    region_slug: String,
 }
 
 enum PageFetcherKind {
@@ -212,7 +212,7 @@ impl Archive {
         pool: PgPool,
         config: ArchiveConfig,
         run_id: Uuid,
-        city_slug: String,
+        region_slug: String,
     ) -> Self {
         let page_fetcher = match config.page_backend {
             PageBackend::Chrome => PageFetcherKind::Chrome(ChromeFetcher::new()),
@@ -246,7 +246,7 @@ impl Archive {
                 .build()
                 .expect("Failed to build HTTP client"),
             run_id,
-            city_slug,
+            region_slug,
         }
     }
 
@@ -306,7 +306,7 @@ impl Archive {
 
                 self.store.insert(InsertInteraction {
                     run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
+                    region_slug: self.region_slug.clone(),
                     kind: "search".to_string(),
                     target: query.to_string(),
                     target_raw: target_raw.to_string(),
@@ -364,7 +364,7 @@ impl Archive {
 
                 self.store.insert(InsertInteraction {
                     run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
+                    region_slug: self.region_slug.clone(),
                     kind: "social".to_string(),
                     target: target_normalized,
                     target_raw: target_raw.to_string(),
@@ -426,7 +426,7 @@ impl Archive {
 
                 self.store.insert(InsertInteraction {
                     run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
+                    region_slug: self.region_slug.clone(),
                     kind: "social".to_string(),
                     target: target_raw.to_string(),
                     target_raw: target_raw.to_string(),
@@ -521,7 +521,7 @@ impl Archive {
 
                 self.store.insert(InsertInteraction {
                     run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
+                    region_slug: self.region_slug.clone(),
                     kind: "page".to_string(),
                     target: url.to_string(),
                     target_raw: target_raw.to_string(),
@@ -572,7 +572,7 @@ impl Archive {
 
                 self.store.insert(InsertInteraction {
                     run_id: self.run_id,
-                    city_slug: self.city_slug.clone(),
+                    region_slug: self.region_slug.clone(),
                     kind: "feed".to_string(),
                     target: url.to_string(),
                     target_raw: target_raw.to_string(),
@@ -632,7 +632,7 @@ impl Archive {
 
         self.store.insert(InsertInteraction {
             run_id: self.run_id,
-            city_slug: self.city_slug.clone(),
+            region_slug: self.region_slug.clone(),
             kind: "pdf".to_string(),
             target: url.to_string(),
             target_raw: target_raw.to_string(),
@@ -681,7 +681,7 @@ impl Archive {
 
         self.store.insert(InsertInteraction {
             run_id: self.run_id,
-            city_slug: self.city_slug.clone(),
+            region_slug: self.region_slug.clone(),
             kind: "raw".to_string(),
             target: url.to_string(),
             target_raw: target_raw.to_string(),
@@ -721,7 +721,7 @@ impl Archive {
         warn!(kind, target, error = %error, "Fetch failed");
         self.store.insert(InsertInteraction {
             run_id: self.run_id,
-            city_slug: self.city_slug.clone(),
+            region_slug: self.region_slug.clone(),
             kind: kind.to_string(),
             target: target.to_string(),
             target_raw: target_raw.to_string(),

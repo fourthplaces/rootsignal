@@ -9,7 +9,7 @@ pub enum SensitivityLevel {
     General,
     /// Organizing, advocacy, political action. Neighborhood-level precision.
     Elevated,
-    /// Enforcement activity, vulnerable populations, sanctuary networks. City/region only.
+    /// Enforcement activity, vulnerable populations, sanctuary networks. Region-level only.
     Sensitive,
 }
 
@@ -30,7 +30,7 @@ use crate::types::{GeoPoint, GeoPrecision};
 /// Reduce coordinate precision based on sensitivity level.
 /// General: exact coordinates returned.
 /// Elevated: snapped to neighborhood centroid (~500m grid).
-/// Sensitive: snapped to city-level centroid (~5km grid).
+/// Sensitive: snapped to region-level centroid (~5km grid).
 pub fn fuzz_location(point: GeoPoint, sensitivity: SensitivityLevel) -> GeoPoint {
     let radius = sensitivity.fuzz_radius();
     if radius == 0.0 {
@@ -39,7 +39,7 @@ pub fn fuzz_location(point: GeoPoint, sensitivity: SensitivityLevel) -> GeoPoint
 
     // Snap to grid: round coordinates to the nearest grid cell
     let precision = if radius >= 0.01 {
-        GeoPrecision::City
+        GeoPrecision::Approximate
     } else {
         GeoPrecision::Neighborhood
     };
@@ -123,7 +123,7 @@ mod tests {
             precision: GeoPrecision::Exact,
         };
         let fuzzed = fuzz_location(point, SensitivityLevel::Sensitive);
-        assert_eq!(fuzzed.precision, GeoPrecision::City);
+        assert_eq!(fuzzed.precision, GeoPrecision::Approximate);
     }
 
     #[test]

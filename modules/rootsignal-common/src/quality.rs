@@ -7,7 +7,7 @@ pub enum GeoAccuracy {
     High,
     /// Neighborhood or zip code
     Medium,
-    /// City-level fallback
+    /// Region-level fallback
     Low,
 }
 
@@ -15,7 +15,7 @@ pub enum GeoAccuracy {
 pub struct ExtractionQuality {
     /// Has action_url AND (has timing OR is ongoing)
     pub actionable: bool,
-    /// Location extracted with at least city-level precision
+    /// Location extracted with at least approximate precision
     pub has_location: bool,
     /// Has an action URL
     pub has_action_url: bool,
