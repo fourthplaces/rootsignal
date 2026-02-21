@@ -13,5 +13,5 @@ pub mod scout;
 pub use discovery::{gathering_finder, response_finder, source_finder, tension_linker};
 pub use enrichment::{actor_extractor, expansion, investigator, quality};
 pub use infra::{embedder, util};
-pub use pipeline::{extractor, scrape_phase, scraper, sources};
+pub use pipeline::{extractor, scrape_phase, sources};
 pub use scheduling::{bootstrap, budget, metrics, scheduler};

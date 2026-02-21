@@ -267,11 +267,7 @@ impl<'a> Investigator<'a> {
                     for r in results {
                         let result_domain = extract_domain(&r.url);
                         if result_domain != source_domain {
-                            all_results.push(crate::scraper::SearchResult {
-                                url: r.url,
-                                title: r.title,
-                                snippet: r.snippet,
-                            });
+                            all_results.push(r);
                         }
                     }
                 }

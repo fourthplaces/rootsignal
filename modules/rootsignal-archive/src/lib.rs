@@ -4,9 +4,10 @@ pub mod replay;
 mod router;
 mod store;
 mod readability;
-mod fetchers;
+pub mod fetchers;
 mod semantics;
 
 pub use archive::{Archive, ArchiveConfig, Content, FetchBackend, FetchBackendExt, FetchRequest, FetchedContent, PageBackend, SocialSearch};
 pub use replay::Replay;
 pub use error::{ArchiveError, Result};
+pub use fetchers::page::extract_links_by_pattern;

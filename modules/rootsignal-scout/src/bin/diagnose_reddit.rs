@@ -1,20 +1,20 @@
 //! Diagnostic tool: trace r/Minneapolis posts through the FULL pipeline.
-//! Shows what Apify returns, what the LLM extracts, and what survives each
+//! Shows what the archive returns, what the LLM extracts, and what survives each
 //! stage: quality scoring → geo-filter → title dedup → embedding dedup.
 //!
 //! Usage: cargo run --bin diagnose_reddit
 
+use std::sync::Arc;
+
 use anyhow::Result;
-use apify_client::ApifyClient;
-use rootsignal_common::{Node, NodeType};
+use rootsignal_archive::{Archive, ArchiveConfig, Content, FetchBackend, FetchBackendExt, PageBackend};
+use rootsignal_common::{Node, NodeType, SocialPost};
 use rootsignal_graph::GraphClient;
 use rootsignal_scout::embedder::Embedder;
 use rootsignal_scout::extractor::{Extractor, SignalExtractor};
 use rootsignal_scout::quality;
-use rootsignal_scout::scraper::{SocialAccount, SocialPlatform, SocialPost, SocialScraper};
 
 const SUBREDDIT_URL: &str = "https://www.reddit.com/r/Minneapolis/";
-const POST_LIMIT: u32 = 20;
 
 // City config (from graph)
 const CENTER_LAT: f64 = 44.9773;
@@ -25,41 +25,69 @@ const GEO_TERMS: &[&str] = &["Minneapolis", "Minnesota"];
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv_load();
-    let apify_key = std::env::var("APIFY_API_KEY").expect("APIFY_API_KEY required");
     let anthropic_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY required");
     let voyage_key = std::env::var("VOYAGE_API_KEY").expect("VOYAGE_API_KEY required");
+    let serper_key = std::env::var("SERPER_API_KEY").expect("SERPER_API_KEY required");
+    let apify_key = std::env::var("APIFY_API_KEY").ok();
 
     // Connect to Neo4j for dedup checks
     let graph = GraphClient::connect("bolt://localhost:7687", "neo4j", "rootsignal").await?;
     let writer = rootsignal_graph::GraphWriter::new(graph);
 
+    // Build archive for fetching
+    let page_backend = if let Ok(url) = std::env::var("BROWSERLESS_URL") {
+        let token = std::env::var("BROWSERLESS_TOKEN").ok();
+        PageBackend::Browserless {
+            base_url: url,
+            token,
+        }
+    } else {
+        PageBackend::Chrome
+    };
+    let archive_config = ArchiveConfig {
+        page_backend,
+        serper_api_key: serper_key,
+        apify_api_key: apify_key,
+        anthropic_api_key: Some(anthropic_key.clone()),
+    };
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
+    let pool = sqlx::PgPool::connect(&database_url).await?;
+    let archive: Arc<dyn FetchBackend> = Arc::new(Archive::new(
+        pool,
+        archive_config,
+        uuid::Uuid::new_v4(),
+        "minneapolis".to_string(),
+    ));
+
     // ================================================================
-    // STAGE 1: Apify
+    // STAGE 1: Archive fetch (social posts)
     // ================================================================
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║  STAGE 1: Apify Reddit Scrape                              ║");
+    println!("║  STAGE 1: Archive Social Fetch                             ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
-    let apify = ApifyClient::new(apify_key);
-    let account = SocialAccount {
-        platform: SocialPlatform::Reddit,
-        identifier: SUBREDDIT_URL.to_string(),
+    let posts: Vec<SocialPost> = match archive.fetch(SUBREDDIT_URL).content().await {
+        Ok(Content::SocialPosts(posts)) => posts,
+        Ok(other) => {
+            println!("Unexpected content type: {:?}", std::mem::discriminant(&other));
+            return Ok(());
+        }
+        Err(e) => {
+            println!("Fetch failed: {}", e);
+            return Ok(());
+        }
     };
-
-    let posts: Vec<SocialPost> = apify.search_posts(&account, POST_LIMIT).await?;
-    println!("Apify returned {} posts\n", posts.len());
+    println!("Archive returned {} posts\n", posts.len());
 
     // Analyze what we got
     let mut unique_threads: std::collections::HashSet<String> = std::collections::HashSet::new();
     for post in &posts {
         if let Some(ref url) = post.url {
-            // Extract thread URL (strip comment suffix)
             let thread = if let Some(idx) = url.find("/comments/") {
                 let rest = &url[idx + "/comments/".len()..];
                 if let Some(slash_idx) = rest.find('/') {
                     let after_id = &rest[slash_idx + 1..];
                     if let Some(next_slash) = after_id.find('/') {
-                        // Has comment ID suffix — this is a comment
                         url[..idx + "/comments/".len() + slash_idx + 1 + next_slash + 1].to_string()
                     } else {
                         url.clone()
@@ -83,7 +111,7 @@ async fn main() -> Result<()> {
 
     for (i, post) in posts.iter().enumerate() {
         let url = post.url.as_deref().unwrap_or("(no url)");
-        let is_comment = url.matches('/').count() > 8; // rough heuristic
+        let is_comment = url.matches('/').count() > 8;
         let tag = if is_comment { " [COMMENT]" } else { "" };
         let preview: String = post.content.chars().take(100).collect();
         println!(
@@ -200,7 +228,7 @@ async fn main() -> Result<()> {
     println!("║  STAGE 4: Geo-Filter                                       ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
-    let is_city_local = true; // This source URL is a known city source
+    let is_city_local = true;
     let mut geo_passed = Vec::new();
     let mut geo_killed = Vec::new();
 
@@ -374,7 +402,6 @@ async fn main() -> Result<()> {
 
     let embedder = Embedder::new(&voyage_key);
 
-    // Build embed texts exactly as scout.rs does
     let content_snippet = if all_combined_text.len() > 500 {
         &all_combined_text[..500]
     } else {
@@ -396,7 +423,6 @@ async fn main() -> Result<()> {
                 let mut embed_passed = Vec::new();
                 let mut embed_killed = Vec::new();
 
-                // Also check pairwise similarity between new signals
                 println!("  --- Pairwise similarity between NEW signals ---\n");
                 for i in 0..embeddings.len() {
                     for j in (i + 1)..embeddings.len() {
@@ -497,7 +523,7 @@ async fn main() -> Result<()> {
                 println!("╔══════════════════════════════════════════════════════════════╗");
                 println!("║  PIPELINE SUMMARY                                          ║");
                 println!("╚══════════════════════════════════════════════════════════════╝\n");
-                println!("  Apify posts returned:      {}", posts.len());
+                println!("  Posts returned:             {}", posts.len());
                 println!("  LLM signals extracted:     {}", total_extracted);
                 println!(
                     "  After quality scoring:     {} (all pass, just sets confidence)",

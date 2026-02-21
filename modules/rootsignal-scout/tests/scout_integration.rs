@@ -29,7 +29,7 @@ fn city_node(
         geo_terms: geo_terms.iter().map(|s| s.to_string()).collect(),
     }
 }
-use rootsignal_scout::scraper::SocialPost;
+use rootsignal_common::SocialPost;
 
 // ---------------------------------------------------------------------------
 // Scenario 1: Event page → extracts Gathering signals

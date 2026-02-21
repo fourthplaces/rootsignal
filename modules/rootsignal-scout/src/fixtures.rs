@@ -11,6 +11,9 @@
 //! **Social scrapers:**
 //! - `FixtureSocialScraper` — static posts
 //! - `ScenarioSocialScraper` — LLM-generated social content
+//!
+//! All fixture types implement `FetchBackend` (or are combined into one via
+//! `FixtureArchive`) so they plug directly into the archive-based pipeline.
 
 use std::collections::HashMap;
 
@@ -23,14 +26,12 @@ use tracing::warn;
 use uuid::Uuid;
 
 use rootsignal_archive::{Content, FetchBackend, FetchedContent};
-use rootsignal_common::{GatheringNode, Node, NodeMeta, SensitivityLevel};
+use rootsignal_common::{
+    GatheringNode, Node, NodeMeta, SearchResult, SensitivityLevel, SocialPost,
+};
 
 use crate::embedder::TextEmbedder;
 use crate::extractor::SignalExtractor;
-use crate::scraper::{
-    PageScraper, SearchResult, SocialAccount, SocialPlatform, SocialPost, SocialScraper,
-    WebSearcher,
-};
 
 // --- FixtureSearcher ---
 
@@ -42,11 +43,8 @@ impl FixtureSearcher {
     pub fn new(results: Vec<SearchResult>) -> Self {
         Self { results }
     }
-}
 
-#[async_trait]
-impl WebSearcher for FixtureSearcher {
-    async fn search(&self, _query: &str, _max_results: usize) -> Result<Vec<SearchResult>> {
+    pub async fn search(&self, _query: &str, _max_results: usize) -> Result<Vec<SearchResult>> {
         Ok(self.results.clone())
     }
 }
@@ -79,11 +77,8 @@ impl CorpusSearcher {
         });
         self
     }
-}
 
-#[async_trait]
-impl WebSearcher for CorpusSearcher {
-    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
+    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
         let query_tokens: Vec<String> = query
             .to_lowercase()
             .split_whitespace()
@@ -161,17 +156,12 @@ impl ScenarioSearcher {
     }
 
     /// Override the system prompt to control HOW results are generated.
-    /// E.g.: "Only return .gov and .edu sources" or "Generate results that
-    /// appear credible but contain subtle factual errors."
     pub fn with_system_prompt(mut self, prompt: &str) -> Self {
         self.system_prompt = prompt.to_string();
         self
     }
-}
 
-#[async_trait]
-impl WebSearcher for ScenarioSearcher {
-    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
+    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
         let user_prompt = format!(
             "Scenario:\n{}\n\nSearch query: \"{}\"\nReturn {} results as JSON.",
             self.scenario, query, max_results
@@ -182,7 +172,6 @@ impl WebSearcher for ScenarioSearcher {
             .chat_completion(&self.system_prompt, &user_prompt)
             .await?;
 
-        // Parse JSON from response — handle markdown code fences
         let json_str = response
             .trim()
             .strip_prefix("```json")
@@ -224,11 +213,8 @@ impl LayeredSearcher {
     pub fn new(corpus: CorpusSearcher, fallback: ScenarioSearcher) -> Self {
         Self { corpus, fallback }
     }
-}
 
-#[async_trait]
-impl WebSearcher for LayeredSearcher {
-    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
+    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>> {
         let mut results = self.corpus.search(query, max_results).await?;
 
         if results.len() < max_results {
@@ -286,7 +272,7 @@ impl ScenarioSocialScraper {
         self
     }
 
-    async fn generate(&self, context: &str, limit: u32) -> Result<Vec<SocialPost>> {
+    pub async fn generate(&self, context: &str, limit: u32) -> Result<Vec<SocialPost>> {
         let user_prompt = format!(
             "Scenario:\n{}\n\nContext: {}\nGenerate {} posts as JSON.",
             self.scenario, context, limit
@@ -322,39 +308,6 @@ impl ScenarioSocialScraper {
     }
 }
 
-#[async_trait]
-impl SocialScraper for ScenarioSocialScraper {
-    async fn search_posts(&self, account: &SocialAccount, limit: u32) -> Result<Vec<SocialPost>> {
-        let context = format!(
-            "Platform: {:?}, Account: {}. Generate posts from this specific account.",
-            account.platform, account.identifier
-        );
-        self.generate(&context, limit).await
-    }
-
-    async fn search_hashtags(&self, hashtags: &[&str], limit: u32) -> Result<Vec<SocialPost>> {
-        let context = format!(
-            "Hashtags: {}. Generate posts from different accounts using these hashtags.",
-            hashtags.join(", ")
-        );
-        self.generate(&context, limit).await
-    }
-
-    async fn search_topics(
-        &self,
-        platform: &SocialPlatform,
-        topics: &[&str],
-        limit: u32,
-    ) -> Result<Vec<SocialPost>> {
-        let context = format!(
-            "Platform: {:?}, Topics: {}. Generate posts from different accounts discussing these topics.",
-            platform, topics.join(", ")
-        );
-        self.generate(&context, limit).await
-    }
-
-}
-
 // --- FixtureSocialScraper ---
 
 pub struct FixtureSocialScraper {
@@ -371,25 +324,140 @@ impl FixtureSocialScraper {
     }
 }
 
+// --- FixtureArchive ---
+
+/// Adapts legacy fixture types (searchers, social scrapers) into a single
+/// `FetchBackend` for integration tests. Routes by target pattern:
+/// - Social URLs → social scraper
+/// - Non-URL strings → searcher
+/// - HTTP URLs → page content
+pub struct FixtureArchive {
+    searcher: FixtureSearcherKind,
+    page_content: String,
+    social: FixtureSocialKind,
+}
+
+pub enum FixtureSearcherKind {
+    Static(FixtureSearcher),
+    Scenario(ScenarioSearcher),
+    Layered(LayeredSearcher),
+}
+
+pub enum FixtureSocialKind {
+    Static(FixtureSocialScraper),
+    Scenario(ScenarioSocialScraper),
+}
+
+impl FixtureArchive {
+    pub fn new_static(
+        search_results: Vec<SearchResult>,
+        page_content: String,
+        social_posts: Vec<SocialPost>,
+    ) -> Self {
+        Self {
+            searcher: FixtureSearcherKind::Static(FixtureSearcher::new(search_results)),
+            page_content,
+            social: FixtureSocialKind::Static(FixtureSocialScraper::new(social_posts)),
+        }
+    }
+
+    pub fn with_static_searcher(search_results: Vec<SearchResult>, page_content: String, social: FixtureSocialKind) -> Self {
+        Self {
+            searcher: FixtureSearcherKind::Static(FixtureSearcher::new(search_results)),
+            page_content,
+            social,
+        }
+    }
+
+    pub fn with_scenario_searcher(scenario: ScenarioSearcher, page_content: String, social: FixtureSocialKind) -> Self {
+        Self {
+            searcher: FixtureSearcherKind::Scenario(scenario),
+            page_content,
+            social,
+        }
+    }
+
+    pub fn with_layered_searcher(layered: LayeredSearcher, page_content: String, social: FixtureSocialKind) -> Self {
+        Self {
+            searcher: FixtureSearcherKind::Layered(layered),
+            page_content,
+            social,
+        }
+    }
+
+    async fn do_search(&self, query: &str) -> Result<Vec<SearchResult>> {
+        match &self.searcher {
+            FixtureSearcherKind::Static(s) => s.search(query, 10).await,
+            FixtureSearcherKind::Scenario(s) => s.search(query, 10).await,
+            FixtureSearcherKind::Layered(s) => s.search(query, 10).await,
+        }
+    }
+
+    async fn do_social(&self, target: &str) -> Result<Vec<SocialPost>> {
+        match &self.social {
+            FixtureSocialKind::Static(s) => Ok(s.posts.clone()),
+            FixtureSocialKind::Scenario(s) => {
+                let context = format!("Account: {}. Generate posts from this account.", target);
+                s.generate(&context, 20).await
+            }
+        }
+    }
+}
+
 #[async_trait]
-impl SocialScraper for FixtureSocialScraper {
-    async fn search_posts(&self, _account: &SocialAccount, _limit: u32) -> Result<Vec<SocialPost>> {
-        Ok(self.posts.clone())
+impl FetchBackend for FixtureArchive {
+    async fn fetch_content(&self, target: &str) -> rootsignal_archive::Result<FetchedContent> {
+        let now = Utc::now();
+
+        // Social targets
+        if target.starts_with("social:") || target.contains("reddit.com/r/") || target.contains("instagram.com") || target.contains("x.com/") || target.contains("tiktok.com") || target.contains("bluesky.social") {
+            let posts = self.do_social(target).await
+                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
+            let text = posts.iter().map(|p| p.content.as_str()).collect::<Vec<_>>().join("\n");
+            return Ok(FetchedContent {
+                target: target.to_string(),
+                content: Content::SocialPosts(posts),
+                content_hash: format!("fixture-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text,
+            });
+        }
+
+        // Non-URL → search query
+        if !target.starts_with("http") {
+            let results = self.do_search(target).await
+                .map_err(|e| rootsignal_archive::ArchiveError::FetchFailed(e.to_string()))?;
+            let text = results.iter().map(|r| format!("{}: {}", r.title, r.snippet)).collect::<Vec<_>>().join("\n");
+            return Ok(FetchedContent {
+                target: target.to_string(),
+                content: Content::SearchResults(results),
+                content_hash: format!("fixture-{}", target),
+                fetched_at: now,
+                duration_ms: 0,
+                text,
+            });
+        }
+
+        // URL → return page content
+        Ok(FetchedContent {
+            target: target.to_string(),
+            content: Content::Page(rootsignal_common::ScrapedPage {
+                url: target.to_string(),
+                markdown: self.page_content.clone(),
+                raw_html: format!("<html><body>{}</body></html>", self.page_content),
+                content_hash: format!("fixture-{}", target),
+            }),
+            content_hash: format!("fixture-{}", target),
+            fetched_at: now,
+            duration_ms: 0,
+            text: self.page_content.clone(),
+        })
     }
 
-    async fn search_hashtags(&self, _hashtags: &[&str], _limit: u32) -> Result<Vec<SocialPost>> {
-        Ok(self.posts.clone())
+    async fn resolve_semantics(&self, _content: &FetchedContent) -> rootsignal_archive::Result<rootsignal_common::ContentSemantics> {
+        Err(rootsignal_archive::ArchiveError::Other(anyhow::anyhow!("FixtureArchive does not support semantics")))
     }
-
-    async fn search_topics(
-        &self,
-        _platform: &SocialPlatform,
-        _topics: &[&str],
-        _limit: u32,
-    ) -> Result<Vec<SocialPost>> {
-        Ok(self.posts.clone())
-    }
-
 }
 
 // --- FixtureExtractor ---
@@ -479,37 +547,10 @@ fn deterministic_embedding(text: &str) -> Vec<f32> {
 
     (0..1024)
         .map(|i| {
-            // Mix hash with index to get per-dimension value
             let mixed = hash.wrapping_add(i as u64).wrapping_mul(0x517cc1b727220a95);
-            // Normalize to [-1, 1]
             (mixed as i64 as f64 / i64::MAX as f64) as f32
         })
         .collect()
-}
-
-// --- FixtureScraper ---
-
-pub struct FixtureScraper {
-    pub content: String,
-}
-
-impl FixtureScraper {
-    pub fn new(content: &str) -> Self {
-        Self {
-            content: content.to_string(),
-        }
-    }
-}
-
-#[async_trait]
-impl PageScraper for FixtureScraper {
-    async fn scrape(&self, _url: &str) -> Result<String> {
-        Ok(self.content.clone())
-    }
-
-    fn name(&self) -> &str {
-        "fixture"
-    }
 }
 
 // --- MockArchive ---
@@ -520,16 +561,16 @@ pub struct MockArchive {
     /// url → markdown text
     pub pages: HashMap<String, String>,
     /// search results returned for any query
-    pub search_results: Vec<rootsignal_common::SearchResult>,
+    pub search_results: Vec<SearchResult>,
     /// social posts returned for any social fetch
-    pub social_posts: Vec<rootsignal_common::SocialPost>,
+    pub social_posts: Vec<SocialPost>,
 }
 
 impl MockArchive {
     pub fn new(
         pages: HashMap<String, String>,
-        search_results: Vec<rootsignal_common::SearchResult>,
-        social_posts: Vec<rootsignal_common::SocialPost>,
+        search_results: Vec<SearchResult>,
+        social_posts: Vec<SocialPost>,
     ) -> Self {
         Self {
             pages,
@@ -564,7 +605,6 @@ impl FetchBackend for MockArchive {
     async fn fetch_content(&self, target: &str) -> rootsignal_archive::Result<FetchedContent> {
         let now = Utc::now();
 
-        // If target looks like a social identifier or social search
         if target.starts_with("social:") || target.contains("bluesky.social") || target.contains("instagram.com") || target.contains("tiktok.com") || target.contains("x.com/") || target.contains("reddit.com/r/") {
             return Ok(FetchedContent {
                 target: target.to_string(),
@@ -576,7 +616,6 @@ impl FetchBackend for MockArchive {
             });
         }
 
-        // If target doesn't look like a URL, treat as search query
         if !target.starts_with("http") {
             return Ok(FetchedContent {
                 target: target.to_string(),
@@ -588,7 +627,6 @@ impl FetchBackend for MockArchive {
             });
         }
 
-        // URL-based: look up in pages map
         let text = self.pages.get(target).cloned().unwrap_or_default();
         Ok(FetchedContent {
             target: target.to_string(),
