@@ -76,6 +76,7 @@ impl GraphWriter {
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged',
                 created_by: $created_by,
                 scout_run_id: $scout_run_id
@@ -115,6 +116,7 @@ impl GraphWriter {
         .param("is_recurring", n.is_recurring)
         .param("implied_queries", n.meta.implied_queries.clone())
         .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
         .param("created_by", created_by)
         .param("scout_run_id", scout_run_id);
 
@@ -149,6 +151,7 @@ impl GraphWriter {
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged',
                 created_by: $created_by,
                 scout_run_id: $scout_run_id
@@ -176,6 +179,7 @@ impl GraphWriter {
         .param("is_ongoing", n.is_ongoing)
         .param("implied_queries", n.meta.implied_queries.clone())
         .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
         .param("created_by", created_by)
         .param("scout_run_id", scout_run_id);
 
@@ -210,6 +214,7 @@ impl GraphWriter {
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged',
                 created_by: $created_by,
                 scout_run_id: $scout_run_id
@@ -239,6 +244,7 @@ impl GraphWriter {
         .param("action_url", n.action_url.clone().unwrap_or_default())
         .param("goal", n.goal.clone().unwrap_or_default())
         .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
         .param("created_by", created_by)
         .param("scout_run_id", scout_run_id);
 
@@ -279,6 +285,7 @@ impl GraphWriter {
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged',
                 created_by: $created_by,
                 scout_run_id: $scout_run_id
@@ -316,6 +323,7 @@ impl GraphWriter {
             n.source_authority.clone().unwrap_or_default(),
         )
         .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
         .param("created_by", created_by)
         .param("scout_run_id", scout_run_id);
 
@@ -355,6 +363,7 @@ impl GraphWriter {
                 lat: $lat,
                 lng: $lng,
                 embedding: $embedding,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged',
                 created_by: $created_by,
                 scout_run_id: $scout_run_id
@@ -386,6 +395,7 @@ impl GraphWriter {
             n.what_would_help.as_deref().unwrap_or(""),
         )
         .param("embedding", embedding_to_f64(embedding))
+        .param("channel_diversity", n.meta.channel_diversity as i64)
         .param("created_by", created_by)
         .param("scout_run_id", scout_run_id);
 
@@ -425,7 +435,8 @@ impl GraphWriter {
                 ev.content_hash = $content_hash,
                 ev.snippet = $snippet,
                 ev.relevance = $relevance,
-                ev.evidence_confidence = $evidence_confidence
+                ev.evidence_confidence = $evidence_confidence,
+                ev.channel_type = $channel_type
             ON MATCH SET
                 ev.retrieved_at = datetime($retrieved_at),
                 ev.content_hash = $content_hash",
@@ -439,6 +450,10 @@ impl GraphWriter {
         .param(
             "evidence_confidence",
             evidence.evidence_confidence.unwrap_or(0.0) as f64,
+        )
+        .param(
+            "channel_type",
+            evidence.channel_type.map(|ct| ct.as_str()).unwrap_or("press"),
         )
         .param("signal_id", signal_node_id.to_string());
 
@@ -727,18 +742,24 @@ impl GraphWriter {
             .compute_source_diversity(node_id, node_type, entity_mappings)
             .await?;
 
+        // Recompute channel diversity from all evidence nodes
+        let channel_diversity = self
+            .compute_channel_diversity(node_id, node_type, entity_mappings)
+            .await?;
+
         let q = query(&format!(
             "MATCH (n:{} {{id: $id}})
-             SET n.source_diversity = $diversity, n.external_ratio = $ratio",
+             SET n.source_diversity = $diversity, n.external_ratio = $ratio, n.channel_diversity = $channel_diversity",
             label
         ))
         .param("id", node_id.to_string())
         .param("diversity", diversity as i64)
-        .param("ratio", external_ratio as f64);
+        .param("ratio", external_ratio as f64)
+        .param("channel_diversity", channel_diversity as i64);
 
         self.client.graph.run(q).await?;
 
-        info!(%node_id, %label, diversity, external_ratio, "Corroborated existing signal");
+        info!(%node_id, %label, diversity, external_ratio, channel_diversity, "Corroborated existing signal");
         Ok(())
     }
 
@@ -795,6 +816,60 @@ impl GraphWriter {
             Ok((diversity, external_ratio))
         } else {
             Ok((1, 0.0))
+        }
+    }
+
+    /// Compute channel diversity for a signal from its evidence nodes.
+    /// Entity-gated: only distinct (entity, channel_type) pairs count, and only
+    /// channels with at least one *external* entity (different from the originating
+    /// entity) are counted.
+    pub async fn compute_channel_diversity(
+        &self,
+        node_id: Uuid,
+        node_type: NodeType,
+        entity_mappings: &[rootsignal_common::EntityMappingOwned],
+    ) -> Result<u32, neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
+            NodeType::Need => "Need",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Evidence => return Ok(1),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{label} {{id: $id}})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             RETURN n.source_url AS self_url,
+                    collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
+        ))
+        .param("id", node_id.to_string());
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let self_url: String = row.get("self_url").unwrap_or_default();
+            let evidence: Vec<neo4rs::BoltMap> = row.get("evidence").unwrap_or_default();
+
+            let self_entity = rootsignal_common::resolve_entity(&self_url, entity_mappings);
+
+            // Collect (entity, channel_type) pairs
+            let mut channels_with_external: HashSet<String> = HashSet::new();
+            for ev in &evidence {
+                let url: String = ev.get::<String>("url").unwrap_or_default();
+                let channel: String = ev.get::<String>("channel").unwrap_or_else(|_| "press".to_string());
+                if url.is_empty() {
+                    continue;
+                }
+                let entity = rootsignal_common::resolve_entity(&url, entity_mappings);
+                if entity != self_entity {
+                    channels_with_external.insert(channel);
+                }
+            }
+
+            Ok(channels_with_external.len().max(1) as u32)
+        } else {
+            Ok(1)
         }
     }
 
@@ -1101,6 +1176,7 @@ impl GraphWriter {
                 drawn_to_count: $drawn_to_count,
                 gap_score: $gap_score,
                 gap_velocity: $gap_velocity,
+                channel_diversity: $channel_diversity,
                 review_status: 'staged'
             })",
         )
@@ -1126,7 +1202,8 @@ impl GraphWriter {
         .param("event_count", story.event_count as i64)
         .param("drawn_to_count", story.drawn_to_count as i64)
         .param("gap_score", story.gap_score as i64)
-        .param("gap_velocity", story.gap_velocity);
+        .param("gap_velocity", story.gap_velocity)
+        .param("channel_diversity", story.channel_diversity as i64);
 
         let q = match (story.centroid_lat, story.centroid_lng) {
             (Some(lat), Some(lng)) => q.param("centroid_lat", lat).param("centroid_lng", lng),
@@ -4492,6 +4569,24 @@ impl GraphWriter {
         );
 
         Ok(stats)
+    }
+
+    // ========== Supervisor / Validation Issues ==========
+
+    /// Dismiss a validation issue by ID.
+    pub async fn dismiss_validation_issue(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (v:ValidationIssue {id: $id})
+             WHERE v.status = 'open'
+             SET v.status = 'dismissed',
+                 v.resolved_at = datetime(),
+                 v.resolution = 'dismissed by admin'
+             RETURN v.id AS id",
+        )
+        .param("id", id.to_string());
+
+        let mut stream = self.client.inner().execute(q).await?;
+        Ok(stream.next().await?.is_some())
     }
 }
 

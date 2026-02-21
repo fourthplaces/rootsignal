@@ -3027,6 +3027,7 @@ dependencies = [
  "rootsignal-common",
  "rootsignal-graph",
  "rootsignal-scout",
+ "rootsignal-scout-supervisor",
  "serde",
  "serde_json",
  "sha2",

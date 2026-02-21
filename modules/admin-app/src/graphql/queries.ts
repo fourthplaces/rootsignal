@@ -4,27 +4,27 @@ import { gql } from "@apollo/client";
 const SIGNAL_FIELDS = `
   ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     startsAt endsAt actionUrl organizer isRecurring
   }
   ... on GqlAidSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     actionUrl availability isOngoing
   }
   ... on GqlNeedSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     urgency whatNeeded actionUrl goal
   }
   ... on GqlNoticeSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     severity category effectiveDate sourceAuthority
   }
   ... on GqlTensionSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat
+    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
     severity category whatWouldHelp
   }
 `;
@@ -306,6 +306,41 @@ export const ALL_TAGS = gql`
     tags(limit: $limit) {
       slug
       name
+    }
+  }
+`;
+
+export const SUPERVISOR_FINDINGS = gql`
+  query SupervisorFindings($region: String!, $status: String, $limit: Int) {
+    supervisorFindings(region: $region, status: $status, limit: $limit) {
+      id
+      issueType
+      severity
+      targetId
+      targetLabel
+      description
+      suggestedAction
+      status
+      createdAt
+      resolvedAt
+    }
+  }
+`;
+
+export const SUPERVISOR_SUMMARY = gql`
+  query SupervisorSummary($region: String!) {
+    supervisorSummary(region: $region) {
+      totalOpen
+      totalResolved
+      totalDismissed
+      countByType {
+        label
+        count
+      }
+      countBySeverity {
+        label
+        count
+      }
     }
   }
 `;

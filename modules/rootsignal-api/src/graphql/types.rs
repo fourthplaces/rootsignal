@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_graphql::dataloader::DataLoader;
-use async_graphql::{Context, Object, Result, Union};
+use async_graphql::{Context, Object, Result, SimpleObject, Union};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -256,6 +256,9 @@ macro_rules! signal_meta_resolvers {
         async fn cause_heat(&self) -> f64 {
             self.meta().cause_heat
         }
+        async fn channel_diversity(&self) -> u32 {
+            self.meta().channel_diversity
+        }
         async fn mentioned_actors(&self) -> &[String] {
             &self.meta().mentioned_actors
         }
@@ -309,6 +312,7 @@ impl GqlGatheringSignal {
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
     async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
     async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
         let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
@@ -363,6 +367,7 @@ impl GqlAidSignal {
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
     async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
     async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
         let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
@@ -411,6 +416,7 @@ impl GqlNeedSignal {
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
     async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
     async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
         let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
@@ -462,6 +468,7 @@ impl GqlNoticeSignal {
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
     async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
     async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
         let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
@@ -513,6 +520,7 @@ impl GqlTensionSignal {
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
+    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
     async fn mentioned_actors(&self) -> &[String] { &self.meta().mentioned_actors }
     async fn evidence(&self, ctx: &Context<'_>) -> Result<Vec<GqlEvidence>> {
         let loader = ctx.data_unchecked::<DataLoader<EvidenceBySignalLoader>>();
@@ -621,6 +629,9 @@ impl GqlStory {
 
     async fn cause_heat(&self) -> f64 {
         self.0.cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.0.channel_diversity
     }
     async fn need_count(&self) -> u32 {
         self.0.ask_count
@@ -746,6 +757,37 @@ impl GqlSearchResult {
     async fn score(&self) -> f64 {
         self.score
     }
+}
+
+// ========== Supervisor Findings ==========
+
+#[derive(SimpleObject)]
+pub struct SupervisorFinding {
+    pub id: String,
+    pub issue_type: String,
+    pub severity: String,
+    pub target_id: String,
+    pub target_label: String,
+    pub description: String,
+    pub suggested_action: String,
+    pub status: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+pub struct SupervisorSummary {
+    pub total_open: i64,
+    pub total_resolved: i64,
+    pub total_dismissed: i64,
+    pub count_by_type: Vec<FindingCount>,
+    pub count_by_severity: Vec<FindingCount>,
+}
+
+#[derive(SimpleObject)]
+pub struct FindingCount {
+    pub label: String,
+    pub count: i64,
 }
 
 /// A story matched via its constituent signals' semantic similarity.

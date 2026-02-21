@@ -16,7 +16,7 @@ pub struct Supervisor {
     client: GraphClient,
     state: SupervisorState,
     issues: IssueStore,
-    city: CityNode,
+    region: CityNode,
     anthropic_api_key: String,
     notifier: Box<dyn NotifyBackend>,
 }
@@ -24,17 +24,17 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(
         client: GraphClient,
-        city: CityNode,
+        region: CityNode,
         anthropic_api_key: String,
         notifier: Box<dyn NotifyBackend>,
     ) -> Self {
-        let state = SupervisorState::new(client.clone(), city.slug.clone());
+        let state = SupervisorState::new(client.clone(), region.slug.clone());
         let issues = IssueStore::new(client.clone());
         Self {
             client,
             state,
             issues,
-            city,
+            region,
             anthropic_api_key,
             notifier,
         }
@@ -77,7 +77,7 @@ impl Supervisor {
 
         // Phase 1: Auto-fix checks (deterministic, safe to run anytime)
         stats.auto_fix =
-            auto_fix::run_auto_fixes(&self.client, self.city.center_lat, self.city.center_lng)
+            auto_fix::run_auto_fixes(&self.client, self.region.center_lat, self.region.center_lng)
                 .await?;
 
         // Phase 2: Heuristic triage (cheap graph queries — pre-enrichment for batch review)
@@ -87,7 +87,7 @@ impl Supervisor {
         match batch_review::review_batch(
             &self.client,
             &self.anthropic_api_key,
-            &self.city,
+            &self.region,
             &suspects,
         )
         .await
@@ -113,9 +113,9 @@ impl Supervisor {
 
                 // Feedback loop: save report + create GitHub issue if rejections exist
                 if output.signals_rejected > 0 {
-                    match report::save_report(&self.city.slug, &output) {
+                    match report::save_report(&self.region.slug, &output) {
                         Ok(report_path) => {
-                            match report::create_github_issue(&self.city.slug, &output, &report_path) {
+                            match report::create_github_issue(&self.region.slug, &output, &report_path) {
                                 Ok(Some(_url)) => {
                                     stats.github_issue_created = true;
                                 }

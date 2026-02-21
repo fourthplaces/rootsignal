@@ -93,16 +93,16 @@ pub struct BatchReviewOutput {
 
 pub async fn fetch_staged_signals(
     client: &GraphClient,
-    city: &CityNode,
+    region: &CityNode,
 ) -> Result<Vec<SignalForReview>> {
     let g = client.inner();
 
-    let lat_delta = city.radius_km / 111.0;
-    let lng_delta = city.radius_km / (111.0 * city.center_lat.to_radians().cos());
-    let min_lat = city.center_lat - lat_delta;
-    let max_lat = city.center_lat + lat_delta;
-    let min_lng = city.center_lng - lng_delta;
-    let max_lng = city.center_lng + lng_delta;
+    let lat_delta = region.radius_km / 111.0;
+    let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
+    let min_lat = region.center_lat - lat_delta;
+    let max_lat = region.center_lat + lat_delta;
+    let min_lng = region.center_lng - lng_delta;
+    let max_lng = region.center_lng + lng_delta;
 
     // UNION-per-label for index utilization
     let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
@@ -200,7 +200,7 @@ pub fn annotate_triage_flags(signals: &mut [SignalForReview], suspects: &[Suspec
 // Build prompts
 // =============================================================================
 
-fn build_system_prompt(city: &CityNode) -> String {
+fn build_system_prompt(region: &CityNode) -> String {
     format!(
         r#"You are a data quality gate for a community signal mapping system.
 
@@ -237,10 +237,10 @@ When rejecting, provide rejection_reason (short category) and explanation.
 - suggested_fix: What should a developer change in the module's code to prevent this? Be specific (e.g., "add source URL validation in the investigator's evidence gathering step").
 
 Most signals from well-configured sources should pass. Be a fair but firm gate."#,
-        city_name = city.name,
-        lat = city.center_lat,
-        lng = city.center_lng,
-        radius = city.radius_km,
+        city_name = region.name,
+        lat = region.center_lat,
+        lng = region.center_lng,
+        radius = region.radius_km,
     )
 }
 
@@ -282,11 +282,11 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
 pub async fn review_batch(
     client: &GraphClient,
     api_key: &str,
-    city: &CityNode,
+    region: &CityNode,
     suspects: &[Suspect],
 ) -> Result<BatchReviewOutput> {
     // 1. Fetch staged signals
-    let mut signals = fetch_staged_signals(client, city).await?;
+    let mut signals = fetch_staged_signals(client, region).await?;
 
     if signals.is_empty() {
         info!("No staged signals to review");
@@ -305,7 +305,7 @@ pub async fn review_batch(
     annotate_triage_flags(&mut signals, suspects);
 
     // 3. Build prompts
-    let system = build_system_prompt(city);
+    let system = build_system_prompt(region);
     let user = build_user_prompt(&signals);
 
     // 4. Call LLM
@@ -361,7 +361,7 @@ pub async fn review_batch(
                     .unwrap_or("unknown");
 
                 issues.push(ValidationIssue::new(
-                    &city.slug,
+                    &region.slug,
                     IssueType::from_llm_str(reason),
                     Severity::Warning,
                     signal_id,

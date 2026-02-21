@@ -616,6 +616,65 @@ impl QueryRoot {
             running,
         })
     }
+
+    /// List supervisor validation findings for a region.
+    #[graphql(guard = "AdminGuard")]
+    async fn supervisor_findings(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+        status: Option<String>,
+        limit: Option<i32>,
+    ) -> Result<Vec<SupervisorFinding>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(100).min(500) as i64;
+        let rows = reader
+            .list_validation_issues(&region, status.as_deref(), limit)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| SupervisorFinding {
+                id: r.id,
+                issue_type: r.issue_type,
+                severity: r.severity,
+                target_id: r.target_id,
+                target_label: r.target_label,
+                description: r.description,
+                suggested_action: r.suggested_action,
+                status: r.status,
+                created_at: r.created_at,
+                resolved_at: r.resolved_at,
+            })
+            .collect())
+    }
+
+    /// Aggregate summary of supervisor findings for a region.
+    #[graphql(guard = "AdminGuard")]
+    async fn supervisor_summary(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+    ) -> Result<SupervisorSummary> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let summary = reader.validation_issue_summary(&region).await?;
+
+        Ok(SupervisorSummary {
+            total_open: summary.total_open,
+            total_resolved: summary.total_resolved,
+            total_dismissed: summary.total_dismissed,
+            count_by_type: summary
+                .count_by_type
+                .into_iter()
+                .map(|(label, count)| FindingCount { label, count })
+                .collect(),
+            count_by_severity: summary
+                .count_by_severity
+                .into_iter()
+                .map(|(label, count)| FindingCount { label, count })
+                .collect(),
+        })
+    }
 }
 
 // ========== Admin GQL Types ==========

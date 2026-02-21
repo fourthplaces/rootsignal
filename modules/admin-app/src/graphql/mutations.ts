@@ -114,3 +114,9 @@ export const SUBMIT_SOURCE = gql`
     }
   }
 `;
+
+export const DISMISS_FINDING = gql`
+  mutation DismissFinding($id: String!) {
+    dismissFinding(id: $id)
+  }
+`;

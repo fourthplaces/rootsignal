@@ -564,6 +564,17 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Failed to merge tags: {e}")))?;
         Ok(true)
     }
+
+    /// Dismiss a supervisor finding (validation issue).
+    #[graphql(guard = "AdminGuard")]
+    async fn dismiss_finding(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let dismissed = writer
+            .dismiss_validation_issue(&id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to dismiss finding: {e}")))?;
+        Ok(dismissed)
+    }
 }
 
 fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {
@@ -642,6 +653,7 @@ fn spawn_scout_run(
             if let Err(e) = run_scout(&client, &config, &region_slug, cancel).await {
                 tracing::error!(error = %e, "Scout run failed");
             } else {
+                run_supervisor(&client, &config, &region_slug).await;
                 cache_store.reload(&client).await;
             }
         });
@@ -692,6 +704,42 @@ async fn run_scout(
     Ok(())
 }
 
+/// Run the supervisor after a successful scout run. Non-fatal on error.
+async fn run_supervisor(
+    client: &GraphClient,
+    config: &rootsignal_common::Config,
+    region_slug: &str,
+) {
+    let writer = rootsignal_graph::GraphWriter::new(client.clone());
+    let region = match writer.get_region(region_slug).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            warn!(region = region_slug, "Supervisor: region not found, skipping");
+            return;
+        }
+        Err(e) => {
+            warn!(region = region_slug, error = %e, "Supervisor: failed to load region, skipping");
+            return;
+        }
+    };
+
+    let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
+        Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
+
+    let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
+        client.clone(),
+        region,
+        config.anthropic_api_key.clone(),
+        notifier,
+    );
+
+    info!(region = region_slug, "Starting supervisor run");
+    match supervisor.run().await {
+        Ok(stats) => info!(region = region_slug, %stats, "Supervisor run complete"),
+        Err(e) => warn!(region = region_slug, error = %e, "Supervisor run failed"),
+    }
+}
+
 /// Start the background scout interval loop (called from main).
 pub fn start_scout_interval(
     client: GraphClient,
@@ -735,6 +783,7 @@ pub fn start_scout_interval(
                     if let Err(e) = run_scout(&client, &config, &region.slug, cancel).await {
                         tracing::error!(region = region.slug.as_str(), error = %e, "Scout interval run failed");
                     } else {
+                        run_supervisor(&client, &config, &region.slug).await;
                         cache_store.reload(&client).await;
                     }
                     break;

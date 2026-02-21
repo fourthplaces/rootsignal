@@ -9,6 +9,7 @@ import { SignalDetailPage } from "@/pages/SignalDetailPage";
 import { StoriesPage } from "@/pages/StoriesPage";
 import { StoryDetailPage } from "@/pages/StoryDetailPage";
 import { ActorsPage } from "@/pages/ActorsPage";
+import { FindingsPage } from "@/pages/FindingsPage";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="stories" element={<StoriesPage />} />
         <Route path="stories/:id" element={<StoryDetailPage />} />
         <Route path="actors" element={<ActorsPage />} />
+        <Route path="findings" element={<FindingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

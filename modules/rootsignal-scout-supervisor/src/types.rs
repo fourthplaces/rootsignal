@@ -6,7 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
     pub id: Uuid,
-    pub city: String,
+    pub region: String,
     pub issue_type: IssueType,
     pub severity: Severity,
     pub target_id: Uuid,
@@ -19,7 +19,7 @@ pub struct ValidationIssue {
 
 impl ValidationIssue {
     pub fn new(
-        city: &str,
+        region: &str,
         issue_type: IssueType,
         severity: Severity,
         target_id: Uuid,
@@ -29,7 +29,7 @@ impl ValidationIssue {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            city: city.to_string(),
+            region: region.to_string(),
             issue_type,
             severity,
             target_id,

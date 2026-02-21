@@ -13,7 +13,7 @@ use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdi
 
 #[derive(Debug, Serialize)]
 pub struct SupervisorReport {
-    pub city: String,
+    pub region: String,
     pub run_date: String,
     pub scout_run_id: String,
     pub signals_reviewed: u64,
@@ -39,7 +39,7 @@ pub fn save_report(city_slug: &str, output: &BatchReviewOutput) -> Result<PathBu
     let path = dir.join(format!("{date}-{scout_run_id}.json"));
 
     let report = SupervisorReport {
-        city: city_slug.to_string(),
+        region: city_slug.to_string(),
         run_date: date,
         scout_run_id: scout_run_id.to_string(),
         signals_reviewed: output.signals_reviewed,
