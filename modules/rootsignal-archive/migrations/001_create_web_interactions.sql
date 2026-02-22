@@ -1,7 +1,7 @@
 -- Web interactions archive: records every web fetch the scout makes.
 
 CREATE TABLE web_interactions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID NOT NULL DEFAULT gen_random_uuid(),
     run_id          UUID NOT NULL,
     city_slug       TEXT NOT NULL,
     kind            TEXT NOT NULL,    -- 'page', 'feed', 'search', 'social', 'pdf', 'raw'
@@ -16,7 +16,8 @@ CREATE TABLE web_interactions (
     fetched_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     duration_ms     INTEGER NOT NULL,
     error           TEXT,             -- null on success, error message on failure
-    metadata        JSONB             -- extensible: platform, limit, topics, etc.
+    metadata        JSONB,            -- extensible: platform, limit, topics, etc.
+    PRIMARY KEY (id, fetched_at)
 ) PARTITION BY RANGE (fetched_at);
 
 -- Initial partition (monthly)

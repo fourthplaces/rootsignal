@@ -235,6 +235,9 @@ impl Scout {
     }
 
     async fn run_inner(&self) -> Result<ScoutStats> {
+        // Ensure archive tables exist (idempotent)
+        self.archive.migrate().await?;
+
         let run_id = Uuid::new_v4().to_string();
         info!(run_id = run_id.as_str(), "Scout run started");
 
@@ -311,9 +314,30 @@ impl Scout {
         }
 
         // ================================================================
-        // 2b. Actor sources — inject known actor accounts with elevated priority
+        // 2b. Actor discovery — if no actors in region, discover from web pages
         // ================================================================
         let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
+        let actors_in_region = self
+            .writer
+            .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
+            .await
+            .unwrap_or_default();
+
+        if actors_in_region.is_empty() {
+            info!("No actors in region — running actor discovery");
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+                &self.writer,
+                self.archive.clone(),
+                &self.anthropic_api_key,
+                self.region.clone(),
+            );
+            let discovered = bootstrapper.discover_actor_pages().await;
+            info!(count = discovered.len(), "Actor discovery complete");
+        }
+
+        // ================================================================
+        // 2c. Actor sources — inject known actor accounts with elevated priority
+        // ================================================================
         let actor_pairs = match self
             .writer
             .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)

@@ -1,0 +1,363 @@
+{
+  "run_id": "3dd3e200-ea9f-4a3f-8228-801e1a58f351",
+  "region": "Twin Cities (Minneapolis-St. Paul, Minnesota)",
+  "started_at": "2026-02-21T14:47:43.191689Z",
+  "finished_at": "2026-02-21T14:48:25.489923Z",
+  "stats": {
+    "urls_scraped": 1,
+    "urls_unchanged": 1,
+    "urls_failed": 0,
+    "signals_extracted": 7,
+    "signals_deduplicated": 2,
+    "signals_stored": 1,
+    "social_media_posts": 0,
+    "expansion_queries_collected": 3,
+    "expansion_sources_created": 2
+  },
+  "events": [
+    {
+      "seq": 0,
+      "ts": "2026-02-21T14:47:43.477613Z",
+      "type": "reap_expired",
+      "gatherings": 0,
+      "needs": 0,
+      "stale": 0
+    },
+    {
+      "seq": 1,
+      "ts": "2026-02-21T14:47:55.970982Z",
+      "type": "bootstrap",
+      "sources_created": 66
+    },
+    {
+      "seq": 2,
+      "ts": "2026-02-21T14:47:56.002968Z",
+      "type": "search_query",
+      "query": "Minneapolis evictions crisis 2024",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Minneapolis evictions crisis 2024"
+    },
+    {
+      "seq": 3,
+      "ts": "2026-02-21T14:47:56.003008Z",
+      "type": "search_query",
+      "query": "St. Paul police accountability complaints",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "St. Paul police accountability complaints"
+    },
+    {
+      "seq": 4,
+      "ts": "2026-02-21T14:47:56.003024Z",
+      "type": "search_query",
+      "query": "Twin Cities water quality problems",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Twin Cities water quality problems"
+    },
+    {
+      "seq": 5,
+      "ts": "2026-02-21T14:47:56.003041Z",
+      "type": "search_query",
+      "query": "Minnesota utility shutoffs winter",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Minnesota utility shutoffs winter"
+    },
+    {
+      "seq": 6,
+      "ts": "2026-02-21T14:47:56.003061Z",
+      "type": "search_query",
+      "query": "Minneapolis affordable housing shortage",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Minneapolis affordable housing shortage"
+    },
+    {
+      "seq": 7,
+      "ts": "2026-02-21T14:47:56.003077Z",
+      "type": "search_query",
+      "query": "St. Paul school funding disparities",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "St. Paul school funding disparities"
+    },
+    {
+      "seq": 8,
+      "ts": "2026-02-21T14:47:56.003092Z",
+      "type": "search_query",
+      "query": "Twin Cities mental health crisis",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Twin Cities mental health crisis"
+    },
+    {
+      "seq": 9,
+      "ts": "2026-02-21T14:47:56.003107Z",
+      "type": "search_query",
+      "query": "Minnesota lead pipes contamination",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Minnesota lead pipes contamination"
+    },
+    {
+      "seq": 10,
+      "ts": "2026-02-21T14:48:15.956892Z",
+      "type": "scrape_url",
+      "url": "https://www.reddit.com/r/Minneapolis/comments/abc123/rent_increases/",
+      "strategy": "web",
+      "success": true,
+      "content_bytes": 2616
+    },
+    {
+      "seq": 11,
+      "ts": "2026-02-21T14:48:15.956898Z",
+      "type": "llm_extraction",
+      "source_url": "https://www.reddit.com/r/Minneapolis/comments/abc123/rent_increases/",
+      "content_chars": 2616,
+      "signals_extracted": 7,
+      "implied_queries": 3
+    },
+    {
+      "seq": 12,
+      "ts": "2026-02-21T14:48:19.760250Z",
+      "type": "signal_created",
+      "node_id": "df02e90a-e6ba-44b3-a8d4-4a875cf5b626",
+      "signal_type": "Tension",
+      "title": "Rapid rent increases outpacing income in Minneapolis",
+      "confidence": 0.15000000596046448,
+      "source_url": "https://www.reddit.com/r/Minneapolis/comments/abc123/rent_increases/"
+    },
+    {
+      "seq": 13,
+      "ts": "2026-02-21T14:48:20.045009Z",
+      "type": "signal_deduplicated",
+      "signal_type": "Gathering",
+      "title": "Minneapolis Highrise Representative Council — rent increase response meeting",
+      "matched_id": "df02e90a-e6ba-44b3-a8d4-4a875cf5b626",
+      "similarity": 0.9556965231895447,
+      "action": "refresh"
+    },
+    {
+      "seq": 14,
+      "ts": "2026-02-21T14:48:20.067802Z",
+      "type": "signal_deduplicated",
+      "signal_type": "Notice",
+      "title": "Minneapolis rent stabilization ordinance — buildings before 2004, 10+ units",
+      "matched_id": "df02e90a-e6ba-44b3-a8d4-4a875cf5b626",
+      "similarity": 0.9446398019790649,
+      "action": "refresh"
+    },
+    {
+      "seq": 15,
+      "ts": "2026-02-21T14:48:20.564497Z",
+      "type": "search_query",
+      "query": "mutual aid networks Minneapolis St Paul Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "mutual aid networks Minneapolis St Paul Minnesota"
+    },
+    {
+      "seq": 16,
+      "ts": "2026-02-21T14:48:20.564506Z",
+      "type": "search_query",
+      "query": "legal aid organizations Twin Cities Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "legal aid organizations Twin Cities Minnesota"
+    },
+    {
+      "seq": 17,
+      "ts": "2026-02-21T14:48:20.564511Z",
+      "type": "search_query",
+      "query": "community food pantries kitchens Minneapolis St Paul",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "community food pantries kitchens Minneapolis St Paul"
+    },
+    {
+      "seq": 18,
+      "ts": "2026-02-21T14:48:20.564516Z",
+      "type": "search_query",
+      "query": "housing assistance shelter programs Twin Cities",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "housing assistance shelter programs Twin Cities"
+    },
+    {
+      "seq": 19,
+      "ts": "2026-02-21T14:48:20.564521Z",
+      "type": "search_query",
+      "query": "community health centers Minneapolis St Paul Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "community health centers Minneapolis St Paul Minnesota"
+    },
+    {
+      "seq": 20,
+      "ts": "2026-02-21T14:48:20.564526Z",
+      "type": "search_query",
+      "query": "mental health services nonprofits Twin Cities",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "mental health services nonprofits Twin Cities"
+    },
+    {
+      "seq": 21,
+      "ts": "2026-02-21T14:48:20.564530Z",
+      "type": "search_query",
+      "query": "environmental restoration groups Minneapolis Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "environmental restoration groups Minneapolis Minnesota"
+    },
+    {
+      "seq": 22,
+      "ts": "2026-02-21T14:48:20.564540Z",
+      "type": "search_query",
+      "query": "disaster preparedness community resilience Twin Cities Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "disaster preparedness community resilience Twin Cities Minnesota"
+    },
+    {
+      "seq": 23,
+      "ts": "2026-02-21T14:48:20.564545Z",
+      "type": "search_query",
+      "query": "volunteer opportunities Minneapolis St Paul organizations",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "volunteer opportunities Minneapolis St Paul organizations"
+    },
+    {
+      "seq": 24,
+      "ts": "2026-02-21T14:48:20.564549Z",
+      "type": "search_query",
+      "query": "community organizing networks Twin Cities Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "community organizing networks Twin Cities Minnesota"
+    },
+    {
+      "seq": 25,
+      "ts": "2026-02-21T14:48:20.564554Z",
+      "type": "search_query",
+      "query": "food banks Twin Cities Minnesota nonprofits",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "food banks Twin Cities Minnesota nonprofits"
+    },
+    {
+      "seq": 26,
+      "ts": "2026-02-21T14:48:20.564558Z",
+      "type": "search_query",
+      "query": "tenant rights advocacy Minneapolis St Paul",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "tenant rights advocacy Minneapolis St Paul"
+    },
+    {
+      "seq": 27,
+      "ts": "2026-02-21T14:48:20.564563Z",
+      "type": "search_query",
+      "query": "homeless services Twin Cities Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "homeless services Twin Cities Minnesota"
+    },
+    {
+      "seq": 28,
+      "ts": "2026-02-21T14:48:20.564567Z",
+      "type": "search_query",
+      "query": "environmental justice organizations Minneapolis",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "environmental justice organizations Minneapolis"
+    },
+    {
+      "seq": 29,
+      "ts": "2026-02-21T14:48:20.564572Z",
+      "type": "search_query",
+      "query": "community health workers Twin Cities",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "community health workers Twin Cities"
+    },
+    {
+      "seq": 30,
+      "ts": "2026-02-21T14:48:20.564576Z",
+      "type": "search_query",
+      "query": "mutual aid COVID Twin Cities",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "mutual aid COVID Twin Cities"
+    },
+    {
+      "seq": 31,
+      "ts": "2026-02-21T14:48:20.564581Z",
+      "type": "search_query",
+      "query": "grassroots organizing groups Minneapolis St Paul",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "grassroots organizing groups Minneapolis St Paul"
+    },
+    {
+      "seq": 32,
+      "ts": "2026-02-21T14:48:20.564586Z",
+      "type": "search_query",
+      "query": "housing first programs Twin Cities Minnesota",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "housing first programs Twin Cities Minnesota"
+    },
+    {
+      "seq": 33,
+      "ts": "2026-02-21T14:48:20.564591Z",
+      "type": "search_query",
+      "query": "mental health nonprofits Minneapolis St Paul",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "mental health nonprofits Minneapolis St Paul"
+    },
+    {
+      "seq": 34,
+      "ts": "2026-02-21T14:48:20.564596Z",
+      "type": "search_query",
+      "query": "site:gofundme.com/f/ Twin Cities (Minneapolis-St. Paul, Minnesota)",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "site:gofundme.com/f/ Twin Cities (Minneapolis-St. Paul, Minnesota)"
+    },
+    {
+      "seq": 35,
+      "ts": "2026-02-21T14:48:20.564600Z",
+      "type": "search_query",
+      "query": "Rent stabilization policy enforcement, affordable housing preservation, tenant protections, stronger anti-retaliation measures, expansion of rent control to post-2004 buildings, policy requiring affordable units in new construction resources services Twin Cities (Minneapolis-St. Paul, Minnesota)",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Rent stabilization policy enforcement, affordable housing preservation, tenant protections, stronger anti-retaliation measures, expansion of rent control to post-2004 buildings, policy requiring affordable units in new construction resources services Twin Cities (Minneapolis-St. Paul, Minnesota)"
+    },
+    {
+      "seq": 36,
+      "ts": "2026-02-21T14:48:23.941243Z",
+      "type": "expansion_source_created",
+      "canonical_key": "Minneapolis rent stabilization ordinance enforcement 2026",
+      "query": "Minneapolis rent stabilization ordinance enforcement 2026"
+    },
+    {
+      "seq": 37,
+      "ts": "2026-02-21T14:48:24.955800Z",
+      "type": "expansion_source_created",
+      "canonical_key": "Twin Cities renter advocacy groups housing crisis",
+      "query": "Twin Cities renter advocacy groups housing crisis"
+    },
+    {
+      "seq": 38,
+      "ts": "2026-02-21T14:48:25.489896Z",
+      "type": "budget_checkpoint",
+      "spent_cents": 0,
+      "remaining_cents": 18446744073709551615
+    }
+  ]
+}

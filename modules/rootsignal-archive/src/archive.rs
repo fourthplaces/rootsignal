@@ -43,6 +43,10 @@ pub trait FetchBackend: Send + Sync {
     /// Resolve semantics for already-fetched content.
     async fn resolve_semantics(&self, content: &FetchedContent) -> Result<ContentSemantics>;
 
+    /// Run database migrations. Default is a no-op for backends without storage.
+    async fn migrate(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Extension trait that adds `.fetch(target)` to any `FetchBackend`.
@@ -747,6 +751,10 @@ impl Archive {
 impl FetchBackend for Archive {
     async fn fetch_content(&self, target: &str) -> Result<FetchedContent> {
         self.do_fetch(target).await
+    }
+
+    async fn migrate(&self) -> Result<()> {
+        self.store.migrate().await
     }
 
     async fn resolve_semantics(&self, content: &FetchedContent) -> Result<ContentSemantics> {
