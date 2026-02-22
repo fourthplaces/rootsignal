@@ -7,22 +7,25 @@ use rootsignal_graph::GraphClient;
 
 /// Detect echo signatures — high signal volume with low type/entity diversity.
 ///
-/// Computes echo_score for each story:
+/// Computes echo_score for each situation:
 ///   echo_score = 1.0 - (type_diversity * entity_diversity)
-/// where both are normalized to [0, 1]. A score near 1.0 means the story
+/// where both are normalized to [0, 1]. A score near 1.0 means the situation
 /// looks like a single-source echo chamber; near 0.0 means diverse corroboration.
 ///
-/// Returns the number of stories flagged (echo_score > threshold).
+/// Returns the number of situations flagged (echo_score > threshold).
 pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoStats> {
     let mut stats = EchoStats::default();
 
-    // Find stories with enough signals to evaluate
+    // Find situations with enough signals to evaluate
     let q = query(
-        "MATCH (s:Story)-[:CONTAINS]->(sig)
+        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
          WITH s, count(sig) AS signal_count,
               count(DISTINCT labels(sig)[0]) AS type_count
          WHERE signal_count >= 5
-         OPTIONAL MATCH (s)-[:CONTAINS]->(sig2)-[:ACTED_IN]->(a:Actor)
+         OPTIONAL MATCH (sig2)-[:EVIDENCES]->(s) WHERE (sig2)-[:ACTED_IN]->(:Actor)
+         WITH s, signal_count, type_count,
+              count(DISTINCT sig2) AS sigs_with_actors
+         OPTIONAL MATCH (sig3)-[:EVIDENCES]->(s), (sig3)-[:ACTED_IN]->(a:Actor)
          WITH s, signal_count, type_count,
               count(DISTINCT a.id) AS entity_count
          RETURN s.id AS id, s.headline AS headline,
@@ -43,8 +46,8 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
 
         let echo_score = compute_echo_score(signal_count, type_count, entity_count);
 
-        // Write echo_score to the story node
-        let update = query("MATCH (s:Story {id: $id}) SET s.echo_score = $score")
+        // Write echo_score to the situation node
+        let update = query("MATCH (s:Situation {id: $id}) SET s.echo_score = $score")
             .param("id", id.to_string())
             .param("score", echo_score);
 
@@ -58,7 +61,7 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
         if echo_score > threshold {
             stats.echoes_flagged += 1;
             info!(
-                story_id = %id,
+                situation_id = %id,
                 headline = row.get::<String>("headline").unwrap_or_default().as_str(),
                 signal_count,
                 type_count,

@@ -101,15 +101,15 @@ async fn triage_misclassification(
     Ok(suspects)
 }
 
-/// Stories whose constituent signals have few shared actors and many different types.
-/// Suggests the clustering grouped semantically similar but narratively unrelated signals.
+/// Situations whose constituent signals have few shared actors and many different types.
+/// Suggests the causal grouping may have grouped unrelated signals.
 async fn triage_incoherent_stories(
     client: &GraphClient,
     from_ts: &str,
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (s:Story)-[:CONTAINS]->(sig)
+        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
          WHERE s.last_updated >= datetime($from) AND s.last_updated <= datetime($to)
          WITH s, collect(sig) AS signals,
               count(DISTINCT labels(sig)[0]) AS type_count
@@ -120,7 +120,7 @@ async fn triage_incoherent_stories(
               count(DISTINCT a.id) AS actor_count,
               count(sig2) AS signals_with_actors
          WHERE actor_count < 2 OR (signals_with_actors * 1.0 / size(signals)) < 0.3
-         RETURN s.id AS id, s.headline AS title, s.summary AS summary,
+         RETURN s.id AS id, s.headline AS title, s.lede AS summary,
                 type_count, actor_count, size(signals) AS signal_count",
     )
     .param("from", from_ts.to_string())
@@ -140,7 +140,7 @@ async fn triage_incoherent_stories(
 
         // Fetch signal titles for LLM context
         let signals_q = query(
-            "MATCH (s:Story {id: $id})-[:CONTAINS]->(sig)
+            "MATCH (sig)-[:EVIDENCES]->(s:Situation {id: $id})
              RETURN labels(sig)[0] AS label, sig.title AS title, sig.summary AS summary
              LIMIT 20",
         )
@@ -162,7 +162,7 @@ async fn triage_incoherent_stories(
 
         suspects.push(Suspect {
             id,
-            label: "Story".to_string(),
+            label: "Situation".to_string(),
             title: row.get("title").unwrap_or_default(),
             summary: row.get("summary").unwrap_or_default(),
             check_type: SuspectType::IncoherentStory,
@@ -171,7 +171,7 @@ async fn triage_incoherent_stories(
     }
 
     if !suspects.is_empty() {
-        info!(count = suspects.len(), "Incoherent story suspects found");
+        info!(count = suspects.len(), "Incoherent situation suspects found");
     }
     Ok(suspects)
 }
@@ -295,20 +295,21 @@ async fn triage_near_duplicates(
     Ok(suspects)
 }
 
-/// Signals with very low confidence that appear in confirmed stories.
+/// Signals with very low confidence that appear in active situations (temperature >= 0.3).
 async fn triage_low_confidence_high_visibility(
     client: &GraphClient,
     from_ts: &str,
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (s:Story {status: 'confirmed'})-[:CONTAINS]->(sig)
+        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
          WHERE sig.extracted_at >= datetime($from) AND sig.extracted_at <= datetime($to)
            AND sig.confidence < 0.3
+           AND s.temperature >= 0.3
          RETURN sig.id AS id, labels(sig)[0] AS label,
                 sig.title AS title, sig.summary AS summary,
                 sig.confidence AS confidence,
-                s.headline AS story_headline",
+                s.headline AS situation_headline",
     )
     .param("from", from_ts.to_string())
     .param("to", to_ts.to_string());
@@ -322,9 +323,9 @@ async fn triage_low_confidence_high_visibility(
             Err(_) => continue,
         };
         let confidence: f64 = row.get("confidence").unwrap_or(0.0);
-        let story_headline: String = row.get("story_headline").unwrap_or_default();
+        let situation_headline: String = row.get("situation_headline").unwrap_or_default();
 
-        let context = format!("Confidence: {confidence:.2}\nIn confirmed story: {story_headline}");
+        let context = format!("Confidence: {confidence:.2}\nIn active situation: {situation_headline}");
 
         suspects.push(Suspect {
             id,

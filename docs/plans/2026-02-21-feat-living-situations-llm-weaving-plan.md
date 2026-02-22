@@ -1097,13 +1097,13 @@ type Mutation {
 
 **Migration steps:**
 - [ ] Batch-reprocess existing signals through SituationWeaver
-- [ ] Archive Story nodes: relabel `Story` → `LegacyStory`, keep for rollback
-- [ ] Create EVIDENCES edges from existing CONTAINS edges (reverse direction)
+- [x] Archive Story nodes: relabel `Story` → `LegacyStory`, keep for rollback
+- [x] Create EVIDENCES edges from existing CONTAINS edges (reverse direction)
 - [ ] Rewrite all audited CONTAINS queries to use EVIDENCES
-- [ ] Remove StoryWeaver from scout pipeline
-- [ ] Replace `StoryBySignalLoader` with `SituationsBySignalLoader`
-- [ ] Migrate supervisor checks: triage (incoherent story → incoherent situation), echo score (recompute against situations), batch review (story context → situation context), promote_ready_stories → promote_ready_situations
-- [ ] Migrate CLI dump (`main.rs`): `StoryDump` → `SituationDump`, `row_to_story` → `row_to_situation`, ungrouped signal query
+- [x] Remove StoryWeaver from scout pipeline
+- [x] Replace `StoryBySignalLoader` with `SituationsBySignalLoader`
+- [x] Migrate supervisor checks: triage (incoherent story → incoherent situation), echo score (recompute against situations), batch review (story context → situation context), promote_ready_stories → promote_ready_situations
+- [x] Migrate CLI dump (`main.rs`): `StoryDump` → `SituationDump`, `row_to_story` → `row_to_situation`, ungrouped signal query
 - [ ] Update all remaining references: story → situation
 
 **Files:**
