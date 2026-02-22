@@ -639,6 +639,62 @@ impl Scout {
         self.check_cancelled()?;
 
         // ================================================================
+        // 8b. Situation-driven source boost
+        //     Hot situations (temperature >= 0.6) get a source weight bonus so their
+        //     related sources are scraped more frequently. Circuit breaker: skip if
+        //     the situation is SENSITIVE or RESTRICTED.
+        // ================================================================
+        match self.writer.get_situation_landscape(20).await {
+            Ok(situations) => {
+                let hot: Vec<_> = situations
+                    .iter()
+                    .filter(|s| s.temperature >= 0.6 && s.sensitivity != "SENSITIVE" && s.sensitivity != "RESTRICTED")
+                    .collect();
+                if !hot.is_empty() {
+                    info!(count = hot.len(), "Hot situations boosting source cadence");
+                    for sit in &hot {
+                        // Boost sources that contributed signals to this situation
+                        if let Err(e) = self
+                            .writer
+                            .boost_sources_for_situation_headline(&sit.headline, 1.2)
+                            .await
+                        {
+                            warn!(error = %e, headline = sit.headline.as_str(), "Failed to boost sources for hot situation");
+                        }
+                    }
+                }
+
+                let fuzzy: Vec<_> = situations
+                    .iter()
+                    .filter(|s| s.clarity == "Fuzzy" && s.temperature >= 0.3)
+                    .collect();
+                if !fuzzy.is_empty() {
+                    info!(
+                        count = fuzzy.len(),
+                        "Fuzzy situations identified for investigation: {}",
+                        fuzzy.iter().map(|s| s.headline.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                }
+            }
+            Err(e) => warn!(error = %e, "Failed to fetch situation landscape for feedback"),
+        }
+
+        self.check_cancelled()?;
+
+        // ================================================================
+        // 8c. Situation-triggered curiosity re-investigation
+        //     Emerging/fuzzy situations queue their signals for re-investigation
+        //     by the tension linker, with a 7-day cooldown per situation.
+        // ================================================================
+        match self.writer.trigger_situation_curiosity().await {
+            Ok(0) => {}
+            Ok(n) => info!(count = n, "Situations triggered curiosity re-investigation"),
+            Err(e) => warn!(error = %e, "Failed to trigger situation curiosity"),
+        }
+
+        self.check_cancelled()?;
+
+        // ================================================================
         // 9. Signal Expansion — create sources from implied queries
         // ================================================================
         let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);

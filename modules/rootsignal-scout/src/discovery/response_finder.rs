@@ -15,7 +15,7 @@ use rootsignal_common::{
     AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
     NodeMeta, NodeType, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
 };
-use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic};
+use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 
 use rootsignal_archive::FetchBackend;
 
@@ -174,6 +174,7 @@ Include the event date when known. Past events are not useful."
 fn investigation_user_prompt(
     target: &ResponseFinderTarget,
     existing: &[ResponseHeuristic],
+    situation_context: &str,
 ) -> String {
     let mut prompt = format!(
         "TENSION: {}\nSeverity: {}\nSummary: {}",
@@ -201,7 +202,39 @@ fn investigation_user_prompt(
         );
     }
 
+    if !situation_context.is_empty() {
+        prompt.push_str(&format!(
+            "\n\nSITUATION CONTEXT (causal clusters this tension may be part of):\n{situation_context}\n\n\
+             Prioritize finding responses that address the root causes identified in these situations, \
+             especially where response gaps exist (low dispatch counts)."
+        ));
+    }
+
     prompt
+}
+
+fn format_situation_context(situations: &[SituationBrief]) -> String {
+    if situations.is_empty() {
+        return String::new();
+    }
+    situations
+        .iter()
+        .filter(|s| s.temperature >= 0.2) // Only include warm+ situations
+        .map(|s| {
+            let gap_note = if s.dispatch_count == 0 {
+                " [NO RESPONSES YET]"
+            } else if s.dispatch_count < s.signal_count / 3 {
+                " [RESPONSE GAP]"
+            } else {
+                ""
+            };
+            format!(
+                "- {} [{}] (temp={:.2}, {} signals, {} dispatches){gap_note}",
+                s.headline, s.arc, s.temperature, s.signal_count, s.dispatch_count,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 const STRUCTURING_SYSTEM: &str = "\
@@ -326,13 +359,22 @@ impl<'a> ResponseFinder<'a> {
 
         info!(count = targets.len(), "Response scout targets selected");
 
+        // Load situation landscape — unmet response gaps from situations guide investigation
+        let situation_context = match self.writer.get_situation_landscape(15).await {
+            Ok(situations) => format_situation_context(&situations),
+            Err(e) => {
+                warn!(error = %e, "Failed to load situation landscape for response finder");
+                String::new()
+            }
+        };
+
         for target in &targets {
             if self.cancelled.load(Ordering::Relaxed) {
                 info!("Response finder cancelled");
                 break;
             }
 
-            match self.investigate_tension(target, &mut stats).await {
+            match self.investigate_tension(target, &situation_context, &mut stats).await {
                 Ok(()) => {
                     stats.targets_investigated += 1;
                 }
@@ -362,6 +404,7 @@ impl<'a> ResponseFinder<'a> {
     async fn investigate_tension(
         &self,
         target: &ResponseFinderTarget,
+        situation_context: &str,
         stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         // Fetch existing response heuristics
@@ -372,7 +415,7 @@ impl<'a> ResponseFinder<'a> {
             .unwrap_or_default();
 
         let system = investigation_system_prompt(&self.region.name);
-        let user = investigation_user_prompt(target, &existing);
+        let user = investigation_user_prompt(target, &existing, situation_context);
 
         // Build a tracked agent for this investigation
         let (claude, visited_urls) = self.build_tracked_agent();

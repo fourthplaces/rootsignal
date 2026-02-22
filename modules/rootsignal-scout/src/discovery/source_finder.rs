@@ -9,8 +9,8 @@ use uuid::Uuid;
 use ai_client::claude::Claude;
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
-    ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SourceBrief, StoryBrief,
-    TensionResponseShape, UnmetTension,
+    ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SituationBrief, SourceBrief,
+    StoryBrief, TensionResponseShape, UnmetTension,
 };
 
 use crate::budget::{BudgetTracker, OperationCost};
@@ -45,6 +45,7 @@ impl std::fmt::Display for SourceFinderStats {
 pub struct DiscoveryBriefing {
     pub tensions: Vec<UnmetTension>,
     pub stories: Vec<StoryBrief>,
+    pub situations: Vec<SituationBrief>,
     pub signal_counts: SignalTypeCounts,
     pub successes: Vec<SourceBrief>,
     pub failures: Vec<SourceBrief>,
@@ -58,7 +59,7 @@ pub struct DiscoveryBriefing {
 impl DiscoveryBriefing {
     /// True when the graph is too sparse for LLM discovery to be useful.
     pub fn is_cold_start(&self) -> bool {
-        self.tensions.len() < 3 && self.stories.is_empty()
+        self.tensions.len() < 3 && self.stories.is_empty() && self.situations.is_empty()
     }
 
     /// Render the briefing as structured natural language for the LLM.
@@ -141,9 +142,33 @@ impl DiscoveryBriefing {
             out.push('\n');
         }
 
-        // Stories
+        // Situation Landscape
+        if !self.situations.is_empty() {
+            out.push_str("## SITUATION LANDSCAPE\n");
+            out.push_str("Living situations — causal groupings of signals around a root cause.\n");
+            out.push_str("Fuzzy situations need more evidence. Hot situations may need response discovery.\n\n");
+            for (i, s) in self.situations.iter().enumerate() {
+                let loc = s.location_name.as_deref().unwrap_or("unknown location");
+                out.push_str(&format!(
+                    "{}. \"{}\" [{loc}]\n   arc={}, temp={:.2}, clarity={}, signals={}, tensions={}\n",
+                    i + 1,
+                    s.headline,
+                    s.arc,
+                    s.temperature,
+                    s.clarity,
+                    s.signal_count,
+                    s.tension_count,
+                ));
+                if s.sensitivity == "SENSITIVE" || s.sensitivity == "RESTRICTED" {
+                    out.push_str("   ⚠ SENSITIVE — handle with care in discovery\n");
+                }
+            }
+            out.push('\n');
+        }
+
+        // Legacy Stories (during transition)
         if !self.stories.is_empty() {
-            out.push_str("## STORY LANDSCAPE\n");
+            out.push_str("## STORY LANDSCAPE (legacy)\n");
             for (i, s) in self.stories.iter().enumerate() {
                 let arc = s.arc.as_deref().unwrap_or("unknown");
                 out.push_str(&format!(
@@ -835,6 +860,12 @@ impl<'a> SourceFinder<'a> {
             .await
             .map_err(|e| anyhow::anyhow!("get_story_landscape: {e}"))?;
 
+        let situations = self
+            .writer
+            .get_situation_landscape(10)
+            .await
+            .map_err(|e| anyhow::anyhow!("get_situation_landscape: {e}"))?;
+
         let signal_counts = self
             .writer
             .get_signal_type_counts()
@@ -880,6 +911,7 @@ impl<'a> SourceFinder<'a> {
         Ok(DiscoveryBriefing {
             tensions,
             stories,
+            situations,
             signal_counts,
             successes,
             failures,
@@ -1165,6 +1197,7 @@ mod tests {
             region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
+            situations: vec![],
             response_shapes: vec![],
         }
     }
@@ -1300,6 +1333,7 @@ mod tests {
         let briefing = DiscoveryBriefing {
             tensions: vec![],
             stories: vec![],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![],
@@ -1320,6 +1354,7 @@ mod tests {
                 make_tension("Tension 2", "medium", None, true),
             ],
             stories: vec![],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![],
@@ -1349,6 +1384,7 @@ mod tests {
                 make_story("S1", "Emerging", 0.5, 3, "Tension", 2),
                 make_story("S2", "Growing", 0.8, 6, "Need", 3),
             ],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![],
@@ -1368,6 +1404,7 @@ mod tests {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![
                 make_source_brief(
@@ -1406,6 +1443,7 @@ mod tests {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![make_source_brief(
@@ -1434,6 +1472,7 @@ mod tests {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![make_source_brief("good query", 10, 0.7, 0, "worked", true)],
             failures: vec![make_source_brief("bad query", 0, 0.2, 8, "failed", false)],
@@ -1468,6 +1507,7 @@ mod tests {
                 make_tension("Met tension B", "medium", Some("help B"), false),
             ],
             stories: vec![],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![],
@@ -1506,6 +1546,7 @@ mod tests {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
             stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
+            situations: vec![],
             signal_counts: SignalTypeCounts {
                 gatherings: 10,
                 aids: 3,
@@ -1774,6 +1815,7 @@ mod tests {
                 0.0,
             )],
             stories: vec![],
+            situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
             failures: vec![],

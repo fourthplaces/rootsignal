@@ -2567,6 +2567,96 @@ impl GraphWriter {
         Ok(results)
     }
 
+    /// Active situations by temperature — gives the LLM a sense of what causal situations exist.
+    pub async fn get_situation_landscape(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<SituationBrief>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Situation)
+             WHERE s.temperature > 0.1
+             RETURN s.headline AS headline, s.arc AS arc, s.temperature AS temperature,
+                    s.clarity AS clarity, s.signal_count AS signal_count,
+                    s.tension_count AS tension_count, s.dispatch_count AS dispatch_count,
+                    s.location_name AS location_name, s.sensitivity AS sensitivity
+             ORDER BY s.temperature DESC LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            results.push(SituationBrief {
+                headline: row.get("headline").unwrap_or_default(),
+                arc: row.get("arc").unwrap_or_default(),
+                temperature: row.get("temperature").unwrap_or(0.0),
+                clarity: row.get("clarity").unwrap_or_default(),
+                signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                tension_count: row.get::<i64>("tension_count").unwrap_or(0) as u32,
+                dispatch_count: row.get::<i64>("dispatch_count").unwrap_or(0) as u32,
+                location_name: {
+                    let name: String = row.get("location_name").unwrap_or_default();
+                    if name.is_empty() { None } else { Some(name) }
+                },
+                sensitivity: row.get("sensitivity").unwrap_or_default(),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Boost source weights for sources that contributed signals evidencing a hot situation.
+    /// The boost is multiplicative (e.g. factor=1.2 means 20% increase), capped at 5.0.
+    pub async fn boost_sources_for_situation_headline(
+        &self,
+        headline: &str,
+        factor: f64,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (sig)-[:EVIDENCES]->(s:Situation {headline: $headline})
+             WITH collect(DISTINCT sig.source_url) AS urls
+             UNWIND urls AS url
+             MATCH (src:Source {active: true})
+             WHERE src.url = url AND src.weight IS NOT NULL
+             SET src.weight = CASE WHEN src.weight * $factor > 5.0 THEN 5.0 ELSE src.weight * $factor END",
+        )
+        .param("headline", headline)
+        .param("factor", factor);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Queue signals from emerging/fuzzy situations for re-investigation by the tension linker.
+    /// Uses a 7-day cooldown per situation to avoid repeated re-triggering.
+    /// Returns the number of signals queued.
+    pub async fn trigger_situation_curiosity(
+        &self,
+    ) -> Result<u32, neo4rs::Error> {
+        // Find situations that are emerging or fuzzy, haven't been curiosity-triggered in 7 days
+        let q = query(
+            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+             WHERE (s.arc = 'emerging' OR s.clarity = 'Fuzzy')
+               AND s.temperature >= 0.3
+               AND s.sensitivity <> 'SENSITIVE' AND s.sensitivity <> 'RESTRICTED'
+               AND (s.curiosity_triggered_at IS NULL
+                    OR datetime(s.curiosity_triggered_at) < datetime() - duration('P7D'))
+             WITH s, collect(sig) AS signals
+             LIMIT 5
+             UNWIND signals AS sig
+             WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
+               AND NOT sig:Tension
+             SET sig.curiosity_investigated = NULL
+             WITH DISTINCT s
+             SET s.curiosity_triggered_at = datetime()
+             RETURN count(s) AS triggered",
+        );
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("triggered").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Aggregate counts of each active signal type. Reveals systemic imbalances.
     pub async fn get_signal_type_counts(
         &self,
@@ -4534,6 +4624,20 @@ pub struct StoryBrief {
     pub type_diversity: u32,
     pub dominant_type: String,
     pub source_count: u32,
+}
+
+/// A brief summary of a situation for the discovery briefing.
+#[derive(Debug, Clone)]
+pub struct SituationBrief {
+    pub headline: String,
+    pub arc: String,
+    pub temperature: f64,
+    pub clarity: String,
+    pub signal_count: u32,
+    pub tension_count: u32,
+    pub dispatch_count: u32,
+    pub location_name: Option<String>,
+    pub sensitivity: String,
 }
 
 /// Aggregate counts of each signal type.
