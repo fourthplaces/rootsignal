@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use apify_client::ApifyClient;
+use chrono::{DateTime, Utc};
 use tracing::info;
 use uuid::Uuid;
 
@@ -67,7 +68,9 @@ impl TikTokService {
                         author: p.author_meta.and_then(|a| a.name),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: p.create_time_iso.as_deref()
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&Utc)),
                         permalink: p.web_video_url,
                         mentions,
                         hashtags,
@@ -127,7 +130,9 @@ impl TikTokService {
                         text,
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: p.create_time_iso.as_deref()
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&Utc)),
                         permalink: p.web_video_url,
                     },
                     files,
@@ -177,7 +182,9 @@ impl TikTokService {
                         author: p.author_meta.and_then(|a| a.name),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: p.create_time_iso.as_deref()
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&Utc)),
                         permalink: p.web_video_url,
                         mentions,
                         hashtags,
