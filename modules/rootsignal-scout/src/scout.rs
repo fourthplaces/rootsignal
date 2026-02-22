@@ -114,7 +114,7 @@ pub struct Scout {
     graph_client: GraphClient,
     writer: GraphWriter,
     extractor: Box<dyn SignalExtractor>,
-    embedder: Box<dyn TextEmbedder>,
+    embedder: Arc<dyn TextEmbedder>,
     archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
     region: ScoutScope,
@@ -171,7 +171,7 @@ impl Scout {
                 region.center_lat,
                 region.center_lng,
             )),
-            embedder: Box::new(crate::embedder::Embedder::new(voyage_api_key)),
+            embedder: Arc::new(crate::embedder::Embedder::new(voyage_api_key)),
             archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
@@ -184,7 +184,7 @@ impl Scout {
     pub fn new_for_test(
         graph_client: GraphClient,
         extractor: Box<dyn SignalExtractor>,
-        embedder: Box<dyn TextEmbedder>,
+        embedder: Arc<dyn TextEmbedder>,
         archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
         region: ScoutScope,
@@ -634,6 +634,26 @@ impl Scout {
         match weaver.run(has_weave_budget).await {
             Ok(weave_stats) => info!("{weave_stats}"),
             Err(e) => warn!(error = %e, "Story weaving failed (non-fatal)"),
+        }
+
+        self.check_cancelled()?;
+
+        // ================================================================
+        // 8b. Situation Weaving (assigns signals to living situations)
+        // ================================================================
+        info!("Starting situation weaving...");
+        let situation_weaver = rootsignal_graph::SituationWeaver::new(
+            self.graph_client.clone(),
+            &self.anthropic_api_key,
+            Arc::clone(&self.embedder),
+            self.region.clone(),
+        );
+        let has_situation_budget = self
+            .budget
+            .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
+        match situation_weaver.run(&run_id, has_situation_budget).await {
+            Ok(sit_stats) => info!("{sit_stats}"),
+            Err(e) => warn!(error = %e, "Situation weaving failed (non-fatal)"),
         }
 
         self.check_cancelled()?;
