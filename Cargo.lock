@@ -3584,6 +3584,7 @@ dependencies = [
  "rootsignal-archive",
  "rootsignal-common",
  "rootsignal-graph",
+ "rootsignal-scout-supervisor",
  "schemars 0.8.22",
  "serde",
  "serde_json",

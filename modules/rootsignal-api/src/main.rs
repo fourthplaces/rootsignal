@@ -234,10 +234,20 @@ async fn main() -> Result<()> {
 
         use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
         use rootsignal_scout::workflows::actor_discovery::{ActorDiscoveryWorkflow, ActorDiscoveryWorkflowImpl};
+        use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
+        use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
+        use rootsignal_scout::workflows::situation_weaver::{SituationWeaverWorkflow, SituationWeaverWorkflowImpl};
+        use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
+        use rootsignal_scout::workflows::full_run::{FullScoutRunWorkflow, FullScoutRunWorkflowImpl};
 
         let endpoint = builder
             .bind(BootstrapWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(ActorDiscoveryWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(ScrapeWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(SynthesisWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(SituationWeaverWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .build();
 
         let restate_addr = format!("0.0.0.0:{restate_port}");

@@ -8,6 +8,11 @@
 
 pub mod actor_discovery;
 pub mod bootstrap;
+pub mod full_run;
+pub mod scrape;
+pub mod situation_weaver;
+pub mod supervisor;
+pub mod synthesis;
 pub mod types;
 
 use std::sync::Arc;
