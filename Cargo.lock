@@ -3263,6 +3263,7 @@ dependencies = [
 name = "rootsignal-api"
 version = "0.1.0"
 dependencies = [
+ "ai-client",
  "anyhow",
  "async-graphql",
  "async-graphql-axum",
@@ -3277,6 +3278,7 @@ dependencies = [
  "rootsignal-graph",
  "rootsignal-scout",
  "rootsignal-scout-supervisor",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "sha2",
