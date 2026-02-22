@@ -2846,6 +2846,7 @@ impl GraphWriter {
              WITH s, collect(sig) AS signals
              LIMIT 5
              UNWIND signals AS sig
+             WITH s, sig
              WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
                AND NOT sig:Tension
              SET sig.curiosity_investigated = NULL

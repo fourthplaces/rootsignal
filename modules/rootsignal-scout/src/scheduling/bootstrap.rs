@@ -8,7 +8,7 @@ use uuid::Uuid;
 use rootsignal_common::{ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::{FetchBackend, FetchBackendExt};
+use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
 use crate::sources;
 
@@ -92,8 +92,79 @@ impl<'a> Bootstrapper<'a> {
             }
         }
 
+        // Step 4: Discover actor pages from web search
+        let actor_pages = self.discover_actor_pages().await;
+        info!(actors_discovered = actor_pages.len(), "Actor page discovery complete");
+        for (id, name) in &actor_pages {
+            info!(actor_id = %id, name = name.as_str(), "Discovered actor from page");
+        }
+
         info!(sources_created, "Cold start bootstrap complete");
         Ok(sources_created)
+    }
+
+    /// Search for organization pages (Linktree, community orgs) and create actors from them.
+    /// Returns list of (actor_id, name) for logging.
+    pub async fn discover_actor_pages(&self) -> Vec<(Uuid, String)> {
+        // Use the first geo_term (short city name) for search queries instead of the
+        // full Nominatim display_name which is too verbose for good search results.
+        let short_name = self
+            .region
+            .geo_terms
+            .first()
+            .unwrap_or(&self.region.name);
+        let queries = [
+            format!("site:linktr.ee mutual aid {short_name}"),
+            format!("site:linktr.ee community {short_name}"),
+            format!("site:linktr.ee {short_name}"),
+            format!("{short_name} community organizations"),
+        ];
+
+        let mut discovered = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+
+        for query in &queries {
+            let fetched = match self.archive.fetch_content(query).await {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!(query = query.as_str(), error = %e, "Actor discovery search failed");
+                    continue;
+                }
+            };
+
+            let urls: Vec<String> = match fetched.content {
+                Content::SearchResults(results) => {
+                    results.into_iter().take(10).map(|r| r.url).collect()
+                }
+                _ => continue,
+            };
+
+            for url in &urls {
+                if !seen_urls.insert(url.clone()) {
+                    continue; // already processed this URL from a previous query
+                }
+                match crate::enrichment::actor_discovery::create_actor_from_page(
+                    self.archive.as_ref(),
+                    self.writer,
+                    &self.anthropic_api_key,
+                    url,
+                    short_name,
+                    true, // require social links
+                )
+                .await
+                {
+                    Ok(Some(result)) => {
+                        discovered.push((result.actor_id, result.location_name.clone()));
+                    }
+                    Ok(None) => {} // not an actor page
+                    Err(e) => {
+                        warn!(url = url.as_str(), error = %e, "Failed to process actor page");
+                    }
+                }
+            }
+        }
+
+        discovered
     }
 
     /// Use Claude Haiku to generate seed web search queries for the region.

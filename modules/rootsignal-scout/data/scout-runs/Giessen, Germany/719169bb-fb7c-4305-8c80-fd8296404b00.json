@@ -1,0 +1,268 @@
+{
+  "run_id": "719169bb-fb7c-4305-8c80-fd8296404b00",
+  "region": "Giessen, Germany",
+  "started_at": "2026-02-21T14:47:45.399316Z",
+  "finished_at": "2026-02-21T14:48:15.099063Z",
+  "stats": {
+    "urls_scraped": 2,
+    "urls_unchanged": 0,
+    "urls_failed": 0,
+    "signals_extracted": 2,
+    "signals_deduplicated": 0,
+    "signals_stored": 0,
+    "social_media_posts": 0,
+    "expansion_queries_collected": 3,
+    "expansion_sources_created": 3
+  },
+  "events": [
+    {
+      "seq": 0,
+      "ts": "2026-02-21T14:47:45.688559Z",
+      "type": "reap_expired",
+      "gatherings": 0,
+      "needs": 0,
+      "stale": 0
+    },
+    {
+      "seq": 1,
+      "ts": "2026-02-21T14:48:02.344Z",
+      "type": "bootstrap",
+      "sources_created": 39
+    },
+    {
+      "seq": 2,
+      "ts": "2026-02-21T14:48:02.379774Z",
+      "type": "search_query",
+      "query": "Giessen Wohnungskrise Mangel Mieten",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Wohnungskrise Mangel Mieten"
+    },
+    {
+      "seq": 3,
+      "ts": "2026-02-21T14:48:02.379796Z",
+      "type": "search_query",
+      "query": "Giessen Kriminalität Sicherheit Probleme",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Kriminalität Sicherheit Probleme"
+    },
+    {
+      "seq": 4,
+      "ts": "2026-02-21T14:48:02.379810Z",
+      "type": "search_query",
+      "query": "Giessen Infrastruktur Straßen Wasser Ausfälle",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Infrastruktur Straßen Wasser Ausfälle"
+    },
+    {
+      "seq": 5,
+      "ts": "2026-02-21T14:48:02.379824Z",
+      "type": "search_query",
+      "query": "Giessen Korruption Behörden Versagen",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Korruption Behörden Versagen"
+    },
+    {
+      "seq": 6,
+      "ts": "2026-02-21T14:48:02.379841Z",
+      "type": "search_query",
+      "query": "Giessen Umweltverschmutzung Chemie Industrie",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Umweltverschmutzung Chemie Industrie"
+    },
+    {
+      "seq": 7,
+      "ts": "2026-02-21T14:48:02.379854Z",
+      "type": "search_query",
+      "query": "Giessen Hochwasser Überschwemmungen Klimawandel",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Hochwasser Überschwemmungen Klimawandel"
+    },
+    {
+      "seq": 8,
+      "ts": "2026-02-21T14:48:02.379868Z",
+      "type": "search_query",
+      "query": "Giessen Schulen Unterfinanzierung Probleme",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Schulen Unterfinanzierung Probleme"
+    },
+    {
+      "seq": 9,
+      "ts": "2026-02-21T14:48:02.379882Z",
+      "type": "search_query",
+      "query": "Giessen Armut Lebenshaltungskosten Teuer",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Armut Lebenshaltungskosten Teuer"
+    },
+    {
+      "seq": 10,
+      "ts": "2026-02-21T14:48:09.761661Z",
+      "type": "scrape_url",
+      "url": "https://www.cancerresearchfoundation.org/donate",
+      "strategy": "web",
+      "success": true,
+      "content_bytes": 1428
+    },
+    {
+      "seq": 11,
+      "ts": "2026-02-21T14:48:09.761664Z",
+      "type": "llm_extraction",
+      "source_url": "https://www.cancerresearchfoundation.org/donate",
+      "content_chars": 1428,
+      "signals_extracted": 2,
+      "implied_queries": 3
+    },
+    {
+      "seq": 12,
+      "ts": "2026-02-21T14:48:10.213033Z",
+      "type": "search_query",
+      "query": "Giessen Nachbarschaftshilfe Selbsthilfe Netzwerk",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Nachbarschaftshilfe Selbsthilfe Netzwerk"
+    },
+    {
+      "seq": 13,
+      "ts": "2026-02-21T14:48:10.213056Z",
+      "type": "search_query",
+      "query": "Giessen Rechtsberatung Sozialberatung Advocacy",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Rechtsberatung Sozialberatung Advocacy"
+    },
+    {
+      "seq": 14,
+      "ts": "2026-02-21T14:48:10.213072Z",
+      "type": "search_query",
+      "query": "Giessen Tafel Lebensmittelausgabe Gemeinschaftsküche",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Tafel Lebensmittelausgabe Gemeinschaftsküche"
+    },
+    {
+      "seq": 15,
+      "ts": "2026-02-21T14:48:10.213089Z",
+      "type": "search_query",
+      "query": "Giessen Wohnungslosenhilfe Unterkunft Obdachlosenhilfe",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Wohnungslosenhilfe Unterkunft Obdachlosenhilfe"
+    },
+    {
+      "seq": 16,
+      "ts": "2026-02-21T14:48:10.213105Z",
+      "type": "search_query",
+      "query": "Giessen Gesundheitszentrum Psychosoziale Beratung Therapie",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Gesundheitszentrum Psychosoziale Beratung Therapie"
+    },
+    {
+      "seq": 17,
+      "ts": "2026-02-21T14:48:10.213124Z",
+      "type": "search_query",
+      "query": "Giessen Umweltschutz Naturschutz Restauration Grünflächen",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Umweltschutz Naturschutz Restauration Grünflächen"
+    },
+    {
+      "seq": 18,
+      "ts": "2026-02-21T14:48:10.213140Z",
+      "type": "search_query",
+      "query": "Giessen Katastrophenschutz Notfallvorsorge Resilienz Gemeinschaft",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Katastrophenschutz Notfallvorsorge Resilienz Gemeinschaft"
+    },
+    {
+      "seq": 19,
+      "ts": "2026-02-21T14:48:10.213172Z",
+      "type": "search_query",
+      "query": "Giessen Freiwilligenarbeit Ehrenamt Gemeindeorganisierung",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Freiwilligenarbeit Ehrenamt Gemeindeorganisierung"
+    },
+    {
+      "seq": 20,
+      "ts": "2026-02-21T14:48:10.213189Z",
+      "type": "search_query",
+      "query": "Giessen Soziale Hilfsorganisationen Unterstützung Bedürftige",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Soziale Hilfsorganisationen Unterstützung Bedürftige"
+    },
+    {
+      "seq": 21,
+      "ts": "2026-02-21T14:48:10.213206Z",
+      "type": "search_query",
+      "query": "Giessen Gemeinschaftsprojekte Nachbarschaftszentren Sozialarbeit",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "Giessen Gemeinschaftsprojekte Nachbarschaftszentren Sozialarbeit"
+    },
+    {
+      "seq": 22,
+      "ts": "2026-02-21T14:48:10.213223Z",
+      "type": "search_query",
+      "query": "site:gofundme.com/f/ Giessen, Germany",
+      "provider": "serper",
+      "result_count": 1,
+      "canonical_key": "site:gofundme.com/f/ Giessen, Germany"
+    },
+    {
+      "seq": 23,
+      "ts": "2026-02-21T14:48:11.026043Z",
+      "type": "scrape_url",
+      "url": "https://www.cancerresearchfoundation.org/donate",
+      "strategy": "web",
+      "success": true,
+      "content_bytes": 1428
+    },
+    {
+      "seq": 24,
+      "ts": "2026-02-21T14:48:11.026045Z",
+      "type": "llm_extraction",
+      "source_url": "https://www.cancerresearchfoundation.org/donate",
+      "content_chars": 1428,
+      "signals_extracted": 0,
+      "implied_queries": 0
+    },
+    {
+      "seq": 25,
+      "ts": "2026-02-21T14:48:12.473662Z",
+      "type": "expansion_source_created",
+      "canonical_key": "volunteer opportunities cancer organizations Giessen",
+      "query": "volunteer opportunities cancer organizations Giessen"
+    },
+    {
+      "seq": 26,
+      "ts": "2026-02-21T14:48:13.477063Z",
+      "type": "expansion_source_created",
+      "canonical_key": "community fundraising campaigns health",
+      "query": "community fundraising campaigns health"
+    },
+    {
+      "seq": 27,
+      "ts": "2026-02-21T14:48:14.496934Z",
+      "type": "expansion_source_created",
+      "canonical_key": "cancer awareness events",
+      "query": "cancer awareness events"
+    },
+    {
+      "seq": 28,
+      "ts": "2026-02-21T14:48:15.098954Z",
+      "type": "budget_checkpoint",
+      "spent_cents": 0,
+      "remaining_cents": 18446744073709551615
+    }
+  ]
+}
