@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ScoutScope,
+    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, EntityContext, ScoutScope,
     DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
     SocialPlatform, SocialPost, SourceNode, SourceRole,
 };
@@ -48,6 +48,10 @@ pub(crate) struct RunContext {
     pub social_expansion_topics: Vec<String>,
     pub stats: ScoutStats,
     pub query_api_errors: HashSet<String>,
+    /// Entity context keyed by source canonical_key. When a source is linked to
+    /// a trusted entity via HAS_ACCOUNT, its context is stored here for location
+    /// fallback during signal extraction.
+    pub entity_contexts: HashMap<String, EntityContext>,
 }
 
 impl RunContext {
@@ -68,6 +72,7 @@ impl RunContext {
             social_expansion_topics: Vec::new(),
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
+            entity_contexts: HashMap::new(),
         }
     }
 
