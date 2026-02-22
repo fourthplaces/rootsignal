@@ -230,10 +230,10 @@ BootstrapWorkflow wraps `Bootstrapper::run()`. ActorDiscoveryWorkflow wraps `Boo
 - `modules/rootsignal-api/src/graphql/mutations.rs` — optionally update `discoverActors` to call workflow
 
 **Acceptance criteria:**
-- [ ] `BootstrapWorkflow` can be invoked standalone via Restate for a region
-- [ ] `ActorDiscoveryWorkflow` can be invoked standalone
-- [ ] Both show status via `get_status()` shared handler
-- [ ] Existing `scout.run()` still works unchanged (no regression)
+- [x] `BootstrapWorkflow` can be invoked standalone via Restate for a region
+- [x] `ActorDiscoveryWorkflow` can be invoked standalone
+- [x] Both show status via `get_status()` shared handler
+- [x] Existing `scout.run()` still works unchanged (no regression)
 
 ### Phase 3: ScrapeWorkflow
 

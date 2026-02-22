@@ -6,6 +6,8 @@
 //! Follows the same single-binary pattern as mntogether: each workflow impl holds
 //! `Arc<ScoutDeps>` and constructs per-invocation resources from the shared deps.
 
+pub mod actor_discovery;
+pub mod bootstrap;
 pub mod types;
 
 use std::sync::Arc;
