@@ -310,6 +310,7 @@ fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionRespons
                     effective_date: None, source_authority: None, content_date: None,
                     mentioned_actors: None, source_url: None, what_would_help: None,
                     implied_queries: vec![], resources: vec![], tags: vec![],
+                    is_firsthand: None,
                 },
             };
 
@@ -357,6 +358,7 @@ fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionRespons
                 implied_queries: meta.implied_queries.clone(),
                 resources: vec![],
                 tags: vec![],
+                is_firsthand: None,
             }
         })
         .collect();

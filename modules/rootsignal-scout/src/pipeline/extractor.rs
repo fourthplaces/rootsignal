@@ -76,6 +76,9 @@ pub struct ExtractedSignal {
     /// 3-5 thematic tags as lowercase-with-hyphens slugs (e.g. "ice-enforcement", "housing-displacement").
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Whether this signal is first-hand (from someone directly affected/involved).
+    /// Only populated for non-entity search/feed sources. None = not assessed.
+    pub is_firsthand: Option<bool>,
 }
 
 /// A resource capability extracted from a signal.
@@ -230,6 +233,16 @@ impl Extractor {
                     source_url,
                     title = signal.title,
                     "Filtered junk signal from extraction"
+                );
+                continue;
+            }
+
+            // Drop signals flagged as not first-hand (political commentary, not personally affected)
+            if signal.is_firsthand == Some(false) {
+                info!(
+                    source_url,
+                    title = signal.title,
+                    "Dropped non-first-hand signal"
                 );
                 continue;
             }
@@ -653,6 +666,7 @@ mod tests {
             implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
             resources: vec![],
             tags: vec![],
+            is_firsthand: None,
         };
 
         assert_eq!(signal.signal_type, "tension");
@@ -849,5 +863,52 @@ mod tests {
         );
         assert!(prompt.contains("requires"), "should mention requires role");
         assert!(prompt.contains("offers"), "should mention offers role");
+    }
+
+    #[test]
+    fn is_firsthand_false_deserialization() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "tension",
+                "title": "Political commentary",
+                "summary": "Opinion about housing",
+                "sensitivity": "general",
+                "is_firsthand": false
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals[0].is_firsthand, Some(false));
+    }
+
+    #[test]
+    fn is_firsthand_true_deserialization() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "need",
+                "title": "My family needs help",
+                "summary": "Direct plea for assistance",
+                "sensitivity": "sensitive",
+                "is_firsthand": true
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals[0].is_firsthand, Some(true));
+    }
+
+    #[test]
+    fn is_firsthand_missing_is_none() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "aid",
+                "title": "Food shelf",
+                "summary": "Free groceries",
+                "sensitivity": "general"
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert!(
+            response.signals[0].is_firsthand.is_none(),
+            "Missing is_firsthand should be None, not Some(false)"
+        );
     }
 }
