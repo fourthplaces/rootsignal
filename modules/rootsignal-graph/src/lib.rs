@@ -7,6 +7,7 @@ pub mod migrate;
 pub mod reader;
 pub mod response;
 pub mod similarity;
+pub mod situation_weaver;
 pub mod story_metrics;
 pub mod story_weaver;
 pub mod synthesizer;
@@ -20,6 +21,7 @@ pub use client::GraphClient;
 pub use reader::{PublicGraphReader, ResourceGap, ResourceMatch, ValidationIssueRow, ValidationIssueSummary};
 pub use similarity::SimilarityBuilder;
 pub use story_metrics::{parse_recency, story_energy, story_status};
+pub use situation_weaver::SituationWeaver;
 pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use writer::{

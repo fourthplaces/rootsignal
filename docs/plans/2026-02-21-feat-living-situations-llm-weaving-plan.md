@@ -1009,20 +1009,20 @@ type Mutation {
 
 **Goal**: New signals get assigned to situations via embedding search + LLM.
 
-- [ ] Create `modules/rootsignal-graph/src/situation_weaver.rs` (in graph crate — domain logic)
-- [ ] Add `situation_weaver` module to `modules/rootsignal-graph/src/lib.rs`
-- [ ] `SituationWeaver` struct takes `Arc<dyn TextEmbedder>` (from `rootsignal-common`) — injected at construction, no direct Voyage dependency
-- [ ] Implement signal discovery via `scout_run_id` graph query
-- [ ] Implement embedding-based candidate retrieval (in-memory cosine similarity against situation centroids)
-- [ ] Implement LLM weaving pass with structured output (Haiku, JSON mode)
-- [ ] Implement dispatch writing with `[signal:UUID]` citation format
-- [ ] Implement structured state management (LLM working memory, no actor roles)
-- [ ] Implement graceful degradation (`situation_pending = true` when LLM unavailable)
-- [ ] Implement post-hoc dispatch verification (citation check + PII scan)
-- [ ] Implement splits and merges as dispatch types
-- [ ] Implement correction dispatches with `supersedes` field
-- [ ] Wire into scout pipeline (`scout.rs`) — scout constructs `SituationWeaver` with `Arc::new(embedder)` injection, calls AFTER response mapping and investigation, alongside (not replacing) StoryWeaver initially
-- [ ] Budget priority: SituationWeaver runs after discovery pipeline
+- [x] Create `modules/rootsignal-graph/src/situation_weaver.rs` (in graph crate — domain logic)
+- [x] Add `situation_weaver` module to `modules/rootsignal-graph/src/lib.rs`
+- [x] `SituationWeaver` struct takes `Arc<dyn TextEmbedder>` (from `rootsignal-common`) — injected at construction, no direct Voyage dependency
+- [x] Implement signal discovery via `scout_run_id` graph query
+- [x] Implement embedding-based candidate retrieval (in-memory cosine similarity against situation centroids)
+- [x] Implement LLM weaving pass with structured output (Haiku, JSON mode)
+- [x] Implement dispatch writing with `[signal:UUID]` citation format
+- [x] Implement structured state management (LLM working memory, no actor roles)
+- [x] Implement graceful degradation (`situation_pending = true` when LLM unavailable)
+- [x] Implement post-hoc dispatch verification (citation check + PII scan)
+- [x] Implement splits and merges as dispatch types
+- [x] Implement correction dispatches with `supersedes` field
+- [x] Wire into scout pipeline (`scout.rs`) — scout constructs `SituationWeaver` with `Arc::new(embedder)` injection, calls AFTER response mapping and investigation, alongside (not replacing) StoryWeaver initially
+- [x] Budget priority: SituationWeaver runs after discovery pipeline
 
 **Files:**
 - `modules/rootsignal-graph/src/situation_weaver.rs` — new (core domain logic)
