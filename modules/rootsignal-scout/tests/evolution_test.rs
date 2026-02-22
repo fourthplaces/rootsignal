@@ -171,7 +171,7 @@ async fn evolution_loop() {
 
     // Build baseline genome from current prompts
     let extractor_prompt = TestContext::baseline_extractor_prompt();
-    let discovery_prompt = rootsignal_scout::source_finder::discovery_system_prompt("{city_name}");
+    let discovery_prompt = rootsignal_scout::discovery::source_finder::discovery_system_prompt("{city_name}");
     let baseline = ScoutGenome::baseline(extractor_prompt, discovery_prompt);
 
     // Run evolution

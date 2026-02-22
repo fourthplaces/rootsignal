@@ -241,20 +241,13 @@ pub struct WebQueryScheduleResult {
 /// - **Cold tier (15%)**: Random sample from never-scraped or dormant queries
 ///   (seasonal resurrection).
 ///
-/// `max_per_run` defaults to 50 if 0. Env var `MAX_WEB_QUERIES_PER_RUN` overrides.
+/// `max_per_run` defaults to 50 if 0. Callers should pass `Config.max_web_queries_per_run`.
 pub fn schedule_web_queries(
     sources: &[SourceNode],
     max_per_run: usize,
     now: DateTime<Utc>,
 ) -> WebQueryScheduleResult {
-    let max = if max_per_run == 0 {
-        std::env::var("MAX_WEB_QUERIES_PER_RUN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(50usize)
-    } else {
-        max_per_run
-    };
+    let max = if max_per_run == 0 { 50 } else { max_per_run };
 
     // Filter to active web query sources only
     let web_queries: Vec<&SourceNode> = sources

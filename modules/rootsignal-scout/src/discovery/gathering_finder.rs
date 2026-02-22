@@ -18,9 +18,9 @@ use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
 use rootsignal_archive::FetchBackend;
 
-use crate::embedder::TextEmbedder;
-use crate::sources;
-use crate::tension_linker::{ReadPageTool, WebSearchTool};
+use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::sources;
+use crate::discovery::tension_linker::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -793,7 +793,7 @@ impl<'a> GatheringFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::source_finder::initial_weight_for_method(
+            weight: crate::discovery::source_finder::initial_weight_for_method(
                 DiscoveryMethod::GapAnalysis,
                 Some("unmet_tension"),
             ),
@@ -818,7 +818,7 @@ impl<'a> GatheringFinder<'a> {
 }
 
 fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
-    crate::util::cosine_similarity(a, b)
+    crate::infra::util::cosine_similarity(a, b)
 }
 
 #[cfg(test)]

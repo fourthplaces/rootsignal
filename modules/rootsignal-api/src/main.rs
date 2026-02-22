@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
     };
 
     if let Some(pool) = pg_pool {
-        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::new(
+        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
             client.clone(),
             pool,
             &config,

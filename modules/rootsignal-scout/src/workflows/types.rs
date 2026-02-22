@@ -3,8 +3,45 @@
 //! All types implement `serde::{Serialize, Deserialize}` plus the Restate SDK
 //! serialization traits via `impl_restate_serde!`.
 
+use std::fmt;
+
 use rootsignal_common::ScoutScope;
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Workflow phases
+// ---------------------------------------------------------------------------
+
+/// Named phases of a full scout run, used as status strings in Restate state.
+///
+/// String-compatible with the existing Restate state store — `to_string()`
+/// produces the same values that were previously hard-coded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowPhase {
+    Pending,
+    Bootstrap,
+    ActorDiscovery,
+    Scraping,
+    Synthesis,
+    SituationWeaving,
+    Supervisor,
+    Complete,
+}
+
+impl fmt::Display for WorkflowPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Bootstrap => write!(f, "Running bootstrap..."),
+            Self::ActorDiscovery => write!(f, "Discovering actors..."),
+            Self::Scraping => write!(f, "Scraping sources..."),
+            Self::Synthesis => write!(f, "Running synthesis..."),
+            Self::SituationWeaving => write!(f, "Weaving situations..."),
+            Self::Supervisor => write!(f, "Running supervisor..."),
+            Self::Complete => write!(f, "Full scout run complete"),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Requests

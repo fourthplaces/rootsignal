@@ -1,6 +1,3 @@
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Serialize;
@@ -16,7 +13,7 @@ use rootsignal_graph::{
     reader::{node_type_label, row_to_node},
     GraphClient, GraphWriter, PublicGraphReader,
 };
-use rootsignal_scout::scout::Scout;
+use rootsignal_scout::scout::{Scout, ScoutParams};
 
 #[derive(Parser)]
 #[command(about = "Run the Root Signal scout for a region")]
@@ -125,16 +122,19 @@ async fn main() -> Result<()> {
         .context("Failed to connect to Postgres")?;
 
     // Create and run scout
-    let scout = Scout::new(
-        client.clone(),
-        pool,
-        &config.anthropic_api_key,
-        &config.voyage_api_key,
-        &config.serper_api_key,
-        &config.apify_api_key,
-        region,
-        config.daily_budget_cents,
-        Arc::new(AtomicBool::new(false)),
+    let scout = Scout::from_params(
+        ScoutParams::builder()
+            .graph_client(client.clone())
+            .pool(pool)
+            .anthropic_api_key(config.anthropic_api_key.clone())
+            .voyage_api_key(config.voyage_api_key.clone())
+            .serper_api_key(config.serper_api_key.clone())
+            .apify_api_key(config.apify_api_key.clone())
+            .region(region)
+            .daily_budget_cents(config.daily_budget_cents)
+            .browserless_url(config.browserless_url.clone())
+            .browserless_token(config.browserless_token.clone())
+            .build(),
     )?;
 
     let stats = scout.run().await?;
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
 
     // Actor extraction — extract actors from signals that have none
     info!("Starting actor extraction...");
-    let sweep_stats = rootsignal_scout::actor_extractor::run_actor_extraction(
+    let sweep_stats = rootsignal_scout::enrichment::actor_extractor::run_actor_extraction(
         &writer_ref,
         &client,
         &config.anthropic_api_key,

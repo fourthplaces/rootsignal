@@ -23,15 +23,15 @@ use rootsignal_common::{
 use rootsignal_graph::GraphWriter;
 
 use super::geo_filter;
-use crate::embedder::TextEmbedder;
-use crate::extractor::{ResourceTag, SignalExtractor};
-use crate::quality;
+use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
+use crate::enrichment::quality;
 use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
-use crate::sources;
-use crate::util::{content_hash, sanitize_url};
+use crate::pipeline::sources;
+use crate::infra::util::{content_hash, sanitize_url};
 
 // ---------------------------------------------------------------------------
 // RunContext — shared mutable state for the entire scout run

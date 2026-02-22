@@ -16,10 +16,15 @@ use crate::scout::ScoutStats;
 // data_dir helper
 // ---------------------------------------------------------------------------
 
-/// Root data directory, controlled by `DATA_DIR` env var (default: `"data"`).
+/// Root data directory, controlled by `Config.data_dir` (default: `"data"`).
 /// On Railway, set `DATA_DIR=/data` and mount a persistent volume there.
 pub fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()))
+}
+
+/// Root data directory from an explicit path (preferred over env var).
+pub fn data_dir_from(path: &std::path::Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 // ---------------------------------------------------------------------------

@@ -75,9 +75,6 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         ctx: SharedWorkflowContext<'_>,
         _req: EmptyRequest,
     ) -> Result<String, HandlerError> {
-        Ok(ctx
-            .get::<String>("status")
-            .await?
-            .unwrap_or_else(|| "pending".to_string()))
+        super::read_workflow_status(&ctx).await
     }
 }

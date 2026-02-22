@@ -13,17 +13,19 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
+use typed_builder::TypedBuilder;
+
 use rootsignal_archive::{Archive, ArchiveConfig, FetchBackend, PageBackend};
 
-use crate::budget::{BudgetTracker, OperationCost};
-use crate::embedder::TextEmbedder;
-use crate::extractor::{Extractor, SignalExtractor};
-use crate::expansion::Expansion;
-use crate::metrics::Metrics;
+use crate::scheduling::budget::{BudgetTracker, OperationCost};
+use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::extractor::{Extractor, SignalExtractor};
+use crate::enrichment::expansion::Expansion;
+use crate::scheduling::metrics::Metrics;
 use crate::run_log::{EventKind, RunLog};
-use crate::scrape_phase::{RunContext, ScrapePhase};
-use crate::source_finder::SourceFinderStats;
-use crate::util::sanitize_url;
+use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
+use crate::discovery::source_finder::SourceFinderStats;
+use crate::infra::util::sanitize_url;
 
 /// Stats from a scout run.
 #[derive(Debug, Default)]
@@ -224,7 +226,7 @@ impl<'a> ScrapePipeline<'a> {
         // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
         if all_sources.is_empty() {
             info!("No sources found — running cold-start bootstrap");
-            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+            let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
                 &self.writer,
                 self.archive.clone(),
                 &self.anthropic_api_key,
@@ -252,7 +254,7 @@ impl<'a> ScrapePipeline<'a> {
 
         if actors_in_region.is_empty() {
             info!("No actors in region — running actor discovery");
-            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+            let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
                 &self.writer,
                 self.archive.clone(),
                 &self.anthropic_api_key,
@@ -305,7 +307,7 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         let now_schedule = Utc::now();
-        let scheduler = crate::scheduler::SourceScheduler::new();
+        let scheduler = crate::scheduling::scheduler::SourceScheduler::new();
         let schedule = scheduler.schedule(&all_sources, now_schedule);
         let scheduled_keys: HashSet<String> = schedule
             .scheduled
@@ -329,7 +331,7 @@ impl<'a> ScrapePipeline<'a> {
         );
 
         // Web query tiered scheduling
-        let wq_schedule = crate::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
+        let wq_schedule = crate::scheduling::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
         let wq_scheduled_keys: HashSet<String> =
             wq_schedule.scheduled.into_iter().collect();
 
@@ -419,7 +421,7 @@ impl<'a> ScrapePipeline<'a> {
     /// Returns discovery stats and social topics discovered for later topic-based searching.
     pub(crate) async fn discover_mid_run_sources(&self) -> (SourceFinderStats, Vec<String>) {
         info!("=== Mid-Run Discovery ===");
-        let discoverer = crate::source_finder::SourceFinder::new(
+        let discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
             &self.region.name,
             &self.region.name,
@@ -528,7 +530,7 @@ impl<'a> ScrapePipeline<'a> {
         check_cancelled_flag(&self.cancelled)?;
 
         // End-of-run discovery — find new sources for next run
-        let end_discoverer = crate::source_finder::SourceFinder::new(
+        let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
             &self.region.name,
             &self.region.name,
@@ -654,7 +656,7 @@ pub async fn run_synthesis(
         async {
             if run_tension_linker {
                 info!("Starting tension linker...");
-                let tension_linker = crate::tension_linker::TensionLinker::new(
+                let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
                     writer,
                     archive.clone(),
                     embedder,
@@ -672,7 +674,7 @@ pub async fn run_synthesis(
         async {
             if run_response_finder {
                 info!("Starting response finder...");
-                let response_finder = crate::response_finder::ResponseFinder::new(
+                let response_finder = crate::discovery::response_finder::ResponseFinder::new(
                     writer,
                     archive.clone(),
                     embedder,
@@ -690,7 +692,7 @@ pub async fn run_synthesis(
         async {
             if run_gathering_finder {
                 info!("Starting gathering finder...");
-                let gathering_finder = crate::gathering_finder::GatheringFinder::new(
+                let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
                     writer,
                     archive.clone(),
                     embedder,
@@ -708,7 +710,7 @@ pub async fn run_synthesis(
         async {
             if run_investigation {
                 info!("Starting investigation phase...");
-                let investigator = crate::investigator::Investigator::new(
+                let investigator = crate::enrichment::investigator::Investigator::new(
                     writer,
                     archive.clone(),
                     anthropic_api_key,
@@ -818,6 +820,7 @@ pub async fn run_situation_weaving(
 // Scout — thin orchestrator that calls the pipeline functions
 // ============================================================================
 
+// TODO: remove once main.rs migrates to Restate workflows
 pub struct Scout {
     graph_client: GraphClient,
     writer: GraphWriter,
@@ -830,61 +833,91 @@ pub struct Scout {
     cancelled: Arc<AtomicBool>,
 }
 
-impl Scout {
-    pub fn new(
-        graph_client: GraphClient,
-        pool: PgPool,
-        anthropic_api_key: &str,
-        voyage_api_key: &str,
-        serper_api_key: &str,
-        apify_api_key: &str,
-        region: ScoutScope,
-        daily_budget_cents: u64,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<Self> {
-        info!(region = region.name.as_str(), "Initializing scout");
+/// Named parameters for constructing a `Scout`.
+///
+/// Use the builder pattern instead of positional args:
+/// ```ignore
+/// Scout::from_params(
+///     ScoutParams::builder()
+///         .graph_client(client)
+///         .pool(pool)
+///         .anthropic_api_key(key)
+///         .voyage_api_key(vkey)
+///         .serper_api_key(skey)
+///         .region(scope)
+///         .build()
+/// )
+/// ```
+#[derive(TypedBuilder)]
+pub struct ScoutParams {
+    pub graph_client: GraphClient,
+    pub pool: PgPool,
+    pub anthropic_api_key: String,
+    pub voyage_api_key: String,
+    pub serper_api_key: String,
+    #[builder(default)]
+    pub apify_api_key: String,
+    pub region: ScoutScope,
+    #[builder(default)]
+    pub daily_budget_cents: u64,
+    #[builder(default)]
+    pub cancelled: Arc<AtomicBool>,
+    #[builder(default)]
+    pub browserless_url: Option<String>,
+    #[builder(default)]
+    pub browserless_token: Option<String>,
+}
 
-        let region_slug = rootsignal_common::slugify(&region.name);
+impl Scout {
+    /// Construct a Scout from named parameters.
+    pub fn from_params(p: ScoutParams) -> Result<Self> {
+        info!(region = p.region.name.as_str(), "Initializing scout");
+
+        let region_slug = rootsignal_common::slugify(&p.region.name);
         let archive_config = ArchiveConfig {
-            page_backend: match std::env::var("BROWSERLESS_URL") {
-                Ok(url) => {
-                    let token = std::env::var("BROWSERLESS_TOKEN").ok();
-                    PageBackend::Browserless { base_url: url, token }
-                }
-                Err(_) => PageBackend::Chrome,
+            page_backend: match p.browserless_url {
+                Some(ref url) => PageBackend::Browserless {
+                    base_url: url.clone(),
+                    token: p.browserless_token.clone(),
+                },
+                None => PageBackend::Chrome,
             },
-            serper_api_key: serper_api_key.to_string(),
-            apify_api_key: if apify_api_key.is_empty() {
+            serper_api_key: p.serper_api_key.clone(),
+            apify_api_key: if p.apify_api_key.is_empty() {
                 warn!("APIFY_API_KEY not set, social media scraping will return errors");
                 None
             } else {
-                Some(apify_api_key.to_string())
+                Some(p.apify_api_key.clone())
             },
-            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
+            anthropic_api_key: if p.anthropic_api_key.is_empty() {
+                None
+            } else {
+                Some(p.anthropic_api_key.clone())
+            },
         };
 
         let archive = Arc::new(Archive::new(
-            pool,
+            p.pool,
             archive_config,
             Uuid::new_v4(),
             region_slug,
         ));
 
         Ok(Self {
-            graph_client: graph_client.clone(),
-            writer: GraphWriter::new(graph_client),
+            graph_client: p.graph_client.clone(),
+            writer: GraphWriter::new(p.graph_client),
             extractor: Arc::new(Extractor::new(
-                anthropic_api_key,
-                region.name.as_str(),
-                region.center_lat,
-                region.center_lng,
+                &p.anthropic_api_key,
+                p.region.name.as_str(),
+                p.region.center_lat,
+                p.region.center_lng,
             )),
-            embedder: Arc::new(crate::embedder::Embedder::new(voyage_api_key)),
+            embedder: Arc::new(crate::infra::embedder::Embedder::new(&p.voyage_api_key)),
             archive,
-            anthropic_api_key: anthropic_api_key.to_string(),
-            region,
-            budget: BudgetTracker::new(daily_budget_cents),
-            cancelled,
+            anthropic_api_key: p.anthropic_api_key,
+            region: p.region,
+            budget: BudgetTracker::new(p.daily_budget_cents),
+            cancelled: p.cancelled,
         })
     }
 

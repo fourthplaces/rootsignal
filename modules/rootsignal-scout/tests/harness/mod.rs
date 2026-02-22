@@ -17,14 +17,14 @@ use rootsignal_archive::{FetchBackend, Replay, Seeder};
 use rootsignal_common::{ScoutScope, DiscoveryMethod, SearchResult, SocialPost, SourceNode, SourceRole};
 use rootsignal_graph::testutil::neo4j_container;
 use rootsignal_graph::{GraphClient, GraphWriter};
-use rootsignal_scout::embedder::Embedder;
-use rootsignal_scout::extractor::{self, Extractor};
+use rootsignal_scout::infra::embedder::Embedder;
+use rootsignal_scout::pipeline::extractor::{self, Extractor};
 use rootsignal_scout::fixtures::{
     CorpusSearcher, FixtureArchive, FixtureSocialKind, FixtureSocialScraper,
     LayeredSearcher, MockArchive, ScenarioSearcher, ScenarioSocialScraper,
 };
 use rootsignal_scout::scout::{Scout, ScoutStats};
-use rootsignal_scout::sources;
+use rootsignal_scout::pipeline::sources;
 use simweb::{SimulatedWeb, World};
 
 use sim_adapter::SimArchive;

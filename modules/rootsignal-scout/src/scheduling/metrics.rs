@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
-use crate::scrape_phase::RunContext;
+use crate::pipeline::scrape_phase::RunContext;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
@@ -69,7 +69,7 @@ impl<'a> Metrics<'a> {
             } else {
                 source.scrape_count.max(1)
             };
-            let base_weight = crate::scheduler::compute_weight(
+            let base_weight = crate::scheduling::scheduler::compute_weight(
                 total_signals,
                 source.signals_corroborated,
                 scrape_count,
@@ -92,9 +92,9 @@ impl<'a> Metrics<'a> {
                 source.consecutive_empty_runs
             };
             let cadence = if is_web_query(&source.canonical_value) {
-                crate::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
+                crate::scheduling::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
             } else {
-                crate::scheduler::cadence_hours_for_weight(new_weight)
+                crate::scheduling::scheduler::cadence_hours_for_weight(new_weight)
             };
             if let Err(e) = self
                 .writer

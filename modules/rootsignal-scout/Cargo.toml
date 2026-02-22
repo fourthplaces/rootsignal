@@ -37,6 +37,7 @@ feed-rs = { workspace = true }
 sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
 restate-sdk = { workspace = true }
+typed-builder = { workspace = true }
 bytes = { workspace = true }
 url = "2"
 tempfile = "3"

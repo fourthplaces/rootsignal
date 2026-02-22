@@ -12,10 +12,10 @@ use uuid::Uuid;
 use rootsignal_common::{DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
-use crate::embedder::TextEmbedder;
+use crate::infra::embedder::TextEmbedder;
 use crate::run_log::{EventKind, RunLog};
-use crate::scrape_phase::RunContext;
-use crate::sources;
+use crate::pipeline::scrape_phase::RunContext;
+use crate::pipeline::sources;
 
 // --- Constants ---
 
@@ -139,7 +139,7 @@ impl<'a> Expansion<'a> {
                 gap_context: Some(
                     "Signal expansion: implied query from extracted signal".to_string(),
                 ),
-                weight: crate::source_finder::initial_weight_for_method(
+                weight: crate::discovery::source_finder::initial_weight_for_method(
                     DiscoveryMethod::SignalExpansion,
                     None,
                 ),
