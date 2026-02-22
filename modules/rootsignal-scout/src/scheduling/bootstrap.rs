@@ -382,8 +382,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
                 for (name, feed_url) in outlets {
                     // Validate the feed URL is reachable by attempting a fetch
                     let reachable = async {
-                        let handle = self.archive.source(&feed_url).await?;
-                        handle.feed().await?;
+                        self.archive.feed(&feed_url).await?;
                         Ok::<_, rootsignal_archive::ArchiveError>(())
                     }
                     .await

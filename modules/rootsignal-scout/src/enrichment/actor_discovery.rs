@@ -76,8 +76,7 @@ pub async fn create_actor_from_page(
     require_social_links: bool,
 ) -> anyhow::Result<Option<ActorDiscoveryResult>> {
     // 1. Fetch the page
-    let handle = archive.source(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-    let page = handle.page().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let page = archive.page(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // 2. Scan HTML for social links
     let all_links = extract_links_by_pattern(&page.raw_html, url, "");
