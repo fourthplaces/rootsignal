@@ -1033,15 +1033,15 @@ type Mutation {
 
 **Goal**: Situations have computable, transparent temperature derived from graph mechanics.
 
-- [ ] Implement `compute_tension_heat_agg()` — mean cause_heat of Tension-type signals only
-- [ ] Implement `compute_entity_velocity()` — dual-window (7-day fast + 30-day slow-burn), take max; entity diversity growth, not signal count (carry from Phase D)
-- [ ] Implement `compute_response_gap()` — ratio of unmet tensions within 90-day window
-- [ ] Implement `compute_amplification()` — external geographic references, multiplicative with substance
-- [ ] Implement `compute_clarity_need()` — graph-derived: thesis_support (high cause_heat tensions) × thesis_diversity (unique sources), NOT from LLM clarity judgment
-- [ ] Implement `derive_arc()` — temperature + age → arc mapping with reactivation detection
-- [ ] Implement `compute_dampened_centroid()` — recency + cause_heat weighted centroid
-- [ ] Create `modules/rootsignal-graph/src/situation_temperature.rs`
-- [ ] Unit tests for all components + the stress test scenarios from this plan
+- [x] Implement `compute_tension_heat_agg()` — mean cause_heat of Tension-type signals only
+- [x] Implement `compute_entity_velocity()` — dual-window (7-day fast + 30-day slow-burn), take max; entity diversity growth, not signal count (carry from Phase D)
+- [x] Implement `compute_response_gap()` — ratio of unmet tensions within 90-day window
+- [x] Implement `compute_amplification()` — external geographic references, multiplicative with substance
+- [x] Implement `compute_clarity_need()` — graph-derived: thesis_support (high cause_heat tensions) × thesis_diversity (unique sources), NOT from LLM clarity judgment
+- [x] Implement `derive_arc()` — temperature + age → arc mapping with reactivation detection
+- [x] Implement `compute_dampened_centroid()` — recency + cause_heat weighted centroid
+- [x] Create `modules/rootsignal-graph/src/situation_temperature.rs`
+- [x] Unit tests for all components + the stress test scenarios from this plan
 
 **Files:**
 - `modules/rootsignal-graph/src/situation_temperature.rs` — new
