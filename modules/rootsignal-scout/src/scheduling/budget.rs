@@ -44,6 +44,14 @@ impl BudgetTracker {
         }
     }
 
+    /// Create a tracker with an initial spend (for workflows resuming from a prior phase).
+    pub fn new_with_spent(daily_limit_cents: u64, initial_spent_cents: u64) -> Self {
+        Self {
+            daily_limit_cents,
+            spent_cents: AtomicU64::new(initial_spent_cents),
+        }
+    }
+
     /// Check if there's budget remaining for an operation.
     pub fn has_budget(&self, cost_cents: u64) -> bool {
         if self.daily_limit_cents == 0 {

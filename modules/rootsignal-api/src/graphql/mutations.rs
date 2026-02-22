@@ -37,6 +37,9 @@ pub struct ClientIp(pub IpAddr);
 /// The scout cancel flag, shared with background scout threads.
 pub struct ScoutCancel(pub Arc<std::sync::atomic::AtomicBool>);
 
+/// Optional Restate ingress URL. When present, `runScout` dispatches via Restate.
+pub struct RestateIngress(pub Option<String>);
+
 /// HTTP response headers that mutations can set (e.g., Set-Cookie).
 /// Wrapped in a Mutex so mutations can append headers.
 pub struct ResponseHeaders(pub Mutex<Vec<(String, String)>>);
@@ -303,6 +306,32 @@ impl MutationRoot {
         };
 
         let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
+        let restate = ctx.data_unchecked::<RestateIngress>();
+
+        // Prefer Restate workflow when ingress is configured
+        if let Some(ref ingress_url) = restate.0 {
+            let url = format!("{}/FullScoutRunWorkflow/{}/run", ingress_url, slug);
+            info!(url = url.as_str(), "Dispatching scout via Restate");
+            let body = serde_json::json!({ "scope": scope });
+            let client = reqwest::Client::new();
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    return Ok(ScoutResult {
+                        success: true,
+                        message: Some(format!("Scout started via Restate for {display_name}")),
+                    });
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    warn!(status = %status, body = %body, "Restate dispatch failed, falling back to direct spawn");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Restate unreachable, falling back to direct spawn");
+                }
+            }
+        }
+
         spawn_scout_run(
             (**graph_client).clone(),
             (**config).clone(),

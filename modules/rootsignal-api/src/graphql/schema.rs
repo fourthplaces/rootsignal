@@ -1132,6 +1132,7 @@ pub fn build_schema(
     scout_cancel: Arc<std::sync::atomic::AtomicBool>,
     graph_client: Arc<rootsignal_graph::GraphClient>,
     cache_store: Arc<rootsignal_graph::CacheStore>,
+    restate_ingress: super::mutations::RestateIngress,
 ) -> ApiSchema {
     use super::mutations::ScoutCancel;
 
@@ -1191,6 +1192,7 @@ pub fn build_schema(
         .data(situations_loader)
         .data(tags_loader)
         .data(embedder)
+        .data(restate_ingress)
         .finish()
 }
 

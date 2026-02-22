@@ -441,7 +441,12 @@ impl<'a> ResponseFinder<'a> {
             .await?;
 
         // Validate URLs: only keep responses whose URLs were actually visited
-        let visited = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
+        // Clone the set and drop the MutexGuard before the async boundary so the
+        // future remains Send (required by tokio::spawn / Restate workflows).
+        let visited: std::collections::HashSet<String> = {
+            let guard = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
         let validated_responses: Vec<_> = finding
             .responses
             .into_iter()

@@ -37,6 +37,24 @@ services:
       retries: 5
       start_period: 10s
 
+  restate:
+    image: docker.io/restatedev/restate:latest
+    ports:
+      - "8080:8080"   # ingress
+      - "9070:9070"   # admin
+      - "9071:9071"   # metrics
+    environment:
+      RESTATE_OBSERVABILITY__LOG__FORMAT: compact
+      RESTATE_OBSERVABILITY__LOG__FILTER: info,restate=debug
+    volumes:
+      - restate-data:/target/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9070/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   browserless:
     image: browserless/chrome
     restart: unless-stopped
@@ -50,10 +68,13 @@ services:
       dockerfile: Dockerfile.dev
     ports:
       - "3001:3000"
+      - "9080:9080"   # Restate endpoint
     depends_on:
       neo4j:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      restate:
         condition: service_healthy
     volumes:
       - ./Cargo.toml:/app/Cargo.toml
@@ -71,6 +92,10 @@ services:
       RUST_LOG: info
       API_HOST: "0.0.0.0"
       API_PORT: "3000"
+      RESTATE_PORT: "9080"
+      RESTATE_ADMIN_URL: http://restate:9070
+      RESTATE_SELF_URL: http://api:9080
+      RESTATE_INGRESS_URL: http://restate:8080
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       SERPER_API_KEY: ${SERPER_API_KEY:-}
@@ -144,6 +169,7 @@ services:
 volumes:
   neo4j-data:
   postgres-data:
+  restate-data:
   cargo-registry:
   cargo-target:
   admin-node-modules:
