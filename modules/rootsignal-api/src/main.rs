@@ -157,6 +157,13 @@ async fn main() -> Result<()> {
         None
     };
 
+    let restate_ingress = graphql::mutations::RestateIngress(
+        std::env::var("RESTATE_INGRESS_URL").ok().filter(|s| !s.is_empty()),
+    );
+    if restate_ingress.0.is_some() {
+        info!("Restate ingress configured — runScout will dispatch via Restate");
+    }
+
     let schema = build_schema(
         reader.clone(),
         writer.clone(),
@@ -167,6 +174,7 @@ async fn main() -> Result<()> {
         scout_cancel.clone(),
         Arc::new(client.clone()),
         cache_store.clone(),
+        restate_ingress,
     );
 
     // Start scout interval loop if configured (before client is moved into AppState)
