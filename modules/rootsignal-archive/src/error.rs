@@ -6,6 +6,9 @@ pub enum ArchiveError {
     #[error("No archived content for target: {0}")]
     NotFound(String),
 
+    #[error("Content type not supported for this source: {0}")]
+    Unsupported(String),
+
     #[error("Unsupported platform: {0}")]
     UnsupportedPlatform(String),
 
