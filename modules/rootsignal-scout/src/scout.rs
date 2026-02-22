@@ -311,28 +311,28 @@ impl Scout {
         }
 
         // ================================================================
-        // 2b. Entity sources — inject trusted entity accounts with elevated priority
+        // 2b. Actor sources — inject known actor accounts with elevated priority
         // ================================================================
         let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
-        let entity_pairs = match self
+        let actor_pairs = match self
             .writer
-            .find_trusted_entities_in_region(min_lat, max_lat, min_lng, max_lng)
+            .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
             .await
         {
             Ok(pairs) => {
-                let entity_count = pairs.len();
+                let actor_count = pairs.len();
                 let source_count: usize = pairs.iter().map(|(_, s)| s.len()).sum();
-                if entity_count > 0 {
+                if actor_count > 0 {
                     info!(
-                        entities = entity_count,
+                        actors = actor_count,
                         sources = source_count,
-                        "Loaded trusted entity accounts for region"
+                        "Loaded actor accounts for region"
                     );
                 }
                 pairs
             }
             Err(e) => {
-                warn!(error = %e, "Failed to load trusted entities, continuing without");
+                warn!(error = %e, "Failed to load actor accounts, continuing without");
                 Vec::new()
             }
         };
@@ -340,7 +340,7 @@ impl Scout {
         // Boost existing entity sources or add new ones
         let existing_keys: std::collections::HashSet<String> =
             all_sources.iter().map(|s| s.canonical_key.clone()).collect();
-        for (_actor, sources) in &entity_pairs {
+        for (_actor, sources) in &actor_pairs {
             for source in sources {
                 if let Some(existing) = all_sources
                     .iter_mut()
@@ -402,18 +402,18 @@ impl Scout {
         // Create shared run context and scrape phase
         let mut ctx = RunContext::new(&all_sources);
 
-        // Populate entity contexts for location fallback during extraction
-        for (actor, sources) in &entity_pairs {
-            let entity_ctx = rootsignal_common::EntityContext {
-                entity_name: actor.name.clone(),
+        // Populate actor contexts for location fallback during extraction
+        for (actor, sources) in &actor_pairs {
+            let actor_ctx = rootsignal_common::ActorContext {
+                actor_name: actor.name.clone(),
                 bio: actor.bio.clone(),
                 location_name: actor.location_name.clone(),
                 location_lat: actor.location_lat,
                 location_lng: actor.location_lng,
             };
             for source in sources {
-                ctx.entity_contexts
-                    .insert(source.canonical_key.clone(), entity_ctx.clone());
+                ctx.actor_contexts
+                    .insert(source.canonical_key.clone(), actor_ctx.clone());
             }
         }
 

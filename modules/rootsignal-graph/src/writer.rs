@@ -2275,7 +2275,6 @@ impl GraphWriter {
                 a.first_seen = datetime($first_seen),
                 a.last_active = datetime($last_active),
                 a.typical_roles = $typical_roles,
-                a.trusted = $trusted,
                 a.bio = $bio,
                 a.location_lat = $location_lat,
                 a.location_lng = $location_lng,
@@ -2296,7 +2295,6 @@ impl GraphWriter {
         .param("first_seen", format_datetime(&actor.first_seen))
         .param("last_active", format_datetime(&actor.last_active))
         .param("typical_roles", actor.typical_roles.clone())
-        .param("trusted", actor.trusted)
         .param("bio", actor.bio.clone().unwrap_or_default())
         .param("location_lat", actor.location_lat.unwrap_or(0.0))
         .param("location_lng", actor.location_lng.unwrap_or(0.0))
@@ -2306,9 +2304,9 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Create or update an actor as a trusted entity with location.
-    /// Used by the createEntity GraphQL mutation.
-    pub async fn upsert_entity(
+    /// Create or update an actor with location and profile.
+    /// Used by the createActor GraphQL mutation. Returns the actor's UUID.
+    pub async fn upsert_actor_with_profile(
         &self,
         actor: &ActorNode,
     ) -> Result<Uuid, neo4rs::Error> {
@@ -2325,14 +2323,12 @@ impl GraphWriter {
                 a.first_seen = datetime($now),
                 a.last_active = datetime($now),
                 a.typical_roles = $typical_roles,
-                a.trusted = $trusted,
                 a.bio = $bio,
                 a.location_lat = $location_lat,
                 a.location_lng = $location_lng,
                 a.location_name = $location_name
              ON MATCH SET
                 a.name = $name,
-                a.trusted = $trusted,
                 a.bio = $bio,
                 a.location_lat = $location_lat,
                 a.location_lng = $location_lng,
@@ -2348,7 +2344,6 @@ impl GraphWriter {
         .param("description", actor.description.clone())
         .param("now", format_datetime(&actor.first_seen))
         .param("typical_roles", actor.typical_roles.clone())
-        .param("trusted", actor.trusted)
         .param("bio", actor.bio.clone().unwrap_or_default())
         .param("location_lat", actor.location_lat.unwrap_or(0.0))
         .param("location_lng", actor.location_lng.unwrap_or(0.0))
@@ -2365,7 +2360,7 @@ impl GraphWriter {
     }
 
     /// Link an actor to a source via HAS_ACCOUNT edge.
-    pub async fn link_entity_account(
+    pub async fn link_actor_account(
         &self,
         actor_id: Uuid,
         source_canonical_key: &str,
@@ -2382,27 +2377,9 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Set trust flag on an actor.
-    pub async fn set_entity_trust(
-        &self,
-        actor_id: Uuid,
-        trusted: bool,
-    ) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $id})
-             SET a.trusted = $trusted
-             RETURN a.id AS id",
-        )
-        .param("id", actor_id.to_string())
-        .param("trusted", trusted);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        Ok(stream.next().await?.is_some())
-    }
-
-    /// Find trusted actors within a bounding box, with their linked source accounts.
+    /// Find actors with linked social accounts within a bounding box.
     /// Returns (ActorNode, Vec<SourceNode>) pairs.
-    pub async fn find_trusted_entities_in_region(
+    pub async fn find_actors_in_region(
         &self,
         min_lat: f64,
         max_lat: f64,
@@ -2410,11 +2387,9 @@ impl GraphWriter {
         max_lng: f64,
     ) -> Result<Vec<(ActorNode, Vec<SourceNode>)>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor)
-             WHERE a.trusted = true
-               AND a.location_lat >= $min_lat AND a.location_lat <= $max_lat
+            "MATCH (a:Actor)-[:HAS_ACCOUNT]->(s:Source)
+             WHERE a.location_lat >= $min_lat AND a.location_lat <= $max_lat
                AND a.location_lng >= $min_lng AND a.location_lng <= $max_lng
-             OPTIONAL MATCH (a)-[:HAS_ACCOUNT]->(s:Source)
              RETURN a, collect(s) AS sources",
         )
         .param("min_lat", min_lat)
@@ -2464,7 +2439,6 @@ impl GraphWriter {
                 first_seen: chrono::Utc::now(),
                 last_active: chrono::Utc::now(),
                 typical_roles: actor_node.get("typical_roles").unwrap_or_default(),
-                trusted: true,
                 bio,
                 location_lat,
                 location_lng,
@@ -2486,10 +2460,10 @@ impl GraphWriter {
                 let dm_str: String = sn.get("discovery_method").unwrap_or_default();
                 let discovery_method = match dm_str.as_str() {
                     "curated" => DiscoveryMethod::Curated,
-                    "entity_account" => DiscoveryMethod::EntityAccount,
+                    "actor_account" => DiscoveryMethod::ActorAccount,
                     "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
                     "human_submission" => DiscoveryMethod::HumanSubmission,
-                    _ => DiscoveryMethod::EntityAccount,
+                    _ => DiscoveryMethod::ActorAccount,
                 };
                 let active: bool = sn.get("active").unwrap_or(true);
                 let weight: f64 = sn.get("weight").unwrap_or(0.7);
@@ -2522,7 +2496,7 @@ impl GraphWriter {
             }
         }
 
-        info!(count = results.len(), "Found trusted entities in region");
+        info!(count = results.len(), "Found actors with accounts in region");
         Ok(results)
     }
 

@@ -183,10 +183,8 @@ pub struct ActorNode {
     pub first_seen: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
     pub typical_roles: Vec<String>,
-    // --- Entity fields (populated when actor is a trusted entity) ---
-    /// Whether this entity is trusted for signal collection.
-    pub trusted: bool,
-    /// Entity bio / description for LLM context.
+    // --- Actor profile fields (populated when actor has linked social accounts) ---
+    /// Actor bio / description for LLM context.
     pub bio: Option<String>,
     /// Pinned location latitude.
     pub location_lat: Option<f64>,
@@ -196,18 +194,18 @@ pub struct ActorNode {
     pub location_name: Option<String>,
 }
 
-/// Context passed from a trusted entity to the signal extractor.
+/// Context passed from a known actor to the signal extractor.
 /// Provides location fallback when posts don't mention geography.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityContext {
-    pub entity_name: String,
+pub struct ActorContext {
+    pub actor_name: String,
     pub bio: Option<String>,
     pub location_name: Option<String>,
     pub location_lat: Option<f64>,
     pub location_lng: Option<f64>,
 }
 
-/// A social account mentioned in a post from a trusted entity.
+/// A social account mentioned in a post from a known actor.
 /// Used for social graph discovery (Phase 3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MentionedAccount {
@@ -907,9 +905,9 @@ pub enum DiscoveryMethod {
     HumanSubmission,
     /// Expanded from implied queries on extracted signals
     SignalExpansion,
-    /// Social account linked to a known entity
-    EntityAccount,
-    /// Discovered via trusted entity's social graph
+    /// Social account linked to a known actor
+    ActorAccount,
+    /// Discovered via a known actor's social graph
     SocialGraphFollow,
 }
 
@@ -924,7 +922,7 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
             DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
             DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
-            DiscoveryMethod::EntityAccount => write!(f, "entity_account"),
+            DiscoveryMethod::ActorAccount => write!(f, "actor_account"),
             DiscoveryMethod::SocialGraphFollow => write!(f, "social_graph_follow"),
         }
     }
