@@ -689,6 +689,10 @@ pub struct Post {
     pub engagement: Option<serde_json::Value>,
     pub published_at: Option<DateTime<Utc>>,
     pub permalink: Option<String>,
+    pub mentions: Vec<String>,
+    pub hashtags: Vec<String>,
+    pub media_type: Option<String>,
+    pub platform_id: Option<String>,
     pub attachments: Vec<ArchiveFile>,
 }
 
@@ -745,6 +749,7 @@ pub struct ArchivedPage {
     pub raw_html: String,
     pub markdown: String,
     pub title: Option<String>,
+    pub links: Vec<String>,
 }
 
 /// A fetched RSS/Atom feed.

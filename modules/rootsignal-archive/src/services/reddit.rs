@@ -7,6 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::store::InsertPost;
+use crate::text_extract;
 
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
@@ -52,6 +53,9 @@ impl RedditService {
                     "comments": p.number_of_comments,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = text_extract::extract_hashtags(&text);
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -62,6 +66,10 @@ impl RedditService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: p.url,
+                        mentions,
+                        hashtags,
+                        media_type: Some("text".to_string()),
+                        platform_id: None,
                     },
                 })
             })
@@ -100,6 +108,9 @@ impl RedditService {
                     "comments": p.number_of_comments,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = text_extract::extract_hashtags(&text);
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -110,6 +121,10 @@ impl RedditService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: p.url,
+                        mentions,
+                        hashtags,
+                        media_type: Some("text".to_string()),
+                        platform_id: None,
                     },
                 })
             })

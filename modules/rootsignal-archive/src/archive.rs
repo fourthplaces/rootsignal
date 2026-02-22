@@ -106,6 +106,28 @@ impl Archive {
         })
     }
 
+    // --- Shorthand methods (skip the two-step source().await?.method().await pattern) ---
+
+    /// Fetch posts from a social media URL.
+    pub async fn posts(&self, url: &str, limit: u32) -> Result<Vec<rootsignal_common::types::Post>> {
+        self.source(url).await?.posts(limit).await
+    }
+
+    /// Fetch and archive a web page.
+    pub async fn page(&self, url: &str) -> Result<rootsignal_common::types::ArchivedPage> {
+        self.source(url).await?.page().await
+    }
+
+    /// Fetch an RSS/Atom feed.
+    pub async fn feed(&self, url: &str) -> Result<rootsignal_common::types::ArchivedFeed> {
+        self.source(url).await?.feed().await
+    }
+
+    /// Run a web search.
+    pub async fn search(&self, query: &str) -> Result<rootsignal_common::types::ArchivedSearchResults> {
+        self.source(query).await?.search(query).await
+    }
+
     /// Run database migrations.
     pub async fn migrate(&self) -> Result<()> {
         self.inner.store.migrate().await

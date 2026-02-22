@@ -7,6 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::store::{InsertFile, InsertPost, InsertShortVideo};
+use crate::text_extract;
 
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
@@ -51,6 +52,13 @@ impl TikTokService {
                     "plays": p.play_count,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = p.hashtags
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|h| h.name.map(|n| n.to_lowercase()))
+                    .collect();
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -61,6 +69,10 @@ impl TikTokService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: p.web_video_url,
+                        mentions,
+                        hashtags,
+                        media_type: Some("video".to_string()),
+                        platform_id: p.id,
                     },
                 })
             })
@@ -150,6 +162,13 @@ impl TikTokService {
                     "plays": p.play_count,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = p.hashtags
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|h| h.name.map(|n| n.to_lowercase()))
+                    .collect();
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -160,6 +179,10 @@ impl TikTokService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: p.web_video_url,
+                        mentions,
+                        hashtags,
+                        media_type: Some("video".to_string()),
+                        platform_id: p.id,
                     },
                 })
             })

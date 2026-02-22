@@ -60,6 +60,7 @@ impl ChromePageService {
                     content_hash: hash,
                     markdown: String::new(),
                     title: None,
+                    links: Vec::new(),
                 },
                 raw_html: String::new(),
             });
@@ -80,6 +81,7 @@ impl ChromePageService {
                 content_hash: hash,
                 markdown,
                 title,
+                links: Vec::new(),
             },
             raw_html,
         })
@@ -192,6 +194,7 @@ impl BrowserlessPageService {
                     content_hash: hash,
                     markdown: String::new(),
                     title: None,
+                    links: Vec::new(),
                 },
                 raw_html: String::new(),
             });
@@ -209,6 +212,7 @@ impl BrowserlessPageService {
                 content_hash: hash,
                 markdown,
                 title,
+                links: Vec::new(),
             },
             raw_html: html,
         })

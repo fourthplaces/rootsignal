@@ -7,6 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::store::InsertPost;
+use crate::text_extract;
 
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
@@ -45,6 +46,9 @@ impl FacebookService {
                     "shares": p.shares,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = text_extract::extract_hashtags(&text);
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -55,6 +59,10 @@ impl FacebookService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: p.url,
+                        mentions,
+                        hashtags,
+                        media_type: None,
+                        platform_id: None,
                     },
                 })
             })
