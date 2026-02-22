@@ -69,7 +69,7 @@ export function SearchInput({ initialValue, onSearch, loading, onFocus }: Search
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onFocus={onFocus}
-        placeholder="Search signals and stories..."
+        placeholder="Search signals and situations..."
         className="w-full rounded-lg border border-border bg-background px-4 py-2.5 pr-20 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
       />
       <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">

@@ -54,7 +54,7 @@ export function SignalDetail({ signalId, onBack }: SignalDetailProps) {
 
           {signal.story && (
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground mb-1">Part of story</p>
+              <p className="text-xs text-muted-foreground mb-1">Part of situation</p>
               <p className="text-sm font-medium">{signal.story.headline}</p>
             </div>
           )}
