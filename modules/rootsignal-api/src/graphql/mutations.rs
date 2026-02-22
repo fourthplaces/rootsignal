@@ -9,7 +9,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole, SubmissionNode,
+    ActorNode, ActorType, Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
+    SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -64,6 +65,13 @@ struct AddSourceResult {
 struct ScoutResult {
     success: bool,
     message: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct EntityResult {
+    success: bool,
+    entity_id: Option<String>,
+    location_name: Option<String>,
 }
 
 #[derive(SimpleObject)]
@@ -613,6 +621,195 @@ impl MutationRoot {
             success: true,
             message: Some("News scan started in background".to_string()),
         })
+    }
+
+    // ========== Entity mutations (AdminGuard) ==========
+
+    /// Create a trusted entity with a location string (geocoded on backend).
+    /// Links social accounts if provided.
+    #[graphql(guard = "AdminGuard")]
+    async fn create_entity(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+        #[graphql(desc = "organization | individual | government_body | coalition")]
+        actor_type: Option<String>,
+        trusted: Option<bool>,
+        #[graphql(desc = "Location string, e.g. 'Minneapolis, MN' — geocoded on backend")]
+        location: String,
+        bio: Option<String>,
+        #[graphql(desc = "Social account URLs to link (e.g. https://instagram.com/handle)")]
+        social_accounts: Option<Vec<String>>,
+    ) -> Result<EntityResult> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let name = name.trim().to_string();
+        let location = location.trim().to_string();
+
+        if name.is_empty() {
+            return Err("Name is required".into());
+        }
+        if location.is_empty() {
+            return Err("Location is required".into());
+        }
+
+        // Geocode location
+        let (lat, lng, display_name) = geocode_location(&location)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+
+        let actor_type = match actor_type.as_deref() {
+            Some("individual") => ActorType::Individual,
+            Some("government_body") => ActorType::GovernmentBody,
+            Some("coalition") => ActorType::Coalition,
+            _ => ActorType::Organization,
+        };
+
+        let entity_id = name.to_lowercase().replace(' ', "-");
+        let actor = ActorNode {
+            id: Uuid::new_v4(),
+            name: name.clone(),
+            actor_type,
+            entity_id,
+            domains: vec![],
+            social_urls: social_accounts.clone().unwrap_or_default(),
+            description: bio.clone().unwrap_or_default(),
+            signal_count: 0,
+            first_seen: chrono::Utc::now(),
+            last_active: chrono::Utc::now(),
+            typical_roles: vec![],
+            trusted: trusted.unwrap_or(true),
+            bio,
+            location_lat: Some(lat),
+            location_lng: Some(lng),
+            location_name: Some(display_name.clone()),
+        };
+
+        let entity_id = writer
+            .upsert_entity(&actor)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create entity: {e}")))?;
+
+        // Link social accounts as Source nodes with HAS_ACCOUNT edges
+        for url in social_accounts.unwrap_or_default() {
+            let url = url.trim().to_string();
+            if url.is_empty() {
+                continue;
+            }
+            let cv = rootsignal_common::canonical_value(&url);
+            let source = SourceNode {
+                id: Uuid::new_v4(),
+                canonical_key: cv.clone(),
+                canonical_value: cv.clone(),
+                url: Some(url),
+                discovery_method: DiscoveryMethod::EntityAccount,
+                created_at: chrono::Utc::now(),
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: true,
+                gap_context: Some(format!("Entity account: {name}")),
+                weight: 0.7,
+                cadence_hours: Some(12),
+                avg_signals_per_scrape: 0.0,
+                quality_penalty: 1.0,
+                source_role: SourceRole::Mixed,
+                scrape_count: 0,
+            };
+            if let Err(e) = writer.upsert_source(&source).await {
+                warn!(error = %e, "Failed to create entity source");
+                continue;
+            }
+            if let Err(e) = writer.link_entity_account(entity_id, &cv).await {
+                warn!(error = %e, "Failed to link entity account");
+            }
+        }
+
+        info!(name = name.as_str(), location = display_name.as_str(), "Entity created");
+
+        Ok(EntityResult {
+            success: true,
+            entity_id: Some(entity_id.to_string()),
+            location_name: Some(display_name),
+        })
+    }
+
+    /// Add a social account to an existing entity.
+    #[graphql(guard = "AdminGuard")]
+    async fn add_entity_account(
+        &self,
+        ctx: &Context<'_>,
+        entity_id: String,
+        url: String,
+    ) -> Result<EntityResult> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let url = url.trim().to_string();
+
+        let actor_id = Uuid::parse_str(&entity_id)
+            .map_err(|_| async_graphql::Error::new("Invalid entity ID"))?;
+
+        let cv = rootsignal_common::canonical_value(&url);
+        let source = SourceNode {
+            id: Uuid::new_v4(),
+            canonical_key: cv.clone(),
+            canonical_value: cv.clone(),
+            url: Some(url.clone()),
+            discovery_method: DiscoveryMethod::EntityAccount,
+            created_at: chrono::Utc::now(),
+            last_scraped: None,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: true,
+            gap_context: Some("Entity account".to_string()),
+            weight: 0.7,
+            cadence_hours: Some(12),
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role: SourceRole::Mixed,
+            scrape_count: 0,
+        };
+
+        writer
+            .upsert_source(&source)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
+
+        writer
+            .link_entity_account(actor_id, &cv)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to link account: {e}")))?;
+
+        info!(entity_id = entity_id.as_str(), url = url.as_str(), "Entity account added");
+
+        Ok(EntityResult {
+            success: true,
+            entity_id: Some(entity_id),
+            location_name: None,
+        })
+    }
+
+    /// Set trust flag on an entity.
+    #[graphql(guard = "AdminGuard")]
+    async fn set_entity_trust(
+        &self,
+        ctx: &Context<'_>,
+        entity_id: String,
+        trusted: bool,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let actor_id = Uuid::parse_str(&entity_id)
+            .map_err(|_| async_graphql::Error::new("Invalid entity ID"))?;
+
+        let updated = writer
+            .set_entity_trust(actor_id, trusted)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to update trust: {e}")))?;
+
+        info!(entity_id = entity_id.as_str(), trusted, "Entity trust updated");
+        Ok(updated)
     }
 }
 
