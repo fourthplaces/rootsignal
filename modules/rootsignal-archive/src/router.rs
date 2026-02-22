@@ -2,6 +2,102 @@
 
 use rootsignal_common::SocialPlatform;
 
+/// Detected platform for a URL. Used by SourceHandle to route to the right service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Instagram,
+    Twitter,
+    Reddit,
+    Facebook,
+    TikTok,
+    Bluesky,
+    Web,
+}
+
+/// Detect which platform a URL belongs to.
+pub fn detect_platform(url: &str) -> Platform {
+    let lower = url.to_lowercase();
+    if lower.contains("instagram.com") {
+        Platform::Instagram
+    } else if lower.contains("twitter.com") || lower.contains("x.com/") {
+        Platform::Twitter
+    } else if lower.contains("reddit.com") {
+        Platform::Reddit
+    } else if lower.contains("facebook.com") {
+        Platform::Facebook
+    } else if lower.contains("tiktok.com") {
+        Platform::TikTok
+    } else if lower.contains("bsky.app") {
+        Platform::Bluesky
+    } else {
+        Platform::Web
+    }
+}
+
+/// Normalize a URL for use as a source identity.
+/// Strips protocol, www., trailing slashes. Lowercases host.
+/// twitter.com and x.com are aliased to x.com.
+pub fn normalize_url(url: &str) -> String {
+    let mut s = url.trim().to_string();
+
+    // Strip protocol
+    if let Some(rest) = s.strip_prefix("https://") {
+        s = rest.to_string();
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        s = rest.to_string();
+    }
+
+    // Strip www.
+    if let Some(rest) = s.strip_prefix("www.") {
+        s = rest.to_string();
+    }
+
+    // Strip trailing slash
+    while s.ends_with('/') {
+        s.pop();
+    }
+
+    // Alias twitter.com → x.com
+    if s.starts_with("twitter.com") {
+        s = s.replacen("twitter.com", "x.com", 1);
+    }
+
+    s
+}
+
+/// Extract the identifier (username, subreddit, etc.) from a normalized URL.
+pub fn extract_identifier(url: &str, platform: Platform) -> String {
+    match platform {
+        Platform::Reddit => {
+            // Handle /r/Name or /user/Name
+            if let Some(idx) = url.find("/r/") {
+                let rest = &url[idx + 3..];
+                return rest.split('/').next().unwrap_or(rest).to_string();
+            }
+            if let Some(idx) = url.find("/user/") {
+                let rest = &url[idx + 6..];
+                return rest.split('/').next().unwrap_or(rest).to_string();
+            }
+            extract_last_path_segment(url)
+        }
+        _ => extract_last_path_segment(url),
+    }
+}
+
+fn extract_last_path_segment(url: &str) -> String {
+    // Take everything after the host part
+    if let Some(slash_idx) = url.find('/') {
+        let path = &url[slash_idx + 1..];
+        // Get first meaningful path segment
+        let segment = path.split('/').find(|s| !s.is_empty()).unwrap_or(path);
+        // Strip query params
+        let segment = segment.split('?').next().unwrap_or(segment);
+        segment.to_string()
+    } else {
+        url.to_string()
+    }
+}
+
 /// Default post limit for social search when not specified in URL.
 const DEFAULT_SOCIAL_SEARCH_LIMIT: u32 = 20;
 
