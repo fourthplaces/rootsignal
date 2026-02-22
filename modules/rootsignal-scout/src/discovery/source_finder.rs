@@ -13,8 +13,8 @@ use rootsignal_graph::{
     StoryBrief, TensionResponseShape, UnmetTension,
 };
 
-use crate::budget::{BudgetTracker, OperationCost};
-use crate::sources;
+use crate::scheduling::budget::{BudgetTracker, OperationCost};
+use crate::pipeline::sources;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_CURIOSITY_QUERIES: usize = 7;
@@ -450,7 +450,7 @@ pub struct SourceFinder<'a> {
     region_name: String,
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
-    embedder: Option<&'a dyn crate::embedder::TextEmbedder>,
+    embedder: Option<&'a dyn crate::infra::embedder::TextEmbedder>,
 }
 
 /// Cosine similarity threshold for embedding-based query dedup.
@@ -483,7 +483,7 @@ impl<'a> SourceFinder<'a> {
     /// When set, new queries are embedded and checked against existing query
     /// embeddings before creation. Without an embedder, falls back to
     /// substring-based dedup only.
-    pub fn with_embedder(mut self, embedder: &'a dyn crate::embedder::TextEmbedder) -> Self {
+    pub fn with_embedder(mut self, embedder: &'a dyn crate::infra::embedder::TextEmbedder) -> Self {
         self.embedder = Some(embedder);
         self
     }

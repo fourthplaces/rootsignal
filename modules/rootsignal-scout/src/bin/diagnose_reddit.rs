@@ -10,9 +10,9 @@ use anyhow::Result;
 use rootsignal_archive::{Archive, ArchiveConfig, Content, FetchBackend, FetchBackendExt, PageBackend};
 use rootsignal_common::{Node, NodeType, SocialPost};
 use rootsignal_graph::GraphClient;
-use rootsignal_scout::embedder::Embedder;
-use rootsignal_scout::extractor::{Extractor, SignalExtractor};
-use rootsignal_scout::quality;
+use rootsignal_scout::infra::embedder::Embedder;
+use rootsignal_scout::pipeline::extractor::{Extractor, SignalExtractor};
+use rootsignal_scout::enrichment::quality;
 
 const SUBREDDIT_URL: &str = "https://www.reddit.com/r/Minneapolis/";
 

@@ -45,16 +45,10 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         let scope = req.scope.clone();
         let spent_cents = req.spent_cents;
 
-        let result = tokio::spawn(async move {
+        let result = super::spawn_workflow("Situation weaver", async move {
             run_situation_weaving_from_deps(&deps, &scope, spent_cents).await
         })
-        .await
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(format!("Situation weaver task panicked: {e}")).into()
-        })?
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(e.to_string()).into()
-        })?;
+        .await?;
 
         ctx.set("status", "Situation weaving complete".to_string());
         info!("SituationWeaverWorkflow complete");
@@ -67,10 +61,7 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         ctx: SharedWorkflowContext<'_>,
         _req: EmptyRequest,
     ) -> Result<String, HandlerError> {
-        Ok(ctx
-            .get::<String>("status")
-            .await?
-            .unwrap_or_else(|| "pending".to_string()))
+        super::read_workflow_status(&ctx).await
     }
 }
 
@@ -80,9 +71,9 @@ async fn run_situation_weaving_from_deps(
     spent_cents: u64,
 ) -> anyhow::Result<SituationWeaverResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
-    let embedder: Arc<dyn crate::embedder::TextEmbedder> =
-        Arc::new(crate::embedder::Embedder::new(&deps.voyage_api_key));
-    let budget = crate::budget::BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
+    let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
+        Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
+    let budget = crate::scheduling::budget::BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 
     let weaver_stats = crate::scout::run_situation_weaving(

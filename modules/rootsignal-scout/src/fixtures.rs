@@ -30,8 +30,8 @@ use rootsignal_common::{
     GatheringNode, Node, NodeMeta, SearchResult, SensitivityLevel, SocialPost,
 };
 
-use crate::embedder::TextEmbedder;
-use crate::extractor::SignalExtractor;
+use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::extractor::SignalExtractor;
 
 // --- FixtureSearcher ---
 
@@ -512,8 +512,8 @@ impl SignalExtractor for FixtureExtractor {
         &self,
         _content: &str,
         _source_url: &str,
-    ) -> Result<crate::extractor::ExtractionResult> {
-        Ok(crate::extractor::ExtractionResult {
+    ) -> Result<crate::pipeline::extractor::ExtractionResult> {
+        Ok(crate::pipeline::extractor::ExtractionResult {
             nodes: self.nodes.clone(),
             implied_queries: Vec::new(),
             resource_tags: Vec::new(),

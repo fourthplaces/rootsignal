@@ -37,6 +37,17 @@ pub struct Config {
     /// Daily budget limit in cents. 0 = unlimited.
     pub daily_budget_cents: u64,
 
+    // Browserless (optional headless browser service)
+    pub browserless_url: Option<String>,
+    pub browserless_token: Option<String>,
+
+    // Scout tuning
+    /// Max web queries per scout run. Defaults to 50.
+    pub max_web_queries_per_run: usize,
+
+    // Data directory for run logs
+    pub data_dir: std::path::PathBuf,
+
     // Twilio (for admin OTP auth)
     pub twilio_account_sid: String,
     pub twilio_auth_token: String,
@@ -75,6 +86,15 @@ impl Config {
             region_lng: None,
             region_radius_km: None,
             daily_budget_cents: 0,
+            browserless_url: env::var("BROWSERLESS_URL").ok(),
+            browserless_token: env::var("BROWSERLESS_TOKEN").ok(),
+            max_web_queries_per_run: env::var("MAX_WEB_QUERIES_PER_RUN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50),
+            data_dir: std::path::PathBuf::from(
+                env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()),
+            ),
             twilio_account_sid: String::new(),
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
@@ -106,6 +126,15 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            browserless_url: env::var("BROWSERLESS_URL").ok(),
+            browserless_token: env::var("BROWSERLESS_TOKEN").ok(),
+            max_web_queries_per_run: env::var("MAX_WEB_QUERIES_PER_RUN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50),
+            data_dir: std::path::PathBuf::from(
+                env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()),
+            ),
             twilio_account_sid: String::new(),
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
@@ -137,6 +166,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100),
+            browserless_url: None,
+            browserless_token: None,
+            max_web_queries_per_run: 50,
+            data_dir: std::path::PathBuf::from("data"),
             twilio_account_sid: String::new(),
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
@@ -176,6 +209,12 @@ impl Config {
             region_lng: None,
             region_radius_km: None,
             daily_budget_cents: 0,
+            browserless_url: env::var("BROWSERLESS_URL").ok(),
+            browserless_token: env::var("BROWSERLESS_TOKEN").ok(),
+            max_web_queries_per_run: 50,
+            data_dir: std::path::PathBuf::from(
+                env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()),
+            ),
             twilio_account_sid: env::var("TWILIO_ACCOUNT_SID").unwrap_or_default(),
             twilio_auth_token: env::var("TWILIO_AUTH_TOKEN").unwrap_or_default(),
             twilio_service_id: env::var("TWILIO_SERVICE_ID").unwrap_or_default(),

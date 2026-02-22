@@ -10,7 +10,7 @@ use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
-use crate::sources;
+use crate::pipeline::sources;
 
 /// Handles cold-start bootstrapping for a brand-new region.
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.

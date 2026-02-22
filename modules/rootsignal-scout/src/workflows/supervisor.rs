@@ -42,16 +42,10 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         let deps = self.deps.clone();
         let scope = req.scope.clone();
 
-        let result = tokio::spawn(async move {
+        let result = super::spawn_workflow("Supervisor", async move {
             run_supervisor_pipeline(&deps, &scope).await
         })
-        .await
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(format!("Supervisor task panicked: {e}")).into()
-        })?
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(e.to_string()).into()
-        })?;
+        .await?;
 
         ctx.set(
             "status",
@@ -67,10 +61,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         ctx: SharedWorkflowContext<'_>,
         _req: EmptyRequest,
     ) -> Result<String, HandlerError> {
-        Ok(ctx
-            .get::<String>("status")
-            .await?
-            .unwrap_or_else(|| "pending".to_string()))
+        super::read_workflow_status(&ctx).await
     }
 }
 

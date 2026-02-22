@@ -1,18 +1,13 @@
 pub mod discovery;
 pub mod enrichment;
 pub mod infra;
+// Used by rootsignal-api mutations
 pub mod news_scanner;
 pub mod pipeline;
 pub mod run_log;
 pub mod scheduling;
 pub mod workflows;
 
+// Used by integration tests (cannot be cfg(test) since tests are external)
 pub mod fixtures;
 pub mod scout;
-
-// Re-export submodules at crate root for backwards compatibility
-pub use discovery::{gathering_finder, response_finder, source_finder, tension_linker};
-pub use enrichment::{actor_extractor, expansion, investigator, quality};
-pub use infra::{embedder, util};
-pub use pipeline::{extractor, scrape_phase, sources};
-pub use scheduling::{bootstrap, budget, metrics, scheduler};

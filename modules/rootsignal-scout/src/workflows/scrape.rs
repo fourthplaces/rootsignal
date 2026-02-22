@@ -89,10 +89,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         ctx: SharedWorkflowContext<'_>,
         _req: EmptyRequest,
     ) -> Result<String, HandlerError> {
-        Ok(ctx
-            .get::<String>("status")
-            .await?
-            .unwrap_or_else(|| "pending".to_string()))
+        super::read_workflow_status(&ctx).await
     }
 }
 
@@ -102,18 +99,18 @@ async fn run_scrape_from_deps(
     status: watch::Sender<String>,
 ) -> anyhow::Result<ScrapeResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
-    let extractor: Arc<dyn crate::extractor::SignalExtractor> =
-        Arc::new(crate::extractor::Extractor::new(
+    let extractor: Arc<dyn crate::pipeline::extractor::SignalExtractor> =
+        Arc::new(crate::pipeline::extractor::Extractor::new(
             &deps.anthropic_api_key,
             scope.name.as_str(),
             scope.center_lat,
             scope.center_lng,
         ));
-    let embedder: Arc<dyn crate::embedder::TextEmbedder> =
-        Arc::new(crate::embedder::Embedder::new(&deps.voyage_api_key));
+    let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
+        Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let region_slug = rootsignal_common::slugify(&scope.name);
     let archive = create_archive(deps, &region_slug);
-    let budget = crate::budget::BudgetTracker::new(deps.daily_budget_cents);
+    let budget = crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 
     // Ensure archive tables exist

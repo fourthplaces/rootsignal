@@ -21,7 +21,7 @@ use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, Tensio
 
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
-use crate::embedder::TextEmbedder;
+use crate::infra::embedder::TextEmbedder;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
@@ -290,7 +290,7 @@ Extract the tensions discovered in the investigation. For each tension:
 
 If the signal is self-explanatory (not curious), set curious=false and provide a skip_reason. \
 Return at most 3 tensions. Only include tensions you have evidence for.",
-        crate::util::TENSION_CATEGORIES,
+        crate::infra::util::TENSION_CATEGORIES,
     )
 }
 

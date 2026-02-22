@@ -440,7 +440,7 @@ pub fn build_system_prompt(
     tag_vocabulary: &[String],
 ) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
-    let tension_cats = crate::util::TENSION_CATEGORIES;
+    let tension_cats = crate::infra::util::TENSION_CATEGORIES;
     let tag_vocab_section = if tag_vocabulary.is_empty() {
         String::new()
     } else {

@@ -160,7 +160,7 @@ impl QueryRoot {
         limit: Option<u32>,
     ) -> Result<Vec<GqlSearchResult>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
+        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
         let limit = limit.unwrap_or(50).min(200);
 
         let embedding = embedder.embed(&query).await.map_err(|e| {
@@ -195,7 +195,7 @@ impl QueryRoot {
         limit: Option<u32>,
     ) -> Result<Vec<GqlStorySearchResult>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::embedder::Embedder>>();
+        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
         let limit = limit.unwrap_or(20).min(100);
 
         let embedding = embedder.embed(&query).await.map_err(|e| {
@@ -581,7 +581,7 @@ impl QueryRoot {
             .map(|s| {
                 let effective_weight = s.weight * s.quality_penalty;
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
-                    rootsignal_scout::scheduler::cadence_hours_for_weight(effective_weight)
+                    rootsignal_scout::scheduling::scheduler::cadence_hours_for_weight(effective_weight)
                 });
                 let source_label = source_label_from_value(s.value());
                 AdminSource {
@@ -1170,7 +1170,7 @@ pub fn build_schema(
         if voyage_key.is_empty() {
             tracing::warn!("VOYAGE_API_KEY not set — semantic search queries will fail");
         }
-        Arc::new(rootsignal_scout::embedder::Embedder::new(voyage_key))
+        Arc::new(rootsignal_scout::infra::embedder::Embedder::new(voyage_key))
     };
 
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
