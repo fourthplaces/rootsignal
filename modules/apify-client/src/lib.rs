@@ -375,9 +375,16 @@ impl ApifyClient {
     ) -> Result<Vec<RedditPost>> {
         tracing::info!(subreddit_url, limit, "Starting Reddit scrape");
 
+        // Accept both bare identifiers ("TwinCities") and full URLs
+        let full_url = if subreddit_url.starts_with("http") {
+            subreddit_url.to_string()
+        } else {
+            format!("https://www.reddit.com/r/{}", subreddit_url)
+        };
+
         let input = RedditScraperInput {
             start_urls: vec![StartUrl {
-                url: subreddit_url.to_string(),
+                url: full_url,
             }],
             max_items: limit,
             sort: "new".to_string(),
