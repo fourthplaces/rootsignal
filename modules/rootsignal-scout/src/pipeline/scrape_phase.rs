@@ -640,6 +640,26 @@ impl<'a> ScrapePhase<'a> {
             "Scraping social media..."
         );
 
+        // Build entity context prefixes for trusted entity sources
+        let entity_prefixes: HashMap<String, String> = accounts
+            .iter()
+            .filter_map(|(ck, _, _)| {
+                ctx.entity_contexts.get(ck).map(|ec| {
+                    let mut prefix = format!(
+                        "ENTITY CONTEXT: This content is from {}", ec.entity_name
+                    );
+                    if let Some(ref bio) = ec.bio {
+                        prefix.push_str(&format!(", {}", bio));
+                    }
+                    if let Some(ref loc) = ec.location_name {
+                        prefix.push_str(&format!(", located in {}", loc));
+                    }
+                    prefix.push_str(". Use this location as fallback if the post doesn't mention a specific place.\n\n");
+                    (ck.clone(), prefix)
+                })
+            })
+            .collect();
+
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> =
             Vec::new();
@@ -648,6 +668,7 @@ impl<'a> ScrapePhase<'a> {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
             let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
+            let entity_prefix = entity_prefixes.get(&canonical_key).cloned();
 
             futures.push(Box::pin(async move {
                 let posts = match self.archive.fetch(&account.identifier).content().await {
@@ -676,7 +697,7 @@ impl<'a> ScrapePhase<'a> {
                     let mut all_signal_tags = Vec::new();
                     let mut combined_all = String::new();
                     for batch in batches {
-                        let combined_text: String = batch
+                        let mut combined_text: String = batch
                             .iter()
                             .enumerate()
                             .map(|(i, p)| post_header(i, p))
@@ -684,6 +705,10 @@ impl<'a> ScrapePhase<'a> {
                             .join("\n\n");
                         if combined_text.is_empty() {
                             continue;
+                        }
+                        // Prepend entity context for trusted entity sources
+                        if let Some(ref prefix) = entity_prefix {
+                            combined_text = format!("{prefix}{combined_text}");
                         }
                         combined_all.push_str(&combined_text);
                         match self.extractor.extract(&combined_text, &source_url).await {
@@ -711,8 +736,8 @@ impl<'a> ScrapePhase<'a> {
                         post_count,
                     ))
                 } else {
-                    // Instagram/Facebook: combine all posts then extract
-                    let combined_text: String = posts
+                    // Instagram/Facebook/Twitter/TikTok: combine all posts then extract
+                    let mut combined_text: String = posts
                         .iter()
                         .enumerate()
                         .map(|(i, p)| post_header(i, p))
@@ -720,6 +745,10 @@ impl<'a> ScrapePhase<'a> {
                         .join("\n\n");
                     if combined_text.is_empty() {
                         return None;
+                    }
+                    // Prepend entity context for trusted entity sources
+                    if let Some(ref prefix) = entity_prefix {
+                        combined_text = format!("{prefix}{combined_text}");
                     }
                     let result = match self.extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
