@@ -31,6 +31,42 @@ If the answer to any of these is no, the signal doesn't belong in Root Signal.
 
 ---
 
+## The Corrupted Information Environment
+
+This document's inclusion test was written assuming the web is noisy but mostly honest. That assumption no longer holds.
+
+The information environment is actively hostile. Social media platforms suppress civic content through algorithmic filtering, content removal, and API restrictions. Simultaneously, the open web is flooded with AI-generated content, coordinated astroturfing campaigns, and political noise that drowns genuine community voices. A hashtag query for a local issue may return a wall of political commentary from people with no connection to the community, bots amplifying engagement-bait, and algorithmically boosted outrage — with the actual community voices buried or removed entirely.
+
+In this environment, open ingestion is not neutral — it's naive. Filtering for sources with verifiable real-world touchpoints isn't gatekeeping. It's quality control against a corrupted input layer. See `self-evolving-system.md` for how this shapes source discovery.
+
+---
+
+## The First-Hand Principle
+
+The inclusion test's "grounded" requirement means grounded in direct experience — something happening to you, your family, your community, your neighborhood, or a request for help. Political commentary about an issue from people not personally affected by it fails the grounded test regardless of viewpoint.
+
+This is not a political filter. It's the difference between community signal and national discourse. If an issue doesn't touch someone's life directly, it's not their community signal — it's news consumption repackaged as opinion.
+
+Even first-hand content must still pass the full inclusion test. Root Signal's attention flows toward the wound and the response: needs, tensions, responses, gatherings, calls for help. Content that endorses or celebrates the source of harm — even from someone directly affected — doesn't surface a need, enable action, or illuminate community context. It fails the "connects to action or context" test.
+
+The two layers work together:
+1. **First-hand only** — is this person directly affected or involved?
+2. **Connects to action or context** — does this surface a need, a response, or help someone understand and participate in community life?
+
+### Scope
+
+The first-hand filter applies specifically to **platform search/feed scraping** — the channel where political noise, AI-generated content, and astroturfing are most concentrated. It is enforced at the LLM signal extraction layer.
+
+It does not apply to:
+- **Trusted account posts** — sources already vetted for real-world involvement
+- **News feeds** — already editorially filtered
+- **Org websites** — meet the inclusion test by nature
+- **Government/institutional sources** — grounded by definition
+
+Platform hashtag queries are particularly vulnerable to political noise — coordinated campaigns, astroturfing, and algorithmic amplification flood results with commentary that fails both layers. The first-hand principle makes explicit what the inclusion test already implies: Root Signal captures civic reality as lived, not as debated.
+
+---
+
 ## What We Include
 
 **Community Needs:** Volunteer opportunities, mutual aid requests, donation drives, meal trains, mentorship programs, skill-sharing, community support networks, resource directories.
