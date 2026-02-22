@@ -216,7 +216,7 @@ async fn main() -> Result<()> {
     };
 
     if let Some(pool) = pg_pool {
-        let _scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::new(
+        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::new(
             client.clone(),
             pool,
             &config,
@@ -232,8 +232,13 @@ async fn main() -> Result<()> {
                 .expect("Invalid Restate identity key");
         }
 
-        // Workflows will be .bind()'d here as they are implemented.
-        let endpoint = builder.build();
+        use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
+        use rootsignal_scout::workflows::actor_discovery::{ActorDiscoveryWorkflow, ActorDiscoveryWorkflowImpl};
+
+        let endpoint = builder
+            .bind(BootstrapWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(ActorDiscoveryWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .build();
 
         let restate_addr = format!("0.0.0.0:{restate_port}");
         info!("Restate endpoint starting on {restate_addr}");
