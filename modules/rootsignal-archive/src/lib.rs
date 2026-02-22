@@ -6,6 +6,7 @@ mod store;
 mod readability;
 pub mod fetchers;
 mod semantics;
+mod services;
 pub mod seed;
 
 pub use archive::{Archive, ArchiveConfig, Content, FetchBackend, FetchBackendExt, FetchRequest, FetchedContent, PageBackend, SocialSearch};
