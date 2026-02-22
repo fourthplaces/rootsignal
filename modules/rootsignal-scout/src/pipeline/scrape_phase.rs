@@ -1591,6 +1591,11 @@ impl<'a> ScrapePhase<'a> {
                                 first_seen: Utc::now(),
                                 last_active: Utc::now(),
                                 typical_roles: vec![],
+                                trusted: false,
+                                bio: None,
+                                location_lat: None,
+                                location_lng: None,
+                                location_name: None,
                             };
                             if let Err(e) = self.writer.upsert_actor(&actor).await {
                                 warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
