@@ -2,13 +2,8 @@ use ai_client::openai::OpenAi;
 use ai_client::traits::EmbedAgent;
 use anyhow::Result;
 
-// --- TextEmbedder trait ---
-
-#[async_trait::async_trait]
-pub trait TextEmbedder: Send + Sync {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
-    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
-}
+// TextEmbedder trait is now defined in rootsignal-common.
+pub use rootsignal_common::TextEmbedder;
 
 /// Wrapper around Voyage AI embeddings via the OpenAI-compatible API.
 pub struct Embedder {

@@ -3324,6 +3324,7 @@ name = "rootsignal-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "regex",
  "schemars 0.8.22",
@@ -3341,6 +3342,7 @@ dependencies = [
  "ai-client",
  "anyhow",
  "arc-swap",
+ "async-trait",
  "chrono",
  "futures",
  "geohash",

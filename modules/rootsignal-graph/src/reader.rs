@@ -2394,3 +2394,290 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         typical_roles,
     })
 }
+
+// --- Situation reader methods ---
+
+impl PublicGraphReader {
+    /// Fetch a single situation by ID.
+    pub async fn situation_by_id(
+        &self,
+        id: &Uuid,
+    ) -> Result<Option<rootsignal_common::SituationNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {id: $id})
+             RETURN s",
+        )
+        .param("id", id.to_string());
+
+        let mut stream = g.execute(q).await?;
+        match stream.next().await? {
+            Some(row) => Ok(row_to_situation(&row, "s")),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch situations within a geographic bounding box, ordered by temperature descending.
+    pub async fn situations_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+        arc_filter: Option<&str>,
+    ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let arc_clause = match arc_filter {
+            Some(arc) => format!("AND s.arc = '{arc}'"),
+            None => String::new(),
+        };
+
+        let q = query(&format!(
+            "MATCH (s:Situation)
+             WHERE s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
+               AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
+               {arc_clause}
+             RETURN s
+             ORDER BY s.temperature DESC
+             LIMIT $limit"
+        ))
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng)
+        .param("limit", limit as i64);
+
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(sit) = row_to_situation(&row, "s") {
+                results.push(sit);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Fetch situations filtered by arc, ordered by temperature descending.
+    pub async fn situations_by_arc(
+        &self,
+        arc: &str,
+        limit: u32,
+    ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {arc: $arc})
+             RETURN s
+             ORDER BY s.temperature DESC
+             LIMIT $limit",
+        )
+        .param("arc", arc)
+        .param("limit", limit as i64);
+
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(sit) = row_to_situation(&row, "s") {
+                results.push(sit);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Fetch top situations ordered by temperature descending.
+    pub async fn situations(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation)
+             RETURN s
+             ORDER BY s.temperature DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(sit) = row_to_situation(&row, "s") {
+                results.push(sit);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Fetch dispatches for a situation, ordered by creation time.
+    pub async fn dispatches_for_situation(
+        &self,
+        situation_id: &Uuid,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<rootsignal_common::DispatchNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {id: $id})-[:HAS_DISPATCH]->(d:Dispatch)
+             RETURN d
+             ORDER BY d.created_at ASC
+             SKIP $offset
+             LIMIT $limit",
+        )
+        .param("id", situation_id.to_string())
+        .param("offset", offset as i64)
+        .param("limit", limit as i64);
+
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(dispatch) = row_to_dispatch(&row, "d") {
+                results.push(dispatch);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Fetch situations that a signal evidences (many-to-many via EVIDENCES).
+    pub async fn situations_for_signal(
+        &self,
+        signal_id: &Uuid,
+    ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+             WHERE sig.id = $signal_id
+             RETURN s
+             ORDER BY s.temperature DESC",
+        )
+        .param("signal_id", signal_id.to_string());
+
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(sit) = row_to_situation(&row, "s") {
+                results.push(sit);
+            }
+        }
+        Ok(results)
+    }
+}
+
+/// Parse a Situation node from a neo4rs Row.
+fn row_to_situation(
+    row: &neo4rs::Row,
+    key: &str,
+) -> Option<rootsignal_common::SituationNode> {
+    let n: neo4rs::Node = row.get(key).ok()?;
+    let id_str: String = n.get("id").ok()?;
+    let id = Uuid::parse_str(&id_str).ok()?;
+    let headline: String = n.get("headline").unwrap_or_default();
+    let lede: String = n.get("lede").unwrap_or_default();
+    let arc_str: String = n.get("arc").unwrap_or_default();
+    let arc: rootsignal_common::SituationArc = arc_str.parse().unwrap_or(rootsignal_common::SituationArc::Emerging);
+
+    let temperature: f64 = n.get("temperature").unwrap_or(0.0);
+    let tension_heat: f64 = n.get("tension_heat").unwrap_or(0.0);
+    let entity_velocity: f64 = n.get("entity_velocity").unwrap_or(0.0);
+    let amplification: f64 = n.get("amplification").unwrap_or(0.0);
+    let response_coverage: f64 = n.get("response_coverage").unwrap_or(0.0);
+    let clarity_need: f64 = n.get("clarity_need").unwrap_or(0.0);
+
+    let clarity_str: String = n.get("clarity").unwrap_or_default();
+    let clarity: rootsignal_common::Clarity = clarity_str.parse().unwrap_or(rootsignal_common::Clarity::Fuzzy);
+
+    let centroid_lat: Option<f64> = n.get("centroid_lat").ok();
+    let centroid_lng: Option<f64> = n.get("centroid_lng").ok();
+    let location_name: Option<String> = n.get("location_name").ok().filter(|s: &String| !s.is_empty());
+
+    let structured_state: String = n.get("structured_state").unwrap_or_default();
+
+    let signal_count: i64 = n.get("signal_count").unwrap_or(0);
+    let tension_count: i64 = n.get("tension_count").unwrap_or(0);
+    let dispatch_count: i64 = n.get("dispatch_count").unwrap_or(0);
+    let first_seen = parse_story_datetime(&n, "first_seen");
+    let last_updated = parse_story_datetime(&n, "last_updated");
+
+    let sensitivity_str: String = n.get("sensitivity").unwrap_or_default();
+    let sensitivity = match sensitivity_str.as_str() {
+        "elevated" => SensitivityLevel::Elevated,
+        "sensitive" => SensitivityLevel::Sensitive,
+        _ => SensitivityLevel::General,
+    };
+
+    let category: Option<String> = n.get("category").ok().filter(|s: &String| !s.is_empty());
+
+    Some(rootsignal_common::SituationNode {
+        id,
+        headline,
+        lede,
+        arc,
+        temperature,
+        tension_heat,
+        entity_velocity,
+        amplification,
+        response_coverage,
+        clarity_need,
+        clarity,
+        centroid_lat,
+        centroid_lng,
+        location_name,
+        structured_state,
+        signal_count: signal_count as u32,
+        tension_count: tension_count as u32,
+        dispatch_count: dispatch_count as u32,
+        first_seen,
+        last_updated,
+        sensitivity,
+        category,
+    })
+}
+
+/// Parse a Dispatch node from a neo4rs Row.
+fn row_to_dispatch(
+    row: &neo4rs::Row,
+    key: &str,
+) -> Option<rootsignal_common::DispatchNode> {
+    let n: neo4rs::Node = row.get(key).ok()?;
+    let id_str: String = n.get("id").ok()?;
+    let id = Uuid::parse_str(&id_str).ok()?;
+    let situation_id_str: String = n.get("situation_id").unwrap_or_default();
+    let situation_id = Uuid::parse_str(&situation_id_str).ok()?;
+    let body: String = n.get("body").unwrap_or_default();
+
+    let signal_ids_raw: Vec<String> = n.get("signal_ids").unwrap_or_default();
+    let signal_ids: Vec<Uuid> = signal_ids_raw
+        .iter()
+        .filter_map(|s| Uuid::parse_str(s).ok())
+        .collect();
+
+    let created_at = parse_story_datetime(&n, "created_at");
+    let dispatch_type_str: String = n.get("dispatch_type").unwrap_or_default();
+    let dispatch_type: rootsignal_common::DispatchType =
+        dispatch_type_str.parse().unwrap_or(rootsignal_common::DispatchType::Update);
+
+    let supersedes_str: Option<String> = n.get("supersedes").ok().filter(|s: &String| !s.is_empty());
+    let supersedes = supersedes_str.and_then(|s| Uuid::parse_str(&s).ok());
+
+    let flagged_for_review: bool = n.get("flagged_for_review").unwrap_or(false);
+    let flag_reason: Option<String> = n.get("flag_reason").ok().filter(|s: &String| !s.is_empty());
+    let fidelity_score: Option<f64> = n.get("fidelity_score").ok().filter(|v: &f64| *v >= 0.0);
+
+    Some(rootsignal_common::DispatchNode {
+        id,
+        situation_id,
+        body,
+        signal_ids,
+        created_at,
+        dispatch_type,
+        supersedes,
+        flagged_for_review,
+        flag_reason,
+        fidelity_score,
+    })
+}

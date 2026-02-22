@@ -4831,6 +4831,348 @@ pub fn row_datetime_opt_pub(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc
     row_datetime_opt(row, key)
 }
 
+// --- Situation / Dispatch writer methods ---
+
+impl GraphWriter {
+    /// Create a Situation node in the graph. Returns the situation's UUID.
+    pub async fn create_situation(
+        &self,
+        situation: &rootsignal_common::SituationNode,
+        narrative_embedding: &[f32],
+        causal_embedding: &[f32],
+    ) -> Result<Uuid, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "CREATE (s:Situation {
+                id: $id,
+                headline: $headline,
+                lede: $lede,
+                arc: $arc,
+                temperature: $temperature,
+                tension_heat: $tension_heat,
+                entity_velocity: $entity_velocity,
+                amplification: $amplification,
+                response_coverage: $response_coverage,
+                clarity_need: $clarity_need,
+                clarity: $clarity,
+                centroid_lat: $centroid_lat,
+                centroid_lng: $centroid_lng,
+                location_name: $location_name,
+                structured_state: $structured_state,
+                signal_count: $signal_count,
+                tension_count: $tension_count,
+                dispatch_count: $dispatch_count,
+                first_seen: datetime($first_seen),
+                last_updated: datetime($last_updated),
+                sensitivity: $sensitivity,
+                category: $category,
+                narrative_embedding: $narrative_embedding,
+                causal_embedding: $causal_embedding
+            })",
+        )
+        .param("id", situation.id.to_string())
+        .param("headline", situation.headline.as_str())
+        .param("lede", situation.lede.as_str())
+        .param("arc", situation.arc.to_string())
+        .param("temperature", situation.temperature)
+        .param("tension_heat", situation.tension_heat)
+        .param("entity_velocity", situation.entity_velocity)
+        .param("amplification", situation.amplification)
+        .param("response_coverage", situation.response_coverage)
+        .param("clarity_need", situation.clarity_need)
+        .param("clarity", situation.clarity.to_string())
+        .param("centroid_lat", situation.centroid_lat.unwrap_or(0.0))
+        .param("centroid_lng", situation.centroid_lng.unwrap_or(0.0))
+        .param(
+            "location_name",
+            situation.location_name.as_deref().unwrap_or(""),
+        )
+        .param("structured_state", situation.structured_state.as_str())
+        .param("signal_count", situation.signal_count as i64)
+        .param("tension_count", situation.tension_count as i64)
+        .param("dispatch_count", situation.dispatch_count as i64)
+        .param(
+            "first_seen",
+            situation.first_seen.to_rfc3339(),
+        )
+        .param(
+            "last_updated",
+            situation.last_updated.to_rfc3339(),
+        )
+        .param("sensitivity", situation.sensitivity.as_str())
+        .param(
+            "category",
+            situation.category.as_deref().unwrap_or(""),
+        )
+        .param("narrative_embedding", narrative_embedding.to_vec())
+        .param("causal_embedding", causal_embedding.to_vec());
+
+        g.run(q).await?;
+        info!(id = %situation.id, headline = %situation.headline, "Created Situation node");
+        Ok(situation.id)
+    }
+
+    /// Create a Dispatch node and link it to its Situation via HAS_DISPATCH.
+    pub async fn create_dispatch(
+        &self,
+        dispatch: &rootsignal_common::DispatchNode,
+    ) -> Result<Uuid, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let signal_ids_json: Vec<String> =
+            dispatch.signal_ids.iter().map(|id| id.to_string()).collect();
+
+        let q = query(
+            "MATCH (s:Situation {id: $situation_id})
+             CREATE (d:Dispatch {
+                id: $id,
+                situation_id: $situation_id,
+                body: $body,
+                signal_ids: $signal_ids,
+                created_at: datetime($created_at),
+                dispatch_type: $dispatch_type,
+                supersedes: $supersedes,
+                flagged_for_review: $flagged_for_review,
+                flag_reason: $flag_reason,
+                fidelity_score: $fidelity_score
+             })
+             CREATE (s)-[:HAS_DISPATCH {position: s.dispatch_count}]->(d)
+             SET s.dispatch_count = s.dispatch_count + 1,
+                 s.last_updated = datetime($created_at)",
+        )
+        .param("id", dispatch.id.to_string())
+        .param("situation_id", dispatch.situation_id.to_string())
+        .param("body", dispatch.body.as_str())
+        .param("signal_ids", signal_ids_json)
+        .param("created_at", dispatch.created_at.to_rfc3339())
+        .param("dispatch_type", dispatch.dispatch_type.to_string())
+        .param(
+            "supersedes",
+            dispatch
+                .supersedes
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+        )
+        .param("flagged_for_review", dispatch.flagged_for_review)
+        .param(
+            "flag_reason",
+            dispatch.flag_reason.as_deref().unwrap_or(""),
+        )
+        .param("fidelity_score", dispatch.fidelity_score.unwrap_or(-1.0));
+
+        g.run(q).await?;
+        info!(id = %dispatch.id, situation_id = %dispatch.situation_id, "Created Dispatch node");
+        Ok(dispatch.id)
+    }
+
+    /// Create or update an EVIDENCES edge (signal → situation, many-to-many).
+    pub async fn merge_evidence_edge(
+        &self,
+        signal_id: &Uuid,
+        signal_label: &str,
+        situation_id: &Uuid,
+        match_confidence: f64,
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(&format!(
+            "MATCH (sig:{signal_label} {{id: $signal_id}})
+             MATCH (sit:Situation {{id: $situation_id}})
+             MERGE (sig)-[e:EVIDENCES]->(sit)
+             SET e.assigned_at = datetime(),
+                 e.match_confidence = $confidence,
+                 e.debunked = false"
+        ))
+        .param("signal_id", signal_id.to_string())
+        .param("situation_id", situation_id.to_string())
+        .param("confidence", match_confidence);
+
+        g.run(q).await?;
+        Ok(())
+    }
+
+    /// Create CITES edges from a dispatch to its cited signals.
+    pub async fn merge_cites_edges(
+        &self,
+        dispatch_id: &Uuid,
+        signal_ids: &[Uuid],
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        for signal_id in signal_ids {
+            let q = query(
+                "MATCH (d:Dispatch {id: $dispatch_id})
+                 MATCH (sig) WHERE sig.id = $signal_id
+                   AND (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+                 MERGE (d)-[:CITES]->(sig)",
+            )
+            .param("dispatch_id", dispatch_id.to_string())
+            .param("signal_id", signal_id.to_string());
+
+            g.run(q).await?;
+        }
+        Ok(())
+    }
+
+    /// Verify that all signal UUIDs actually exist in the graph. Returns the set of missing IDs.
+    pub async fn verify_signal_ids(
+        &self,
+        signal_ids: &[Uuid],
+    ) -> Result<Vec<Uuid>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut missing = Vec::new();
+
+        for id in signal_ids {
+            let q = query(
+                "MATCH (n) WHERE n.id = $id
+                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                 RETURN n.id AS id",
+            )
+            .param("id", id.to_string());
+
+            let mut stream = g.execute(q).await?;
+            if stream.next().await?.is_none() {
+                missing.push(*id);
+            }
+        }
+
+        Ok(missing)
+    }
+
+    /// Update a situation's structured_state JSON blob.
+    pub async fn update_situation_state(
+        &self,
+        situation_id: &Uuid,
+        structured_state: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {id: $id})
+             SET s.structured_state = $state,
+                 s.last_updated = datetime()",
+        )
+        .param("id", situation_id.to_string())
+        .param("state", structured_state);
+
+        g.run(q).await
+    }
+
+    /// Update a situation's temperature components and derived arc.
+    pub async fn update_situation_temperature(
+        &self,
+        situation_id: &Uuid,
+        temperature: f64,
+        tension_heat: f64,
+        entity_velocity: f64,
+        amplification: f64,
+        response_coverage: f64,
+        clarity_need: f64,
+        arc: &rootsignal_common::SituationArc,
+        clarity: &rootsignal_common::Clarity,
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {id: $id})
+             SET s.temperature = $temperature,
+                 s.tension_heat = $tension_heat,
+                 s.entity_velocity = $entity_velocity,
+                 s.amplification = $amplification,
+                 s.response_coverage = $response_coverage,
+                 s.clarity_need = $clarity_need,
+                 s.arc = $arc,
+                 s.clarity = $clarity,
+                 s.last_updated = datetime()",
+        )
+        .param("id", situation_id.to_string())
+        .param("temperature", temperature)
+        .param("tension_heat", tension_heat)
+        .param("entity_velocity", entity_velocity)
+        .param("amplification", amplification)
+        .param("response_coverage", response_coverage)
+        .param("clarity_need", clarity_need)
+        .param("arc", arc.to_string())
+        .param("clarity", clarity.to_string());
+
+        g.run(q).await
+    }
+
+    /// Update a situation's dual embeddings.
+    pub async fn update_situation_embedding(
+        &self,
+        situation_id: &Uuid,
+        narrative_embedding: &[f32],
+        causal_embedding: &[f32],
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (s:Situation {id: $id})
+             SET s.narrative_embedding = $narrative_embedding,
+                 s.causal_embedding = $causal_embedding",
+        )
+        .param("id", situation_id.to_string())
+        .param("narrative_embedding", narrative_embedding.to_vec())
+        .param("causal_embedding", causal_embedding.to_vec());
+
+        g.run(q).await
+    }
+
+    /// Find signals from a scout run that aren't yet assigned to any situation.
+    pub async fn find_unassigned_signals(
+        &self,
+        scout_run_id: &str,
+    ) -> Result<Vec<(Uuid, String)>, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        let mut results = Vec::new();
+
+        for label in &labels {
+            let q = query(&format!(
+                "MATCH (n:{label} {{scout_run_id: $run_id}})
+                 WHERE NOT (n)-[:EVIDENCES]->(:Situation)
+                 RETURN n.id AS id"
+            ))
+            .param("run_id", scout_run_id);
+
+            let mut stream = g.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id: String = row.get("id").unwrap_or_default();
+                if let Ok(uuid) = Uuid::parse_str(&id) {
+                    results.push((uuid, label.to_string()));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Flag a dispatch for review by post-hoc verification.
+    pub async fn flag_dispatch_for_review(
+        &self,
+        dispatch_id: &Uuid,
+        flag_reason: &str,
+        fidelity_score: Option<f64>,
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "MATCH (d:Dispatch {id: $id})
+             SET d.flagged_for_review = true,
+                 d.flag_reason = $reason,
+                 d.fidelity_score = $fidelity",
+        )
+        .param("id", dispatch_id.to_string())
+        .param("reason", flag_reason)
+        .param("fidelity", fidelity_score.unwrap_or(-1.0));
+
+        g.run(q).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
