@@ -14,6 +14,14 @@ pub enum SensitivityLevel {
 }
 
 impl SensitivityLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SensitivityLevel::General => "general",
+            SensitivityLevel::Elevated => "elevated",
+            SensitivityLevel::Sensitive => "sensitive",
+        }
+    }
+
     /// Returns the coordinate fuzz radius in degrees (approximate).
     /// General: no fuzz, Elevated: ~0.5km, Sensitive: ~5km
     pub fn fuzz_radius(&self) -> f64 {

@@ -514,6 +514,46 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Remove city concept: drop legacy indexes and properties ---
     remove_city_concept(client).await?;
 
+    // --- Situation and Dispatch node constraints and indexes ---
+    let situation_constraints = [
+        "CREATE CONSTRAINT situation_id_unique IF NOT EXISTS FOR (n:Situation) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT dispatch_id_unique IF NOT EXISTS FOR (n:Dispatch) REQUIRE n.id IS UNIQUE",
+    ];
+    for c in &situation_constraints {
+        g.run(query(c)).await?;
+    }
+
+    let situation_indexes = [
+        "CREATE INDEX situation_arc IF NOT EXISTS FOR (n:Situation) ON (n.arc)",
+        "CREATE INDEX situation_temperature IF NOT EXISTS FOR (n:Situation) ON (n.temperature)",
+        "CREATE INDEX situation_category IF NOT EXISTS FOR (n:Situation) ON (n.category)",
+        "CREATE INDEX situation_sensitivity IF NOT EXISTS FOR (n:Situation) ON (n.sensitivity)",
+        "CREATE INDEX situation_last_updated IF NOT EXISTS FOR (n:Situation) ON (n.last_updated)",
+        "CREATE INDEX situation_centroid_lat_lng IF NOT EXISTS FOR (n:Situation) ON (n.centroid_lat, n.centroid_lng)",
+        "CREATE INDEX dispatch_situation_id IF NOT EXISTS FOR (n:Dispatch) ON (n.situation_id)",
+        "CREATE INDEX dispatch_created_at IF NOT EXISTS FOR (n:Dispatch) ON (n.created_at)",
+        "CREATE INDEX dispatch_flagged IF NOT EXISTS FOR (n:Dispatch) ON (n.flagged_for_review)",
+    ];
+    for idx in &situation_indexes {
+        g.run(query(idx)).await?;
+    }
+
+    // Dual vector indexes for situation embeddings (1024-dim Voyage AI)
+    let situation_vector_indexes = [
+        "CREATE VECTOR INDEX situation_narrative_embedding IF NOT EXISTS FOR (n:Situation) ON (n.narrative_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+        "CREATE VECTOR INDEX situation_causal_embedding IF NOT EXISTS FOR (n:Situation) ON (n.causal_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}",
+    ];
+    for idx in &situation_vector_indexes {
+        g.run(query(idx)).await?;
+    }
+
+    // EVIDENCES edge index (for signal→situation lookups)
+    g.run(query(
+        "CREATE INDEX evidences_match_confidence IF NOT EXISTS FOR ()-[r:EVIDENCES]-() ON (r.match_confidence)",
+    )).await?;
+
+    info!("Situation/Dispatch constraints and indexes created");
+
     info!("Schema migration complete");
     Ok(())
 }

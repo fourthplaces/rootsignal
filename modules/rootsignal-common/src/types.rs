@@ -1,3 +1,4 @@
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1178,6 +1179,171 @@ pub enum EdgeType {
     Prefers,
     /// Aid -> Resource (this is what we provide). Properties: confidence, capacity
     Offers,
+}
+
+// --- TextEmbedder trait (shared across crates) ---
+
+#[async_trait::async_trait]
+pub trait TextEmbedder: Send + Sync {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+}
+
+// --- Situation Types ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SituationArc {
+    Emerging,
+    Developing,
+    Active,
+    Cooling,
+    Cold,
+}
+
+impl std::fmt::Display for SituationArc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SituationArc::Emerging => write!(f, "emerging"),
+            SituationArc::Developing => write!(f, "developing"),
+            SituationArc::Active => write!(f, "active"),
+            SituationArc::Cooling => write!(f, "cooling"),
+            SituationArc::Cold => write!(f, "cold"),
+        }
+    }
+}
+
+impl std::str::FromStr for SituationArc {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "emerging" => Ok(Self::Emerging),
+            "developing" => Ok(Self::Developing),
+            "active" => Ok(Self::Active),
+            "cooling" => Ok(Self::Cooling),
+            "cold" => Ok(Self::Cold),
+            other => Err(format!("unknown SituationArc: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Clarity {
+    Fuzzy,
+    Sharpening,
+    Sharp,
+}
+
+impl std::fmt::Display for Clarity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Clarity::Fuzzy => write!(f, "fuzzy"),
+            Clarity::Sharpening => write!(f, "sharpening"),
+            Clarity::Sharp => write!(f, "sharp"),
+        }
+    }
+}
+
+impl std::str::FromStr for Clarity {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "fuzzy" => Ok(Self::Fuzzy),
+            "sharpening" => Ok(Self::Sharpening),
+            "sharp" => Ok(Self::Sharp),
+            other => Err(format!("unknown Clarity: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchType {
+    Update,
+    Emergence,
+    Split,
+    Merge,
+    Reactivation,
+    Correction,
+}
+
+impl std::fmt::Display for DispatchType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DispatchType::Update => write!(f, "update"),
+            DispatchType::Emergence => write!(f, "emergence"),
+            DispatchType::Split => write!(f, "split"),
+            DispatchType::Merge => write!(f, "merge"),
+            DispatchType::Reactivation => write!(f, "reactivation"),
+            DispatchType::Correction => write!(f, "correction"),
+        }
+    }
+}
+
+impl std::str::FromStr for DispatchType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "update" => Ok(Self::Update),
+            "emergence" => Ok(Self::Emergence),
+            "split" => Ok(Self::Split),
+            "merge" => Ok(Self::Merge),
+            "reactivation" => Ok(Self::Reactivation),
+            "correction" => Ok(Self::Correction),
+            other => Err(format!("unknown DispatchType: {other}")),
+        }
+    }
+}
+
+/// A living situation: a root cause + affected population + place.
+/// Organizational layer on top of the signal graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SituationNode {
+    pub id: Uuid,
+    pub headline: String,
+    pub lede: String,
+    pub arc: SituationArc,
+
+    // Temperature components (all 0.0-1.0, derived from graph)
+    pub temperature: f64,
+    pub tension_heat: f64,
+    pub entity_velocity: f64,
+    pub amplification: f64,
+    pub response_coverage: f64,
+    pub clarity_need: f64,
+
+    pub clarity: Clarity,
+
+    pub centroid_lat: Option<f64>,
+    pub centroid_lng: Option<f64>,
+    pub location_name: Option<String>,
+
+    /// LLM working memory (JSON blob). NOT exposed via public API.
+    pub structured_state: String,
+
+    pub signal_count: u32,
+    pub tension_count: u32,
+    pub dispatch_count: u32,
+    pub first_seen: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
+    pub sensitivity: SensitivityLevel,
+    pub category: Option<String>,
+}
+
+/// An atomic dispatch in a situation's living narrative thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DispatchNode {
+    pub id: Uuid,
+    pub situation_id: Uuid,
+    pub body: String,
+    pub signal_ids: Vec<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub dispatch_type: DispatchType,
+    pub supersedes: Option<Uuid>,
+    pub flagged_for_review: bool,
+    pub flag_reason: Option<String>,
+    pub fidelity_score: Option<f64>,
 }
 
 #[cfg(test)]
