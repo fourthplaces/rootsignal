@@ -237,9 +237,9 @@ impl PostsRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_ids: Vec<Uuid> = attachments.iter().map(|f| f.id).collect();
-            if !file_ids.is_empty() {
-                self.inner.store.insert_attachments("posts", post_id, &file_ids).await?;
+            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            if !file_positions.is_empty() {
+                self.inner.store.insert_attachments("posts", post_id, &file_positions).await?;
             }
 
             posts.push(Post {
@@ -248,6 +248,7 @@ impl PostsRequest {
                 fetched_at: Utc::now(),
                 content_hash: insert_post.content_hash,
                 text: insert_post.text,
+                author: insert_post.author,
                 location: insert_post.location,
                 engagement: insert_post.engagement,
                 published_at: insert_post.published_at,
@@ -310,9 +311,9 @@ impl StoriesRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_ids: Vec<Uuid> = attachments.iter().map(|f| f.id).collect();
-            if !file_ids.is_empty() {
-                self.inner.store.insert_attachments("stories", story_id, &file_ids).await?;
+            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            if !file_positions.is_empty() {
+                self.inner.store.insert_attachments("stories", story_id, &file_positions).await?;
             }
             stories.push(Story {
                 id: story_id,
@@ -395,9 +396,9 @@ impl ShortVideoRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_ids: Vec<Uuid> = attachments.iter().map(|f| f.id).collect();
-            if !file_ids.is_empty() {
-                self.inner.store.insert_attachments("short_videos", video_id, &file_ids).await?;
+            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            if !file_positions.is_empty() {
+                self.inner.store.insert_attachments("short_videos", video_id, &file_positions).await?;
             }
             videos.push(ShortVideo {
                 id: video_id,
@@ -487,6 +488,7 @@ impl PageRequest {
             source_id,
             fetched_at: Utc::now(),
             content_hash: fetched.page.content_hash,
+            raw_html: fetched.raw_html,
             markdown: fetched.page.markdown,
             title: fetched.page.title,
         })
@@ -658,9 +660,9 @@ impl TopicSearchRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_ids: Vec<Uuid> = attachments.iter().map(|f| f.id).collect();
-            if !file_ids.is_empty() {
-                self.inner.store.insert_attachments("posts", post_id, &file_ids).await?;
+            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            if !file_positions.is_empty() {
+                self.inner.store.insert_attachments("posts", post_id, &file_positions).await?;
             }
             posts.push(Post {
                 id: post_id,
@@ -668,6 +670,7 @@ impl TopicSearchRequest {
                 fetched_at: Utc::now(),
                 content_hash: insert_post.content_hash,
                 text: insert_post.text,
+                author: insert_post.author,
                 location: insert_post.location,
                 engagement: insert_post.engagement,
                 published_at: insert_post.published_at,

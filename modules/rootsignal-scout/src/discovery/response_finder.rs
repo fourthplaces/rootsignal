@@ -17,7 +17,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 
-use rootsignal_archive::FetchBackend;
+use rootsignal_archive::Archive;
 
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::ResourceTag;
@@ -275,7 +275,7 @@ Return valid JSON matching the ResponseFinding schema.";
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
     anthropic_api_key: String,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
     _region_slug: String,
@@ -290,7 +290,7 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         region: ScoutScope,

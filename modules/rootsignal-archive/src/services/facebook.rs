@@ -50,6 +50,7 @@ impl FacebookService {
                         source_id,
                         content_hash,
                         text: Some(text),
+                        author: p.page_name,
                         location: None,
                         engagement: Some(engagement),
                         published_at: None,

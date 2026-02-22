@@ -628,29 +628,12 @@ pub struct TagNode {
 
 // --- Web Archive shared types ---
 
-/// A scraped web page with both raw HTML and extracted markdown.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScrapedPage {
-    pub url: String,
-    pub raw_html: String,
-    pub markdown: String,
-    pub content_hash: String,
-}
-
 /// A web search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub url: String,
     pub title: String,
     pub snippet: String,
-}
-
-/// A social media post.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SocialPost {
-    pub content: String,
-    pub author: Option<String>,
-    pub url: Option<String>,
 }
 
 /// A single item from an RSS/Atom feed.
@@ -665,6 +648,125 @@ pub struct FeedItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PdfContent {
     pub extracted_text: String,
+}
+
+// --- Archive Content Types (v2: trait-based content type API) ---
+
+/// A normalized source record. Identity is the normalized URL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Source {
+    pub id: Uuid,
+    pub url: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Universal media record. All media (images, videos, audio, documents) lives here.
+/// Text extraction (PDF parsing, transcription, OCR) is stored in the `text` field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveFile {
+    pub id: Uuid,
+    pub url: String,
+    pub content_hash: String,
+    pub fetched_at: DateTime<Utc>,
+    pub title: Option<String>,
+    pub mime_type: String,
+    pub duration: Option<f64>,
+    pub page_count: Option<i32>,
+    pub text: Option<String>,
+    pub text_language: Option<String>,
+}
+
+/// A social media post (Instagram, Twitter, Reddit, Facebook, TikTok, Bluesky).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Post {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub text: Option<String>,
+    pub author: Option<String>,
+    pub location: Option<String>,
+    pub engagement: Option<serde_json::Value>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub permalink: Option<String>,
+    pub attachments: Vec<ArchiveFile>,
+}
+
+/// An ephemeral story (Instagram stories, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Story {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub text: Option<String>,
+    pub location: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub permalink: Option<String>,
+    pub attachments: Vec<ArchiveFile>,
+}
+
+/// A short-form video (Instagram Reels, YouTube Shorts, TikToks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortVideo {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub text: Option<String>,
+    pub location: Option<String>,
+    pub engagement: Option<serde_json::Value>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub permalink: Option<String>,
+    pub attachments: Vec<ArchiveFile>,
+}
+
+/// A long-form video (YouTube videos, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LongVideo {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub text: Option<String>,
+    pub engagement: Option<serde_json::Value>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub permalink: Option<String>,
+    pub attachments: Vec<ArchiveFile>,
+}
+
+/// A scraped web page (v2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchivedPage {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub raw_html: String,
+    pub markdown: String,
+    pub title: Option<String>,
+}
+
+/// A fetched RSS/Atom feed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchivedFeed {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub items: Vec<FeedItem>,
+    pub title: Option<String>,
+}
+
+/// A set of web search results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchivedSearchResults {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub fetched_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub query: String,
+    pub results: Vec<SearchResult>,
 }
 
 // --- Semantic Extraction Types ---

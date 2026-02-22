@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use ai_client::claude::Claude;
 use rootsignal_archive::router::{detect_target, TargetKind};
-use rootsignal_archive::{extract_links_by_pattern, Content, FetchBackend};
+use rootsignal_archive::{extract_links_by_pattern, Archive};
 use rootsignal_common::{
     ActorNode, ActorType, DiscoveryMethod, SourceNode, SourceRole,
 };
@@ -68,7 +68,7 @@ pub async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, Strin
 /// 4. LLM extraction to determine if page represents an actor
 /// 5. Geocode, deduplicate, create actor + source nodes
 pub async fn create_actor_from_page(
-    archive: &dyn FetchBackend,
+    archive: &Archive,
     writer: &GraphWriter,
     anthropic_api_key: &str,
     url: &str,
@@ -76,11 +76,8 @@ pub async fn create_actor_from_page(
     require_social_links: bool,
 ) -> anyhow::Result<Option<ActorDiscoveryResult>> {
     // 1. Fetch the page
-    let fetched = archive.fetch_content(url).await?;
-    let page = match fetched.content {
-        Content::Page(page) => page,
-        _ => return Ok(None),
-    };
+    let handle = archive.source(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let page = handle.page().await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // 2. Scan HTML for social links
     let all_links = extract_links_by_pattern(&page.raw_html, url, "");

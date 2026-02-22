@@ -6,7 +6,7 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
+use rootsignal_archive::Archive;
 
 use crate::pipeline::extractor::{Extractor, SignalExtractor};
 use crate::scheduling::budget::BudgetTracker;
@@ -43,7 +43,7 @@ const NEWS_FEEDS: &[&str] = &[
 
 /// News scanner that fetches global RSS feeds, extracts signals, and stores them.
 pub struct NewsScanner {
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     extractor: Box<dyn SignalExtractor>,
     writer: GraphWriter,
     budget: BudgetTracker,
@@ -51,7 +51,7 @@ pub struct NewsScanner {
 
 impl NewsScanner {
     pub fn new(
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         anthropic_api_key: &str,
         writer: GraphWriter,
         daily_budget_cents: u64,
@@ -80,15 +80,17 @@ impl NewsScanner {
         // 1. Fetch all feeds
         let mut all_urls: Vec<(String, Option<String>)> = Vec::new();
         for feed_url in NEWS_FEEDS {
-            let feed_result = self.archive.fetch(feed_url).content().await
-                .map(|content| match content {
-                    Content::Feed(items) => items
+            let feed_result = async {
+                let handle = self.archive.source(feed_url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let feed = handle.feed().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok::<_, anyhow::Error>(
+                    feed.items
                         .into_iter()
                         .map(|i| (i.url, i.title))
                         .collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                })
-                .map_err(|e| anyhow::anyhow!("{e}"));
+                )
+            }
+            .await;
             match feed_result {
                 Ok(items) => {
                     for (url, title) in items {
@@ -132,7 +134,13 @@ impl NewsScanner {
             }
 
             // Scrape
-            let content = match self.archive.fetch(url).text().await {
+            let content = match async {
+                let handle = self.archive.source(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let page = handle.page().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok::<_, anyhow::Error>(page.markdown)
+            }
+            .await
+            {
                 Ok(c) if !c.is_empty() => c,
                 Ok(_) => {
                     warn!(url, "Empty content from archive");

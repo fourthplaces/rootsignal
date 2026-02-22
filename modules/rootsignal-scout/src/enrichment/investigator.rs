@@ -12,7 +12,7 @@ use uuid::Uuid;
 use rootsignal_common::{ScoutScope, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
-use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
+use rootsignal_archive::Archive;
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 10;
 const MAX_SIGNALS_INVESTIGATED: usize = 5;
@@ -20,7 +20,7 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     claude: Claude,
     region: String,
     min_lat: f64,
@@ -114,7 +114,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
         cancelled: Arc<AtomicBool>,
@@ -261,8 +261,14 @@ impl<'a> Investigator<'a> {
             }
             stats.search_queries_used += 1;
 
-            match self.archive.fetch(query).content().await {
-                Ok(Content::SearchResults(results)) => {
+            match async {
+                let handle = self.archive.source(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let search = handle.search(query).max_results(10).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok::<_, anyhow::Error>(search.results)
+            }
+            .await
+            {
+                Ok(results) => {
                     // Filter out same-domain results
                     for r in results {
                         let result_domain = extract_domain(&r.url);
@@ -271,7 +277,6 @@ impl<'a> Investigator<'a> {
                         }
                     }
                 }
-                Ok(_) => {}
                 Err(e) => {
                     warn!(query, error = %e, "Investigation search failed");
                 }
