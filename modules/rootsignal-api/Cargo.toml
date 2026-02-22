@@ -33,6 +33,8 @@ reqwest = { workspace = true }
 jsonwebtoken = "9"
 sha2 = "0.10"
 hex = "0.4"
+restate-sdk = { workspace = true }
+bytes = { workspace = true }
 url = "2"
 regex = { workspace = true }
 ai-client = { workspace = true }

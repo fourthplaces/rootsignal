@@ -5,6 +5,7 @@ pub mod news_scanner;
 pub mod pipeline;
 pub mod run_log;
 pub mod scheduling;
+pub mod workflows;
 
 pub mod fixtures;
 pub mod scout;

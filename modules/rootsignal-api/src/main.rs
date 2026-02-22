@@ -186,6 +186,103 @@ async fn main() -> Result<()> {
         );
     }
 
+    // ========== Restate endpoint ==========
+    // Runs on a separate port alongside the Axum GraphQL server.
+    // Workflows will be bound here as they are implemented (Phase 2+).
+    let restate_port: u16 = std::env::var("RESTATE_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9080);
+
+    // Connect to Postgres for the web archive (needed by scout workflows)
+    let pg_pool = match std::env::var("DATABASE_URL") {
+        Ok(database_url) => {
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+            {
+                Ok(pool) => Some(pool),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to connect to Postgres — Restate workflows disabled");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("DATABASE_URL not set — Restate workflows disabled");
+            None
+        }
+    };
+
+    if let Some(pool) = pg_pool {
+        let _scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::new(
+            client.clone(),
+            pool,
+            &config,
+        ));
+
+        let mut builder = restate_sdk::endpoint::Endpoint::builder();
+
+        // Configure Restate request identity verification
+        if let Ok(identity_key) = std::env::var("RESTATE_IDENTITY_KEY") {
+            info!("Restate identity key configured");
+            builder = builder
+                .identity_key(&identity_key)
+                .expect("Invalid Restate identity key");
+        }
+
+        // Workflows will be .bind()'d here as they are implemented.
+        let endpoint = builder.build();
+
+        let restate_addr = format!("0.0.0.0:{restate_port}");
+        info!("Restate endpoint starting on {restate_addr}");
+
+        // Auto-register with Restate runtime if RESTATE_ADMIN_URL is set
+        if let Ok(admin_url) = std::env::var("RESTATE_ADMIN_URL") {
+            let self_url = std::env::var("RESTATE_SELF_URL")
+                .unwrap_or_else(|_| format!("http://localhost:{restate_port}"));
+            let auth_token = std::env::var("RESTATE_AUTH_TOKEN").ok();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                info!(
+                    admin_url = %admin_url,
+                    self_url = %self_url,
+                    "Auto-registering with Restate"
+                );
+                let client = reqwest::Client::new();
+                let mut request = client
+                    .post(format!("{}/deployments", admin_url))
+                    .json(&serde_json::json!({
+                        "uri": self_url,
+                        "force": true
+                    }));
+                if let Some(token) = &auth_token {
+                    request = request.bearer_auth(token);
+                }
+                match request.send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        info!("Restate registration successful");
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        tracing::warn!(status = %status, body = %body, "Restate registration failed");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to connect to Restate admin");
+                    }
+                }
+            });
+        }
+
+        tokio::spawn(async move {
+            restate_sdk::http_server::HttpServer::new(endpoint)
+                .listen_and_serve(restate_addr.parse().expect("Invalid Restate address"))
+                .await;
+        });
+    }
+
     let state = Arc::new(AppState {
         schema,
         reader: PublicGraphReader::new(client.clone()),
@@ -269,6 +366,7 @@ async fn main() -> Result<()> {
             ),
         );
 
+    // ========== Axum HTTP server ==========
     let addr = format!("{host}:{port}");
     info!("Root Signal API starting on {addr}");
     info!("GraphQL endpoint at http://{addr}/graphql");

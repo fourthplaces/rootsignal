@@ -72,6 +72,10 @@ regex = "1"
 # Database (Postgres)
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
 
+# Durable workflows
+restate-sdk = "0.4.0"
+bytes = "1"
+
 # Testing
 testcontainers = "0.23"
 
