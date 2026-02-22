@@ -7,6 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::store::{InsertFile, InsertPost, InsertShortVideo, InsertStory};
+use crate::text_extract;
 
 /// Raw fetched post with its media, before persistence.
 pub(crate) struct FetchedPost {
@@ -70,6 +71,11 @@ impl InstagramService {
                     });
                 }
 
+                let mentions = p.mentions.unwrap_or_default();
+                let hashtags = text_extract::extract_hashtags(text.as_deref().unwrap_or(""));
+                let media_type = p.post_type;
+                let platform_id = p.short_code;
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -80,6 +86,10 @@ impl InstagramService {
                         engagement: Some(engagement),
                         published_at: p.timestamp,
                         permalink: Some(p.url),
+                        mentions,
+                        hashtags,
+                        media_type,
+                        platform_id,
                     },
                     files,
                 })
@@ -106,6 +116,9 @@ impl InstagramService {
             .into_iter()
             .map(|p| {
                 let content_hash = rootsignal_common::content_hash(&p.content).to_string();
+                let mentions = text_extract::extract_mentions(&p.content);
+                let hashtags = text_extract::extract_hashtags(&p.content);
+
                 FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -116,6 +129,10 @@ impl InstagramService {
                         engagement: None,
                         published_at: p.timestamp,
                         permalink: Some(p.post_url),
+                        mentions,
+                        hashtags,
+                        media_type: None,
+                        platform_id: None,
                     },
                     files: Vec::new(),
                 }

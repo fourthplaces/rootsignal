@@ -40,6 +40,10 @@ pub(crate) struct InsertPost {
     pub engagement: Option<serde_json::Value>,
     pub published_at: Option<DateTime<Utc>>,
     pub permalink: Option<String>,
+    pub mentions: Vec<String>,
+    pub hashtags: Vec<String>,
+    pub media_type: Option<String>,
+    pub platform_id: Option<String>,
 }
 
 pub(crate) struct InsertStory {
@@ -75,6 +79,7 @@ pub(crate) struct InsertPage {
     pub content_hash: String,
     pub markdown: String,
     pub title: Option<String>,
+    pub links: Vec<String>,
 }
 
 pub(crate) struct InsertFeed {
@@ -293,8 +298,8 @@ impl Store {
     pub(crate) async fn insert_post(&self, p: &InsertPost) -> Result<Uuid> {
         let id = sqlx::query_scalar::<_, Uuid>(
             r#"
-            INSERT INTO posts (source_id, content_hash, text, author, location, engagement, published_at, permalink)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO posts (source_id, content_hash, text, author, location, engagement, published_at, permalink, mentions, hashtags, media_type, platform_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id
             "#,
         )
@@ -306,15 +311,22 @@ impl Store {
         .bind(&p.engagement)
         .bind(p.published_at)
         .bind(&p.permalink)
+        .bind(&p.mentions)
+        .bind(&p.hashtags)
+        .bind(&p.media_type)
+        .bind(&p.platform_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(id)
     }
 
     pub(crate) async fn get_posts(&self, source_id: Uuid, limit: u32) -> Result<Vec<Post>> {
-        let rows = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, Option<String>)>(
+        // 14 columns — large tuple, but avoids a custom FromRow derive.
+        #[allow(clippy::type_complexity)]
+        let rows = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, Option<String>, Vec<String>, Vec<String>, Option<String>, Option<String>)>(
             r#"
-            SELECT id, source_id, fetched_at, content_hash, text, author, location, engagement, published_at, permalink
+            SELECT id, source_id, fetched_at, content_hash, text, author, location, engagement,
+                   published_at, permalink, mentions, hashtags, media_type, platform_id
             FROM posts WHERE source_id = $1
             ORDER BY fetched_at DESC LIMIT $2
             "#,
@@ -338,6 +350,10 @@ impl Store {
                 engagement: r.7,
                 published_at: r.8,
                 permalink: r.9,
+                mentions: r.10,
+                hashtags: r.11,
+                media_type: r.12,
+                platform_id: r.13,
                 attachments,
             });
         }
@@ -514,8 +530,8 @@ impl Store {
     pub(crate) async fn insert_page(&self, p: &InsertPage) -> Result<Uuid> {
         let id = sqlx::query_scalar::<_, Uuid>(
             r#"
-            INSERT INTO pages (source_id, content_hash, markdown, title)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO pages (source_id, content_hash, markdown, title, links)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id
             "#,
         )
@@ -523,15 +539,16 @@ impl Store {
         .bind(&p.content_hash)
         .bind(&p.markdown)
         .bind(&p.title)
+        .bind(&p.links)
         .fetch_one(&self.pool)
         .await?;
         Ok(id)
     }
 
     pub(crate) async fn get_page(&self, source_id: Uuid) -> Result<Option<ArchivedPage>> {
-        let row = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, String, String, Option<String>)>(
+        let row = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, String, String, Option<String>, Vec<String>)>(
             r#"
-            SELECT id, source_id, fetched_at, content_hash, raw_html, markdown, title
+            SELECT id, source_id, fetched_at, content_hash, raw_html, markdown, title, links
             FROM pages WHERE source_id = $1
             ORDER BY fetched_at DESC LIMIT 1
             "#,
@@ -548,6 +565,7 @@ impl Store {
             raw_html: r.4,
             markdown: r.5,
             title: r.6,
+            links: r.7,
         }))
     }
 

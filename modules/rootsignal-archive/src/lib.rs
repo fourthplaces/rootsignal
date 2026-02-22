@@ -2,6 +2,7 @@ pub mod archive;
 pub mod error;
 pub mod links;
 pub mod router;
+pub mod text_extract;
 mod store;
 mod readability;
 mod services;

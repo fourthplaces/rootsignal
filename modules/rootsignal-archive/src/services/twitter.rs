@@ -7,6 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::store::InsertPost;
+use crate::text_extract;
 
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
@@ -48,6 +49,9 @@ impl TwitterService {
                     "shares": t.retweet_count,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = text_extract::extract_hashtags(&text);
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -58,6 +62,10 @@ impl TwitterService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: t.url,
+                        mentions,
+                        hashtags,
+                        media_type: None,
+                        platform_id: t.id,
                     },
                 })
             })
@@ -92,6 +100,9 @@ impl TwitterService {
                     "shares": t.retweet_count,
                 });
 
+                let mentions = text_extract::extract_mentions(&text);
+                let hashtags = text_extract::extract_hashtags(&text);
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -102,6 +113,10 @@ impl TwitterService {
                         engagement: Some(engagement),
                         published_at: None,
                         permalink: t.url,
+                        mentions,
+                        hashtags,
+                        media_type: None,
+                        platform_id: t.id,
                     },
                 })
             })

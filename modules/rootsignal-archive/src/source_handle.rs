@@ -253,6 +253,10 @@ impl PostsRequest {
                 engagement: insert_post.engagement,
                 published_at: insert_post.published_at,
                 permalink: insert_post.permalink,
+                mentions: insert_post.mentions,
+                hashtags: insert_post.hashtags,
+                media_type: insert_post.media_type,
+                platform_id: insert_post.platform_id,
                 attachments,
             });
         }
@@ -480,17 +484,26 @@ impl PageRequest {
             return Err(ArchiveError::Unsupported("No page fetcher configured".into()));
         };
 
-        let page_id = self.inner.store.insert_page(&fetched.page).await?;
+        let links = crate::links::extract_all_links(&fetched.raw_html, &self.source.url);
+        let page = crate::store::InsertPage {
+            source_id,
+            content_hash: fetched.page.content_hash,
+            markdown: fetched.page.markdown,
+            title: fetched.page.title,
+            links: links.clone(),
+        };
+        let page_id = self.inner.store.insert_page(&page).await?;
         self.inner.store.update_last_scraped(source_id, "pages").await?;
 
         Ok(ArchivedPage {
             id: page_id,
             source_id,
             fetched_at: Utc::now(),
-            content_hash: fetched.page.content_hash,
+            content_hash: page.content_hash,
             raw_html: fetched.raw_html,
-            markdown: fetched.page.markdown,
-            title: fetched.page.title,
+            markdown: page.markdown,
+            title: page.title,
+            links,
         })
     }
 }
@@ -675,6 +688,10 @@ impl TopicSearchRequest {
                 engagement: insert_post.engagement,
                 published_at: insert_post.published_at,
                 permalink: insert_post.permalink,
+                mentions: insert_post.mentions,
+                hashtags: insert_post.hashtags,
+                media_type: insert_post.media_type,
+                platform_id: insert_post.platform_id,
                 attachments,
             });
         }
