@@ -423,7 +423,21 @@ impl<'a> ScrapePhase<'a> {
                     }
                 }
 
-                match extractor.extract(&content, &clean_url).await {
+                // Prepend first-hand filter for web search/feed sources
+                let filtered_content = format!(
+                    "FIRST-HAND FILTER (applies to this content):\n\
+                    This content comes from web search results, which may contain \
+                    political commentary from people not directly involved. Apply strict filtering:\n\n\
+                    For each potential signal, assess: Is this person describing something happening \
+                    to them, their family, their community, or their neighborhood? Or are they \
+                    asking for help? If yes, mark is_firsthand: true. If this is political commentary \
+                    from someone not personally affected — regardless of viewpoint — mark \
+                    is_firsthand: false.\n\n\
+                    Only extract signals where is_firsthand is true. Reject the rest.\n\n\
+                    {content}"
+                );
+
+                match extractor.extract(&filtered_content, &clean_url).await {
                     Ok(result) => (
                         clean_url,
                         ScrapeOutcome::New {
@@ -660,6 +674,22 @@ impl<'a> ScrapePhase<'a> {
             })
             .collect();
 
+        // First-hand filter prefix for non-entity social sources
+        let firsthand_filter = "FIRST-HAND FILTER (applies to this content):\n\
+            This content comes from platform search results, which are flooded with \
+            political commentary from people not directly involved. Apply strict filtering:\n\n\
+            For each potential signal, assess: Is this person describing something happening \
+            to them, their family, their community, or their neighborhood? Or are they \
+            asking for help? If yes, mark is_firsthand: true. If this is political commentary \
+            from someone not personally affected — regardless of viewpoint — mark \
+            is_firsthand: false.\n\n\
+            Signal: \"My family was taken.\" → is_firsthand: true\n\
+            Signal: \"There were raids on 5th street today.\" → is_firsthand: true\n\
+            Signal: \"We need legal observers.\" → is_firsthand: true\n\
+            Noise: \"ICE is doing great work.\" → is_firsthand: false\n\
+            Noise: \"The housing crisis is a failure of capitalism.\" → is_firsthand: false\n\n\
+            Only extract signals where is_firsthand is true. Reject the rest.\n\n";
+
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> =
             Vec::new();
@@ -669,6 +699,11 @@ impl<'a> ScrapePhase<'a> {
             let source_url = source_url.clone();
             let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
             let entity_prefix = entity_prefixes.get(&canonical_key).cloned();
+            let firsthand_prefix = if entity_prefix.is_none() {
+                Some(firsthand_filter.to_string())
+            } else {
+                None
+            };
 
             futures.push(Box::pin(async move {
                 let posts = match self.archive.fetch(&account.identifier).content().await {
@@ -706,8 +741,11 @@ impl<'a> ScrapePhase<'a> {
                         if combined_text.is_empty() {
                             continue;
                         }
-                        // Prepend entity context for trusted entity sources
+                        // Prepend entity context for trusted entity sources,
+                        // or first-hand filter for non-entity sources
                         if let Some(ref prefix) = entity_prefix {
+                            combined_text = format!("{prefix}{combined_text}");
+                        } else if let Some(ref prefix) = firsthand_prefix {
                             combined_text = format!("{prefix}{combined_text}");
                         }
                         combined_all.push_str(&combined_text);
@@ -746,8 +784,11 @@ impl<'a> ScrapePhase<'a> {
                     if combined_text.is_empty() {
                         return None;
                     }
-                    // Prepend entity context for trusted entity sources
+                    // Prepend entity context for trusted entity sources,
+                    // or first-hand filter for non-entity sources
                     if let Some(ref prefix) = entity_prefix {
+                        combined_text = format!("{prefix}{combined_text}");
+                    } else if let Some(ref prefix) = firsthand_prefix {
                         combined_text = format!("{prefix}{combined_text}");
                     }
                     let result = match self.extractor.extract(&combined_text, &source_url).await {
