@@ -15,6 +15,7 @@ use rootsignal_common::{
 use crate::GraphClient;
 
 /// Write-side wrapper for the graph. Used by scout only.
+#[derive(Clone)]
 pub struct GraphWriter {
     client: GraphClient,
 }

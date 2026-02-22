@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ use crate::expansion::Expansion;
 use crate::metrics::Metrics;
 use crate::run_log::{EventKind, RunLog};
 use crate::scrape_phase::{RunContext, ScrapePhase};
+use crate::source_finder::SourceFinderStats;
 use crate::util::sanitize_url;
 
 /// Stats from a scout run.
@@ -119,385 +121,470 @@ fn check_cancelled_flag(cancelled: &AtomicBool) -> Result<()> {
 }
 
 // ============================================================================
-// Pipeline functions — called by both Scout::run_inner() and Restate workflows
+// ScrapePipeline — decomposed scrape-pipeline phases
 // ============================================================================
 
-/// Steps 1-6, 9-10: Reap → Load → Schedule → Phase A → Mid-run discovery →
-/// Phase B → Topic discovery → Metrics → Expansion → End-of-run discovery
-pub async fn run_scrape_pipeline(
-    writer: &GraphWriter,
-    extractor: &dyn SignalExtractor,
-    embedder: &dyn TextEmbedder,
+/// Bundles the shared dependencies for the scrape pipeline.
+/// Each phase method borrows `&self` to access them.
+pub struct ScrapePipeline<'a> {
+    writer: GraphWriter,
+    extractor: Arc<dyn SignalExtractor>,
+    embedder: Arc<dyn TextEmbedder>,
     archive: Arc<dyn FetchBackend>,
-    anthropic_api_key: &str,
-    region: &ScoutScope,
-    budget: &BudgetTracker,
+    anthropic_api_key: String,
+    region: ScoutScope,
+    budget: &'a BudgetTracker,
     cancelled: Arc<AtomicBool>,
-    run_id: &str,
-) -> Result<ScoutStats> {
-    let mut run_log = RunLog::new(run_id.to_string(), region.name.clone());
+    run_id: String,
+}
 
-    // ================================================================
-    // 1. Reap expired signals
-    // ================================================================
-    info!("Reaping expired signals...");
-    match writer.reap_expired().await {
-        Ok(reap) => {
-            run_log.log(EventKind::ReapExpired {
-                gatherings: reap.gatherings,
-                needs: reap.needs,
-                stale: reap.stale,
-            });
-            if reap.gatherings + reap.needs + reap.stale > 0 {
-                info!(
-                    gatherings = reap.gatherings,
-                    needs = reap.needs,
-                    stale = reap.stale,
-                    "Expired signals removed"
-                );
-            }
+/// Phase 2 outputs that flow into subsequent phases.
+pub(crate) struct ScheduledRun {
+    all_sources: Vec<SourceNode>,
+    scheduled_sources: Vec<SourceNode>,
+    tension_phase_keys: HashSet<String>,
+    response_phase_keys: HashSet<String>,
+    scheduled_keys: HashSet<String>,
+    phase: ScrapePhase,
+}
+
+impl<'a> ScrapePipeline<'a> {
+    pub fn new(
+        writer: GraphWriter,
+        extractor: Arc<dyn SignalExtractor>,
+        embedder: Arc<dyn TextEmbedder>,
+        archive: Arc<dyn FetchBackend>,
+        anthropic_api_key: String,
+        region: ScoutScope,
+        budget: &'a BudgetTracker,
+        cancelled: Arc<AtomicBool>,
+        run_id: String,
+    ) -> Self {
+        Self {
+            writer,
+            extractor,
+            embedder,
+            archive,
+            anthropic_api_key,
+            region,
+            budget,
+            cancelled,
+            run_id,
         }
-        Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
     }
 
-    // ================================================================
-    // 2. Load sources + Schedule
-    // ================================================================
-    let mut all_sources = match writer.get_active_sources().await {
-        Ok(sources) => {
-            let curated = sources
-                .iter()
-                .filter(|s| s.discovery_method == DiscoveryMethod::Curated)
-                .count();
-            let discovered = sources.len() - curated;
-            info!(
-                total = sources.len(),
-                curated, discovered, "Loaded sources from graph"
-            );
-            sources
-        }
-        Err(e) => {
-            warn!(error = %e, "Failed to load sources from graph");
-            Vec::new()
-        }
-    };
-
-    // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
-    if all_sources.is_empty() {
-        info!("No sources found — running cold-start bootstrap");
-        let bootstrapper = crate::bootstrap::Bootstrapper::new(
-            writer,
-            archive.clone(),
-            anthropic_api_key,
-            region.clone(),
-        );
-        match bootstrapper.run().await {
-            Ok(n) => {
-                run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
-                info!(sources = n, "Bootstrap created seed sources");
+    /// Remove stale signals from the graph.
+    pub async fn reap_expired_signals(&self, run_log: &mut RunLog) {
+        info!("Reaping expired signals...");
+        match self.writer.reap_expired().await {
+            Ok(reap) => {
+                run_log.log(EventKind::ReapExpired {
+                    gatherings: reap.gatherings,
+                    needs: reap.needs,
+                    stale: reap.stale,
+                });
+                if reap.gatherings + reap.needs + reap.stale > 0 {
+                    info!(
+                        gatherings = reap.gatherings,
+                        needs = reap.needs,
+                        stale = reap.stale,
+                        "Expired signals removed"
+                    );
+                }
             }
-            Err(e) => warn!(error = %e, "Bootstrap failed"),
+            Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
         }
-        all_sources = writer
-            .get_active_sources()
+    }
+
+    /// Load sources, run scheduler, build RunContext and ScrapePhase.
+    /// Returns the ScheduledRun and RunContext needed by subsequent phases.
+    pub(crate) async fn load_and_schedule_sources(
+        &self,
+        run_log: &mut RunLog,
+    ) -> Result<(ScheduledRun, RunContext)> {
+        let mut all_sources = match self.writer.get_active_sources().await {
+            Ok(sources) => {
+                let curated = sources
+                    .iter()
+                    .filter(|s| s.discovery_method == DiscoveryMethod::Curated)
+                    .count();
+                let discovered = sources.len() - curated;
+                info!(
+                    total = sources.len(),
+                    curated, discovered, "Loaded sources from graph"
+                );
+                sources
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load sources from graph");
+                Vec::new()
+            }
+        };
+
+        // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
+        if all_sources.is_empty() {
+            info!("No sources found — running cold-start bootstrap");
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+                &self.writer,
+                self.archive.clone(),
+                &self.anthropic_api_key,
+                self.region.clone(),
+            );
+            match bootstrapper.run().await {
+                Ok(n) => {
+                    run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
+                    info!(sources = n, "Bootstrap created seed sources");
+                }
+                Err(e) => warn!(error = %e, "Bootstrap failed"),
+            }
+            all_sources = self.writer
+                .get_active_sources()
+                .await
+                .unwrap_or_default();
+        }
+
+        // Actor discovery — if no actors in region, discover from web pages
+        let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
+        let actors_in_region = self.writer
+            .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
             .await
             .unwrap_or_default();
-    }
 
-    // ================================================================
-    // 2b. Actor discovery — if no actors in region, discover from web pages
-    // ================================================================
-    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-    let actors_in_region = writer
-        .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
-        .await
-        .unwrap_or_default();
-
-    if actors_in_region.is_empty() {
-        info!("No actors in region — running actor discovery");
-        let bootstrapper = crate::bootstrap::Bootstrapper::new(
-            writer,
-            archive.clone(),
-            anthropic_api_key,
-            region.clone(),
-        );
-        let discovered = bootstrapper.discover_actor_pages().await;
-        info!(count = discovered.len(), "Actor discovery complete");
-    }
-
-    // ================================================================
-    // 2c. Actor sources — inject known actor accounts with elevated priority
-    // ================================================================
-    let actor_pairs = match writer
-        .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
-        .await
-    {
-        Ok(pairs) => {
-            let actor_count = pairs.len();
-            let source_count: usize = pairs.iter().map(|(_, s)| s.len()).sum();
-            if actor_count > 0 {
-                info!(
-                    actors = actor_count,
-                    sources = source_count,
-                    "Loaded actor accounts for region"
-                );
-            }
-            pairs
+        if actors_in_region.is_empty() {
+            info!("No actors in region — running actor discovery");
+            let bootstrapper = crate::bootstrap::Bootstrapper::new(
+                &self.writer,
+                self.archive.clone(),
+                &self.anthropic_api_key,
+                self.region.clone(),
+            );
+            let discovered = bootstrapper.discover_actor_pages().await;
+            info!(count = discovered.len(), "Actor discovery complete");
         }
-        Err(e) => {
-            warn!(error = %e, "Failed to load actor accounts, continuing without");
-            Vec::new()
-        }
-    };
 
-    // Boost existing entity sources or add new ones
-    let _existing_keys: std::collections::HashSet<String> =
-        all_sources.iter().map(|s| s.canonical_key.clone()).collect();
-    for (_actor, sources) in &actor_pairs {
-        for source in sources {
-            if let Some(existing) = all_sources
-                .iter_mut()
-                .find(|s| s.canonical_key == source.canonical_key)
-            {
-                // Boost weight and cadence for entity sources
-                existing.weight = existing.weight.max(0.7);
-                existing.cadence_hours = Some(
-                    existing.cadence_hours.map(|h| h.min(12)).unwrap_or(12),
-                );
-            } else {
-                all_sources.push(source.clone());
+        // Actor sources — inject known actor accounts with elevated priority
+        let actor_pairs = match self.writer
+            .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
+            .await
+        {
+            Ok(pairs) => {
+                let actor_count = pairs.len();
+                let source_count: usize = pairs.iter().map(|(_, s)| s.len()).sum();
+                if actor_count > 0 {
+                    info!(
+                        actors = actor_count,
+                        sources = source_count,
+                        "Loaded actor accounts for region"
+                    );
+                }
+                pairs
             }
-        }
-    }
-
-    let now_schedule = Utc::now();
-    let scheduler = crate::scheduler::SourceScheduler::new();
-    let schedule = scheduler.schedule(&all_sources, now_schedule);
-    let scheduled_keys: std::collections::HashSet<String> = schedule
-        .scheduled
-        .iter()
-        .chain(schedule.exploration.iter())
-        .map(|s| s.canonical_key.clone())
-        .collect();
-
-    let tension_phase_keys: std::collections::HashSet<String> =
-        schedule.tension_phase.iter().cloned().collect();
-    let response_phase_keys: std::collections::HashSet<String> =
-        schedule.response_phase.iter().cloned().collect();
-
-    info!(
-        scheduled = schedule.scheduled.len(),
-        exploration = schedule.exploration.len(),
-        skipped = schedule.skipped,
-        tension_phase = tension_phase_keys.len(),
-        response_phase = response_phase_keys.len(),
-        "Source scheduling complete"
-    );
-
-    // Web query tiered scheduling
-    let wq_schedule = crate::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
-    let wq_scheduled_keys: std::collections::HashSet<String> =
-        wq_schedule.scheduled.into_iter().collect();
-
-    let scheduled_sources: Vec<&SourceNode> = all_sources
-        .iter()
-        .filter(|s| {
-            if !scheduled_keys.contains(&s.canonical_key) {
-                return false;
+            Err(e) => {
+                warn!(error = %e, "Failed to load actor accounts, continuing without");
+                Vec::new()
             }
-            if !is_web_query(&s.canonical_value) {
-                return true;
-            }
-            wq_scheduled_keys.contains(&s.canonical_key)
-        })
-        .collect();
-
-    // Create shared run context and scrape phase
-    let mut ctx = RunContext::new(&all_sources);
-
-    // Populate actor contexts for location fallback during extraction
-    for (actor, sources) in &actor_pairs {
-        let actor_ctx = rootsignal_common::ActorContext {
-            actor_name: actor.name.clone(),
-            bio: actor.bio.clone(),
-            location_name: actor.location_name.clone(),
-            location_lat: actor.location_lat,
-            location_lng: actor.location_lng,
         };
-        for source in sources {
-            ctx.actor_contexts
-                .insert(source.canonical_key.clone(), actor_ctx.clone());
+
+        // Boost existing entity sources or add new ones
+        let _existing_keys: HashSet<String> =
+            all_sources.iter().map(|s| s.canonical_key.clone()).collect();
+        for (_actor, sources) in &actor_pairs {
+            for source in sources {
+                if let Some(existing) = all_sources
+                    .iter_mut()
+                    .find(|s| s.canonical_key == source.canonical_key)
+                {
+                    existing.weight = existing.weight.max(0.7);
+                    existing.cadence_hours = Some(
+                        existing.cadence_hours.map(|h| h.min(12)).unwrap_or(12),
+                    );
+                } else {
+                    all_sources.push(source.clone());
+                }
+            }
         }
-    }
 
-    let phase = ScrapePhase::new(
-        writer,
-        extractor,
-        embedder,
-        archive.clone(),
-        region,
-        run_id.to_string(),
-    );
+        let now_schedule = Utc::now();
+        let scheduler = crate::scheduler::SourceScheduler::new();
+        let schedule = scheduler.schedule(&all_sources, now_schedule);
+        let scheduled_keys: HashSet<String> = schedule
+            .scheduled
+            .iter()
+            .chain(schedule.exploration.iter())
+            .map(|s| s.canonical_key.clone())
+            .collect();
 
-    // ================================================================
-    // 3. Phase A: Find Problems — scrape tension + mixed sources
-    // ================================================================
-    info!("=== Phase A: Find Problems ===");
-    let phase_a_sources: Vec<&SourceNode> = scheduled_sources
-        .iter()
-        .filter(|s| tension_phase_keys.contains(&s.canonical_key))
-        .copied()
-        .collect();
+        let tension_phase_keys: HashSet<String> =
+            schedule.tension_phase.iter().cloned().collect();
+        let response_phase_keys: HashSet<String> =
+            schedule.response_phase.iter().cloned().collect();
 
-    phase.run_web(&phase_a_sources, &mut ctx, &mut run_log).await;
-
-    // Phase A social: tension + mixed social sources
-    let phase_a_social: Vec<&SourceNode> = scheduled_sources
-        .iter()
-        .filter(|s| {
-            matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
-                && tension_phase_keys.contains(&s.canonical_key)
-        })
-        .copied()
-        .collect();
-    if !phase_a_social.is_empty() {
-        phase.run_social(&phase_a_social, &mut ctx, &mut run_log).await;
-    }
-
-    check_cancelled_flag(&cancelled)?;
-
-    // ================================================================
-    // 4. Mid-Run Discovery
-    // ================================================================
-    info!("=== Mid-Run Discovery ===");
-    let discoverer = crate::source_finder::SourceFinder::new(
-        writer,
-        &region.name,
-        &region.name,
-        Some(anthropic_api_key),
-        budget,
-    )
-    .with_embedder(embedder);
-    let (mid_discovery_stats, social_topics) = discoverer.run().await;
-    if mid_discovery_stats.actor_sources + mid_discovery_stats.gap_sources > 0 {
-        info!("{mid_discovery_stats}");
-    }
-
-    check_cancelled_flag(&cancelled)?;
-
-    // ================================================================
-    // 5. Phase B: Find Responses — scrape response + fresh discovery sources
-    // ================================================================
-    info!("=== Phase B: Find Responses ===");
-
-    // Reload sources to pick up fresh discovery sources from mid-run
-    let fresh_sources = match writer.get_active_sources().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(error = %e, "Failed to reload sources for Phase B");
-            Vec::new()
-        }
-    };
-
-    // Phase B includes: originally-scheduled response sources + never-scraped fresh discovery sources
-    let phase_b_sources: Vec<&SourceNode> = fresh_sources
-        .iter()
-        .filter(|s| {
-            response_phase_keys.contains(&s.canonical_key)
-                || (s.last_scraped.is_none() && !scheduled_keys.contains(&s.canonical_key))
-        })
-        .collect();
-
-    // Extend URL→canonical_key with fresh sources
-    for s in &fresh_sources {
-        if let Some(ref url) = s.url {
-            ctx.url_to_canonical_key
-                .entry(sanitize_url(url))
-                .or_insert_with(|| s.canonical_key.clone());
-        }
-    }
-
-    if !phase_b_sources.is_empty() {
         info!(
-            count = phase_b_sources.len(),
-            "Phase B sources (response + fresh discovery)"
+            scheduled = schedule.scheduled.len(),
+            exploration = schedule.exploration.len(),
+            skipped = schedule.skipped,
+            tension_phase = tension_phase_keys.len(),
+            response_phase = response_phase_keys.len(),
+            "Source scheduling complete"
         );
-        phase.run_web(&phase_b_sources, &mut ctx, &mut run_log).await;
+
+        // Web query tiered scheduling
+        let wq_schedule = crate::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
+        let wq_scheduled_keys: HashSet<String> =
+            wq_schedule.scheduled.into_iter().collect();
+
+        let scheduled_sources: Vec<SourceNode> = all_sources
+            .iter()
+            .filter(|s| {
+                if !scheduled_keys.contains(&s.canonical_key) {
+                    return false;
+                }
+                if !is_web_query(&s.canonical_value) {
+                    return true;
+                }
+                wq_scheduled_keys.contains(&s.canonical_key)
+            })
+            .cloned()
+            .collect();
+
+        // Create shared run context and scrape phase
+        let mut ctx = RunContext::new(&all_sources);
+
+        // Populate actor contexts for location fallback during extraction
+        for (actor, sources) in &actor_pairs {
+            let actor_ctx = rootsignal_common::ActorContext {
+                actor_name: actor.name.clone(),
+                bio: actor.bio.clone(),
+                location_name: actor.location_name.clone(),
+                location_lat: actor.location_lat,
+                location_lng: actor.location_lng,
+            };
+            for source in sources {
+                ctx.actor_contexts
+                    .insert(source.canonical_key.clone(), actor_ctx.clone());
+            }
+        }
+
+        let phase = ScrapePhase::new(
+            self.writer.clone(),
+            self.extractor.clone(),
+            self.embedder.clone(),
+            self.archive.clone(),
+            self.region.clone(),
+            self.run_id.clone(),
+        );
+
+        let run = ScheduledRun {
+            all_sources,
+            scheduled_sources,
+            tension_phase_keys,
+            response_phase_keys,
+            scheduled_keys,
+            phase,
+        };
+
+        Ok((run, ctx))
     }
 
-    // Phase B social: response social sources
-    let phase_b_social: Vec<&SourceNode> = scheduled_sources
-        .iter()
-        .filter(|s| {
-            matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
-                && response_phase_keys.contains(&s.canonical_key)
-        })
-        .copied()
-        .collect();
-    if !phase_b_social.is_empty() {
-        phase.run_social(&phase_b_social, &mut ctx, &mut run_log).await;
+    /// Scrape tension + mixed sources (web pages, search queries, social accounts).
+    /// This is the "find problems" pass.
+    pub(crate) async fn scrape_tension_sources(
+        &self,
+        run: &ScheduledRun,
+        ctx: &mut RunContext,
+        run_log: &mut RunLog,
+    ) {
+        info!("=== Phase A: Find Problems ===");
+        let phase_a_sources: Vec<&SourceNode> = run.scheduled_sources
+            .iter()
+            .filter(|s| run.tension_phase_keys.contains(&s.canonical_key))
+            .collect();
+
+        run.phase.run_web(&phase_a_sources, ctx, run_log).await;
+
+        // Phase A social: tension + mixed social sources
+        let phase_a_social: Vec<&SourceNode> = run.scheduled_sources
+            .iter()
+            .filter(|s| {
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && run.tension_phase_keys.contains(&s.canonical_key)
+            })
+            .collect();
+        if !phase_a_social.is_empty() {
+            run.phase.run_social(&phase_a_social, ctx, run_log).await;
+        }
     }
 
-    check_cancelled_flag(&cancelled)?;
-
-    // Topic discovery — search social media to find new accounts
-    // Merge expansion-derived social topics with LLM-generated topics
-    let mut all_social_topics = social_topics;
-    all_social_topics.extend(ctx.social_expansion_topics.drain(..));
-    phase
-        .discover_from_topics(&all_social_topics, &mut ctx, &mut run_log)
-        .await;
-
-    // ================================================================
-    // 6. Source metrics + weight updates
-    // ================================================================
-    let metrics = Metrics::new(writer, &region.name);
-    metrics.update(&all_sources, &ctx, Utc::now()).await;
-
-    // Log budget status before compute-heavy phases
-    budget.log_status();
-
-    check_cancelled_flag(&cancelled)?;
-
-    // ================================================================
-    // 9. Signal Expansion — create sources from implied queries
-    // ================================================================
-    let expansion = Expansion::new(writer, embedder, &region.name);
-    expansion.run(&mut ctx, &mut run_log).await;
-
-    check_cancelled_flag(&cancelled)?;
-
-    // ================================================================
-    // 10. End-of-run discovery — find new sources for next run
-    // ================================================================
-    let end_discoverer = crate::source_finder::SourceFinder::new(
-        writer,
-        &region.name,
-        &region.name,
-        Some(anthropic_api_key),
-        budget,
-    )
-    .with_embedder(embedder);
-    let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
-    if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
-        info!("{end_discovery_stats}");
-    }
-    if !end_social_topics.is_empty() {
-        info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
-        phase.discover_from_topics(&end_social_topics, &mut ctx, &mut run_log).await;
+    /// Find new sources from graph analysis (actor-linked accounts, coverage gaps).
+    /// Returns discovery stats and social topics discovered for later topic-based searching.
+    pub(crate) async fn discover_mid_run_sources(&self) -> (SourceFinderStats, Vec<String>) {
+        info!("=== Mid-Run Discovery ===");
+        let discoverer = crate::source_finder::SourceFinder::new(
+            &self.writer,
+            &self.region.name,
+            &self.region.name,
+            Some(&self.anthropic_api_key),
+            self.budget,
+        )
+        .with_embedder(&*self.embedder);
+        let (stats, social_topics) = discoverer.run().await;
+        if stats.actor_sources + stats.gap_sources > 0 {
+            info!("{stats}");
+        }
+        (stats, social_topics)
     }
 
-    // Log budget checkpoint and save run log
-    run_log.log(EventKind::BudgetCheckpoint {
-        spent_cents: budget.total_spent(),
-        remaining_cents: budget.remaining(),
-    });
-    if let Err(e) = run_log.save(&ctx.stats) {
-        warn!(error = %e, "Failed to save scout run log");
+    /// Scrape response + fresh discovery sources (web + social), then search
+    /// social platforms by topic to discover new accounts.
+    pub(crate) async fn scrape_response_sources(
+        &self,
+        run: &ScheduledRun,
+        social_topics: Vec<String>,
+        ctx: &mut RunContext,
+        run_log: &mut RunLog,
+    ) -> Result<()> {
+        info!("=== Phase B: Find Responses ===");
+
+        // Reload sources to pick up fresh discovery sources from mid-run
+        let fresh_sources = match self.writer.get_active_sources().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "Failed to reload sources for Phase B");
+                Vec::new()
+            }
+        };
+
+        // Phase B includes: originally-scheduled response sources + never-scraped fresh discovery sources
+        let phase_b_sources: Vec<&SourceNode> = fresh_sources
+            .iter()
+            .filter(|s| {
+                run.response_phase_keys.contains(&s.canonical_key)
+                    || (s.last_scraped.is_none() && !run.scheduled_keys.contains(&s.canonical_key))
+            })
+            .collect();
+
+        // Extend URL→canonical_key with fresh sources
+        for s in &fresh_sources {
+            if let Some(ref url) = s.url {
+                ctx.url_to_canonical_key
+                    .entry(sanitize_url(url))
+                    .or_insert_with(|| s.canonical_key.clone());
+            }
+        }
+
+        if !phase_b_sources.is_empty() {
+            info!(
+                count = phase_b_sources.len(),
+                "Phase B sources (response + fresh discovery)"
+            );
+            run.phase.run_web(&phase_b_sources, ctx, run_log).await;
+        }
+
+        // Phase B social: response social sources
+        let phase_b_social: Vec<&SourceNode> = run.scheduled_sources
+            .iter()
+            .filter(|s| {
+                matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                    && run.response_phase_keys.contains(&s.canonical_key)
+            })
+            .collect();
+        if !phase_b_social.is_empty() {
+            run.phase.run_social(&phase_b_social, ctx, run_log).await;
+        }
+
+        check_cancelled_flag(&self.cancelled)?;
+
+        // Topic discovery — search social media to find new accounts
+        // Merge expansion-derived social topics with LLM-generated topics
+        let mut all_social_topics = social_topics;
+        all_social_topics.extend(ctx.social_expansion_topics.drain(..));
+        run.phase
+            .discover_from_topics(&all_social_topics, ctx, run_log)
+            .await;
+
+        Ok(())
     }
 
-    info!("{}", ctx.stats);
-    Ok(ctx.stats)
+    /// Record source metrics, update weights/cadence, deactivate dead sources.
+    pub(crate) async fn update_source_metrics(&self, run: &ScheduledRun, ctx: &RunContext) {
+        let metrics = Metrics::new(&self.writer, &self.region.name);
+        metrics.update(&run.all_sources, ctx, Utc::now()).await;
+
+        // Log budget status before compute-heavy phases
+        self.budget.log_status();
+    }
+
+    /// Create new sources from implied queries + end-of-run source discovery.
+    pub(crate) async fn expand_and_discover(
+        &self,
+        run: &ScheduledRun,
+        ctx: &mut RunContext,
+        run_log: &mut RunLog,
+    ) -> Result<()> {
+        // Signal Expansion — create sources from implied queries
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);
+        expansion.run(ctx, run_log).await;
+
+        check_cancelled_flag(&self.cancelled)?;
+
+        // End-of-run discovery — find new sources for next run
+        let end_discoverer = crate::source_finder::SourceFinder::new(
+            &self.writer,
+            &self.region.name,
+            &self.region.name,
+            Some(&self.anthropic_api_key),
+            self.budget,
+        )
+        .with_embedder(&*self.embedder);
+        let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
+        if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
+            info!("{end_discovery_stats}");
+        }
+        if !end_social_topics.is_empty() {
+            info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
+            run.phase.discover_from_topics(&end_social_topics, ctx, run_log).await;
+        }
+
+        Ok(())
+    }
+
+    /// Save run log and return final stats.
+    pub(crate) fn finalize(&self, ctx: RunContext, mut run_log: RunLog) -> ScoutStats {
+        run_log.log(EventKind::BudgetCheckpoint {
+            spent_cents: self.budget.total_spent(),
+            remaining_cents: self.budget.remaining(),
+        });
+        if let Err(e) = run_log.save(&ctx.stats) {
+            warn!(error = %e, "Failed to save scout run log");
+        }
+
+        info!("{}", ctx.stats);
+        ctx.stats
+    }
+
+    /// Run all phases in sequence. Convenience for Scout::run_inner().
+    pub async fn run_all(self) -> Result<ScoutStats> {
+        let mut run_log = RunLog::new(self.run_id.clone(), self.region.name.clone());
+
+        self.reap_expired_signals(&mut run_log).await;
+
+        let (run, mut ctx) = self.load_and_schedule_sources(&mut run_log).await?;
+
+        self.scrape_tension_sources(&run, &mut ctx, &mut run_log).await;
+        check_cancelled_flag(&self.cancelled)?;
+
+        let (_, social_topics) = self.discover_mid_run_sources().await;
+        check_cancelled_flag(&self.cancelled)?;
+
+        self.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
+
+        self.update_source_metrics(&run, &ctx).await;
+        check_cancelled_flag(&self.cancelled)?;
+
+        self.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
+
+        Ok(self.finalize(ctx, run_log))
+    }
 }
 
 /// Step 7: Similarity edges + 6 parallel finders
@@ -643,6 +730,10 @@ pub async fn run_synthesis(
 }
 
 /// Steps 8, 8b, 8c: Situation weaving + source boost + curiosity triggers
+///
+/// Returns the `SituationWeaverStats` from the weaving phase. Steps 8b (source
+/// boost) and 8c (curiosity triggers) are always attempted regardless of 8's
+/// outcome.
 pub async fn run_situation_weaving(
     graph_client: &GraphClient,
     writer: &GraphWriter,
@@ -651,7 +742,7 @@ pub async fn run_situation_weaving(
     region: &ScoutScope,
     budget: &BudgetTracker,
     run_id: &str,
-) -> Result<()> {
+) -> Result<rootsignal_graph::situation_weaver::SituationWeaverStats> {
     // ================================================================
     // 8. Situation Weaving (assigns signals to living situations)
     // ================================================================
@@ -664,10 +755,16 @@ pub async fn run_situation_weaving(
     );
     let has_situation_budget = budget
         .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
-    match situation_weaver.run(run_id, has_situation_budget).await {
-        Ok(sit_stats) => info!("{sit_stats}"),
-        Err(e) => warn!(error = %e, "Situation weaving failed (non-fatal)"),
-    }
+    let weaver_stats = match situation_weaver.run(run_id, has_situation_budget).await {
+        Ok(sit_stats) => {
+            info!("{sit_stats}");
+            sit_stats
+        }
+        Err(e) => {
+            warn!(error = %e, "Situation weaving failed (non-fatal)");
+            Default::default()
+        }
+    };
 
     // ================================================================
     // 8b. Situation-driven source boost
@@ -714,7 +811,7 @@ pub async fn run_situation_weaving(
         Err(e) => warn!(error = %e, "Failed to trigger situation curiosity"),
     }
 
-    Ok(())
+    Ok(weaver_stats)
 }
 
 // ============================================================================
@@ -724,7 +821,7 @@ pub async fn run_situation_weaving(
 pub struct Scout {
     graph_client: GraphClient,
     writer: GraphWriter,
-    extractor: Box<dyn SignalExtractor>,
+    extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
     archive: Arc<dyn FetchBackend>,
     anthropic_api_key: String,
@@ -776,7 +873,7 @@ impl Scout {
         Ok(Self {
             graph_client: graph_client.clone(),
             writer: GraphWriter::new(graph_client),
-            extractor: Box::new(Extractor::new(
+            extractor: Arc::new(Extractor::new(
                 anthropic_api_key,
                 region.name.as_str(),
                 region.center_lat,
@@ -794,7 +891,7 @@ impl Scout {
     /// Build a Scout with pre-built dependencies (for testing).
     pub fn new_for_test(
         graph_client: GraphClient,
-        extractor: Box<dyn SignalExtractor>,
+        extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
         archive: Arc<dyn FetchBackend>,
         anthropic_api_key: &str,
@@ -848,18 +945,18 @@ impl Scout {
         let run_id = Uuid::new_v4().to_string();
         info!(run_id = run_id.as_str(), "Scout run started");
 
-        let stats = run_scrape_pipeline(
-            &self.writer,
-            &*self.extractor,
-            &*self.embedder,
+        let pipeline = ScrapePipeline::new(
+            self.writer.clone(),
+            Arc::clone(&self.extractor),
+            Arc::clone(&self.embedder),
             self.archive.clone(),
-            &self.anthropic_api_key,
-            &self.region,
+            self.anthropic_api_key.clone(),
+            self.region.clone(),
             &self.budget,
             self.cancelled.clone(),
-            &run_id,
-        )
-        .await?;
+            run_id.clone(),
+        );
+        let stats = pipeline.run_all().await?;
 
         self.check_cancelled()?;
 

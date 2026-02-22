@@ -3,16 +3,12 @@
 //! Encapsulates the core scrape cycle from `Scout::run_inner()`:
 //! reap → load/schedule → Phase A → mid-run discovery → Phase B →
 //! topic discovery → expansion → metrics → end-of-run discovery.
-//!
-//! Uses `std::thread::spawn` with a dedicated tokio runtime because
-//! `ScrapePhase::run_web()` uses `for_each_concurrent` with closures
-//! that have higher-ranked lifetime bounds, making the future `!Send`
-//! (incompatible with `tokio::spawn`).
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
+use tokio::sync::watch;
 use tracing::info;
 
 use rootsignal_graph::GraphWriter;
@@ -49,23 +45,28 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let deps = self.deps.clone();
         let scope = req.scope.clone();
 
-        // Use std::thread::spawn + dedicated runtime because ScrapePhase's
-        // for_each_concurrent closures have HRTB bounds that are !Send.
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            let result = rt.block_on(run_scrape_pipeline_from_deps(&deps, &scope));
-            let _ = tx.send(result);
+        let (status_tx, mut status_rx) = watch::channel("Starting...".to_string());
+
+        let mut handle = tokio::spawn(async move {
+            run_scrape_from_deps(&deps, &scope, status_tx).await
         });
 
-        let result = rx
-            .await
-            .map_err(|_| -> HandlerError {
-                TerminalError::new("Scrape thread dropped without sending result").into()
-            })?
-            .map_err(|e| -> HandlerError {
-                TerminalError::new(e.to_string()).into()
-            })?;
+        let result = loop {
+            tokio::select! {
+                result = &mut handle => {
+                    break result
+                        .map_err(|e| -> HandlerError {
+                            TerminalError::new(format!("Scrape task panicked: {e}")).into()
+                        })?
+                        .map_err(|e| -> HandlerError {
+                            TerminalError::new(e.to_string()).into()
+                        })?;
+                }
+                Ok(()) = status_rx.changed() => {
+                    ctx.set("status", status_rx.borrow_and_update().clone());
+                }
+            }
+        };
 
         ctx.set(
             "status",
@@ -95,17 +96,19 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
     }
 }
 
-async fn run_scrape_pipeline_from_deps(
+async fn run_scrape_from_deps(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
+    status: watch::Sender<String>,
 ) -> anyhow::Result<ScrapeResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
-    let extractor = Box::new(crate::extractor::Extractor::new(
-        &deps.anthropic_api_key,
-        scope.name.as_str(),
-        scope.center_lat,
-        scope.center_lng,
-    ));
+    let extractor: Arc<dyn crate::extractor::SignalExtractor> =
+        Arc::new(crate::extractor::Extractor::new(
+            &deps.anthropic_api_key,
+            scope.name.as_str(),
+            scope.center_lat,
+            scope.center_lng,
+        ));
     let embedder: Arc<dyn crate::embedder::TextEmbedder> =
         Arc::new(crate::embedder::Embedder::new(&deps.voyage_api_key));
     let region_slug = rootsignal_common::slugify(&scope.name);
@@ -116,18 +119,40 @@ async fn run_scrape_pipeline_from_deps(
     // Ensure archive tables exist
     archive.migrate().await?;
 
-    let stats = crate::scout::run_scrape_pipeline(
-        &writer,
-        &*extractor,
-        &*embedder,
+    let pipeline = crate::scout::ScrapePipeline::new(
+        writer,
+        extractor,
+        embedder,
         archive,
-        &deps.anthropic_api_key,
-        scope,
+        deps.anthropic_api_key.clone(),
+        scope.clone(),
         &budget,
         Arc::new(AtomicBool::new(false)),
-        &run_id,
-    )
-    .await?;
+        run_id.clone(),
+    );
+
+    let mut run_log = crate::run_log::RunLog::new(run_id, scope.name.clone());
+
+    let _ = status.send("Reaping expired signals...".into());
+    pipeline.reap_expired_signals(&mut run_log).await;
+
+    let _ = status.send("Loading and scheduling sources...".into());
+    let (run, mut ctx) = pipeline.load_and_schedule_sources(&mut run_log).await?;
+
+    let _ = status.send("Scraping tension sources...".into());
+    pipeline.scrape_tension_sources(&run, &mut ctx, &mut run_log).await;
+
+    let _ = status.send("Discovering new sources...".into());
+    let (_, social_topics) = pipeline.discover_mid_run_sources().await;
+
+    let _ = status.send("Scraping response sources...".into());
+    pipeline.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
+
+    let _ = status.send("Updating metrics and expanding...".into());
+    pipeline.update_source_metrics(&run, &ctx).await;
+    pipeline.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
+
+    let stats = pipeline.finalize(ctx, run_log);
 
     Ok(ScrapeResult {
         urls_scraped: stats.urls_scraped,

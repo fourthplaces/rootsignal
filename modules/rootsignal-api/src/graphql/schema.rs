@@ -1129,13 +1129,10 @@ pub fn build_schema(
     config: Arc<Config>,
     twilio: Option<Arc<twilio::TwilioService>>,
     rate_limiter: super::mutations::RateLimiter,
-    scout_cancel: Arc<std::sync::atomic::AtomicBool>,
     graph_client: Arc<rootsignal_graph::GraphClient>,
     cache_store: Arc<rootsignal_graph::CacheStore>,
     restate_ingress: super::mutations::RestateIngress,
 ) -> ApiSchema {
-    use super::mutations::ScoutCancel;
-
     let evidence_loader = DataLoader::new(
         EvidenceBySignalLoader {
             reader: reader.clone(),
@@ -1183,7 +1180,6 @@ pub fn build_schema(
         .data(config)
         .data(twilio)
         .data(rate_limiter)
-        .data(ScoutCancel(scout_cancel))
         .data(graph_client)
         .data(cache_store)
         .data(evidence_loader)

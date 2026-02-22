@@ -5,13 +5,10 @@
 //!
 //! Budget flows as `spent_cents` between workflows.
 
-use std::sync::Arc;
-
 use restate_sdk::prelude::*;
 use tracing::info;
 
 use super::types::*;
-use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "FullScoutRunWorkflow"]
@@ -21,13 +18,11 @@ pub trait FullScoutRunWorkflow {
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
 
-pub struct FullScoutRunWorkflowImpl {
-    deps: Arc<ScoutDeps>,
-}
+pub struct FullScoutRunWorkflowImpl;
 
 impl FullScoutRunWorkflowImpl {
-    pub fn with_deps(deps: Arc<ScoutDeps>) -> Self {
-        Self { deps }
+    pub fn new() -> Self {
+        Self
     }
 }
 

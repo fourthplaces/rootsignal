@@ -128,6 +128,13 @@ async fn run_supervisor_pipeline(
         Err(e) => warn!(error = %e, "Failed to compute cause heat"),
     }
 
+    // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
+    match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &writer).await {
+        Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
+        Ok(_) => {}
+        Err(e) => warn!(error = %e, "Beacon detection failed"),
+    }
+
     Ok(SupervisorResult {
         issues_found: issues_found as u32,
     })
