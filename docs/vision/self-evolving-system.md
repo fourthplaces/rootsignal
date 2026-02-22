@@ -2,11 +2,28 @@
 
 ## The Core Idea
 
-Root Signal is not a scraper with a source list. It is an organism that grows its own senses.
+Root Signal is not a scraper with a source list. It is an organism that grows its own senses — but it grows them from anchors in physical reality, not from the open web.
 
-The system discovers its own sources by analyzing what it already knows. Signals in the graph reference organizations, programs, and communities that aren't yet tracked. Story clusters reveal gaps — thin corroboration, missing audience roles, geographic blind spots. The system identifies these gaps, generates search queries to fill them, and evaluates what it finds through the same anti-fragility mechanisms it applies to everything else.
+The system discovers its own sources by analyzing what it already knows. Signals in the graph reference organizations, programs, and communities that aren't yet tracked. Story clusters reveal gaps — thin corroboration, missing audience roles, geographic blind spots. The system identifies these gaps and expands outward from trusted sources to fill them.
 
 Sources earn trust through evidence — when the system investigates and finds institutional depth (registrations, media coverage, grant records, verifiable presence), trust accumulates. Sources with no evidence trail naturally rank low. No blacklists. No editorial gatekeeping. Just evidence.
+
+## The Corrupted Web Reality
+
+This document was originally written assuming a noisy-but-honest web — an environment where most inputs are genuine and a few are fake, where open discovery works because real sources outnumber bad ones.
+
+That assumption no longer holds. The information environment is actively hostile:
+
+- **Platform censorship** — social media companies algorithmically suppress civic content, actively remove posts, and restrict API access
+- **AI-generated noise** — the web is increasingly flooded with synthetic content that passes surface-level quality checks but has no connection to reality
+- **Coordinated astroturfing** — hashtag queries return walls of political commentary from people with no connection to the issue, drowning out genuine community voices
+- **Algorithmic amplification** — platforms boost engagement-optimized content (outrage, tribalism) over on-the-ground community reporting
+
+When the environment itself is corrupted, open ingestion produces garbage. Letting sources "emerge" from a poisoned environment means the emergent behavior inherits the corruption. The evidence-based trust mechanisms described below are necessary but not sufficient — they catch occasional bad actors, not systemic corruption of the input layer.
+
+**The correction:** The bootstrap isn't just a seed — it's the immune system. Trusted sources with verifiable real-world touchpoints (physical presence, human staff, in-community work) are the anchor. Discovery still runs, but it expands outward from trusted nodes — following their social graphs, the organizations they mention, the partners they link to — rather than searching the open web indiscriminately and hoping the trust pipeline catches the bad ones.
+
+This is not a retreat from emergence. Stories still emerge from clustering. Gaps still emerge from analysis. Trust still emerges from evidence. But the raw inputs — the sources the system listens to — must be anchored in physical reality, not discovered from a corrupted web.
 
 ## How It Works
 
@@ -37,14 +54,15 @@ Each cycle, the system sees more and understands more deeply. What it sees tells
 
 ### Why This Is Emergent
 
-Nobody tells the system what the themes of a city are. Nobody curates the full source list. Nobody decides which audience roles matter. The system discovers all of this from the signal itself.
+Nobody tells the system what the themes of a city are. Nobody curates the full source list. Nobody decides which audience roles matter. The system discovers all of this from the signal itself — expanding outward from trusted anchors.
 
 - **Stories emerge** from semantic clustering of individual signals
 - **Source gaps emerge** from analyzing what stories exist and what they're missing
 - **Trust emerges** from evidence accumulation — the system investigates, and evidence IS trust
 - **Coverage emerges** from filling gaps that the system itself identifies
+- **New sources emerge** from the social graphs and references of existing trusted sources — not from open-web search
 
-The human's role shifts from "decide what to scrape" to "set the geographic scope and let the system fill it in."
+The human's role shifts from "decide what to scrape" to "seed the trusted anchors, set the geographic scope, and let the system expand from there."
 
 ### Why This Is Anti-Fragile
 
@@ -58,7 +76,7 @@ Traditional systems get weaker when attacked. This system gets stronger.
 
 **Source failure resilience:** A source goes offline, changes its URL structure, or stops producing content. The system doesn't break — it just stops seeing signals from that source. After 10 empty runs, the source is deactivated. Meanwhile, the gap analysis notices the coverage hole and discovers replacement sources.
 
-**Bias correction:** The initial seed sources embed the curator's worldview. But the system immediately starts correcting for this. Signals from seed sources mention orgs that aren't in the seed list. The gap analyzer notices. New sources are discovered. Over time, the source list reflects the actual community landscape, not one person's mental model of it.
+**Bias correction:** The initial seed sources embed the curator's worldview. But the system immediately starts correcting for this. Signals from seed sources mention orgs that aren't in the seed list. The gap analyzer notices. New sources are discovered through the social graphs and references of existing trusted sources. Over time, the source list reflects the actual community landscape, not one person's mental model of it. This is why seeding must be deliberate and diverse — the discovery expansion follows the social graph of the seeds, so seeds must span the full spectrum of orgs doing direct community work.
 
 ## The Newspaper Metaphor
 
@@ -133,7 +151,7 @@ The system doesn't need a spam filter. The graph structure *is* the filter, and 
 
 Once the system discovers its own sources, several things become possible that weren't before:
 
-**City bootstrapping:** Point the system at a new city with a minimal seed (5-10 URLs, a few web search queries). The system discovers the rest. What took days of manual research becomes a few scout runs.
+**City bootstrapping:** Seed a new city with trusted sources that have verifiable real-world touchpoints — orgs with physical presence, local journalists with beats, community organizers with direct involvement. The system discovers adjacent sources through their social graphs and references. What took days of manual research becomes a few scout runs expanding outward from a solid anchor.
 
 **Temporal adaptation:** When a crisis hits, the gap analyzer notices the surge in related signals and discovers new sources covering the crisis (mutual aid networks, legal aid hotlines, community response organizations). The system's attention naturally shifts to where community energy is concentrating.
 
@@ -143,11 +161,11 @@ Once the system discovers its own sources, several things become possible that w
 
 ## Principles
 
-1. **Sources are outputs, not inputs.** The curated list is a seed, not a boundary.
+1. **Trusted sources are the anchor, discovery is the expansion.** The curated seed isn't just a starting point — it's the immune system. Sources with verifiable real-world touchpoints anchor the graph. Discovery expands outward from these anchors through social graphs and references, not through open-web search into a corrupted environment.
 2. **Trust is evidence.** Not a formula, not a score — the literal Evidence nodes in the graph. Investigation produces evidence; evidence IS trust.
-3. **Nothing is gatekept.** Low trust affects surfacing priority, never admission to the graph.
+3. **Signal quality is defended at the source layer.** In a corrupted information environment, filtering for real-world-grounded sources isn't gatekeeping — it's quality control. Political commentary from people not directly involved in an issue, AI-generated content, and astroturfed noise fail the inclusion test not because of viewpoint but because they aren't grounded in lived experience.
 4. **Absence is signal.** Investigation reveals what's missing — no registration, no media trail, no institutional depth.
-5. **The system corrects its own biases.** Gap analysis looks for what's missing. Investigation verifies what's found.
-6. **Emergence over engineering.** Don't hard-code what the system can discover.
-7. **Humans set scope, not content.** Geographic boundaries and signal domain — the system fills in the details.
+5. **The system corrects its own biases.** Gap analysis looks for what's missing. Investigation verifies what's found. Seed sources must be deliberately diverse because discovery follows their social graph.
+6. **Emergence over engineering.** Don't hard-code what the system can discover — but anchor discovery in physical reality.
+7. **Humans set scope and trust anchors.** Geographic boundaries, signal domain, and the initial trusted sources. The system expands from there.
 8. **The system asks WHY.** Sensing is not enough. Investigation follows evidence chains and records what it finds.
