@@ -441,3 +441,65 @@ export const SUPERVISOR_SUMMARY = gql`
     }
   }
 `;
+
+// --- Situation queries ---
+
+export const SITUATIONS = gql`
+  query Situations($limit: Int) {
+    situations(limit: $limit) {
+      id
+      headline
+      lede
+      arc
+      temperature
+      signalCount
+      tensionCount
+      dispatchCount
+      centroidLat
+      centroidLng
+      locationName
+      clarity
+      firstSeen
+      lastUpdated
+    }
+  }
+`;
+
+export const SITUATION_DETAIL = gql`
+  query SituationDetail($id: UUID!) {
+    situation(id: $id) {
+      id
+      headline
+      lede
+      arc
+      temperature
+      tensionHeat
+      entityVelocity
+      amplification
+      responseCoverage
+      clarityNeed
+      clarity
+      signalCount
+      tensionCount
+      dispatchCount
+      centroidLat
+      centroidLng
+      locationName
+      firstSeen
+      lastUpdated
+      sensitivity
+      category
+      dispatches(limit: 100) {
+        id
+        body
+        signalIds
+        createdAt
+        dispatchType
+        supersedes
+        flaggedForReview
+        flagReason
+        fidelityScore
+      }
+    }
+  }
+`;

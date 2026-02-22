@@ -367,3 +367,93 @@ export const SIGNAL_DETAIL = gql`
     }
   }
 `;
+
+// --- Situation queries ---
+
+export const SITUATIONS_IN_BOUNDS = gql`
+  query SituationsInBounds(
+    $minLat: Float!
+    $maxLat: Float!
+    $minLng: Float!
+    $maxLng: Float!
+    $arc: String
+    $limit: Int
+  ) {
+    situationsInBounds(
+      minLat: $minLat
+      maxLat: $maxLat
+      minLng: $minLng
+      maxLng: $maxLng
+      arc: $arc
+      limit: $limit
+    ) {
+      id
+      headline
+      lede
+      arc
+      temperature
+      signalCount
+      centroidLat
+      centroidLng
+      locationName
+      clarity
+      category
+    }
+  }
+`;
+
+export const SITUATION_DETAIL = gql`
+  query SituationDetail($id: UUID!) {
+    situation(id: $id) {
+      id
+      headline
+      lede
+      arc
+      temperature
+      tensionHeat
+      entityVelocity
+      amplification
+      responseCoverage
+      clarityNeed
+      clarity
+      signalCount
+      tensionCount
+      dispatchCount
+      centroidLat
+      centroidLng
+      locationName
+      firstSeen
+      lastUpdated
+      sensitivity
+      category
+      dispatches(limit: 50) {
+        id
+        body
+        signalIds
+        createdAt
+        dispatchType
+        supersedes
+        flaggedForReview
+        flagReason
+        fidelityScore
+      }
+    }
+  }
+`;
+
+export const SITUATIONS = gql`
+  query Situations($limit: Int) {
+    situations(limit: $limit) {
+      id
+      headline
+      lede
+      arc
+      temperature
+      signalCount
+      centroidLat
+      centroidLng
+      locationName
+      clarity
+    }
+  }
+`;
