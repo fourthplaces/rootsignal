@@ -310,6 +310,53 @@ impl Scout {
                 .unwrap_or_default();
         }
 
+        // ================================================================
+        // 2b. Entity sources — inject trusted entity accounts with elevated priority
+        // ================================================================
+        let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
+        let entity_pairs = match self
+            .writer
+            .find_trusted_entities_in_region(min_lat, max_lat, min_lng, max_lng)
+            .await
+        {
+            Ok(pairs) => {
+                let entity_count = pairs.len();
+                let source_count: usize = pairs.iter().map(|(_, s)| s.len()).sum();
+                if entity_count > 0 {
+                    info!(
+                        entities = entity_count,
+                        sources = source_count,
+                        "Loaded trusted entity accounts for region"
+                    );
+                }
+                pairs
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load trusted entities, continuing without");
+                Vec::new()
+            }
+        };
+
+        // Boost existing entity sources or add new ones
+        let existing_keys: std::collections::HashSet<String> =
+            all_sources.iter().map(|s| s.canonical_key.clone()).collect();
+        for (_actor, sources) in &entity_pairs {
+            for source in sources {
+                if let Some(existing) = all_sources
+                    .iter_mut()
+                    .find(|s| s.canonical_key == source.canonical_key)
+                {
+                    // Boost weight and cadence for entity sources
+                    existing.weight = existing.weight.max(0.7);
+                    existing.cadence_hours = Some(
+                        existing.cadence_hours.map(|h| h.min(12)).unwrap_or(12),
+                    );
+                } else {
+                    all_sources.push(source.clone());
+                }
+            }
+        }
+
         let now_schedule = Utc::now();
         let scheduler = crate::scheduler::SourceScheduler::new();
         let schedule = scheduler.schedule(&all_sources, now_schedule);
@@ -354,6 +401,21 @@ impl Scout {
 
         // Create shared run context and scrape phase
         let mut ctx = RunContext::new(&all_sources);
+
+        // Populate entity contexts for location fallback during extraction
+        for (actor, sources) in &entity_pairs {
+            let entity_ctx = rootsignal_common::EntityContext {
+                entity_name: actor.name.clone(),
+                bio: actor.bio.clone(),
+                location_name: actor.location_name.clone(),
+                location_lat: actor.location_lat,
+                location_lng: actor.location_lng,
+            };
+            for source in sources {
+                ctx.entity_contexts
+                    .insert(source.canonical_key.clone(), entity_ctx.clone());
+            }
+        }
 
         let phase = ScrapePhase::new(
             &self.writer,
