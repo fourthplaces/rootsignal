@@ -199,6 +199,11 @@ async fn run_actor_extraction_inner(
                         first_seen: Utc::now(),
                         last_active: Utc::now(),
                         typical_roles: vec![],
+                        trusted: false,
+                        bio: None,
+                        location_lat: None,
+                        location_lng: None,
+                        location_name: None,
                     };
                     if let Err(e) = writer.upsert_actor(&actor).await {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");

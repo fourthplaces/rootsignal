@@ -183,6 +183,38 @@ pub struct ActorNode {
     pub first_seen: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
     pub typical_roles: Vec<String>,
+    // --- Entity fields (populated when actor is a trusted entity) ---
+    /// Whether this entity is trusted for signal collection.
+    pub trusted: bool,
+    /// Entity bio / description for LLM context.
+    pub bio: Option<String>,
+    /// Pinned location latitude.
+    pub location_lat: Option<f64>,
+    /// Pinned location longitude.
+    pub location_lng: Option<f64>,
+    /// Pinned location display name (e.g. "Minneapolis, MN").
+    pub location_name: Option<String>,
+}
+
+/// Context passed from a trusted entity to the signal extractor.
+/// Provides location fallback when posts don't mention geography.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityContext {
+    pub entity_name: String,
+    pub bio: Option<String>,
+    pub location_name: Option<String>,
+    pub location_lat: Option<f64>,
+    pub location_lng: Option<f64>,
+}
+
+/// A social account mentioned in a post from a trusted entity.
+/// Used for social graph discovery (Phase 3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MentionedAccount {
+    pub platform: SocialPlatform,
+    pub handle: String,
+    /// How the account was referenced: "mentioned in post", "tagged", "retweeted"
+    pub context: String,
 }
 
 // --- Response Mapping Types ---
@@ -875,6 +907,10 @@ pub enum DiscoveryMethod {
     HumanSubmission,
     /// Expanded from implied queries on extracted signals
     SignalExpansion,
+    /// Social account linked to a known entity
+    EntityAccount,
+    /// Discovered via trusted entity's social graph
+    SocialGraphFollow,
 }
 
 impl std::fmt::Display for DiscoveryMethod {
@@ -888,6 +924,8 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
             DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
             DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
+            DiscoveryMethod::EntityAccount => write!(f, "entity_account"),
+            DiscoveryMethod::SocialGraphFollow => write!(f, "social_graph_follow"),
         }
     }
 }

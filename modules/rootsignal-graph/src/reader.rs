@@ -2380,6 +2380,12 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
     let last_active = parse_story_datetime(&n, "last_active");
     let typical_roles: Vec<String> = n.get("typical_roles").unwrap_or_default();
 
+    let trusted: bool = n.get("trusted").unwrap_or(false);
+    let bio: Option<String> = n.get("bio").ok();
+    let location_lat: Option<f64> = n.get("location_lat").ok();
+    let location_lng: Option<f64> = n.get("location_lng").ok();
+    let location_name_entity: Option<String> = n.get("location_name").ok();
+
     Some(rootsignal_common::ActorNode {
         id,
         name,
@@ -2392,6 +2398,11 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         first_seen,
         last_active,
         typical_roles,
+        trusted,
+        bio,
+        location_lat,
+        location_lng,
+        location_name: location_name_entity,
     })
 }
 
