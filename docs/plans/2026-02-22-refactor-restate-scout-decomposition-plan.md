@@ -265,7 +265,7 @@ ctx.run(metrics_update)
 - `modules/rootsignal-api/src/main.rs`
 
 **Acceptance criteria:**
-- [ ] ScrapeWorkflow produces the same signals as the current `scout.run()` pipeline
+- [ ] ScrapeWorkflow produces the same signals as the current `scout.run()` pipeline *(stub: blocked by HRTB lifetime issue in ScrapePhase::run_web closures)*
 - [ ] RunContext (embed_cache, url maps, expansion queries) works within the workflow
 - [ ] Budget tracking works within the workflow and outputs `spent_cents`
 - [ ] Status updates visible via `get_status()`
@@ -284,10 +284,10 @@ Three workflows that are already relatively isolated in the current code:
 - `modules/rootsignal-scout/src/workflows/supervisor.rs`
 
 **Acceptance criteria:**
-- [ ] Each workflow invocable independently
-- [ ] SynthesisWorkflow respects budget gates
-- [ ] SituationWeaverWorkflow works with whatever edges exist in graph
-- [ ] SupervisorWorkflow includes post-run cleanup steps
+- [ ] Each workflow invocable independently *(stubs for Synthesis/SituationWeaver; SupervisorWorkflow fully implemented)*
+- [ ] SynthesisWorkflow respects budget gates *(stub: blocked by ResponseFinder MutexGuard !Send issue)*
+- [ ] SituationWeaverWorkflow works with whatever edges exist in graph *(stub: depends on synthesis fixes)*
+- [x] SupervisorWorkflow includes post-run cleanup steps
 
 ### Phase 5: FullScoutRunWorkflow + Migration
 
@@ -302,7 +302,7 @@ Create the orchestrator workflow that calls all others in sequence. Update the A
 - `modules/rootsignal-scout/src/main.rs` — CLI can optionally invoke via Restate or keep direct path
 
 **Acceptance criteria:**
-- [ ] `FullScoutRunWorkflow` runs all phases in sequence
+- [x] `FullScoutRunWorkflow` runs all phases in sequence *(orchestrator implemented, depends on sub-workflow stubs being wired up)*
 - [ ] `runScout` GraphQL mutation triggers the Restate workflow
 - [ ] Budget flows correctly through the full chain
 - [ ] Beacon detection runs after supervisor
