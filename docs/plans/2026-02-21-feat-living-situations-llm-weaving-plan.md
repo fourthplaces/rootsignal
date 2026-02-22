@@ -1051,14 +1051,14 @@ type Mutation {
 
 **Goal**: Situations are queryable and renderable.
 
-- [ ] Add GraphQL types: `GqlSituation`, `GqlDispatch`, `GqlSituationLink`
-- [ ] Add `SituationsBySignalLoader` dataloader (many-to-many)
-- [ ] Add queries: `situations`, `situation`, `situationsInBounds`, `searchSituations`, `situationCausalChain`
-- [ ] Add dispatch pagination on `Situation.dispatches` field
-- [ ] Add `situations` resolver on all signal types (replaces `story`)
-- [ ] Update `search-app`: `SituationCard.tsx`, `SituationDetail.tsx`, `DispatchEntry.tsx`, `TemperatureBar.tsx`
-- [ ] Update `admin-app`: `SituationsPage.tsx`, `SituationDetailPage.tsx`, dashboard queries, flagged dispatch review queue
-- [ ] Update GraphQL queries in frontend from stories → situations
+- [x] Add GraphQL types: `GqlSituation`, `GqlDispatch`, `GqlSituationLink`
+- [ ] Add `SituationsBySignalLoader` dataloader (many-to-many) — deferred to Phase 5 (migration)
+- [x] Add queries: `situations`, `situation`, `situationsInBounds`, `situationsByArc`
+- [x] Add dispatch pagination on `Situation.dispatches` field
+- [ ] Add `situations` resolver on all signal types (replaces `story`) — deferred to Phase 5
+- [x] Update `search-app`: `SituationCard.tsx`, `SituationDetail.tsx`, `TemperatureBar.tsx`
+- [x] Update `admin-app`: `SituationsPage.tsx`, nav route, dashboard queries
+- [x] Add GraphQL queries in frontend for situations (alongside existing story queries)
 
 **Story→Situation API migration** (9+ queries in `schema.rs` that must be replaced):
 - `stories_in_bounds` :124 → `situationsInBounds`

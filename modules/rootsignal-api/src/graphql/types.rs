@@ -810,6 +810,189 @@ impl GqlStorySearchResult {
     }
 }
 
+// --- Situation types ---
+
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+pub enum GqlSituationArc {
+    Emerging,
+    Developing,
+    Active,
+    Cooling,
+    Cold,
+}
+
+impl From<rootsignal_common::SituationArc> for GqlSituationArc {
+    fn from(a: rootsignal_common::SituationArc) -> Self {
+        match a {
+            rootsignal_common::SituationArc::Emerging => GqlSituationArc::Emerging,
+            rootsignal_common::SituationArc::Developing => GqlSituationArc::Developing,
+            rootsignal_common::SituationArc::Active => GqlSituationArc::Active,
+            rootsignal_common::SituationArc::Cooling => GqlSituationArc::Cooling,
+            rootsignal_common::SituationArc::Cold => GqlSituationArc::Cold,
+        }
+    }
+}
+
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+pub enum GqlClarity {
+    Fuzzy,
+    Sharpening,
+    Sharp,
+}
+
+impl From<rootsignal_common::Clarity> for GqlClarity {
+    fn from(c: rootsignal_common::Clarity) -> Self {
+        match c {
+            rootsignal_common::Clarity::Fuzzy => GqlClarity::Fuzzy,
+            rootsignal_common::Clarity::Sharpening => GqlClarity::Sharpening,
+            rootsignal_common::Clarity::Sharp => GqlClarity::Sharp,
+        }
+    }
+}
+
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+pub enum GqlDispatchType {
+    Update,
+    Emergence,
+    Split,
+    Merge,
+    Reactivation,
+    Correction,
+}
+
+impl From<rootsignal_common::DispatchType> for GqlDispatchType {
+    fn from(d: rootsignal_common::DispatchType) -> Self {
+        match d {
+            rootsignal_common::DispatchType::Update => GqlDispatchType::Update,
+            rootsignal_common::DispatchType::Emergence => GqlDispatchType::Emergence,
+            rootsignal_common::DispatchType::Split => GqlDispatchType::Split,
+            rootsignal_common::DispatchType::Merge => GqlDispatchType::Merge,
+            rootsignal_common::DispatchType::Reactivation => GqlDispatchType::Reactivation,
+            rootsignal_common::DispatchType::Correction => GqlDispatchType::Correction,
+        }
+    }
+}
+
+pub struct GqlSituation(pub rootsignal_common::SituationNode);
+
+#[Object]
+impl GqlSituation {
+    async fn id(&self) -> Uuid {
+        self.0.id
+    }
+    async fn headline(&self) -> &str {
+        &self.0.headline
+    }
+    async fn lede(&self) -> &str {
+        &self.0.lede
+    }
+    async fn arc(&self) -> GqlSituationArc {
+        self.0.arc.into()
+    }
+    async fn temperature(&self) -> f64 {
+        self.0.temperature
+    }
+    async fn tension_heat(&self) -> f64 {
+        self.0.tension_heat
+    }
+    async fn entity_velocity(&self) -> f64 {
+        self.0.entity_velocity
+    }
+    async fn amplification(&self) -> f64 {
+        self.0.amplification
+    }
+    async fn response_coverage(&self) -> f64 {
+        self.0.response_coverage
+    }
+    async fn clarity_need(&self) -> f64 {
+        self.0.clarity_need
+    }
+    async fn clarity(&self) -> GqlClarity {
+        self.0.clarity.into()
+    }
+    async fn centroid_lat(&self) -> Option<f64> {
+        self.0.centroid_lat
+    }
+    async fn centroid_lng(&self) -> Option<f64> {
+        self.0.centroid_lng
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.0.location_name.as_deref()
+    }
+    async fn signal_count(&self) -> u32 {
+        self.0.signal_count
+    }
+    async fn tension_count(&self) -> u32 {
+        self.0.tension_count
+    }
+    async fn dispatch_count(&self) -> u32 {
+        self.0.dispatch_count
+    }
+    async fn first_seen(&self) -> DateTime<Utc> {
+        self.0.first_seen
+    }
+    async fn last_updated(&self) -> DateTime<Utc> {
+        self.0.last_updated
+    }
+    async fn sensitivity(&self) -> &str {
+        self.0.sensitivity.as_str()
+    }
+    async fn category(&self) -> Option<&str> {
+        self.0.category.as_deref()
+    }
+
+    /// Dispatches for this situation, ordered chronologically.
+    async fn dispatches(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 20)] limit: u32,
+        #[graphql(default = 0)] offset: u32,
+    ) -> Result<Vec<GqlDispatch>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let dispatches = reader
+            .dispatches_for_situation(&self.0.id, limit.min(100), offset)
+            .await?;
+        Ok(dispatches.into_iter().map(GqlDispatch).collect())
+    }
+}
+
+pub struct GqlDispatch(pub rootsignal_common::DispatchNode);
+
+#[Object]
+impl GqlDispatch {
+    async fn id(&self) -> Uuid {
+        self.0.id
+    }
+    async fn situation_id(&self) -> Uuid {
+        self.0.situation_id
+    }
+    async fn body(&self) -> &str {
+        &self.0.body
+    }
+    async fn signal_ids(&self) -> Vec<String> {
+        self.0.signal_ids.iter().map(|id| id.to_string()).collect()
+    }
+    async fn created_at(&self) -> DateTime<Utc> {
+        self.0.created_at
+    }
+    async fn dispatch_type(&self) -> GqlDispatchType {
+        self.0.dispatch_type.into()
+    }
+    async fn supersedes(&self) -> Option<Uuid> {
+        self.0.supersedes
+    }
+    async fn flagged_for_review(&self) -> bool {
+        self.0.flagged_for_review
+    }
+    async fn flag_reason(&self) -> Option<&str> {
+        self.0.flag_reason.as_deref()
+    }
+    async fn fidelity_score(&self) -> Option<f64> {
+        self.0.fidelity_score
+    }
+}
+
 // --- Scout Task types ---
 
 #[derive(SimpleObject)]

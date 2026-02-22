@@ -301,6 +301,63 @@ impl QueryRoot {
 
     }
 
+    // ========== Situation queries ==========
+
+    /// Top situations by temperature.
+    async fn situations(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSituation>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let limit = limit.unwrap_or(20).min(100);
+        let situations = reader.situations(limit).await?;
+        Ok(situations.into_iter().map(GqlSituation).collect())
+    }
+
+    /// Get a single situation by ID.
+    async fn situation(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSituation>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let situation = reader.situation_by_id(&id).await?;
+        Ok(situation.map(GqlSituation))
+    }
+
+    /// Situations within a geographic bounding box.
+    async fn situations_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        arc: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSituation>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let limit = limit.unwrap_or(20).min(100);
+        let situations = reader
+            .situations_in_bounds(min_lat, max_lat, min_lng, max_lng, limit, arc.as_deref())
+            .await?;
+        Ok(situations.into_iter().map(GqlSituation).collect())
+    }
+
+    /// Situations filtered by arc.
+    async fn situations_by_arc(
+        &self,
+        ctx: &Context<'_>,
+        arc: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlSituation>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let limit = limit.unwrap_or(20).min(100);
+        let situations = reader.situations_by_arc(&arc, limit).await?;
+        Ok(situations.into_iter().map(GqlSituation).collect())
+    }
+
     /// Find tensions with < 2 respondents, not yet in any story, within bounds.
     async fn unresponded_tensions_in_bounds(
         &self,
