@@ -199,7 +199,6 @@ async fn run_actor_extraction_inner(
                         first_seen: Utc::now(),
                         last_active: Utc::now(),
                         typical_roles: vec![],
-                        trusted: false,
                         bio: None,
                         location_lat: None,
                         location_lng: None,

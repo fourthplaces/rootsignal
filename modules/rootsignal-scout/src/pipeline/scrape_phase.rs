@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, EntityContext, ScoutScope,
+    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ActorContext, ScoutScope,
     DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
     SocialPlatform, SocialPost, SourceNode, SourceRole,
 };
@@ -49,9 +49,10 @@ pub(crate) struct RunContext {
     pub stats: ScoutStats,
     pub query_api_errors: HashSet<String>,
     /// Entity context keyed by source canonical_key. When a source is linked to
-    /// a trusted entity via HAS_ACCOUNT, its context is stored here for location
+    /// Actor context keyed by source canonical_key. When a source is linked to
+    /// a known actor via HAS_ACCOUNT, its context is stored here for location
     /// fallback during signal extraction.
-    pub entity_contexts: HashMap<String, EntityContext>,
+    pub actor_contexts: HashMap<String, ActorContext>,
 }
 
 impl RunContext {
@@ -72,7 +73,7 @@ impl RunContext {
             social_expansion_topics: Vec::new(),
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
-            entity_contexts: HashMap::new(),
+            actor_contexts: HashMap::new(),
         }
     }
 
@@ -654,18 +655,18 @@ impl<'a> ScrapePhase<'a> {
             "Scraping social media..."
         );
 
-        // Build entity context prefixes for trusted entity sources
-        let entity_prefixes: HashMap<String, String> = accounts
+        // Build actor context prefixes for known actor sources
+        let actor_prefixes: HashMap<String, String> = accounts
             .iter()
             .filter_map(|(ck, _, _)| {
-                ctx.entity_contexts.get(ck).map(|ec| {
+                ctx.actor_contexts.get(ck).map(|ac| {
                     let mut prefix = format!(
-                        "ENTITY CONTEXT: This content is from {}", ec.entity_name
+                        "ACTOR CONTEXT: This content is from {}", ac.actor_name
                     );
-                    if let Some(ref bio) = ec.bio {
+                    if let Some(ref bio) = ac.bio {
                         prefix.push_str(&format!(", {}", bio));
                     }
-                    if let Some(ref loc) = ec.location_name {
+                    if let Some(ref loc) = ac.location_name {
                         prefix.push_str(&format!(", located in {}", loc));
                     }
                     prefix.push_str(". Use this location as fallback if the post doesn't mention a specific place.\n\n");
@@ -698,8 +699,8 @@ impl<'a> ScrapePhase<'a> {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
             let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
-            let entity_prefix = entity_prefixes.get(&canonical_key).cloned();
-            let firsthand_prefix = if entity_prefix.is_none() {
+            let actor_prefix = actor_prefixes.get(&canonical_key).cloned();
+            let firsthand_prefix = if actor_prefix.is_none() {
                 Some(firsthand_filter.to_string())
             } else {
                 None
@@ -741,9 +742,9 @@ impl<'a> ScrapePhase<'a> {
                         if combined_text.is_empty() {
                             continue;
                         }
-                        // Prepend entity context for trusted entity sources,
+                        // Prepend entity context for known actor sources,
                         // or first-hand filter for non-entity sources
-                        if let Some(ref prefix) = entity_prefix {
+                        if let Some(ref prefix) = actor_prefix {
                             combined_text = format!("{prefix}{combined_text}");
                         } else if let Some(ref prefix) = firsthand_prefix {
                             combined_text = format!("{prefix}{combined_text}");
@@ -784,9 +785,9 @@ impl<'a> ScrapePhase<'a> {
                     if combined_text.is_empty() {
                         return None;
                     }
-                    // Prepend entity context for trusted entity sources,
+                    // Prepend entity context for known actor sources,
                     // or first-hand filter for non-entity sources
-                    if let Some(ref prefix) = entity_prefix {
+                    if let Some(ref prefix) = actor_prefix {
                         combined_text = format!("{prefix}{combined_text}");
                     } else if let Some(ref prefix) = firsthand_prefix {
                         combined_text = format!("{prefix}{combined_text}");
@@ -1666,7 +1667,6 @@ impl<'a> ScrapePhase<'a> {
                                 first_seen: Utc::now(),
                                 last_active: Utc::now(),
                                 typical_roles: vec![],
-                                trusted: false,
                                 bio: None,
                                 location_lat: None,
                                 location_lng: None,
