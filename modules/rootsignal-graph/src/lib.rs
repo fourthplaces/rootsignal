@@ -7,6 +7,7 @@ pub mod migrate;
 pub mod reader;
 pub mod response;
 pub mod similarity;
+pub mod situation_temperature;
 pub mod situation_weaver;
 pub mod story_metrics;
 pub mod story_weaver;

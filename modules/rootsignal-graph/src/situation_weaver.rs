@@ -222,7 +222,6 @@ impl SituationWeaver {
         // Process sequentially to prevent duplicate situation creation
         let batch_size = 5;
         let mut temp_id_map: std::collections::HashMap<String, Uuid> = std::collections::HashMap::new();
-
         for chunk in signals.chunks(batch_size) {
             match self.weave_batch(chunk, &candidates, &mut temp_id_map).await {
                 Ok(batch_stats) => {
@@ -235,6 +234,32 @@ impl SituationWeaver {
                 }
                 Err(e) => {
                     warn!(error = %e, "SituationWeaver: batch weaving failed, continuing");
+                }
+            }
+        }
+
+        // Collect all situations affected by this run
+        let affected_situations = self.find_affected_situations(scout_run_id).await?;
+
+        // Phase 5: Recompute temperature for all affected situations
+        for sit_id in &affected_situations {
+            match crate::situation_temperature::recompute_situation_temperature(
+                &self.client,
+                &self.writer,
+                sit_id,
+            )
+            .await
+            {
+                Ok(components) => {
+                    info!(
+                        situation_id = %sit_id,
+                        temperature = components.temperature,
+                        arc = %components.arc,
+                        "Temperature recomputed"
+                    );
+                }
+                Err(e) => {
+                    warn!(error = %e, situation_id = %sit_id, "Temperature recomputation failed");
                 }
             }
         }
@@ -754,6 +779,32 @@ impl SituationWeaver {
         }
 
         Ok(flagged)
+    }
+
+    /// Find all situations that have signals from this scout run.
+    async fn find_affected_situations(
+        &self,
+        scout_run_id: &str,
+    ) -> Result<Vec<Uuid>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut situations = Vec::new();
+
+        let q = query(
+            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+             WHERE sig.scout_run_id = $run_id
+             RETURN DISTINCT s.id AS id",
+        )
+        .param("run_id", scout_run_id);
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                situations.push(id);
+            }
+        }
+
+        Ok(situations)
     }
 
     /// Mark signals as pending for next weaving run (when no LLM budget).
