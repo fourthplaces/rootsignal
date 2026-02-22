@@ -7,7 +7,7 @@ const DEFAULT_SOCIAL_SEARCH_LIMIT: u32 = 20;
 
 /// What kind of target is this? Determined from the target string alone (no HTTP).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TargetKind {
+pub enum TargetKind {
     /// Plain text query (not a URL) → web search via Serper
     WebQuery(String),
     /// Social platform profile or feed URL → Apify
@@ -35,7 +35,7 @@ pub(crate) enum ContentKind {
 }
 
 /// Detect what kind of target this is from the string alone.
-pub(crate) fn detect_target(target: &str) -> TargetKind {
+pub fn detect_target(target: &str) -> TargetKind {
     let trimmed = target.trim();
 
     // Bare subreddit reference: "r/Minneapolis"

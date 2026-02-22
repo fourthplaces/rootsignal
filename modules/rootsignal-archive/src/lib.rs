@@ -1,7 +1,7 @@
 pub mod archive;
 pub mod error;
 pub mod replay;
-mod router;
+pub mod router;
 mod store;
 mod readability;
 pub mod fetchers;
