@@ -13,13 +13,14 @@ use rootsignal_common::{
 };
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::Content;
+use rootsignal_archive::Archive;
 
 use rootsignal_scout::enrichment::actor_discovery::{
     create_actor_from_page, geocode_location,
 };
 
 use crate::jwt::{self, JwtService};
+use crate::restate_client::RestateClient;
 
 use super::context::AdminGuard;
 
@@ -29,8 +30,6 @@ pub struct RateLimiter(pub Mutex<std::collections::HashMap<IpAddr, Vec<Instant>>
 /// The client IP, extracted from the HTTP request and passed into GraphQL context.
 pub struct ClientIp(pub IpAddr);
 
-/// Restate ingress URL. Required for `runScout` dispatch.
-pub struct RestateIngress(pub Option<String>);
 
 /// HTTP response headers that mutations can set (e.g., Set-Cookie).
 /// Wrapped in a Mutex so mutations can append headers.
@@ -271,8 +270,8 @@ impl MutationRoot {
             });
         }
 
-        let restate = ctx.data_unchecked::<RestateIngress>();
-        let ingress_url = restate.0.as_deref().ok_or_else(|| {
+        let restate = ctx.data_unchecked::<Option<RestateClient>>();
+        let restate = restate.as_ref().ok_or_else(|| {
             async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
         })?;
 
@@ -291,61 +290,40 @@ impl MutationRoot {
             geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
         };
 
-        let url = format!("{}/FullScoutRunWorkflow/{}/run", ingress_url, slug);
-        info!(url = url.as_str(), "Dispatching scout via Restate");
-        let body = serde_json::json!({ "scope": scope });
-        let client = reqwest::Client::new();
-        match client.post(&url).json(&body).send().await {
-            Ok(resp) if resp.status().is_success() => Ok(ScoutResult {
-                success: true,
-                message: Some(format!("Scout started via Restate for {display_name}")),
-            }),
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                Err(async_graphql::Error::new(format!(
-                    "Restate dispatch failed (HTTP {status}): {body}"
-                )))
-            }
-            Err(e) => Err(async_graphql::Error::new(format!(
-                "Restate unreachable: {e}"
-            ))),
-        }
+        restate
+            .run_scout(&slug, &scope)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Scout started via Restate for {display_name}")),
+        })
     }
 
     /// Stop a running scout workflow via Restate cancellation.
     #[graphql(guard = "AdminGuard")]
     async fn stop_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
-        let restate = ctx.data_unchecked::<RestateIngress>();
-        let ingress_url = restate.0.as_deref().ok_or_else(|| {
+        let restate = ctx.data_unchecked::<Option<RestateClient>>();
+        let restate = restate.as_ref().ok_or_else(|| {
             async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
         })?;
 
         let slug = rootsignal_common::slugify(&query);
-        let url = format!(
-            "{}/restate/workflow/FullScoutRunWorkflow/{}/cancel",
-            ingress_url, slug
-        );
-        info!(url = url.as_str(), "Cancelling scout via Restate");
 
-        let client = reqwest::Client::new();
-        match client.delete(&url).send().await {
-            Ok(resp) if resp.status().is_success() => Ok(ScoutResult {
+        match restate.cancel_scout(&slug).await {
+            Ok(()) => Ok(ScoutResult {
                 success: true,
                 message: Some(format!("Cancel signal sent for {slug}")),
             }),
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                warn!(status = %status, body = %body, "Restate cancel failed");
+            Err(crate::restate_client::RestateError::Ingress { status, body }) => {
+                warn!(status, body = %body, "Restate cancel failed");
                 Ok(ScoutResult {
                     success: false,
                     message: Some(format!("Cancel failed (HTTP {status}): {body}")),
                 })
             }
-            Err(e) => Err(async_graphql::Error::new(format!(
-                "Restate unreachable: {e}"
-            ))),
+            Err(e) => Err(async_graphql::Error::new(e.to_string())),
         }
     }
 
@@ -788,7 +766,7 @@ impl MutationRoot {
         let fallback_region = region.unwrap_or_else(|| config.region.clone());
 
         match create_actor_from_page(
-            archive.as_ref(),
+            &archive,
             &writer,
             &config.anthropic_api_key,
             &url,
@@ -834,22 +812,22 @@ impl MutationRoot {
         let max = max_results.unwrap_or(10).min(50) as usize;
 
         // Fetch search results
-        let fetched = archive
-            .fetch_content(&query)
+        let handle = archive
+            .source(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Search failed: {e}")))?;
+        let search = handle
+            .search(&query)
+            .max_results(max)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Search failed: {e}")))?;
 
-        let urls: Vec<String> = match fetched.content {
-            Content::SearchResults(results) => {
-                results.into_iter().take(max).map(|r| r.url).collect()
-            }
-            _ => return Err("Expected search results".into()),
-        };
+        let urls: Vec<String> = search.results.into_iter().map(|r| r.url).collect();
 
         let mut actors = Vec::new();
         for url in &urls {
             match create_actor_from_page(
-                archive.as_ref(),
+                &archive,
                 &writer,
                 &config.anthropic_api_key,
                 url,
@@ -963,7 +941,7 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 /// Create an Archive for news scanning. Returns None if DATABASE_URL is not set.
 async fn create_archive_for_news_scan(
     config: &rootsignal_common::Config,
-) -> Option<std::sync::Arc<dyn rootsignal_archive::FetchBackend>> {
+) -> Option<std::sync::Arc<Archive>> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(3)
@@ -984,13 +962,10 @@ async fn create_archive_for_news_scan(
         } else {
             Some(config.apify_api_key.clone())
         },
-        anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
     };
     Some(std::sync::Arc::new(rootsignal_archive::Archive::new(
         pool,
         archive_config,
-        uuid::Uuid::new_v4(),
-        "news-scanner".to_string(),
     )))
 }
 

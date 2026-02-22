@@ -8,7 +8,7 @@ use uuid::Uuid;
 use rootsignal_common::{ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
+use rootsignal_archive::Archive;
 
 use crate::pipeline::sources;
 
@@ -16,7 +16,7 @@ use crate::pipeline::sources;
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     anthropic_api_key: String,
     region: ScoutScope,
 }
@@ -24,7 +24,7 @@ pub struct Bootstrapper<'a> {
 impl<'a> Bootstrapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: ScoutScope,
     ) -> Self {
@@ -124,19 +124,18 @@ impl<'a> Bootstrapper<'a> {
         let mut seen_urls = std::collections::HashSet::new();
 
         for query in &queries {
-            let fetched = match self.archive.fetch_content(query).await {
-                Ok(f) => f,
+            let urls: Vec<String> = match async {
+                let handle = self.archive.source(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let search = handle.search(query).max_results(10).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok::<_, anyhow::Error>(search.results.into_iter().map(|r| r.url).collect::<Vec<_>>())
+            }
+            .await
+            {
+                Ok(urls) => urls,
                 Err(e) => {
                     warn!(query = query.as_str(), error = %e, "Actor discovery search failed");
                     continue;
                 }
-            };
-
-            let urls: Vec<String> = match fetched.content {
-                Content::SearchResults(results) => {
-                    results.into_iter().take(10).map(|r| r.url).collect()
-                }
-                _ => continue,
             };
 
             for url in &urls {
@@ -144,7 +143,7 @@ impl<'a> Bootstrapper<'a> {
                     continue; // already processed this URL from a previous query
                 }
                 match crate::enrichment::actor_discovery::create_actor_from_page(
-                    self.archive.as_ref(),
+                    &self.archive,
                     self.writer,
                     &self.anthropic_api_key,
                     url,
@@ -382,7 +381,13 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
                 );
                 for (name, feed_url) in outlets {
                     // Validate the feed URL is reachable by attempting a fetch
-                    let reachable = self.archive.fetch(&feed_url).text().await.is_ok();
+                    let reachable = async {
+                        let handle = self.archive.source(&feed_url).await?;
+                        handle.feed().await?;
+                        Ok::<_, rootsignal_archive::ArchiveError>(())
+                    }
+                    .await
+                    .is_ok();
                     if reachable {
                         let mut source = make_url(
                             &feed_url,

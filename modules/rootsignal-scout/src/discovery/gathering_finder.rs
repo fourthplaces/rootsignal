@@ -16,7 +16,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
-use rootsignal_archive::FetchBackend;
+use rootsignal_archive::Archive;
 
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::sources;
@@ -282,7 +282,7 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
         region: ScoutScope,

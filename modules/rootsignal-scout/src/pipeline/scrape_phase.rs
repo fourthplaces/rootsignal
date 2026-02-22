@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ActorContext, ScoutScope,
-    DiscoveryMethod, EvidenceNode, Node, NodeType, ScrapingStrategy,
-    SocialPlatform, SocialPost, SourceNode, SourceRole,
+    DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
+    SocialPlatform, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -28,7 +28,7 @@ use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
 use crate::run_log::{EventKind, RunLog};
 use crate::scout::ScoutStats;
-use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
+use rootsignal_archive::Archive;
 
 use crate::pipeline::sources;
 use crate::infra::util::{content_hash, sanitize_url};
@@ -177,7 +177,7 @@ pub(crate) struct ScrapePhase {
     writer: GraphWriter,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     region: ScoutScope,
     run_id: String,
 }
@@ -187,7 +187,7 @@ impl ScrapePhase {
         writer: GraphWriter,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         region: ScoutScope,
         run_id: String,
     ) -> Self {
@@ -245,11 +245,11 @@ impl ScrapePhase {
             let search_results: Vec<_> = stream::iter(query_inputs.into_iter().map(|(canonical_key, query_str)| {
                 let archive = archive.clone();
                 async move {
-                    (
-                        canonical_key,
-                        query_str.clone(),
-                        archive.fetch(&query_str).content().await,
-                    )
+                    let result = async {
+                        let handle = archive.source(&query_str).await?;
+                        handle.search(&query_str).await
+                    }.await;
+                    (canonical_key, query_str, result)
                 }
             }))
             .buffer_unordered(5)
@@ -258,14 +258,14 @@ impl ScrapePhase {
 
             for (canonical_key, query_str, result) in search_results {
                 match result {
-                    Ok(Content::SearchResults(results)) => {
+                    Ok(archived) => {
                         run_log.log(EventKind::SearchQuery {
                             query: query_str.clone(),
                             provider: "serper".to_string(),
-                            result_count: results.len() as u32,
+                            result_count: archived.results.len() as u32,
                             canonical_key: canonical_key.clone(),
                         });
-                        for r in &results {
+                        for r in &archived.results {
                             let clean = sanitize_url(&r.url);
                             ctx.url_to_canonical_key
                                 .entry(clean)
@@ -274,15 +274,9 @@ impl ScrapePhase {
                         ctx.source_signal_counts
                             .entry(canonical_key.clone())
                             .or_default();
-                        for r in results {
+                        for r in archived.results {
                             phase_urls.push(r.url);
                         }
-                    }
-                    Ok(_) => {
-                        // Non-search content returned — no URLs to resolve
-                        ctx.source_signal_counts
-                            .entry(canonical_key)
-                            .or_default();
                     }
                     Err(e) => {
                         warn!(query_str, error = %e, "Web search failed");
@@ -303,13 +297,16 @@ impl ScrapePhase {
                 _ => None,
             };
             if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
-                let raw_result = self.archive.fetch(url).content().await;
-                let html = match raw_result {
-                    Ok(Content::Page(page)) => Some(page.raw_html),
-                    Ok(Content::Raw(text)) => Some(text),
-                    Ok(_) => None,
+                let html = match self.archive.source(url).await {
+                    Ok(handle) => match handle.page().await {
+                        Ok(page) => Some(page.raw_html),
+                        Err(e) => {
+                            warn!(url = url.as_str(), error = %e, "Query scrape failed");
+                            None
+                        }
+                    },
                     Err(e) => {
-                        warn!(url = url.as_str(), error = %e, "Query scrape failed");
+                        warn!(url = url.as_str(), error = %e, "Query source failed");
                         None
                     }
                 };
@@ -341,23 +338,20 @@ impl ScrapePhase {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    let feed_result = self.archive.fetch(feed_url).content().await
-                        .map(|content| match content {
-                            Content::Feed(items) => items,
-                            _ => Vec::new(),
-                        })
-                        .map_err(|e| anyhow::anyhow!("{e}"));
+                    let feed_result = async {
+                        let handle = self.archive.source(feed_url).await?;
+                        handle.feed().await
+                    }.await;
                     match feed_result {
-                        Ok(items) => {
+                        Ok(archived) => {
                             run_log.log(EventKind::ScrapeFeed {
                                 url: feed_url.clone(),
-                                items: items.len() as u32,
+                                items: archived.items.len() as u32,
                             });
-                            // Ensure the RSS source gets a source_signal_counts entry
                             ctx.source_signal_counts
                                 .entry(source.canonical_key.clone())
                                 .or_default();
-                            for item in items {
+                            for item in archived.items {
                                 ctx.url_to_canonical_key
                                     .entry(item.url.clone())
                                     .or_insert_with(|| source.canonical_key.clone());
@@ -408,7 +402,11 @@ impl ScrapePhase {
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let content = match archive.fetch(&url).text().await {
+                let content = match async {
+                    let handle = archive.source(&url).await?;
+                    let page = handle.page().await?;
+                    Ok::<_, rootsignal_archive::ArchiveError>(page.markdown)
+                }.await {
                     Ok(c) if !c.is_empty() => c,
                     Ok(_) => return (clean_url, ScrapeOutcome::Failed),
                     Err(e) => {
@@ -717,9 +715,11 @@ impl ScrapePhase {
             let identifier = account.identifier.clone();
 
             futures.push(Box::pin(async move {
-                let posts = match archive.fetch(&identifier).content().await {
-                    Ok(Content::SocialPosts(posts)) => posts,
-                    Ok(_) => Vec::new(),
+                let posts = match async {
+                    let handle = archive.source(&identifier).await?;
+                    handle.posts(20).await
+                }.await {
+                    Ok(posts) => posts,
                     Err(e) => {
                         warn!(source_url, error = %e, "Social media scrape failed");
                         return None;
@@ -728,10 +728,11 @@ impl ScrapePhase {
                 let post_count = posts.len();
 
                 // Format a post header including the specific post URL when available.
-                let post_header = |i: usize, p: &SocialPost| -> String {
-                    match &p.url {
-                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
-                        None => format!("--- Post {} ---\n{}", i + 1, p.content),
+                let post_header = |i: usize, p: &Post| -> String {
+                    let text = p.text.as_deref().unwrap_or("");
+                    match &p.permalink {
+                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
+                        None => format!("--- Post {} ---\n{}", i + 1, text),
                     }
                 };
 
@@ -919,34 +920,27 @@ impl ScrapePhase {
             .collect();
 
         // Search each social platform with the same topics
-        let platforms = [
-            SocialPlatform::Instagram,
-            SocialPlatform::Twitter,
-            SocialPlatform::TikTok,
-            SocialPlatform::Reddit,
+        let platform_urls: &[(&str, &str)] = &[
+            ("instagram", "https://www.instagram.com/topics"),
+            ("x", "https://x.com/topics"),
+            ("tiktok", "https://www.tiktok.com/topics"),
+            ("reddit", "https://www.reddit.com/topics"),
         ];
 
-        for platform in &platforms {
+        for &(platform_name, platform_url) in platform_urls {
             if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
                 break;
             }
 
-            let platform_name = match platform {
-                SocialPlatform::Instagram => "instagram",
-                SocialPlatform::Twitter => "x",
-                SocialPlatform::TikTok => "tiktok",
-                SocialPlatform::Reddit => "reddit",
-                _ => continue,
+            let source_handle = match self.archive.source(platform_url).await {
+                Ok(h) => h,
+                Err(e) => {
+                    warn!(platform = platform_name, error = %e, "Failed to create source handle for topic search");
+                    continue;
+                }
             };
-
-            let social_search = rootsignal_archive::SocialSearch {
-                platform: *platform,
-                topics: topic_strs.iter().map(|s| s.to_string()).collect(),
-                limit: POSTS_PER_SEARCH,
-            };
-            let discovered_posts = match self.archive.fetch(&social_search.to_string()).content().await {
-                Ok(Content::SocialPosts(posts)) => posts,
-                Ok(_) => Vec::new(),
+            let discovered_posts = match source_handle.search_topics(&topic_strs, POSTS_PER_SEARCH).await {
+                Ok(posts) => posts,
                 Err(e) => {
                     warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");
                     continue;
@@ -970,7 +964,7 @@ impl ScrapePhase {
             ctx.stats.discovery_posts_found += discovered_posts.len() as u32;
 
             // Group posts by author
-            let mut by_author: HashMap<String, Vec<&SocialPost>> = HashMap::new();
+            let mut by_author: HashMap<String, Vec<&Post>> = HashMap::new();
             for post in &discovered_posts {
                 if let Some(ref author) = post.author {
                     by_author.entry(author.clone()).or_default().push(post);
@@ -991,17 +985,11 @@ impl ScrapePhase {
                 }
 
                 // Platform-aware source URL
-                let source_url = match platform {
-                    SocialPlatform::Instagram => {
-                        format!("https://www.instagram.com/{username}/")
-                    }
-                    SocialPlatform::Twitter => format!("https://x.com/{username}"),
-                    SocialPlatform::TikTok => {
-                        format!("https://www.tiktok.com/@{username}")
-                    }
-                    SocialPlatform::Reddit => {
-                        format!("https://www.reddit.com/user/{username}/")
-                    }
+                let source_url = match platform_name {
+                    "instagram" => format!("https://www.instagram.com/{username}/"),
+                    "x" => format!("https://x.com/{username}"),
+                    "tiktok" => format!("https://www.tiktok.com/@{username}"),
+                    "reddit" => format!("https://www.reddit.com/user/{username}/"),
                     _ => continue,
                 };
 
@@ -1014,9 +1002,12 @@ impl ScrapePhase {
                 let combined_text: String = posts
                     .iter()
                     .enumerate()
-                    .map(|(i, p)| match &p.url {
-                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
-                        None => format!("--- Post {} ---\n{}", i + 1, p.content),
+                    .filter_map(|(i, p)| {
+                        let text = p.text.as_deref()?;
+                        Some(match &p.permalink {
+                            Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
+                            None => format!("--- Post {} ---\n{}", i + 1, text),
+                        })
                     })
                     .collect::<Vec<_>>()
                     .join("\n\n");
@@ -1120,34 +1111,51 @@ impl ScrapePhase {
             let site_prefix = &source.canonical_value; // e.g. "site:gofundme.com/f/ Minneapolis"
             for topic in topics.iter().take(MAX_SITE_SEARCH_TOPICS) {
                 let query = format!("{} {}", site_prefix, topic);
-                let results = match self.archive.fetch(&query).content().await {
-                    Ok(Content::SearchResults(r)) => r,
-                    Ok(_) => continue,
+
+                // Use a search source handle for the query
+                let search_handle = match self.archive.source(&query).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!(query, error = %e, "Site-scoped search source failed");
+                        continue;
+                    }
+                };
+                let search_results = match search_handle.search(&query).max_results(SITE_SEARCH_RESULTS).await {
+                    Ok(r) => r,
                     Err(e) => {
                         warn!(query, error = %e, "Site-scoped search failed");
                         continue;
                     }
                 };
 
-                if results.is_empty() {
+                if search_results.results.is_empty() {
                     continue;
                 }
 
-                info!(query, count = results.len(), "Site-scoped search results");
+                info!(query, count = search_results.results.len(), "Site-scoped search results");
 
-                for result in &results {
+                for result in &search_results.results {
                     if known_urls.contains(&result.url) {
                         continue;
                     }
 
-                    let content = match self.archive.fetch(&result.url).text().await {
-                        Ok(c) if !c.is_empty() => c,
-                        Ok(_) => continue,
+                    let page = match self.archive.source(&result.url).await {
+                        Ok(h) => match h.page().await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
+                                continue;
+                            }
+                        },
                         Err(e) => {
-                            warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
+                            warn!(url = result.url.as_str(), error = %e, "Site-scoped source failed");
                             continue;
                         }
                     };
+                    if page.markdown.is_empty() {
+                        continue;
+                    }
+                    let content = page.markdown;
 
                     let extracted =
                         match self.extractor.extract(&content, &result.url).await {

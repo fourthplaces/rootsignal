@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use rootsignal_archive::{Archive, ArchiveConfig, Content, FetchBackend, FetchBackendExt, PageBackend};
-use rootsignal_common::{Node, NodeType, SocialPost};
+use rootsignal_archive::{Archive, ArchiveConfig, PageBackend};
+use rootsignal_common::{Node, NodeType, Post};
 use rootsignal_graph::GraphClient;
 use rootsignal_scout::infra::embedder::Embedder;
 use rootsignal_scout::pipeline::extractor::{Extractor, SignalExtractor};
@@ -48,16 +48,10 @@ async fn main() -> Result<()> {
         page_backend,
         serper_api_key: serper_key,
         apify_api_key: apify_key,
-        anthropic_api_key: Some(anthropic_key.clone()),
     };
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
     let pool = sqlx::PgPool::connect(&database_url).await?;
-    let archive: Arc<dyn FetchBackend> = Arc::new(Archive::new(
-        pool,
-        archive_config,
-        uuid::Uuid::new_v4(),
-        "minneapolis".to_string(), // region_slug
-    ));
+    let archive = Arc::new(Archive::new(pool, archive_config));
 
     // ================================================================
     // STAGE 1: Archive fetch (social posts)
@@ -66,12 +60,13 @@ async fn main() -> Result<()> {
     println!("║  STAGE 1: Archive Social Fetch                             ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
-    let posts: Vec<SocialPost> = match archive.fetch(SUBREDDIT_URL).content().await {
-        Ok(Content::SocialPosts(posts)) => posts,
-        Ok(other) => {
-            println!("Unexpected content type: {:?}", std::mem::discriminant(&other));
-            return Ok(());
-        }
+    let posts: Vec<Post> = match async {
+        let handle = archive.source(SUBREDDIT_URL).await?;
+        handle.posts(20).await
+    }
+    .await
+    {
+        Ok(posts) => posts,
         Err(e) => {
             println!("Fetch failed: {}", e);
             return Ok(());
@@ -82,7 +77,7 @@ async fn main() -> Result<()> {
     // Analyze what we got
     let mut unique_threads: std::collections::HashSet<String> = std::collections::HashSet::new();
     for post in &posts {
-        if let Some(ref url) = post.url {
+        if let Some(ref url) = post.permalink {
             let thread = if let Some(idx) = url.find("/comments/") {
                 let rest = &url[idx + "/comments/".len()..];
                 if let Some(slash_idx) = rest.find('/') {
@@ -110,14 +105,15 @@ async fn main() -> Result<()> {
     );
 
     for (i, post) in posts.iter().enumerate() {
-        let url = post.url.as_deref().unwrap_or("(no url)");
+        let url = post.permalink.as_deref().unwrap_or("(no url)");
         let is_comment = url.matches('/').count() > 8;
         let tag = if is_comment { " [COMMENT]" } else { "" };
-        let preview: String = post.content.chars().take(100).collect();
+        let text = post.text.as_deref().unwrap_or("");
+        let preview: String = text.chars().take(100).collect();
         println!(
             "  {:>2}. ({:>4} chars){} {}",
             i + 1,
-            post.content.len(),
+            text.len(),
             tag,
             preview
         );
@@ -140,14 +136,17 @@ async fn main() -> Result<()> {
     let mut all_nodes: Vec<Node> = Vec::new();
     let mut all_combined_text = String::new();
 
-    let batches: Vec<&[SocialPost]> = posts.chunks(10).collect();
+    let batches: Vec<&[Post]> = posts.chunks(10).collect();
     for (batch_idx, batch) in batches.iter().enumerate() {
         let combined_text: String = batch
             .iter()
             .enumerate()
-            .map(|(i, p)| match &p.url {
-                Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, p.content),
-                None => format!("--- Post {} ---\n{}", i + 1, p.content),
+            .filter_map(|(i, p)| {
+                let text = p.text.as_deref()?;
+                Some(match &p.permalink {
+                    Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
+                    None => format!("--- Post {} ---\n{}", i + 1, text),
+                })
             })
             .collect::<Vec<_>>()
             .join("\n\n");
