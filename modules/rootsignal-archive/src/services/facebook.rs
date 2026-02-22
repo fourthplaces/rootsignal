@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use apify_client::ApifyClient;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use tracing::info;
 use uuid::Uuid;
 
@@ -57,7 +58,16 @@ impl FacebookService {
                         author: p.page_name,
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: p.time.as_deref().and_then(|s| {
+                            DateTime::parse_from_rfc3339(s)
+                                .map(|dt| dt.with_timezone(&Utc))
+                                .ok()
+                                .or_else(|| {
+                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                                        .map(|ndt| ndt.and_utc())
+                                        .ok()
+                                })
+                        }),
                         permalink: p.url,
                         mentions,
                         hashtags,

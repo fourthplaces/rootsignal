@@ -219,7 +219,14 @@ impl PostsRequest {
                     .collect()
             }
             Platform::Bluesky => {
-                return Err(ArchiveError::Unsupported("Bluesky posts not yet supported".into()));
+                let svc = self.inner.bluesky.as_ref()
+                    .ok_or_else(|| ArchiveError::Unsupported("Bluesky service not configured".into()))?;
+                svc.fetch_posts(&self.identifier, source_id, self.limit)
+                    .await
+                    .map_err(ArchiveError::Other)?
+                    .into_iter()
+                    .map(|f| (f.post, Vec::new()))
+                    .collect()
             }
             Platform::Web => {
                 return Err(ArchiveError::Unsupported("Web sources don't have posts".into()));
@@ -651,6 +658,16 @@ impl TopicSearchRequest {
             Platform::TikTok => {
                 let svc = self.inner.tiktok.as_ref()
                     .ok_or_else(|| ArchiveError::Unsupported("TikTok service not configured".into()))?;
+                svc.search_topics(&topic_refs, source_id, self.limit)
+                    .await
+                    .map_err(ArchiveError::Other)?
+                    .into_iter()
+                    .map(|f| (f.post, Vec::new()))
+                    .collect()
+            }
+            Platform::Bluesky => {
+                let svc = self.inner.bluesky.as_ref()
+                    .ok_or_else(|| ArchiveError::Unsupported("Bluesky service not configured".into()))?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?

@@ -3,11 +3,19 @@
 
 use anyhow::Result;
 use apify_client::ApifyClient;
+use chrono::{DateTime, Utc};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::store::InsertPost;
 use crate::text_extract;
+
+/// Parse Twitter's created_at format: "Wed Oct 10 20:19:24 +0000 2018"
+fn parse_twitter_date(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_str(s, "%a %b %d %H:%M:%S %z %Y")
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
 
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
@@ -60,7 +68,7 @@ impl TwitterService {
                         author: t.author.as_ref().and_then(|a| a.user_name.clone()),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: t.created_at.as_deref().and_then(parse_twitter_date),
                         permalink: t.url,
                         mentions,
                         hashtags,
@@ -111,7 +119,7 @@ impl TwitterService {
                         author: t.author.as_ref().and_then(|a| a.user_name.clone()),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: None,
+                        published_at: t.created_at.as_deref().and_then(parse_twitter_date),
                         permalink: t.url,
                         mentions,
                         hashtags,
