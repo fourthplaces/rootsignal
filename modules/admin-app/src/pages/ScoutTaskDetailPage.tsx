@@ -1,14 +1,15 @@
 import { useState, useMemo } from "react";
 import { useParams, Link } from "react-router";
-import { useQuery } from "@apollo/client";
-import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, STORIES_IN_BOUNDS } from "@/graphql/queries";
+import { useQuery, useMutation } from "@apollo/client";
+import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS } from "@/graphql/queries";
+import { RUN_SCOUT } from "@/graphql/mutations";
 import { RegionMap } from "@/pages/MapPage";
 
-type Tab = "map" | "signals" | "stories" | "actors";
+type Tab = "map" | "signals" | "situations" | "actors";
 const TABS: { key: Tab; label: string }[] = [
   { key: "map", label: "Map" },
   { key: "signals", label: "Signals" },
-  { key: "stories", label: "Stories" },
+  { key: "situations", label: "Situations" },
   { key: "actors", label: "Actors" },
 ];
 
@@ -25,16 +26,15 @@ type Signal = {
   actors: { id: string; name: string; actorType: string }[];
 };
 
-type Story = {
+type Situation = {
   id: string;
   headline: string;
-  summary: string;
   arc: string;
-  category: string;
-  energy: number;
+  temperature: number;
   signalCount: number;
+  locationName: string | null;
   firstSeen: string;
-  status: string;
+  lastUpdated: string;
 };
 
 type Actor = {
@@ -77,6 +77,14 @@ const typeColor: Record<string, string> = {
   Tension: "bg-red-500/10 text-red-400",
 };
 
+const arcColor: Record<string, string> = {
+  EMERGING: "bg-blue-500/20 text-blue-300",
+  DEVELOPING: "bg-green-500/20 text-green-300",
+  ACTIVE: "bg-orange-500/20 text-orange-300",
+  COOLING: "bg-gray-500/20 text-gray-300",
+  COLD: "bg-gray-500/20 text-gray-500",
+};
+
 /** Convert center + radius to a bounding box. */
 function toBounds(lat: number, lng: number, radiusKm: number) {
   const latDelta = radiusKm / 111.0;
@@ -110,13 +118,13 @@ export function ScoutTaskDetailPage() {
   });
   const signals: Signal[] = signalsData?.signalsNear ?? [];
 
-  // Fetch stories in the task's bounding box
+  // Fetch situations in the task's bounding box
   const bounds = task ? toBounds(task.centerLat, task.centerLng, task.radiusKm) : null;
-  const { data: storiesData, loading: storiesLoading } = useQuery(STORIES_IN_BOUNDS, {
+  const { data: situationsData, loading: situationsLoading } = useQuery(SITUATIONS_IN_BOUNDS, {
     variables: bounds ? { ...bounds, limit: 50 } : undefined,
     skip: !bounds,
   });
-  const stories: Story[] = storiesData?.storiesInBounds ?? [];
+  const situations: Situation[] = situationsData?.situationsInBounds ?? [];
 
   // Deduplicate actors from signals
   const actors: Actor[] = useMemo(() => {
@@ -213,8 +221,8 @@ export function ScoutTaskDetailPage() {
           <span className="font-medium">{signals.length}</span>
         </span>
         <span>
-          <span className="text-muted-foreground">Stories:</span>{" "}
-          <span className="font-medium">{stories.length}</span>
+          <span className="text-muted-foreground">Situations:</span>{" "}
+          <span className="font-medium">{situations.length}</span>
         </span>
         <span>
           <span className="text-muted-foreground">Actors:</span>{" "}
@@ -308,12 +316,12 @@ export function ScoutTaskDetailPage() {
         )
       )}
 
-      {/* Stories tab */}
-      {tab === "stories" && (
-        storiesLoading ? (
-          <p className="text-muted-foreground">Loading stories...</p>
-        ) : stories.length === 0 ? (
-          <p className="text-muted-foreground">No stories found in this area.</p>
+      {/* Situations tab */}
+      {tab === "situations" && (
+        situationsLoading ? (
+          <p className="text-muted-foreground">Loading situations...</p>
+        ) : situations.length === 0 ? (
+          <p className="text-muted-foreground">No situations found in this area.</p>
         ) : (
           <div className="rounded-lg border border-border overflow-hidden">
             <table className="w-full text-sm">
@@ -321,45 +329,37 @@ export function ScoutTaskDetailPage() {
                 <tr className="border-b border-border bg-muted/50">
                   <th className="text-left px-4 py-2 font-medium">Headline</th>
                   <th className="text-left px-4 py-2 font-medium">Arc</th>
-                  <th className="text-left px-4 py-2 font-medium">Category</th>
-                  <th className="text-right px-4 py-2 font-medium">Energy</th>
+                  <th className="text-left px-4 py-2 font-medium">Location</th>
+                  <th className="text-right px-4 py-2 font-medium">Temp</th>
                   <th className="text-right px-4 py-2 font-medium">Signals</th>
-                  <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-left px-4 py-2 font-medium">First Seen</th>
+                  <th className="text-left px-4 py-2 font-medium">Last Updated</th>
                 </tr>
               </thead>
               <tbody>
-                {stories.map((st) => (
-                  <tr key={st.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                {situations.map((s) => (
+                  <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2 max-w-[300px]">
                       <Link
-                        to={`/stories/${st.id}`}
+                        to={`/situations/${s.id}`}
                         className="text-blue-400 hover:underline"
                       >
-                        {st.headline}
+                        {s.headline}
                       </Link>
                     </td>
                     <td className="px-4 py-2">
-                      {st.arc && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-secondary">
-                          {st.arc}
+                      {s.arc && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${arcColor[s.arc] ?? "bg-secondary"}`}>
+                          {s.arc}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-muted-foreground">{st.category || "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{st.energy.toFixed(1)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{st.signalCount}</td>
-                    <td className="px-4 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        st.status === "emerging"
-                          ? "bg-amber-500/10 text-amber-400"
-                          : "bg-secondary text-muted-foreground"
-                      }`}>
-                        {st.status}
-                      </span>
+                    <td className="px-4 py-2 text-muted-foreground truncate max-w-[150px]">
+                      {s.locationName ?? "—"}
                     </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{s.temperature.toFixed(1)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{s.signalCount}</td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                      {formatDate(st.firstSeen)}
+                      {formatDate(s.lastUpdated)}
                     </td>
                   </tr>
                 ))}

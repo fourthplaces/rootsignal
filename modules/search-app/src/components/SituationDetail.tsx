@@ -10,7 +10,6 @@ const ARC_COLORS: Record<string, string> = {
   EMERGING: "bg-blue-500/10 text-blue-400",
   DEVELOPING: "bg-green-500/10 text-green-400",
   ACTIVE: "bg-orange-500/10 text-orange-400",
-  COOLING: "bg-gray-500/10 text-gray-400",
   COLD: "bg-gray-500/10 text-gray-500",
 };
 
@@ -40,9 +39,11 @@ export function SituationDetail({ situationId, onBack }: SituationDetailProps) {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <span className={`rounded px-2 py-0.5 text-xs font-medium ${ARC_COLORS[situation.arc] ?? "bg-muted text-muted-foreground"}`}>
-                {situation.arc}
-              </span>
+              {situation.arc && situation.arc !== "COOLING" && (
+                <span className={`rounded px-2 py-0.5 text-xs font-medium ${ARC_COLORS[situation.arc] ?? "bg-muted text-muted-foreground"}`}>
+                  {situation.arc}
+                </span>
+              )}
               {situation.clarity && (
                 <span className="rounded px-2 py-0.5 text-xs bg-muted text-muted-foreground">
                   {situation.clarity}

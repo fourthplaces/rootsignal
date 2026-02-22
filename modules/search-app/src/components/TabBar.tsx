@@ -5,22 +5,22 @@ interface TabBarProps {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   signalCount?: number;
-  storyCount?: number;
+  situationCount?: number;
 }
 
-export function TabBar({ activeTab, onTabChange, signalCount, storyCount }: TabBarProps) {
+export function TabBar({ activeTab, onTabChange, signalCount, situationCount }: TabBarProps) {
   return (
     <div className="flex border-b border-border">
       <button
-        onClick={() => onTabChange("stories")}
+        onClick={() => onTabChange("situations")}
         className={cn(
           "flex-1 px-4 py-2 text-sm font-medium transition-colors",
-          activeTab === "stories"
+          activeTab === "situations"
             ? "border-b-2 border-primary text-foreground"
             : "text-muted-foreground hover:text-foreground",
         )}
       >
-        Stories{storyCount != null ? ` (${storyCount})` : ""}
+        Situations{situationCount != null ? ` (${situationCount})` : ""}
       </button>
       <button
         onClick={() => onTabChange("signals")}

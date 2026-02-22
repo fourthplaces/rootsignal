@@ -444,6 +444,21 @@ export const SUPERVISOR_SUMMARY = gql`
 
 // --- Situation queries ---
 
+export const SITUATIONS_IN_BOUNDS = gql`
+  query SituationsInBounds($minLat: Float!, $maxLat: Float!, $minLng: Float!, $maxLng: Float!, $limit: Int) {
+    situationsInBounds(minLat: $minLat, maxLat: $maxLat, minLng: $minLng, maxLng: $maxLng, limit: $limit) {
+      id
+      headline
+      arc
+      temperature
+      signalCount
+      locationName
+      firstSeen
+      lastUpdated
+    }
+  }
+`;
+
 export const SITUATIONS = gql`
   query Situations($limit: Int) {
     situations(limit: $limit) {

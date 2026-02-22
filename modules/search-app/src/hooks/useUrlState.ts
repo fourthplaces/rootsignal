@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
 
-export type Tab = "signals" | "stories";
+export type Tab = "signals" | "situations";
 
 interface UrlState {
   lat: number | null;
@@ -18,7 +18,7 @@ function parseUrlState(params: URLSearchParams): UrlState {
     lng: params.has("lng") ? Number(params.get("lng")) : null,
     z: params.has("z") ? Number(params.get("z")) : null,
     q: params.get("q") ?? "",
-    tab: (params.get("tab") as Tab) === "signals" ? "signals" : "stories",
+    tab: (params.get("tab") as Tab) === "signals" ? "signals" : "situations",
     id: params.get("id"),
   };
 }

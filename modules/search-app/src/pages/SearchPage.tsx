@@ -4,9 +4,9 @@ import { MapView } from "@/components/MapView";
 import { SearchInput, parseQuery, toggleToken } from "@/components/SearchInput";
 import { TabBar } from "@/components/TabBar";
 import { SignalCard } from "@/components/SignalCard";
-import { StoryCard } from "@/components/StoryCard";
+import { SituationCard } from "@/components/SituationCard";
 import { SignalDetail } from "@/components/SignalDetail";
-import { StoryDetail } from "@/components/StoryDetail";
+import { SituationDetail } from "@/components/SituationDetail";
 import { EmptyState } from "@/components/EmptyState";
 import { BottomSheet, type Snap } from "@/components/BottomSheet";
 import { useDebouncedBounds, type Bounds } from "@/hooks/useDebouncedBounds";
@@ -14,9 +14,8 @@ import { useUrlState, type Tab } from "@/hooks/useUrlState";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   SIGNALS_IN_BOUNDS,
-  STORIES_IN_BOUNDS,
+  SITUATIONS_IN_BOUNDS,
   SEARCH_SIGNALS_IN_BOUNDS,
-  SEARCH_STORIES_IN_BOUNDS,
 } from "@/graphql/queries";
 import { RECORD_DEMAND } from "@/graphql/mutations";
 
@@ -36,7 +35,7 @@ export function SearchPage() {
   const [rawQuery, setRawQuery] = useState(url.q);
   const [tab, setTab] = useState<Tab>(url.tab);
   const [selectedId, setSelectedId] = useState<string | null>(url.id);
-  const [selectedType, setSelectedType] = useState<"signal" | "story">("signal");
+  const [selectedType, setSelectedType] = useState<"signal" | "situation">("signal");
   const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number } | null>(null);
   const [sheetSnap, setSheetSnap] = useState<Snap>("half");
   const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -47,7 +46,6 @@ export function SearchPage() {
   const parsed = useMemo(() => parseQuery(rawQuery), [rawQuery]);
   const hasTextQuery = parsed.text.length > 0;
   const hasTypeFilter = parsed.types.length > 0;
-  const hasTagFilter = parsed.tags.length > 0;
 
   const boundsVars = bounds
     ? {
@@ -69,16 +67,11 @@ export function SearchPage() {
     },
   );
 
-  // Stories query — pass first tag filter to backend
-  const storiesQuery = useQuery(
-    hasTextQuery ? SEARCH_STORIES_IN_BOUNDS : STORIES_IN_BOUNDS,
-    {
-      variables: hasTextQuery
-        ? { query: parsed.text, ...boundsVars, limit: 20 }
-        : { ...boundsVars, tag: hasTagFilter ? parsed.tags[0] : null, limit: 20 },
-      skip: !bounds || tab !== "stories",
-    },
-  );
+  // Situations query
+  const situationsQuery = useQuery(SITUATIONS_IN_BOUNDS, {
+    variables: { ...boundsVars, limit: 20 },
+    skip: !bounds || tab !== "situations",
+  });
 
   // Extract signal data, then apply client-side type filter
   const signals = useMemo(() => {
@@ -109,54 +102,30 @@ export function SearchPage() {
     return items;
   }, [signalsQuery.data, tab, hasTextQuery, hasTypeFilter, parsed.types]);
 
-  // Extract story data, client-side type filter on dominantType
-  const stories = useMemo(() => {
-    if (tab !== "stories") return [];
-    const data = storiesQuery.data;
+  // Extract situation data
+  const situations = useMemo(() => {
+    if (tab !== "situations") return [];
+    const data = situationsQuery.data;
     if (!data) return [];
+    return (data.situationsInBounds ?? []) as Record<string, unknown>[];
+  }, [situationsQuery.data, tab]);
 
-    let items: Record<string, unknown>[];
-    if (hasTextQuery && data.searchStoriesInBounds) {
-      items = data.searchStoriesInBounds.map(
-        (r: {
-          story: Record<string, unknown>;
-          score: number;
-          topMatchingSignalTitle: string | null;
-        }) => ({
-          ...r.story,
-          _score: r.score,
-          _topMatch: r.topMatchingSignalTitle,
-        }),
-      );
-    } else {
-      items = data.storiesInBounds ?? [];
-    }
-
-    // Client-side type filtering for stories (by dominantType)
-    if (hasTypeFilter) {
-      const allowedTypes = new Set(parsed.types.map((t) => t.charAt(0).toUpperCase() + t.slice(1)));
-      items = items.filter((s) => allowedTypes.has(s.dominantType as string));
-    }
-
-    return items;
-  }, [storiesQuery.data, tab, hasTextQuery, hasTypeFilter, parsed.types]);
-
-  // Map signals for the map view
+  // Map markers for the map view
   const mapSignals = useMemo(() => {
     if (tab === "signals") return signals as { id: string; title: string; location?: { lat: number; lng: number } | null; __typename?: string }[];
-    return stories.map((s: Record<string, unknown>) => ({
+    return situations.map((s: Record<string, unknown>) => ({
       id: s.id as string,
       title: s.headline as string,
       location:
         s.centroidLat && s.centroidLng
           ? { lat: s.centroidLat as number, lng: s.centroidLng as number }
           : null,
-      __typename: "GqlStoryMarker",
+      __typename: "GqlSituationMarker",
     }));
-  }, [signals, stories, tab]);
+  }, [signals, situations, tab]);
 
   const loading =
-    tab === "signals" ? signalsQuery.loading : storiesQuery.loading;
+    tab === "signals" ? signalsQuery.loading : situationsQuery.loading;
 
   // URL sync
   const handleBoundsChangeWithUrl = useCallback(
@@ -222,16 +191,16 @@ export function SearchPage() {
     [url],
   );
 
-  const handleStorySelect = useCallback(
-    (story: Record<string, unknown>) => {
-      const id = story.id as string;
+  const handleSituationSelect = useCallback(
+    (situation: Record<string, unknown>) => {
+      const id = situation.id as string;
       setSelectedId(id);
-      setSelectedType("story");
+      setSelectedType("situation");
       setSheetSnap("full");
       url.updateUrl({ id }, { replace: true });
 
-      const lat = story.centroidLat as number | undefined;
-      const lng = story.centroidLng as number | undefined;
+      const lat = situation.centroidLat as number | undefined;
+      const lng = situation.centroidLng as number | undefined;
       if (lat && lng) {
         setFlyToTarget({ lng, lat });
       }
@@ -242,7 +211,7 @@ export function SearchPage() {
   const handleMapSignalClick = useCallback(
     (id: string, lng: number, lat: number) => {
       setSelectedId(id);
-      setSelectedType(tab === "stories" ? "story" : "signal");
+      setSelectedType(tab === "situations" ? "situation" : "signal");
       setSheetSnap("full");
       setFlyToTarget({ lng, lat });
       url.updateUrl({ id }, { replace: true });
@@ -259,16 +228,6 @@ export function SearchPage() {
   const handleTypeClick = useCallback(
     (typeKey: string) => {
       const next = toggleToken(rawQuery, "type", typeKey);
-      setRawQuery(next);
-      setSelectedId(null);
-      url.updateUrl({ q: next || undefined }, { replace: false });
-    },
-    [rawQuery, url],
-  );
-
-  const handleTagClick = useCallback(
-    (tagSlug: string) => {
-      const next = toggleToken(rawQuery, "tag", tagSlug);
       setRawQuery(next);
       setSelectedId(null);
       url.updateUrl({ q: next || undefined }, { replace: false });
@@ -302,7 +261,7 @@ export function SearchPage() {
         activeTab={tab}
         onTabChange={handleTabChange}
         signalCount={tab === "signals" ? signals.length : undefined}
-        storyCount={tab === "stories" ? stories.length : undefined}
+        situationCount={tab === "situations" ? situations.length : undefined}
       />
 
       {/* Content area: detail or list */}
@@ -311,7 +270,7 @@ export function SearchPage() {
           selectedType === "signal" ? (
             <SignalDetail signalId={selectedId} onBack={handleBack} />
           ) : (
-            <StoryDetail storyId={selectedId} onBack={handleBack} />
+            <SituationDetail situationId={selectedId} onBack={handleBack} />
           )
         ) : tab === "signals" ? (
           signals.length === 0 && !loading ? (
@@ -330,24 +289,15 @@ export function SearchPage() {
               />
             ))
           )
-        ) : stories.length === 0 && !loading ? (
-          <EmptyState hasQuery={hasTextQuery || hasTypeFilter || hasTagFilter} />
+        ) : situations.length === 0 && !loading ? (
+          <EmptyState hasQuery={hasTextQuery || hasTypeFilter} />
         ) : (
-          stories.map((story: Record<string, unknown>) => (
-            <StoryCard
-              key={story.id as string}
-              story={story}
-              score={
-                hasTextQuery ? (story._score as number | undefined) : undefined
-              }
-              topMatchingSignalTitle={
-                hasTextQuery
-                  ? (story._topMatch as string | undefined)
-                  : undefined
-              }
-              isSelected={selectedId === story.id}
-              onClick={() => handleStorySelect(story)}
-              onTagClick={handleTagClick}
+          situations.map((situation: Record<string, unknown>) => (
+            <SituationCard
+              key={situation.id as string}
+              situation={situation}
+              isSelected={selectedId === situation.id}
+              onClick={() => handleSituationSelect(situation)}
             />
           ))
         )}
