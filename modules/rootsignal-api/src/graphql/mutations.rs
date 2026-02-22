@@ -1,5 +1,4 @@
 use std::net::IpAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,13 +15,9 @@ use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Content;
 
-use rootsignal_graph::cache::CacheStore;
-use rootsignal_graph::cause_heat::compute_cause_heat;
-use rootsignal_graph::GraphClient;
 use rootsignal_scout::enrichment::actor_discovery::{
     create_actor_from_page, geocode_location,
 };
-use rootsignal_scout::scout::Scout;
 
 use crate::jwt::{self, JwtService};
 
@@ -34,10 +29,7 @@ pub struct RateLimiter(pub Mutex<std::collections::HashMap<IpAddr, Vec<Instant>>
 /// The client IP, extracted from the HTTP request and passed into GraphQL context.
 pub struct ClientIp(pub IpAddr);
 
-/// The scout cancel flag, shared with background scout threads.
-pub struct ScoutCancel(pub Arc<std::sync::atomic::AtomicBool>);
-
-/// Optional Restate ingress URL. When present, `runScout` dispatches via Restate.
+/// Restate ingress URL. Required for `runScout` dispatch.
 pub struct RestateIngress(pub Option<String>);
 
 /// HTTP response headers that mutations can set (e.g., Set-Cookie).
@@ -263,13 +255,10 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a location query. Geocodes on backend, returns immediately; scout runs in background.
+    /// Run scout for a location query. Geocodes on backend, dispatches via Restate.
     #[graphql(guard = "AdminGuard")]
     async fn run_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
-        let cancel = ctx.data_unchecked::<ScoutCancel>();
 
         // Check API keys
         if config.anthropic_api_key.is_empty()
@@ -282,20 +271,17 @@ impl MutationRoot {
             });
         }
 
+        let restate = ctx.data_unchecked::<RestateIngress>();
+        let ingress_url = restate.0.as_deref().ok_or_else(|| {
+            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
+        })?;
+
         // Geocode the query
         let (lat, lng, display_name) = geocode_location(&query)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
 
         let slug = rootsignal_common::slugify(&query);
-
-        // Check if already running
-        if writer.is_scout_running(&slug).await.unwrap_or(false) {
-            return Ok(ScoutResult {
-                success: false,
-                message: Some("Scout already running for this region".to_string()),
-            });
-        }
 
         let scope = ScoutScope {
             center_lat: lat,
@@ -305,58 +291,62 @@ impl MutationRoot {
             geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
         };
 
-        let cache_store = ctx.data_unchecked::<Arc<CacheStore>>();
-        let restate = ctx.data_unchecked::<RestateIngress>();
-
-        // Prefer Restate workflow when ingress is configured
-        if let Some(ref ingress_url) = restate.0 {
-            let url = format!("{}/FullScoutRunWorkflow/{}/run", ingress_url, slug);
-            info!(url = url.as_str(), "Dispatching scout via Restate");
-            let body = serde_json::json!({ "scope": scope });
-            let client = reqwest::Client::new();
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    return Ok(ScoutResult {
-                        success: true,
-                        message: Some(format!("Scout started via Restate for {display_name}")),
-                    });
-                }
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    warn!(status = %status, body = %body, "Restate dispatch failed, falling back to direct spawn");
-                }
-                Err(e) => {
-                    warn!(error = %e, "Restate unreachable, falling back to direct spawn");
-                }
+        let url = format!("{}/FullScoutRunWorkflow/{}/run", ingress_url, slug);
+        info!(url = url.as_str(), "Dispatching scout via Restate");
+        let body = serde_json::json!({ "scope": scope });
+        let client = reqwest::Client::new();
+        match client.post(&url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => Ok(ScoutResult {
+                success: true,
+                message: Some(format!("Scout started via Restate for {display_name}")),
+            }),
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Err(async_graphql::Error::new(format!(
+                    "Restate dispatch failed (HTTP {status}): {body}"
+                )))
             }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Restate unreachable: {e}"
+            ))),
         }
-
-        spawn_scout_run(
-            (**graph_client).clone(),
-            (**config).clone(),
-            slug,
-            scope,
-            cancel.0.clone(),
-            cache_store.clone(),
-        );
-
-        Ok(ScoutResult {
-            success: true,
-            message: Some(format!("Scout started for {display_name}")),
-        })
     }
 
-    /// Stop the currently running scout.
+    /// Stop a running scout workflow via Restate cancellation.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(&self, ctx: &Context<'_>) -> Result<ScoutResult> {
-        let cancel = ctx.data_unchecked::<ScoutCancel>();
-        info!("Scout stop requested");
-        cancel.0.store(true, Ordering::Relaxed);
-        Ok(ScoutResult {
-            success: true,
-            message: Some("Stop signal sent".to_string()),
-        })
+    async fn stop_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
+        let restate = ctx.data_unchecked::<RestateIngress>();
+        let ingress_url = restate.0.as_deref().ok_or_else(|| {
+            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
+        })?;
+
+        let slug = rootsignal_common::slugify(&query);
+        let url = format!(
+            "{}/restate/workflow/FullScoutRunWorkflow/{}/cancel",
+            ingress_url, slug
+        );
+        info!(url = url.as_str(), "Cancelling scout via Restate");
+
+        let client = reqwest::Client::new();
+        match client.delete(&url).send().await {
+            Ok(resp) if resp.status().is_success() => Ok(ScoutResult {
+                success: true,
+                message: Some(format!("Cancel signal sent for {slug}")),
+            }),
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                warn!(status = %status, body = %body, "Restate cancel failed");
+                Ok(ScoutResult {
+                    success: false,
+                    message: Some(format!("Cancel failed (HTTP {status}): {body}")),
+                })
+            }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Restate unreachable: {e}"
+            ))),
+        }
     }
 
     /// Reset a stuck scout lock.
@@ -970,91 +960,6 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
     true
 }
 
-/// Spawn a scout run in a dedicated thread. Returns immediately.
-fn spawn_scout_run(
-    client: GraphClient,
-    config: rootsignal_common::Config,
-    region_slug: String,
-    scope: ScoutScope,
-    cancel: Arc<std::sync::atomic::AtomicBool>,
-    cache_store: Arc<CacheStore>,
-) {
-    use std::sync::atomic::Ordering;
-    cancel.store(false, Ordering::Relaxed);
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(async move {
-            let writer = GraphWriter::new(client.clone());
-            let context = scope.name.clone();
-
-            // Claim matching ScoutTask (pending → running)
-            let task_id = match writer.claim_scout_task_by_context(&context).await {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to claim scout task");
-                    None
-                }
-            };
-
-            if let Err(e) = run_scout(&client, &config, &region_slug, scope.clone(), cancel).await {
-                tracing::error!(error = %e, "Scout run failed");
-            } else {
-                run_supervisor(&client, &config, &region_slug, scope).await;
-                cache_store.reload(&client).await;
-            }
-
-            // Mark task as completed
-            if let Some(id) = task_id {
-                if let Err(e) = writer.complete_scout_task(&id).await {
-                    tracing::warn!(error = %e, "Failed to complete scout task");
-                }
-            }
-        });
-    });
-}
-
-async fn run_scout(
-    client: &GraphClient,
-    config: &rootsignal_common::Config,
-    region_slug: &str,
-    region: ScoutScope,
-    cancel: Arc<std::sync::atomic::AtomicBool>,
-) -> anyhow::Result<()> {
-    info!(region = region_slug, "Scout run starting");
-
-    // Save region geo bounds before moving region into Scout
-    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-
-    // Connect to Postgres for the web archive
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL required for web archive"))?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to Postgres: {e}"))?;
-
-    let scout = Scout::new(
-        client.clone(),
-        pool,
-        &config.anthropic_api_key,
-        &config.voyage_api_key,
-        &config.serper_api_key,
-        &config.apify_api_key,
-        region,
-        config.daily_budget_cents,
-        cancel,
-    )?;
-
-    let stats = scout.run().await?;
-    info!("Scout run complete. {stats}");
-
-    compute_cause_heat(client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
-
-    Ok(())
-}
-
 /// Create an Archive for news scanning. Returns None if DATABASE_URL is not set.
 async fn create_archive_for_news_scan(
     config: &rootsignal_common::Config,
@@ -1089,188 +994,3 @@ async fn create_archive_for_news_scan(
     )))
 }
 
-/// Run the supervisor after a successful scout run. Non-fatal on error.
-async fn run_supervisor(
-    client: &GraphClient,
-    config: &rootsignal_common::Config,
-    region_slug: &str,
-    region: ScoutScope,
-) {
-    let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
-        Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
-
-    let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
-        client.clone(),
-        region,
-        config.anthropic_api_key.clone(),
-        notifier,
-    );
-
-    info!(region = region_slug, "Starting supervisor run");
-    match supervisor.run().await {
-        Ok(stats) => info!(region = region_slug, %stats, "Supervisor run complete"),
-        Err(e) => warn!(region = region_slug, error = %e, "Supervisor run failed"),
-    }
-}
-
-/// Start the background scout interval loop (called from main).
-///
-/// Each iteration:
-/// 1. Run news scan (Driver B) — produces signals with lat/lng
-/// 2. Aggregate demand signals into tasks (Driver A)
-/// 3. Consume pending tasks from the queue
-/// 4. If no pending tasks, fall back to config-based scope (backwards compat)
-/// 5. Run beacon detection to create follow-up tasks
-pub fn start_scout_interval(
-    client: GraphClient,
-    config: rootsignal_common::Config,
-    interval_hours: u64,
-    cache_store: Arc<CacheStore>,
-) {
-    use std::sync::atomic::AtomicBool;
-    info!(interval_hours, "Starting scout interval loop");
-
-    let region_slug = config.region.clone();
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(async move {
-            let writer = rootsignal_graph::GraphWriter::new(client.clone());
-            loop {
-                // Step 1: Run news scan (Driver B)
-                info!("Scout interval: running news scan");
-                match create_archive_for_news_scan(&config).await {
-                    Some(archive) => {
-                        let scanner = rootsignal_scout::news_scanner::NewsScanner::new(
-                            archive,
-                            &config.anthropic_api_key,
-                            rootsignal_graph::GraphWriter::new(client.clone()),
-                            config.daily_budget_cents,
-                        );
-                        match scanner.scan().await {
-                            Ok(locations) => info!(count = locations.len(), "News scan produced signals"),
-                            Err(e) => warn!(error = %e, "News scan failed"),
-                        }
-                    }
-                    None => warn!("Cannot create archive for news scan (DATABASE_URL not set)"),
-                }
-
-                // Step 2: Aggregate demand signals into tasks (Driver A)
-                info!("Scout interval: aggregating demand signals");
-                match writer.aggregate_demand().await {
-                    Ok(tasks) => {
-                        if !tasks.is_empty() {
-                            info!(count = tasks.len(), "Created tasks from demand aggregation");
-                        }
-                    }
-                    Err(e) => warn!(error = %e, "Demand aggregation failed"),
-                }
-
-                // Step 3: Consume pending tasks from the queue
-                let pending_tasks = match writer.list_scout_tasks(Some("pending"), 10).await {
-                    Ok(tasks) => tasks,
-                    Err(e) => {
-                        warn!(error = %e, "Failed to list pending tasks");
-                        Vec::new()
-                    }
-                };
-
-                let mut ran_any_task = false;
-                for task in &pending_tasks {
-                    let task_id = task.id.to_string();
-                    let scope: ScoutScope = task.into();
-                    let slug = rootsignal_common::slugify(&scope.name);
-
-                    // Check if already running
-                    match writer.is_scout_running(&slug).await {
-                        Ok(true) => {
-                            info!(task = task_id.as_str(), "Scout already running for task scope, skipping");
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!(task = task_id.as_str(), error = %e, "Lock check failed, skipping task");
-                            continue;
-                        }
-                        Ok(false) => {}
-                    }
-
-                    // Claim the task
-                    match writer.claim_scout_task(&task_id).await {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            info!(task = task_id.as_str(), "Task already claimed, skipping");
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!(task = task_id.as_str(), error = %e, "Failed to claim task");
-                            continue;
-                        }
-                    }
-
-                    info!(task = task_id.as_str(), context = scope.name.as_str(), "Running scout for task");
-                    let cancel = Arc::new(AtomicBool::new(false));
-                    match run_scout(&client, &config, &slug, scope.clone(), cancel).await {
-                        Ok(()) => {
-                            if let Err(e) = writer.complete_scout_task(&task_id).await {
-                                warn!(task = task_id.as_str(), error = %e, "Failed to complete task");
-                            }
-                            run_supervisor(&client, &config, &slug, scope).await;
-
-                            // Step 5: Beacon detection after each successful run
-                            match rootsignal_graph::beacon::detect_beacons(&client, &writer).await {
-                                Ok(new_tasks) => {
-                                    if !new_tasks.is_empty() {
-                                        info!(count = new_tasks.len(), "Beacon detection created new tasks");
-                                    }
-                                }
-                                Err(e) => warn!(error = %e, "Beacon detection failed"),
-                            }
-
-                            cache_store.reload(&client).await;
-                            ran_any_task = true;
-                        }
-                        Err(e) => {
-                            tracing::error!(task = task_id.as_str(), error = %e, "Scout run failed for task");
-                            // Leave as running — will be retried or manually reset
-                        }
-                    }
-                }
-
-                // Step 4: If no pending tasks were consumed, fall back to config-based scope
-                if !ran_any_task {
-                    match writer.is_scout_running(&region_slug).await {
-                        Ok(true) => {
-                            info!(region = region_slug.as_str(), "Scout interval: already running, skipping config fallback");
-                        }
-                        Err(e) => {
-                            warn!(region = region_slug.as_str(), error = %e, "Scout interval: lock check failed");
-                        }
-                        Ok(false) => {
-                            info!(region = region_slug.as_str(), "Scout interval: no tasks, running config-based scope");
-                            let scope = ScoutScope {
-                                center_lat: config.region_lat.unwrap_or(44.9778),
-                                center_lng: config.region_lng.unwrap_or(-93.2650),
-                                radius_km: config.region_radius_km.unwrap_or(30.0),
-                                name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
-                                geo_terms: config.region_name.as_deref()
-                                    .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-                                    .unwrap_or_else(|| vec![config.region.clone()]),
-                            };
-                            let cancel = Arc::new(AtomicBool::new(false));
-                            if let Err(e) = run_scout(&client, &config, &region_slug, scope.clone(), cancel).await {
-                                tracing::error!(region = region_slug.as_str(), error = %e, "Scout interval run failed");
-                            } else {
-                                run_supervisor(&client, &config, &region_slug, scope).await;
-                                cache_store.reload(&client).await;
-                            }
-                        }
-                    }
-                }
-
-                let sleep_secs = (interval_hours * 3600).max(30 * 60);
-                info!(sleep_minutes = sleep_secs / 60, "Scout interval: sleeping until next run");
-                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
-            }
-        });
-    });
-}

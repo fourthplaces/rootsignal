@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -41,7 +40,6 @@ pub struct AppState {
     pub twilio: Option<TwilioService>,
     pub region: String,
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
-    pub scout_cancel: Arc<AtomicBool>,
     pub jwt_service: JwtService,
 }
 
@@ -145,8 +143,6 @@ async fn main() -> Result<()> {
         .or_else(|_| std::env::var("PORT"))
         .unwrap_or_else(|_| config.web_port.to_string());
 
-    let scout_cancel = Arc::new(AtomicBool::new(false));
-
     let twilio = if !config.twilio_account_sid.is_empty() {
         Some(Arc::new(TwilioService::new(twilio::TwilioOptions {
             account_sid: config.twilio_account_sid.clone(),
@@ -171,28 +167,10 @@ async fn main() -> Result<()> {
         Arc::new(config.clone()),
         twilio.clone(),
         RateLimiter(Mutex::new(HashMap::new())),
-        scout_cancel.clone(),
         Arc::new(client.clone()),
         cache_store.clone(),
         restate_ingress,
     );
-
-    // Start scout interval loop if configured (before client is moved into AppState)
-    let scout_interval: u64 = std::env::var("SCOUT_INTERVAL_HOURS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    if scout_interval > 0
-        && !config.anthropic_api_key.is_empty()
-        && !config.voyage_api_key.is_empty()
-        && !config.serper_api_key.is_empty()
-    {
-        graphql::mutations::start_scout_interval(client.clone(), config.clone(), scout_interval, cache_store.clone());
-    } else if scout_interval > 0 {
-        info!(
-            "SCOUT_INTERVAL_HOURS={scout_interval} but API keys not set — scout interval disabled"
-        );
-    }
 
     // ========== Restate endpoint ==========
     // Runs on a separate port alongside the Axum GraphQL server.
@@ -255,7 +233,7 @@ async fn main() -> Result<()> {
             .bind(SynthesisWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(SituationWeaverWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(FullScoutRunWorkflowImpl::new().serve())
             .build();
 
         let restate_addr = format!("0.0.0.0:{restate_port}");
@@ -315,7 +293,6 @@ async fn main() -> Result<()> {
         twilio: twilio.map(|t| (*t).clone()),
         region: config.region.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
-        scout_cancel: scout_cancel.clone(),
         jwt_service: jwt_service.clone(),
     });
 

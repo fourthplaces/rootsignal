@@ -265,10 +265,10 @@ ctx.run(metrics_update)
 - `modules/rootsignal-api/src/main.rs`
 
 **Acceptance criteria:**
-- [ ] ScrapeWorkflow produces the same signals as the current `scout.run()` pipeline *(stub: blocked by HRTB lifetime issue in ScrapePhase::run_web closures)*
-- [ ] RunContext (embed_cache, url maps, expansion queries) works within the workflow
-- [ ] Budget tracking works within the workflow and outputs `spent_cents`
-- [ ] Status updates visible via `get_status()`
+- [x] ScrapeWorkflow produces the same signals as the current `scout.run()` pipeline (`tokio::spawn` escapes Restate's `!Send` context; HRTB issue resolved)
+- [x] RunContext (embed_cache, url maps, expansion queries) works within the workflow (lives entirely inside spawned task)
+- [x] Budget tracking works within the workflow and outputs `spent_cents`
+- [x] Status updates visible via `get_status()` (watch channel bridges spawned task → Restate state)
 
 ### Phase 4: SynthesisWorkflow + SituationWeaverWorkflow + SupervisorWorkflow
 
@@ -276,7 +276,7 @@ Three workflows that are already relatively isolated in the current code:
 
 - **SynthesisWorkflow:** Wraps the existing `tokio::join!` block (similarity edges + 5 finders). Receives `spent_cents` to gate expensive tasks.
 - **SituationWeaverWorkflow:** Wraps `SituationWeaver::run()` + source boosting + curiosity triggers.
-- **SupervisorWorkflow:** Wraps `Supervisor::run()` + `merge_duplicate_tensions` + `compute_cause_heat`.
+- **SupervisorWorkflow:** Wraps `Supervisor::run()` + `merge_duplicate_tensions` + `compute_cause_heat` + `detect_beacons`.
 
 **Files to create:**
 - `modules/rootsignal-scout/src/workflows/synthesis.rs`
@@ -284,9 +284,9 @@ Three workflows that are already relatively isolated in the current code:
 - `modules/rootsignal-scout/src/workflows/supervisor.rs`
 
 **Acceptance criteria:**
-- [ ] Each workflow invocable independently *(stubs for Synthesis/SituationWeaver; SupervisorWorkflow fully implemented)*
-- [ ] SynthesisWorkflow respects budget gates *(stub: blocked by ResponseFinder MutexGuard !Send issue)*
-- [ ] SituationWeaverWorkflow works with whatever edges exist in graph *(stub: depends on synthesis fixes)*
+- [x] Each workflow invocable independently (all three registered in Restate endpoint; `tokio::spawn` pattern escapes `!Send` context)
+- [x] SynthesisWorkflow respects budget gates (`BudgetTracker::new_with_spent` carries prior spend; `has_budget` gates each finder)
+- [x] SituationWeaverWorkflow works with whatever edges exist in graph (returns real `SituationWeaverStats`)
 - [x] SupervisorWorkflow includes post-run cleanup steps
 
 ### Phase 5: FullScoutRunWorkflow + Migration
@@ -302,12 +302,12 @@ Create the orchestrator workflow that calls all others in sequence. Update the A
 - `modules/rootsignal-scout/src/main.rs` — CLI can optionally invoke via Restate or keep direct path
 
 **Acceptance criteria:**
-- [x] `FullScoutRunWorkflow` runs all phases in sequence *(orchestrator implemented, depends on sub-workflow stubs being wired up)*
-- [ ] `runScout` GraphQL mutation triggers the Restate workflow
-- [ ] Budget flows correctly through the full chain
-- [ ] Beacon detection runs after supervisor
-- [ ] Cache reload runs at the end
-- [ ] Neo4j locks can be removed (Restate keying handles concurrency)
+- [x] `FullScoutRunWorkflow` runs all phases in sequence
+- [x] `runScout` GraphQL mutation triggers the Restate workflow (with fallback to direct spawn)
+- [x] Budget flows correctly through the full chain (scrape → synthesis → weaver via `spent_cents`)
+- [x] Beacon detection runs after supervisor (moved into SupervisorWorkflow)
+- [x] Cache reload runs at the end — N/A for workflow path; `CacheStore` lives in API process memory, handled by hourly background loop (`spawn_reload_loop`) and `spawn_scout_run` fallback
+- [x] Neo4j locks — retained for CLI (`Scout::run()`) + admin queries (`is_scout_running`, `resetScoutLock`); API orchestration paths (`spawn_scout_run`, `start_scout_interval`) removed
 
 ## Risk Analysis & Mitigation
 

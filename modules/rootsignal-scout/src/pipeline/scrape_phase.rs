@@ -173,22 +173,22 @@ fn normalize_title(title: &str) -> String {
 // ScrapePhase — the core scrape-extract-store-dedup pipeline
 // ---------------------------------------------------------------------------
 
-pub(crate) struct ScrapePhase<'a> {
-    writer: &'a GraphWriter,
-    extractor: &'a dyn SignalExtractor,
-    embedder: &'a dyn TextEmbedder,
+pub(crate) struct ScrapePhase {
+    writer: GraphWriter,
+    extractor: Arc<dyn SignalExtractor>,
+    embedder: Arc<dyn TextEmbedder>,
     archive: Arc<dyn FetchBackend>,
-    region: &'a ScoutScope,
+    region: ScoutScope,
     run_id: String,
 }
 
-impl<'a> ScrapePhase<'a> {
+impl ScrapePhase {
     pub fn new(
-        writer: &'a GraphWriter,
-        extractor: &'a dyn SignalExtractor,
-        embedder: &'a dyn TextEmbedder,
+        writer: GraphWriter,
+        extractor: Arc<dyn SignalExtractor>,
+        embedder: Arc<dyn TextEmbedder>,
         archive: Arc<dyn FetchBackend>,
-        region: &'a ScoutScope,
+        region: ScoutScope,
         run_id: String,
     ) -> Self {
         Self {
@@ -237,10 +237,13 @@ impl<'a> ScrapePhase<'a> {
                 queries = api_queries.len(),
                 "Resolving web search queries..."
             );
-            let archive = &self.archive;
-            let search_results: Vec<_> = stream::iter(api_queries.iter().map(|source| {
-                let query_str = source.canonical_value.clone();
-                let canonical_key = source.canonical_key.clone();
+            let archive = self.archive.clone();
+            let query_inputs: Vec<_> = api_queries
+                .iter()
+                .map(|source| (source.canonical_key.clone(), source.canonical_value.clone()))
+                .collect();
+            let search_results: Vec<_> = stream::iter(query_inputs.into_iter().map(|(canonical_key, query_str)| {
+                let archive = archive.clone();
                 async move {
                     (
                         canonical_key,
@@ -395,15 +398,17 @@ impl<'a> ScrapePhase<'a> {
         }
 
         // Scrape + extract in parallel
-        let archive_ref = &self.archive;
-        let writer = &self.writer;
-        let extractor = &self.extractor;
-        let pipeline_results: Vec<_> = stream::iter(phase_urls.iter().map(|url| {
-            let url = url.clone();
+        let archive = self.archive.clone();
+        let writer = self.writer.clone();
+        let extractor = self.extractor.clone();
+        let pipeline_results: Vec<_> = stream::iter(phase_urls.into_iter().map(|url| {
+            let archive = archive.clone();
+            let writer = writer.clone();
+            let extractor = extractor.clone();
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let content = match archive_ref.fetch(&url).text().await {
+                let content = match archive.fetch(&url).text().await {
                     Ok(c) if !c.is_empty() => c,
                     Ok(_) => return (clean_url, ScrapeOutcome::Failed),
                     Err(e) => {
@@ -692,9 +697,11 @@ impl<'a> ScrapePhase<'a> {
             Only extract signals where is_firsthand is true. Reject the rest.\n\n";
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
-        let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send + '_>>> =
+        let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send>>> =
             Vec::new();
 
+        let archive = self.archive.clone();
+        let extractor = self.extractor.clone();
         for (canonical_key, source_url, account) in &accounts {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
@@ -705,9 +712,12 @@ impl<'a> ScrapePhase<'a> {
             } else {
                 None
             };
+            let archive = archive.clone();
+            let extractor = extractor.clone();
+            let identifier = account.identifier.clone();
 
             futures.push(Box::pin(async move {
-                let posts = match self.archive.fetch(&account.identifier).content().await {
+                let posts = match archive.fetch(&identifier).content().await {
                     Ok(Content::SocialPosts(posts)) => posts,
                     Ok(_) => Vec::new(),
                     Err(e) => {
@@ -750,7 +760,7 @@ impl<'a> ScrapePhase<'a> {
                             combined_text = format!("{prefix}{combined_text}");
                         }
                         combined_all.push_str(&combined_text);
-                        match self.extractor.extract(&combined_text, &source_url).await {
+                        match extractor.extract(&combined_text, &source_url).await {
                             Ok(result) => {
                                 all_nodes.extend(result.nodes);
                                 all_resource_tags.extend(result.resource_tags);
@@ -792,7 +802,7 @@ impl<'a> ScrapePhase<'a> {
                     } else if let Some(ref prefix) = firsthand_prefix {
                         combined_text = format!("{prefix}{combined_text}");
                     }
-                    let result = match self.extractor.extract(&combined_text, &source_url).await {
+                    let result = match extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
                         Err(e) => {
                             warn!(source_url, error = %e, "Social extraction failed");

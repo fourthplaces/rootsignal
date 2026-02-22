@@ -85,7 +85,7 @@ async fn run_situation_weaving_from_deps(
     let budget = crate::budget::BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    crate::scout::run_situation_weaving(
+    let weaver_stats = crate::scout::run_situation_weaving(
         &deps.graph_client,
         &writer,
         embedder,
@@ -97,7 +97,7 @@ async fn run_situation_weaving_from_deps(
     .await?;
 
     Ok(SituationWeaverResult {
-        situations_woven: 0, // SituationWeaver doesn't expose a count currently
+        situations_woven: weaver_stats.situations_created + weaver_stats.situations_updated,
         spent_cents: budget.total_spent(),
     })
 }
