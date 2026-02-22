@@ -17,7 +17,7 @@ use rootsignal_common::{
     ScoutScope, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
     TensionNode,
 };
-use rootsignal_graph::{GraphWriter, TensionLinkerOutcome, TensionLinkerTarget};
+use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 
 use rootsignal_archive::{Content, FetchBackend, FetchBackendExt};
 
@@ -241,8 +241,8 @@ impl std::fmt::Display for TensionLinkerStats {
 // Prompts
 // =============================================================================
 
-fn investigation_system_prompt(region: &str, tension_landscape: &str) -> String {
-    format!(
+fn investigation_system_prompt(region: &str, tension_landscape: &str, situation_landscape: &str) -> String {
+    let mut prompt = format!(
         "You are investigating a signal to understand WHY it exists in {region}. \
 Your goal is to find the underlying tensions — the problems, needs, conflicts, or fears — \
 that caused this signal to exist.
@@ -264,7 +264,15 @@ Known tensions in {region}:
 
 If your investigation confirms an existing tension, note the match rather than treating it as \
 new. Focus on finding tensions NOT yet in the landscape — that's the highest value."
-    )
+    );
+    if !situation_landscape.is_empty() {
+        prompt.push_str(&format!(
+            "\n\nActive situations in {region} (causal clusters of signals):\n{situation_landscape}\n\n\
+             Prioritize investigating signals that could strengthen emerging or fuzzy situations, \
+             or that reveal tensions not yet captured by any situation."
+        ));
+    }
+    prompt
 }
 
 fn structuring_system() -> String {
@@ -284,6 +292,28 @@ If the signal is self-explanatory (not curious), set curious=false and provide a
 Return at most 3 tensions. Only include tensions you have evidence for.",
         crate::util::TENSION_CATEGORIES,
     )
+}
+
+fn format_situation_landscape(situations: &[SituationBrief]) -> String {
+    if situations.is_empty() {
+        return String::new();
+    }
+    situations
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            format!(
+                "{}. {} [{}] (temp={:.2}, clarity={}, {} signals)",
+                i + 1,
+                s.headline,
+                s.arc,
+                s.temperature,
+                s.clarity,
+                s.signal_count,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // =============================================================================
@@ -392,13 +422,22 @@ impl<'a> TensionLinker<'a> {
             }
         };
 
+        // Load situation landscape — emerging/fuzzy situations guide investigation priority
+        let situation_landscape = match self.writer.get_situation_landscape(15).await {
+            Ok(situations) => format_situation_landscape(&situations),
+            Err(e) => {
+                warn!(error = %e, "Failed to load situation landscape for tension linker");
+                String::new()
+            }
+        };
+
         for target in &targets {
             if self.cancelled.load(Ordering::Relaxed) {
                 info!("Tension linker cancelled");
                 break;
             }
 
-            let outcome = match self.investigate_signal(target, &tension_landscape).await {
+            let outcome = match self.investigate_signal(target, &tension_landscape, &situation_landscape).await {
                 Ok(finding) => {
                     if !finding.curious {
                         stats.targets_skipped += 1;
@@ -469,8 +508,9 @@ impl<'a> TensionLinker<'a> {
         &self,
         target: &TensionLinkerTarget,
         tension_landscape: &str,
+        situation_landscape: &str,
     ) -> Result<SignalFinding> {
-        let system = investigation_system_prompt(&self.region.name, tension_landscape);
+        let system = investigation_system_prompt(&self.region.name, tension_landscape, situation_landscape);
 
         let user = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}",

@@ -28,7 +28,7 @@ pub use synthesizer::Synthesizer;
 pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
     GatheringFinderTarget, GraphWriter, InvestigationTarget, ReapStats, ResponseFinderTarget,
-    ResponseHeuristic, SignalTypeCounts, SourceBrief, SourceStats, StoryBrief, StoryGrowth,
+    ResponseHeuristic, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StoryBrief, StoryGrowth,
     TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent, TensionResponseShape,
     UnmetTension,
 };

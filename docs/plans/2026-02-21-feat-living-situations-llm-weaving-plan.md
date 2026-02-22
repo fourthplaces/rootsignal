@@ -1119,12 +1119,12 @@ type Mutation {
 
 **Goal**: Situations feed back into the discovery engine.
 
-- [ ] Emerging situations trigger curiosity engine investigation (with 7-day cooldown)
-- [ ] Hot situations boost source scraping cadence (multiplicative bonus on source weight)
-- [ ] Unmet response gaps feed into response finder as additional inputs (not replacement)
-- [ ] Causal thesis changes trigger tension linker investigation (with cooldown)
-- [ ] Update `build_briefing()` to include "Situation Landscape" section
-- [ ] Circuit breaker: hot + sensitive situations pause discovery feedback, require admin review
+- [x] Emerging situations trigger curiosity engine investigation (with 7-day cooldown)
+- [x] Hot situations boost source scraping cadence (multiplicative bonus on source weight)
+- [x] Unmet response gaps feed into response finder as additional inputs (not replacement)
+- [x] Causal thesis changes trigger tension linker investigation (with cooldown)
+- [x] Update `build_briefing()` to include "Situation Landscape" section
+- [x] Circuit breaker: hot + sensitive situations pause discovery feedback, require admin review
 
 **Files:**
 - `modules/rootsignal-scout/src/discovery/tension_linker.rs` — accept situation-level curiosity with cooldown
