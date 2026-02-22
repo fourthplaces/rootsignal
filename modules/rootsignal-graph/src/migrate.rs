@@ -554,6 +554,38 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     info!("Situation/Dispatch constraints and indexes created");
 
+    // --- Story → LegacyStory archive migration ---
+    // Relabel Story nodes to LegacyStory for rollback safety.
+    // Create EVIDENCES edges from existing CONTAINS edges (reversed direction).
+    // Both operations are idempotent (MERGE on EVIDENCES, check for remaining Story nodes).
+    let story_count_q = query("MATCH (s:Story) RETURN count(s) AS cnt");
+    let mut stream = g.execute(story_count_q).await?;
+    if let Some(row) = stream.next().await? {
+        let story_count: i64 = row.get("cnt").unwrap_or(0);
+        if story_count > 0 {
+            info!(count = story_count, "Migrating Story→LegacyStory...");
+
+            // 1. Create EVIDENCES edges from existing CONTAINS edges (reversed direction)
+            // Story-[:CONTAINS]->Signal  becomes  Signal-[:EVIDENCES]->Situation (via matching headline)
+            // For now, create a placeholder EVIDENCES edge back to the LegacyStory for traceability
+            match g.run(query(
+                "MATCH (s:Story)-[:CONTAINS]->(sig)
+                 WHERE NOT (sig)-[:EVIDENCES]->(s)
+                 WITH s, sig
+                 MERGE (sig)-[:EVIDENCES {match_confidence: 1.0, migrated: true}]->(s)",
+            )).await {
+                Ok(_) => info!("Created EVIDENCES edges from existing CONTAINS"),
+                Err(e) => warn!("EVIDENCES migration failed (non-fatal): {e}"),
+            }
+
+            // 2. Relabel Story → LegacyStory (keeps all properties and edges)
+            match g.run(query("MATCH (n:Story) SET n:LegacyStory REMOVE n:Story")).await {
+                Ok(_) => info!("Relabeled Story→LegacyStory"),
+                Err(e) => warn!("Story→LegacyStory relabel failed (non-fatal): {e}"),
+            }
+        }
+    }
+
     info!("Schema migration complete");
     Ok(())
 }

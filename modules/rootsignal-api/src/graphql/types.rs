@@ -16,7 +16,8 @@ use rootsignal_common::{
 use rootsignal_graph::CachedReader;
 
 use super::loaders::{
-    ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader, TagsByStoryLoader,
+    ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
+    TagsByStoryLoader,
 };
 
 // --- GraphQL Enums ---
@@ -275,6 +276,16 @@ macro_rules! signal_meta_resolvers {
         async fn story(&self, ctx: &Context<'_>) -> Result<Option<GqlStory>> {
             let loader = ctx.data_unchecked::<DataLoader<StoryBySignalLoader>>();
             Ok(loader.load_one(self.meta().id).await?.map(GqlStory))
+        }
+        async fn situations(&self, ctx: &Context<'_>) -> Result<Vec<GqlSituation>> {
+            let loader = ctx.data_unchecked::<DataLoader<SituationsBySignalLoader>>();
+            Ok(loader
+                .load_one(self.meta().id)
+                .await?
+                .unwrap_or_default()
+                .into_iter()
+                .map(GqlSituation)
+                .collect())
         }
         async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
             let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();

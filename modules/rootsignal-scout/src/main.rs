@@ -8,13 +8,13 @@ use sqlx::postgres::PgPoolOptions;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use rootsignal_common::{Config, Node, NodeType, ScoutScope, StoryNode};
+use rootsignal_common::{Config, Node, NodeType, ScoutScope, SituationNode};
 use rootsignal_graph::{
     cause_heat::compute_cause_heat,
     migrate::{backfill_source_canonical_keys, backfill_source_diversity, migrate},
     query,
-    reader::{node_type_label, row_to_node, row_to_story},
-    GraphClient, GraphWriter,
+    reader::{node_type_label, row_to_node},
+    GraphClient, GraphWriter, PublicGraphReader,
 };
 use rootsignal_scout::scout::Scout;
 
@@ -24,7 +24,7 @@ struct Cli {
     /// Region slug (e.g. "minneapolis"). Overrides REGION env var.
     region: Option<String>,
 
-    /// Dump raw graph data (stories + signals) as JSON to stdout instead of running the scout.
+    /// Dump raw graph data (situations + signals) as JSON to stdout instead of running the scout.
     #[arg(long)]
     dump: bool,
 }
@@ -32,14 +32,14 @@ struct Cli {
 #[derive(Serialize)]
 struct DumpOutput {
     region: String,
-    stories: Vec<StoryDump>,
+    situations: Vec<SituationDump>,
     ungrouped_signals: Vec<Node>,
 }
 
 #[derive(Serialize)]
-struct StoryDump {
+struct SituationDump {
     #[serde(flatten)]
-    story: StoryNode,
+    situation: SituationNode,
     signals: Vec<Node>,
 }
 
@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Dump all stories and signals for a region as raw JSON to stdout.
+/// Dump all situations and signals for a region as raw JSON to stdout.
 async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
     // Construct geo bounds from env vars (same as main scout flow)
     let config = Config::scout_from_env();
@@ -191,33 +191,17 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
     };
     let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
-    // Fetch all stories in the region's bounding box
-    let story_q = query(
-        "MATCH (s:Story)
-         WHERE s.centroid_lat IS NOT NULL
-           AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
-           AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
-         RETURN s
-         ORDER BY s.energy DESC",
-    )
-    .param("min_lat", min_lat)
-    .param("max_lat", max_lat)
-    .param("min_lng", min_lng)
-    .param("max_lng", max_lng);
+    // Fetch all situations in the region's bounding box
+    let reader = PublicGraphReader::new(client.clone());
+    let situation_nodes = reader
+        .situations_in_bounds(min_lat, max_lat, min_lng, max_lng, 500, None)
+        .await?;
 
-    let mut stories: Vec<StoryDump> = Vec::new();
+    let mut situations: Vec<SituationDump> = Vec::new();
     let mut grouped_signal_ids = std::collections::HashSet::new();
 
-    let mut stream = client.inner().execute(story_q).await?;
-    let mut story_nodes = Vec::new();
-    while let Some(row) = stream.next().await? {
-        if let Some(story) = row_to_story(&row) {
-            story_nodes.push(story);
-        }
-    }
-
-    // For each story, fetch its raw signals (no filtering, no fuzzing)
-    for story in story_nodes {
+    // For each situation, fetch its signals via EVIDENCES edges
+    for situation in situation_nodes {
         let mut signals = Vec::new();
         for nt in &[
             NodeType::Gathering,
@@ -228,9 +212,9 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
         ] {
             let label = node_type_label(*nt);
             let cypher = format!(
-                "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label}) RETURN n ORDER BY n.confidence DESC"
+                "MATCH (n:{label})-[:EVIDENCES]->(s:Situation {{id: $id}}) RETURN n ORDER BY n.confidence DESC"
             );
-            let q = query(&cypher).param("id", story.id.to_string());
+            let q = query(&cypher).param("id", situation.id.to_string());
             let mut sig_stream = client.inner().execute(q).await?;
             while let Some(row) = sig_stream.next().await? {
                 if let Some(node) = row_to_node(&row, *nt) {
@@ -239,10 +223,10 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
                 }
             }
         }
-        stories.push(StoryDump { story, signals });
+        situations.push(SituationDump { situation, signals });
     }
 
-    // Fetch ungrouped signals (not in any story) within the bounding box
+    // Fetch ungrouped signals (not evidencing any situation) within the bounding box
     let mut ungrouped = Vec::new();
     for nt in &[
         NodeType::Gathering,
@@ -256,7 +240,7 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
             "MATCH (n:{label})
              WHERE n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
-               AND NOT (n)<-[:CONTAINS]-(:Story)
+               AND NOT (n)-[:EVIDENCES]->(:Situation)
              RETURN n
              ORDER BY n.confidence DESC"
         );
@@ -275,7 +259,7 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
 
     let output = DumpOutput {
         region: region_slug.to_string(),
-        stories,
+        situations,
         ungrouped_signals: ungrouped,
     };
 

@@ -618,28 +618,8 @@ impl Scout {
         self.check_cancelled()?;
 
         // ================================================================
-        // 8. Story Weaving (must run AFTER synthesis — reads edges created above)
-        // ================================================================
-        info!("Starting story weaving...");
-        let weaver = rootsignal_graph::StoryWeaver::new(
-            self.graph_client.clone(),
-            &self.anthropic_api_key,
-            self.region.center_lat,
-            self.region.center_lng,
-            self.region.radius_km,
-        );
-        let has_weave_budget = self
-            .budget
-            .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
-        match weaver.run(has_weave_budget).await {
-            Ok(weave_stats) => info!("{weave_stats}"),
-            Err(e) => warn!(error = %e, "Story weaving failed (non-fatal)"),
-        }
-
-        self.check_cancelled()?;
-
-        // ================================================================
-        // 8b. Situation Weaving (assigns signals to living situations)
+        // 8. Situation Weaving (assigns signals to living situations)
+        //    Replaces legacy StoryWeaver — uses causal embedding search + LLM verification
         // ================================================================
         info!("Starting situation weaving...");
         let situation_weaver = rootsignal_graph::SituationWeaver::new(

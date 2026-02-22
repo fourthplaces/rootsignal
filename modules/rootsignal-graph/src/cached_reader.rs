@@ -627,6 +627,22 @@ impl CachedReader {
         Ok(map)
     }
 
+    /// Batch situations for signals (dataloader). Delegates to Neo4j since situations
+    /// are not cached yet.
+    pub async fn batch_situations_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<rootsignal_common::SituationNode>>, neo4rs::Error> {
+        let mut map = HashMap::new();
+        for &id in ids {
+            let situations = self.neo4j_reader.situations_for_signal(&id).await?;
+            if !situations.is_empty() {
+                map.insert(id, situations);
+            }
+        }
+        Ok(map)
+    }
+
     // ========== Delegated to Neo4j ==========
 
     pub async fn semantic_search_signals_in_bounds(

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_graphql::dataloader::Loader;
 use uuid::Uuid;
 
-use rootsignal_common::{ActorNode, EvidenceNode, StoryNode, TagNode};
+use rootsignal_common::{ActorNode, EvidenceNode, SituationNode, StoryNode, TagNode};
 use rootsignal_graph::CachedReader;
 
 // --- EvidenceBySignalLoader ---
@@ -56,6 +56,24 @@ impl Loader<Uuid> for StoryBySignalLoader {
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
         self.reader
             .batch_story_by_signal_ids(keys)
+            .await
+            .map_err(|e| Arc::new(anyhow::anyhow!(e)))
+    }
+}
+
+// --- SituationsBySignalLoader ---
+
+pub struct SituationsBySignalLoader {
+    pub reader: Arc<CachedReader>,
+}
+
+impl Loader<Uuid> for SituationsBySignalLoader {
+    type Value = Vec<SituationNode>;
+    type Error = Arc<anyhow::Error>;
+
+    async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
+        self.reader
+            .batch_situations_by_signal_ids(keys)
             .await
             .map_err(|e| Arc::new(anyhow::anyhow!(e)))
     }

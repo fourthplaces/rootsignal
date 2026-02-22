@@ -10,7 +10,8 @@ use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
-    ActorsBySignalLoader, EvidenceBySignalLoader, StoryBySignalLoader, TagsByStoryLoader,
+    ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
+    TagsByStoryLoader,
 };
 use super::mutations::MutationRoot;
 use super::types::*;
@@ -1152,6 +1153,12 @@ pub fn build_schema(
         },
         tokio::spawn,
     );
+    let situations_loader = DataLoader::new(
+        SituationsBySignalLoader {
+            reader: reader.clone(),
+        },
+        tokio::spawn,
+    );
     let tags_loader = DataLoader::new(
         TagsByStoryLoader {
             reader: reader.clone(),
@@ -1181,6 +1188,7 @@ pub fn build_schema(
         .data(evidence_loader)
         .data(actors_loader)
         .data(story_loader)
+        .data(situations_loader)
         .data(tags_loader)
         .data(embedder)
         .finish()
