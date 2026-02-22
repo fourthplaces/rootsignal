@@ -245,10 +245,7 @@ impl ScrapePhase {
             let search_results: Vec<_> = stream::iter(query_inputs.into_iter().map(|(canonical_key, query_str)| {
                 let archive = archive.clone();
                 async move {
-                    let result = async {
-                        let handle = archive.source(&query_str).await?;
-                        handle.search(&query_str).await
-                    }.await;
+                    let result = archive.search(&query_str).await;
                     (canonical_key, query_str, result)
                 }
             }))
@@ -297,16 +294,10 @@ impl ScrapePhase {
                 _ => None,
             };
             if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
-                let html = match self.archive.source(url).await {
-                    Ok(handle) => match handle.page().await {
-                        Ok(page) => Some(page.raw_html),
-                        Err(e) => {
-                            warn!(url = url.as_str(), error = %e, "Query scrape failed");
-                            None
-                        }
-                    },
+                let html = match self.archive.page(url).await {
+                    Ok(page) => Some(page.raw_html),
                     Err(e) => {
-                        warn!(url = url.as_str(), error = %e, "Query source failed");
+                        warn!(url = url.as_str(), error = %e, "Query scrape failed");
                         None
                     }
                 };
@@ -338,10 +329,7 @@ impl ScrapePhase {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    let feed_result = async {
-                        let handle = self.archive.source(feed_url).await?;
-                        handle.feed().await
-                    }.await;
+                    let feed_result = self.archive.feed(feed_url).await;
                     match feed_result {
                         Ok(archived) => {
                             run_log.log(EventKind::ScrapeFeed {
@@ -402,11 +390,7 @@ impl ScrapePhase {
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let content = match async {
-                    let handle = archive.source(&url).await?;
-                    let page = handle.page().await?;
-                    Ok::<_, rootsignal_archive::ArchiveError>(page.markdown)
-                }.await {
+                let content = match archive.page(&url).await.map(|p| p.markdown) {
                     Ok(c) if !c.is_empty() => c,
                     Ok(_) => return (clean_url, ScrapeOutcome::Failed),
                     Err(e) => {
@@ -715,10 +699,7 @@ impl ScrapePhase {
             let identifier = account.identifier.clone();
 
             futures.push(Box::pin(async move {
-                let posts = match async {
-                    let handle = archive.source(&identifier).await?;
-                    handle.posts(20).await
-                }.await {
+                let posts = match archive.posts(&identifier, 20).await {
                     Ok(posts) => posts,
                     Err(e) => {
                         warn!(source_url, error = %e, "Social media scrape failed");
@@ -1139,16 +1120,10 @@ impl ScrapePhase {
                         continue;
                     }
 
-                    let page = match self.archive.source(&result.url).await {
-                        Ok(h) => match h.page().await {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
-                                continue;
-                            }
-                        },
+                    let page = match self.archive.page(&result.url).await {
+                        Ok(p) => p,
                         Err(e) => {
-                            warn!(url = result.url.as_str(), error = %e, "Site-scoped source failed");
+                            warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
                             continue;
                         }
                     };

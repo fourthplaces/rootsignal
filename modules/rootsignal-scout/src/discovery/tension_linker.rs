@@ -147,9 +147,7 @@ impl Tool for ReadPageTool {
     }
 
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
-        let handle = self.archive.source(&args.url).await
-            .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
-        let page = handle.page().await
+        let page = self.archive.page(&args.url).await
             .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
         let content = page.markdown;
 

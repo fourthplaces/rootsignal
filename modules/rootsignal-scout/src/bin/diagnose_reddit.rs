@@ -60,12 +60,7 @@ async fn main() -> Result<()> {
     println!("║  STAGE 1: Archive Social Fetch                             ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
-    let posts: Vec<Post> = match async {
-        let handle = archive.source(SUBREDDIT_URL).await?;
-        handle.posts(20).await
-    }
-    .await
-    {
+    let posts: Vec<Post> = match archive.posts(SUBREDDIT_URL, 20).await {
         Ok(posts) => posts,
         Err(e) => {
             println!("Fetch failed: {}", e);

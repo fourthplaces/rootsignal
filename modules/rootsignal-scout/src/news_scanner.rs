@@ -81,8 +81,7 @@ impl NewsScanner {
         let mut all_urls: Vec<(String, Option<String>)> = Vec::new();
         for feed_url in NEWS_FEEDS {
             let feed_result = async {
-                let handle = self.archive.source(feed_url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                let feed = handle.feed().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let feed = self.archive.feed(feed_url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(
                     feed.items
                         .into_iter()
@@ -135,8 +134,7 @@ impl NewsScanner {
 
             // Scrape
             let content = match async {
-                let handle = self.archive.source(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                let page = handle.page().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let page = self.archive.page(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(page.markdown)
             }
             .await
