@@ -34,6 +34,8 @@ pub async fn promote_mentioned_accounts(
     mentioned: &[(SocialPlatform, String, String)],
     writer: &GraphWriter,
     config: &PromotionConfig,
+    center_lat: f64,
+    center_lng: f64,
 ) -> Result<u32> {
     if mentioned.is_empty() {
         return Ok(0);
@@ -52,7 +54,7 @@ pub async fn promote_mentioned_accounts(
         let canonical_key = format!("{}:{}", platform_prefix(platform), handle);
         let url = platform_url(platform, handle);
 
-        let source = SourceNode::new(
+        let mut source = SourceNode::new(
             canonical_key.clone(),
             handle.clone(),
             Some(url),
@@ -61,6 +63,8 @@ pub async fn promote_mentioned_accounts(
             SourceRole::Mixed,
             Some(format!("Mentioned by {mentioned_by}")),
         );
+        source.center_lat = Some(center_lat);
+        source.center_lng = Some(center_lng);
 
         match writer.upsert_source(&source).await {
             Ok(_) => {

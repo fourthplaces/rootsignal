@@ -1100,6 +1100,11 @@ pub struct SourceNode {
     pub source_role: SourceRole,
     /// Number of times this source has been scraped (independent of signal count).
     pub scrape_count: u32,
+    /// Coordinates of the region that discovered/created this source.
+    /// Used for geographic scoping — regional scouts only load sources within their bounding box.
+    pub center_lat: Option<f64>,
+    /// Longitude of the region that discovered/created this source.
+    pub center_lng: Option<f64>,
 }
 
 impl SourceNode {
@@ -1133,6 +1138,8 @@ impl SourceNode {
             quality_penalty: 1.0,
             source_role,
             scrape_count: 0,
+            center_lat: None,
+            center_lng: None,
         }
     }
 

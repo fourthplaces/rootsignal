@@ -50,7 +50,7 @@ impl<'a> Bootstrapper<'a> {
         for (query, role) in &queries {
             let cv = query.clone();
             let ck = canonical_value(&cv);
-            let source = SourceNode::new(
+            let mut source = SourceNode::new(
                 ck,
                 cv,
                 None,
@@ -59,6 +59,8 @@ impl<'a> Bootstrapper<'a> {
                 role.clone(),
                 None,
             );
+            source.center_lat = Some(self.region.center_lat);
+            source.center_lng = Some(self.region.center_lng);
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
@@ -67,8 +69,10 @@ impl<'a> Bootstrapper<'a> {
 
         // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
         let platform_sources = self.generate_platform_sources().await;
-        for source in &platform_sources {
-            match self.writer.upsert_source(source).await {
+        for mut source in platform_sources {
+            source.center_lat = Some(self.region.center_lat);
+            source.center_lng = Some(self.region.center_lng);
+            match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => {
                     let label = source.url.as_deref().unwrap_or(&source.canonical_value);
@@ -134,6 +138,8 @@ impl<'a> Bootstrapper<'a> {
                     url,
                     short_name,
                     true, // require social links
+                    self.region.center_lat,
+                    self.region.center_lng,
                 )
                 .await
                 {
