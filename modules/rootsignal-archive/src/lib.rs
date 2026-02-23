@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod enrichment;
 pub mod error;
 pub mod links;
 pub mod router;
@@ -9,6 +10,7 @@ mod services;
 mod source_handle;
 
 pub use archive::{Archive, ArchiveConfig, PageBackend};
+pub use enrichment::{EnrichmentJob, MockDispatcher, WorkflowDispatcher};
 pub use error::{ArchiveError, Result};
 pub use links::extract_links_by_pattern;
 pub use router::Platform;

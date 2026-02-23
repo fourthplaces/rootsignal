@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use crate::enrichment::WorkflowDispatcher;
 use crate::error::Result;
 use crate::router::{detect_platform, extract_identifier, normalize_url};
 use crate::services::bluesky::BlueskyService;
@@ -39,7 +40,7 @@ pub struct Archive {
 }
 
 impl Archive {
-    pub fn new(pool: PgPool, config: ArchiveConfig) -> Self {
+    pub fn new(pool: PgPool, config: ArchiveConfig, dispatcher: Option<Arc<dyn WorkflowDispatcher>>) -> Self {
         let store = Store::new(pool);
 
         // Page fetcher
@@ -84,6 +85,7 @@ impl Archive {
             browserless_page,
             feed: FeedService::new(),
             search,
+            dispatcher,
         };
 
         Self {

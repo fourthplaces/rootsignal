@@ -88,7 +88,7 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
         },
     };
 
-    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config))
+    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config, None))
 }
 
 // ---------------------------------------------------------------------------

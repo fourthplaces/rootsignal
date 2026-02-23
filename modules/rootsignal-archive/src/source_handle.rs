@@ -16,6 +16,7 @@ use rootsignal_common::types::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::enrichment::{files_needing_enrichment, EnrichmentJob, WorkflowDispatcher};
 use crate::error::{ArchiveError, Result};
 use crate::router::Platform;
 use crate::store::Store;
@@ -43,6 +44,7 @@ pub(crate) struct ArchiveInner {
     pub browserless_page: Option<BrowserlessPageService>,
     pub feed: FeedService,
     pub search: Option<SearchService>,
+    pub dispatcher: Option<Arc<dyn WorkflowDispatcher>>,
 }
 
 /// A handle to a source. Returned by `Archive::source(url)`.
@@ -77,7 +79,6 @@ impl SourceHandle {
             platform: self.platform,
             identifier: self.identifier.clone(),
             limit,
-            text_analysis: false,
         }
     }
 
@@ -87,7 +88,6 @@ impl SourceHandle {
             source: self.source.clone(),
             platform: self.platform,
             identifier: self.identifier.clone(),
-            text_analysis: false,
         }
     }
 
@@ -98,7 +98,6 @@ impl SourceHandle {
             platform: self.platform,
             identifier: self.identifier.clone(),
             limit,
-            text_analysis: false,
         }
     }
 
@@ -109,7 +108,6 @@ impl SourceHandle {
             platform: self.platform,
             identifier: self.identifier.clone(),
             limit,
-            text_analysis: false,
         }
     }
 
@@ -168,15 +166,9 @@ pub struct PostsRequest {
     platform: Platform,
     identifier: String,
     limit: u32,
-    text_analysis: bool,
 }
 
 impl PostsRequest {
-    pub fn with_text_analysis(mut self) -> Self {
-        self.text_analysis = true;
-        self
-    }
-
     pub async fn send(self) -> Result<Vec<Post>> {
         let source_id = self.source.id;
 
@@ -281,6 +273,10 @@ impl PostsRequest {
             });
         }
 
+        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
+        let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
+        dispatch_enrichment(&self.inner, &all_attachments).await;
+
         self.inner.store.update_last_scraped(source_id, "posts").await?;
         Ok(posts)
     }
@@ -300,15 +296,9 @@ pub struct StoriesRequest {
     source: Source,
     platform: Platform,
     identifier: String,
-    text_analysis: bool,
 }
 
 impl StoriesRequest {
-    pub fn with_text_analysis(mut self) -> Self {
-        self.text_analysis = true;
-        self
-    }
-
     pub async fn send(self) -> Result<Vec<Story>> {
         let source_id = self.source.id;
 
@@ -352,6 +342,10 @@ impl StoriesRequest {
             });
         }
 
+        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
+        let all_attachments: Vec<_> = stories.iter().flat_map(|s| &s.attachments).cloned().collect();
+        dispatch_enrichment(&self.inner, &all_attachments).await;
+
         self.inner.store.update_last_scraped(source_id, "stories").await?;
         Ok(stories)
     }
@@ -372,15 +366,9 @@ pub struct ShortVideoRequest {
     platform: Platform,
     identifier: String,
     limit: u32,
-    text_analysis: bool,
 }
 
 impl ShortVideoRequest {
-    pub fn with_text_analysis(mut self) -> Self {
-        self.text_analysis = true;
-        self
-    }
-
     pub async fn send(self) -> Result<Vec<ShortVideo>> {
         let source_id = self.source.id;
 
@@ -438,6 +426,10 @@ impl ShortVideoRequest {
             });
         }
 
+        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
+        let all_attachments: Vec<_> = videos.iter().flat_map(|v| &v.attachments).cloned().collect();
+        dispatch_enrichment(&self.inner, &all_attachments).await;
+
         self.inner.store.update_last_scraped(source_id, "short_videos").await?;
         Ok(videos)
     }
@@ -458,15 +450,9 @@ pub struct VideoRequest {
     platform: Platform,
     identifier: String,
     limit: u32,
-    text_analysis: bool,
 }
 
 impl VideoRequest {
-    pub fn with_text_analysis(mut self) -> Self {
-        self.text_analysis = true;
-        self
-    }
-
     pub async fn send(self) -> Result<Vec<LongVideo>> {
         Err(ArchiveError::Unsupported(
             format!("{:?} long video fetching not yet implemented", self.platform),
@@ -779,6 +765,10 @@ impl TopicSearchRequest {
             });
         }
 
+        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
+        let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
+        dispatch_enrichment(&self.inner, &all_attachments).await;
+
         self.inner.store.update_last_scraped(source_id, "posts").await?;
         Ok(posts)
     }
@@ -938,6 +928,69 @@ impl IntoFuture for CrawlRequest {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.send())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment dispatch
+// ---------------------------------------------------------------------------
+
+/// Download media bytes and dispatch enrichment jobs for files needing it.
+/// Fire-and-forget: errors are logged but never propagated to the caller.
+async fn dispatch_enrichment(inner: &Arc<ArchiveInner>, files: &[rootsignal_common::types::ArchiveFile]) {
+    let dispatcher = match &inner.dispatcher {
+        Some(d) => d,
+        None => return,
+    };
+
+    let needing = files_needing_enrichment(files);
+    if needing.is_empty() {
+        return;
+    }
+
+    let file_map: std::collections::HashMap<Uuid, &rootsignal_common::types::ArchiveFile> =
+        files.iter().map(|f| (f.id, f)).collect();
+
+    let mut jobs = Vec::new();
+    for file_id in needing {
+        let file = match file_map.get(&file_id) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        // Download media bytes (CDN URLs expire, so we fetch now)
+        let bytes = match reqwest::get(&file.url).await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    warn!(file_id = %file_id, error = %e, "enrichment: failed to read response bytes");
+                    continue;
+                }
+            },
+            Ok(resp) => {
+                warn!(file_id = %file_id, status = %resp.status(), "enrichment: failed to download media");
+                continue;
+            }
+            Err(e) => {
+                warn!(file_id = %file_id, error = %e, "enrichment: failed to download media");
+                continue;
+            }
+        };
+
+        jobs.push(EnrichmentJob {
+            file_id,
+            mime_type: file.mime_type.clone(),
+            media_bytes: bytes,
+        });
+    }
+
+    if jobs.is_empty() {
+        return;
+    }
+
+    let job_count = jobs.len();
+    if let Err(e) = dispatcher.enrich(jobs).await {
+        warn!(error = %e, count = job_count, "enrichment: dispatch failed (non-fatal)");
     }
 }
 
