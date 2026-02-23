@@ -241,6 +241,13 @@ async fn main() -> Result<()> {
         use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
         use rootsignal_scout::workflows::full_run::{FullScoutRunWorkflow, FullScoutRunWorkflowImpl};
         use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
+        use rootsignal_archive::workflows::enrichment::{EnrichmentWorkflow, EnrichmentWorkflowImpl};
+
+        let archive_deps = Arc::new(rootsignal_archive::workflows::ArchiveDeps {
+            pg_pool: scout_deps.pg_pool.clone(),
+            anthropic_api_key: scout_deps.anthropic_api_key.clone(),
+            openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
+        });
 
         let endpoint = builder
             .bind(BootstrapWorkflowImpl::with_deps(scout_deps.clone()).serve())
@@ -250,6 +257,7 @@ async fn main() -> Result<()> {
             .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(NewsScanWorkflowImpl::with_deps(scout_deps.clone()).serve())
+            .bind(EnrichmentWorkflowImpl::with_deps(archive_deps).serve())
             .build();
 
         let restate_addr = format!("0.0.0.0:{restate_port}");

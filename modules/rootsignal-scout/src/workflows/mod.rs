@@ -18,7 +18,7 @@ pub mod types;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
-use rootsignal_archive::{Archive, ArchiveConfig, PageBackend};
+use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, RestateDispatcher};
 use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
@@ -44,6 +44,8 @@ pub struct ScoutDeps {
     pub browserless_token: Option<String>,
     #[builder(default = 50)]
     pub max_web_queries_per_run: usize,
+    #[builder(default)]
+    pub restate_ingress_url: Option<String>,
 }
 
 impl ScoutDeps {
@@ -64,6 +66,7 @@ impl ScoutDeps {
             .browserless_url(config.browserless_url.clone())
             .browserless_token(config.browserless_token.clone())
             .max_web_queries_per_run(config.max_web_queries_per_run)
+            .restate_ingress_url(std::env::var("RESTATE_INGRESS_URL").ok().filter(|s| !s.is_empty()))
             .build()
     }
 }
@@ -88,7 +91,11 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
         },
     };
 
-    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config, None))
+    let dispatcher = deps.restate_ingress_url.as_ref().map(|url| {
+        Arc::new(RestateDispatcher::new(url.clone())) as Arc<dyn rootsignal_archive::WorkflowDispatcher>
+    });
+
+    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config, dispatcher))
 }
 
 // ---------------------------------------------------------------------------

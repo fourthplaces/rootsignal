@@ -134,13 +134,13 @@ pub trait EnrichmentWorkflow {
 - `modules/rootsignal-archive/Cargo.toml` — add `restate-sdk` dependency
 
 **Acceptance criteria:**
-- [ ] `EnrichmentWorkflow` defined in archive, following the same Restate pattern (deps injection, status tracking)
-- [ ] `ArchiveDeps` holds what enrichment needs: `PgPool`, OpenAI API key, Anthropic API key
-- [ ] Each file processed in its own `ctx.run()` block
-- [ ] Routes by mime type: image → Claude vision, video/audio → Whisper
-- [ ] Updates `store.update_file_text(file_id, text, language)` per file
-- [ ] On permanent failure: sets `file.text = ""` (marks as attempted, prevents re-dispatch)
-- [ ] Workflow key derived from sorted file IDs (idempotent)
+- [x] `EnrichmentWorkflow` defined in archive, following the same Restate pattern (deps injection, status tracking)
+- [x] `ArchiveDeps` holds what enrichment needs: `PgPool`, OpenAI API key, Anthropic API key
+- [x] Each file processed in its own `ctx.run()` block
+- [x] Routes by mime type: image → Claude vision, video/audio → Whisper
+- [x] Updates `store.update_file_text(file_id, text, language)` per file
+- [x] On permanent failure: sets `file.text = ""` (marks as attempted, prevents re-dispatch)
+- [ ] Workflow key derived from sorted file IDs (idempotent) — deferred to RestateDispatcher in Phase 5
 
 ### Phase 5: Wire Production Dispatcher + Register Workflow
 
@@ -150,10 +150,10 @@ pub trait EnrichmentWorkflow {
 - `modules/rootsignal-api/src/main.rs` — construct `RestateDispatcher`, pass to Archive, bind `EnrichmentWorkflowImpl` to Restate endpoint
 
 **Acceptance criteria:**
-- [ ] `RestateDispatcher` implements `WorkflowDispatcher` (lives in archive, thin HTTP client)
-- [ ] Archive constructed with dispatcher in production
-- [ ] `EnrichmentWorkflowImpl` registered on the Restate endpoint in API startup
-- [ ] End-to-end: fetch posts → enrichment dispatched → Restate workflow runs → file.text updated
+- [x] `RestateDispatcher` implements `WorkflowDispatcher` (lives in archive, thin HTTP client)
+- [x] Archive constructed with dispatcher in production (via ScoutDeps.restate_ingress_url)
+- [x] `EnrichmentWorkflowImpl` registered on the Restate endpoint in API startup
+- [ ] End-to-end: fetch posts → enrichment dispatched → Restate workflow runs → file.text updated (requires deployment)
 
 ### Phase 6: Tests
 

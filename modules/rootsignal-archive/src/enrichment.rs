@@ -49,6 +49,70 @@ pub fn files_needing_enrichment(files: &[ArchiveFile]) -> Vec<Uuid> {
 }
 
 // ---------------------------------------------------------------------------
+// RestateDispatcher (production)
+// ---------------------------------------------------------------------------
+
+/// Production dispatcher that POSTs enrichment jobs to the Restate ingress.
+/// Uses `/send` suffix for fire-and-forget semantics.
+pub struct RestateDispatcher {
+    http: reqwest::Client,
+    ingress_url: String,
+}
+
+impl RestateDispatcher {
+    pub fn new(ingress_url: impl Into<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            ingress_url: ingress_url.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl WorkflowDispatcher for RestateDispatcher {
+    async fn enrich(&self, jobs: Vec<EnrichmentJob>) -> Result<()> {
+        use base64::Engine;
+
+        // Derive workflow key from sorted file IDs (idempotent)
+        let mut ids: Vec<String> = jobs.iter().map(|j| j.file_id.to_string()).collect();
+        ids.sort();
+        let key = rootsignal_common::content_hash(&ids.join(",")).to_string();
+
+        let files: Vec<crate::workflows::types::EnrichmentFileRequest> = jobs
+            .into_iter()
+            .map(|j| crate::workflows::types::EnrichmentFileRequest {
+                file_id: j.file_id,
+                mime_type: j.mime_type,
+                media_bytes_b64: base64::engine::general_purpose::STANDARD.encode(&j.media_bytes),
+            })
+            .collect();
+
+        let body = serde_json::json!({ "files": files });
+        let url = format!(
+            "{}/EnrichmentWorkflow/{key}/run/send",
+            self.ingress_url
+        );
+
+        tracing::info!(url = url.as_str(), file_count = files.len(), "Dispatching enrichment via Restate");
+
+        let resp = self.http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let error_text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Restate enrichment dispatch failed ({}): {}", status, error_text);
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockDispatcher (for tests)
 // ---------------------------------------------------------------------------
 
