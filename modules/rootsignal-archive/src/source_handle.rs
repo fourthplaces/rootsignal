@@ -10,13 +10,14 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rootsignal_common::types::{
-    ArchivedFeed, ArchivedPage, ArchivedSearchResults, FeedItem, LongVideo, Post,
+    ArchivedFeed, ArchivedPage, ArchivedSearchResults, Channels, FeedItem, LongVideo, Post,
     SearchResult, ShortVideo, Source, Story,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::enrichment::{files_needing_enrichment, EnrichmentJob, WorkflowDispatcher};
+use crate::fetch_request::FetchRequest;
 use crate::error::{ArchiveError, Result};
 use crate::router::Platform;
 use crate::store::Store;
@@ -152,6 +153,18 @@ impl SourceHandle {
             platform: self.platform,
             topics: topics.iter().map(|s| s.to_string()).collect(),
             limit,
+        }
+    }
+
+    pub fn fetch(&self, channels: Channels) -> FetchRequest {
+        FetchRequest {
+            inner: self.inner.clone(),
+            source: self.source.clone(),
+            platform: self.platform,
+            identifier: self.identifier.clone(),
+            channels,
+            post_limit: 20,
+            video_limit: 10,
         }
     }
 }

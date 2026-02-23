@@ -754,6 +754,77 @@ pub struct LongVideo {
     pub attachments: Vec<ArchiveFile>,
 }
 
+// --- Channels (declarative content channel selection) ---
+
+/// Declarative selection of which content channels to fetch from a source.
+/// Each flag corresponds to a content type; unsupported channels for a given
+/// platform are silently skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct Channels {
+    pub page: bool,
+    pub feed: bool,
+    pub media: bool,
+    pub discussion: bool,
+    pub events: bool,
+}
+
+impl Channels {
+    /// All channels enabled.
+    pub fn everything() -> Self {
+        Self {
+            page: true,
+            feed: true,
+            media: true,
+            discussion: true,
+            events: true,
+        }
+    }
+
+    /// Only the page channel.
+    pub fn page() -> Self {
+        Self { page: true, ..Default::default() }
+    }
+
+    /// Only the feed channel.
+    pub fn feed() -> Self {
+        Self { feed: true, ..Default::default() }
+    }
+
+    /// Only the media channel.
+    pub fn media() -> Self {
+        Self { media: true, ..Default::default() }
+    }
+
+    pub fn with_page(mut self) -> Self {
+        self.page = true;
+        self
+    }
+
+    pub fn with_feed(mut self) -> Self {
+        self.feed = true;
+        self
+    }
+
+    pub fn with_media(mut self) -> Self {
+        self.media = true;
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.page && !self.feed && !self.media && !self.discussion && !self.events
+    }
+}
+
+/// A unified result item from a multi-channel fetch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ArchiveItem {
+    Page(ArchivedPage),
+    Feed(ArchivedFeed),
+    Posts(Vec<Post>),
+    Stories(Vec<Story>),
+    ShortVideos(Vec<ShortVideo>),
+}
+
 /// A scraped web page (v2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchivedPage {
@@ -1970,5 +2041,76 @@ mod tests {
         assert!(is_web_query("mutual aid Minneapolis"));
         assert!(!is_web_query("https://example.com"));
         assert!(!is_web_query("http://example.com"));
+    }
+
+    // --- Channels tests ---
+
+    #[test]
+    fn channels_default_is_empty() {
+        let ch = Channels::default();
+        assert!(ch.is_empty());
+        assert!(!ch.page);
+        assert!(!ch.feed);
+        assert!(!ch.media);
+        assert!(!ch.discussion);
+        assert!(!ch.events);
+    }
+
+    #[test]
+    fn channels_everything_enables_all() {
+        let ch = Channels::everything();
+        assert!(!ch.is_empty());
+        assert!(ch.page);
+        assert!(ch.feed);
+        assert!(ch.media);
+        assert!(ch.discussion);
+        assert!(ch.events);
+    }
+
+    #[test]
+    fn channels_named_constructors_enable_single_flag() {
+        let p = Channels::page();
+        assert!(p.page);
+        assert!(!p.feed);
+        assert!(!p.media);
+
+        let f = Channels::feed();
+        assert!(!f.page);
+        assert!(f.feed);
+        assert!(!f.media);
+
+        let m = Channels::media();
+        assert!(!m.page);
+        assert!(!m.feed);
+        assert!(m.media);
+    }
+
+    #[test]
+    fn channels_builder_composes() {
+        let ch = Channels::page().with_feed().with_media();
+        assert!(ch.page);
+        assert!(ch.feed);
+        assert!(ch.media);
+        assert!(!ch.discussion);
+        assert!(!ch.events);
+        assert!(!ch.is_empty());
+    }
+
+    #[test]
+    fn channels_serde_roundtrip() {
+        let ch = Channels { page: true, feed: false, media: true, discussion: false, events: true };
+        let json = serde_json::to_string(&ch).unwrap();
+        let deserialized: Channels = serde_json::from_str(&json).unwrap();
+        assert_eq!(ch, deserialized);
+    }
+
+    #[test]
+    fn channels_literal_construction() {
+        let ch = Channels { feed: true, media: true, ..Default::default() };
+        assert!(!ch.page);
+        assert!(ch.feed);
+        assert!(ch.media);
+        assert!(!ch.discussion);
+        assert!(!ch.events);
     }
 }
