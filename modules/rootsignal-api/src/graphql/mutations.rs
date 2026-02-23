@@ -8,15 +8,15 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, ActorType, Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
+    Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
     SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_archive::Archive;
-
-use rootsignal_scout::discovery::actor_discovery::{
-    create_actor_from_page, geocode_location,
+use rootsignal_scout::discovery::actor_discovery::geocode_location;
+use rootsignal_scout::workflows::types::{
+    AddAccountRequest, CreateFromPageRequest, CreateManualActorRequest,
+    DiscoverActorsBatchRequest,
 };
 
 use crate::jwt::{self, JwtService};
@@ -272,10 +272,7 @@ impl MutationRoot {
             });
         }
 
-        let restate = ctx.data_unchecked::<Option<RestateClient>>();
-        let restate = restate.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
-        })?;
+        let restate = require_restate(ctx)?;
 
         // Geocode the query
         let (lat, lng, display_name) = geocode_location(&query)
@@ -323,12 +320,7 @@ impl MutationRoot {
             });
         }
 
-        let restate = ctx.data_unchecked::<Option<RestateClient>>();
-        let restate = restate.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
-        })?;
-
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let restate = require_restate(ctx)?;
         let restate_phase: crate::restate_client::ScoutPhase = phase.into();
 
         // Geocode the query
@@ -337,28 +329,6 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
 
         let slug = rootsignal_common::slugify(&query);
-
-        // Check prerequisites and atomically transition to running status
-        let allowed = restate_phase.allowed_from_statuses();
-        let running_status = restate_phase.running_status();
-
-        if !writer
-            .transition_region_status(&slug, allowed, running_status)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to check region status: {e}")))?
-        {
-            let current = writer
-                .get_region_run_status(&slug)
-                .await
-                .unwrap_or_else(|_| "unknown".to_string());
-            return Ok(ScoutResult {
-                success: false,
-                message: Some(format!(
-                    "Cannot run {:?}: region status is '{current}'. Prerequisites not met or another phase is running.",
-                    phase
-                )),
-            });
-        }
 
         let scope = ScoutScope {
             center_lat: lat,
@@ -382,10 +352,7 @@ impl MutationRoot {
     /// Stop a running scout workflow via Restate cancellation.
     #[graphql(guard = "AdminGuard")]
     async fn stop_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
-        let restate = ctx.data_unchecked::<Option<RestateClient>>();
-        let restate = restate.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
-        })?;
+        let restate = require_restate(ctx)?;
 
         let slug = rootsignal_common::slugify(&query);
 
@@ -695,51 +662,16 @@ impl MutationRoot {
             });
         }
 
-        let restate = ctx.data_unchecked::<Option<RestateClient>>();
-        match restate {
-            Some(client) => {
-                client
-                    .run_news_scan()
-                    .await
-                    .map_err(|e| async_graphql::Error::new(format!("Failed to dispatch news scan: {e}")))?;
-                Ok(ScoutResult {
-                    success: true,
-                    message: Some("News scan dispatched via Restate".into()),
-                })
-            }
-            None => {
-                // Fallback: no Restate configured, run directly
-                let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
-                let client = (**graph_client).clone();
-                let config_clone = (**config).clone();
+        let restate = require_restate(ctx)?;
+        restate
+            .run_news_scan()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to dispatch news scan: {e}")))?;
 
-                tokio::spawn(async move {
-                    let writer = rootsignal_graph::GraphWriter::new(client.clone());
-                    let archive = match create_archive_for_news_scan(&config_clone).await {
-                        Some(archive) => archive,
-                        None => {
-                            warn!("Cannot create archive for news scan (DATABASE_URL not set)");
-                            return;
-                        }
-                    };
-                    let scanner = rootsignal_scout::pipeline::news_scanner::NewsScanner::new(
-                        archive,
-                        &config_clone.anthropic_api_key,
-                        writer,
-                        config_clone.daily_budget_cents,
-                    );
-                    match scanner.scan().await {
-                        Ok((articles, beacons)) => info!(articles, beacons, "News scan complete"),
-                        Err(e) => warn!(error = %e, "News scan failed"),
-                    }
-                });
-
-                Ok(ScoutResult {
-                    success: true,
-                    message: Some("News scan started in background".to_string()),
-                })
-            }
-        }
+        Ok(ScoutResult {
+            success: true,
+            message: Some("News scan dispatched via Restate".into()),
+        })
     }
 
     // ========== Actor mutations (AdminGuard) ==========
@@ -760,7 +692,6 @@ impl MutationRoot {
         #[graphql(desc = "Social account URLs to link (e.g. https://instagram.com/handle)")]
         social_accounts: Option<Vec<String>>,
     ) -> Result<ActorResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let name = name.trim().to_string();
         let location = location.trim().to_string();
 
@@ -771,87 +702,24 @@ impl MutationRoot {
             return Err("Location is required".into());
         }
 
-        // Geocode location
-        let (lat, lng, display_name) = geocode_location(&location)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
-
-        let actor_type = match actor_type.as_deref() {
-            Some("individual") => ActorType::Individual,
-            Some("government_body") => ActorType::GovernmentBody,
-            Some("coalition") => ActorType::Coalition,
-            _ => ActorType::Organization,
-        };
-
-        let entity_id = name.to_lowercase().replace(' ', "-");
-        let actor = ActorNode {
-            id: Uuid::new_v4(),
-            name: name.clone(),
+        let restate = require_restate(ctx)?;
+        let req = CreateManualActorRequest {
+            name,
             actor_type,
-            entity_id,
-            domains: vec![],
-            social_urls: social_accounts.clone().unwrap_or_default(),
-            description: bio.clone().unwrap_or_default(),
-            signal_count: 0,
-            first_seen: chrono::Utc::now(),
-            last_active: chrono::Utc::now(),
-            typical_roles: vec![],
+            location,
             bio,
-            location_lat: Some(lat),
-            location_lng: Some(lng),
-            location_name: Some(display_name.clone()),
+            social_accounts: social_accounts.unwrap_or_default(),
         };
 
-        let actor_id = writer
-            .upsert_actor_with_profile(&actor)
+        let result = restate
+            .create_manual_actor(&req)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create actor: {e}")))?;
-
-        // Link social accounts as Source nodes with HAS_ACCOUNT edges
-        for url in social_accounts.unwrap_or_default() {
-            let url = url.trim().to_string();
-            if url.is_empty() {
-                continue;
-            }
-            let cv = rootsignal_common::canonical_value(&url);
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: cv.clone(),
-                canonical_value: cv.clone(),
-                url: Some(url),
-                discovery_method: DiscoveryMethod::ActorAccount,
-                created_at: chrono::Utc::now(),
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: Some(format!("Actor account: {name}")),
-                weight: 0.7,
-                cadence_hours: Some(12),
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: SourceRole::Mixed,
-                scrape_count: 0,
-                center_lat: None,
-                center_lng: None,
-            };
-            if let Err(e) = writer.upsert_source(&source).await {
-                warn!(error = %e, "Failed to create actor source");
-                continue;
-            }
-            if let Err(e) = writer.link_actor_account(actor_id, &cv).await {
-                warn!(error = %e, "Failed to link actor account");
-            }
-        }
-
-        info!(name = name.as_str(), location = display_name.as_str(), "Actor created");
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(ActorResult {
             success: true,
-            actor_id: Some(actor_id.to_string()),
-            location_name: Some(display_name),
+            actor_id: Some(result.actor_id),
+            location_name: Some(result.location_name),
         })
     }
 
@@ -867,37 +735,29 @@ impl MutationRoot {
         region: Option<String>,
     ) -> Result<ActorResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-
-        if config.anthropic_api_key.is_empty() {
-            return Err("Anthropic API key not configured".into());
-        }
-
-        let archive = create_archive_for_news_scan(&config)
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Cannot create archive (DATABASE_URL not set)"))?;
+        let restate = require_restate(ctx)?;
 
         let fallback_region = region.unwrap_or_else(|| config.region.clone());
+        let req = CreateFromPageRequest {
+            url,
+            fallback_region,
+            require_social_links: false,
+            region_center_lat: 0.0,
+            region_center_lng: 0.0,
+        };
 
-        match create_actor_from_page(
-            &archive,
-            &writer,
-            &config.anthropic_api_key,
-            &url,
-            &fallback_region,
-            false, // submit mode: don't require social links
-            0.0,   // admin API — no region center
-            0.0,
-        )
-        .await
-        {
-            Ok(Some(result)) => Ok(ActorResult {
+        let result = restate
+            .create_actor_from_page(&req)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        match result.actor_id {
+            Some(actor_id) => Ok(ActorResult {
                 success: true,
-                actor_id: Some(result.actor_id.to_string()),
-                location_name: Some(result.location_name),
+                actor_id: Some(actor_id),
+                location_name: result.location_name,
             }),
-            Ok(None) => Err("Page does not represent a specific actor".into()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to process page: {e}"))),
+            None => Err("Page does not represent a specific actor".into()),
         }
     }
 
@@ -914,60 +774,35 @@ impl MutationRoot {
         #[graphql(desc = "Maximum search results to process (default 10)")]
         max_results: Option<i32>,
     ) -> Result<DiscoverActorsResult> {
-        let config = ctx.data_unchecked::<Arc<Config>>();
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-
-        if config.anthropic_api_key.is_empty() || config.serper_api_key.is_empty() {
-            return Err("API keys not configured".into());
-        }
-
-        let archive = create_archive_for_news_scan(&config)
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Cannot create archive (DATABASE_URL not set)"))?;
-
+        let restate = require_restate(ctx)?;
         let max = max_results.unwrap_or(10).min(50) as usize;
+        let key = format!("discover-{}", chrono::Utc::now().timestamp());
 
-        // Fetch search results
-        let handle = archive
-            .source(&query)
+        let req = DiscoverActorsBatchRequest {
+            query,
+            region,
+            max_results: max,
+        };
+
+        let result = restate
+            .discover_actors_batch(&key, &req)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Search failed: {e}")))?;
-        let search = handle
-            .search(&query)
-            .max_results(max)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Search failed: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let urls: Vec<String> = search.results.into_iter().map(|r| r.url).collect();
+        let actors = result
+            .actors
+            .into_iter()
+            .map(|a| ActorResult {
+                success: true,
+                actor_id: a.actor_id,
+                location_name: a.location_name,
+            })
+            .collect();
 
-        let mut actors = Vec::new();
-        for url in &urls {
-            match create_actor_from_page(
-                &archive,
-                &writer,
-                &config.anthropic_api_key,
-                url,
-                &region,
-                true, // discover mode: require social links
-                0.0,  // admin API — no region center
-                0.0,
-            )
-            .await
-            {
-                Ok(Some(result)) => actors.push(ActorResult {
-                    success: true,
-                    actor_id: Some(result.actor_id.to_string()),
-                    location_name: Some(result.location_name),
-                }),
-                Ok(None) => {} // not an actor page, skip
-                Err(e) => warn!(url = url.as_str(), error = %e, "Failed to process search result"),
-            }
-        }
-
-        let discovered = actors.len() as u32;
-        info!(query = query.as_str(), region = region.as_str(), discovered, "Actor discovery complete");
-
-        Ok(DiscoverActorsResult { discovered, actors })
+        Ok(DiscoverActorsResult {
+            discovered: result.discovered,
+            actors,
+        })
     }
 
     /// Add a social account to an existing actor.
@@ -978,48 +813,20 @@ impl MutationRoot {
         actor_id: String,
         url: String,
     ) -> Result<ActorResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let url = url.trim().to_string();
-
-        let actor_uuid = Uuid::parse_str(&actor_id)
+        // Validate UUID format before dispatching
+        Uuid::parse_str(&actor_id)
             .map_err(|_| async_graphql::Error::new("Invalid actor ID"))?;
 
-        let cv = rootsignal_common::canonical_value(&url);
-        let source = SourceNode {
-            id: Uuid::new_v4(),
-            canonical_key: cv.clone(),
-            canonical_value: cv.clone(),
-            url: Some(url.clone()),
-            discovery_method: DiscoveryMethod::ActorAccount,
-            created_at: chrono::Utc::now(),
-            last_scraped: None,
-            last_produced_signal: None,
-            signals_produced: 0,
-            signals_corroborated: 0,
-            consecutive_empty_runs: 0,
-            active: true,
-            gap_context: Some("Actor account".to_string()),
-            weight: 0.7,
-            cadence_hours: Some(12),
-            avg_signals_per_scrape: 0.0,
-            quality_penalty: 1.0,
-            source_role: SourceRole::Mixed,
-            scrape_count: 0,
-            center_lat: None,
-            center_lng: None,
+        let restate = require_restate(ctx)?;
+        let req = AddAccountRequest {
+            actor_id: actor_id.clone(),
+            url: url.trim().to_string(),
         };
 
-        writer
-            .upsert_source(&source)
+        restate
+            .add_actor_account(&req)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
-
-        writer
-            .link_actor_account(actor_uuid, &cv)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to link account: {e}")))?;
-
-        info!(actor_id = actor_id.as_str(), url = url.as_str(), "Actor account added");
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(ActorResult {
             success: true,
@@ -1058,34 +865,12 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
     true
 }
 
-/// Create an Archive for news scanning. Returns None if DATABASE_URL is not set.
-async fn create_archive_for_news_scan(
-    config: &rootsignal_common::Config,
-) -> Option<std::sync::Arc<Archive>> {
-    let database_url = std::env::var("DATABASE_URL").ok()?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(3)
-        .connect(&database_url)
-        .await
-        .ok()?;
-    let archive_config = rootsignal_archive::ArchiveConfig {
-        page_backend: match std::env::var("BROWSERLESS_URL") {
-            Ok(url) => {
-                let token = std::env::var("BROWSERLESS_TOKEN").ok();
-                rootsignal_archive::PageBackend::Browserless { base_url: url, token }
-            }
-            Err(_) => rootsignal_archive::PageBackend::Chrome,
-        },
-        serper_api_key: config.serper_api_key.clone(),
-        apify_api_key: if config.apify_api_key.is_empty() {
-            None
-        } else {
-            Some(config.apify_api_key.clone())
-        },
-    };
-    Some(std::sync::Arc::new(rootsignal_archive::Archive::new(
-        pool,
-        archive_config,
-    )))
+/// Extract the Restate client from GraphQL context, returning a clear error if not configured.
+fn require_restate<'a>(ctx: &'a Context<'_>) -> Result<&'a RestateClient> {
+    ctx.data_unchecked::<Option<RestateClient>>()
+        .as_ref()
+        .ok_or_else(|| {
+            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
+        })
 }
 

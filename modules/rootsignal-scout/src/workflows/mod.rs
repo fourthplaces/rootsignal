@@ -7,8 +7,11 @@
 //! `Arc<ScoutDeps>` and constructs per-invocation resources from the shared deps.
 
 pub mod actor_discovery;
+pub mod actor_discovery_batch;
+pub mod actor_service;
 pub mod bootstrap;
 pub mod full_run;
+pub mod news_scanner;
 pub mod scrape;
 pub mod situation_weaver;
 pub mod supervisor;

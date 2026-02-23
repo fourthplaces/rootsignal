@@ -37,9 +37,25 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: RegionRequest,
     ) -> Result<BootstrapResult, HandlerError> {
-        ctx.set("status", "Starting bootstrap...".to_string());
-
+        // Status transition guard — reject if prerequisites not met or another phase is running
+        let slug = rootsignal_common::slugify(&req.scope.name);
         let writer = GraphWriter::new(self.deps.graph_client.clone());
+        let transitioned = writer
+            .transition_region_status(
+                &slug,
+                &[
+                    "idle", "bootstrap_complete", "actor_discovery_complete",
+                    "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete",
+                ],
+                "running_bootstrap",
+            )
+            .await
+            .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
+        if !transitioned {
+            return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+        }
+
+        ctx.set("status", "Starting bootstrap...".to_string());
         let archive = create_archive(&self.deps);
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
