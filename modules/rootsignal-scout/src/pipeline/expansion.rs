@@ -7,13 +7,12 @@
 use std::collections::HashSet;
 
 use tracing::{info, warn};
-use rootsignal_common::{DiscoveryMethod, SourceNode};
+use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::scrape_phase::RunContext;
-use crate::pipeline::sources;
 
 // --- Constants ---
 
@@ -119,7 +118,7 @@ impl<'a> Expansion<'a> {
             }
 
             let cv = query_text.clone();
-            let ck = sources::make_canonical_key(&cv);
+            let ck = canonical_value(&cv);
             let source = SourceNode::new(
                 ck.clone(),
                 cv,

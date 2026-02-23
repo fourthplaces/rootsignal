@@ -23,7 +23,7 @@ use rootsignal_archive::Archive;
 use crate::scheduling::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::SignalExtractor;
-use crate::enrichment::expansion::Expansion;
+use crate::pipeline::expansion::Expansion;
 use crate::enrichment::mention_promoter::{self, PromotionConfig};
 use crate::scheduling::metrics::Metrics;
 use crate::infra::run_log::{EventKind, RunLog};
@@ -143,7 +143,7 @@ impl<'a> ScrapePipeline<'a> {
         // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
         if all_sources.is_empty() {
             info!("No sources found — running cold-start bootstrap");
-            let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
+            let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                 &self.writer,
                 self.archive.clone(),
                 &self.anthropic_api_key,
@@ -171,7 +171,7 @@ impl<'a> ScrapePipeline<'a> {
 
         if actors_in_region.is_empty() {
             info!("No actors in region — running actor discovery");
-            let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
+            let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                 &self.writer,
                 self.archive.clone(),
                 &self.anthropic_api_key,
