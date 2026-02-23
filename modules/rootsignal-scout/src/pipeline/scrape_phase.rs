@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -53,6 +53,8 @@ pub(crate) struct RunContext {
     /// a known actor via HAS_ACCOUNT, its context is stored here for location
     /// fallback during signal extraction.
     pub actor_contexts: HashMap<String, ActorContext>,
+    /// RSS/Atom pub_date keyed by article URL, used as fallback content_date.
+    pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
     /// Mentions collected during scraping: (platform, handle, mentioned_by_source).
     pub collected_mentions: Vec<(SocialPlatform, String, String)>,
 }
@@ -76,6 +78,7 @@ impl RunContext {
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
             actor_contexts: HashMap::new(),
+            url_to_pub_date: HashMap::new(),
             collected_mentions: Vec::new(),
         }
     }
@@ -346,6 +349,9 @@ impl ScrapePhase {
                                 ctx.url_to_canonical_key
                                     .entry(item.url.clone())
                                     .or_insert_with(|| source.canonical_key.clone());
+                                if let Some(pub_date) = item.pub_date {
+                                    ctx.url_to_pub_date.insert(item.url.clone(), pub_date);
+                                }
                                 phase_urls.push(item.url);
                             }
                         }
@@ -468,7 +474,7 @@ impl ScrapePhase {
             match outcome {
                 ScrapeOutcome::New {
                     content,
-                    nodes,
+                    mut nodes,
                     resource_tags,
                     signal_tags,
                 } => {
@@ -498,6 +504,17 @@ impl ScrapePhase {
                         signals_extracted: nodes.len() as u32,
                         implied_queries: implied_q_count,
                     });
+
+                    // Apply RSS/Atom pub_date as fallback content_date
+                    if let Some(pub_date) = ctx.url_to_pub_date.get(&url) {
+                        for node in &mut nodes {
+                            if let Some(meta) = node.meta_mut() {
+                                if meta.content_date.is_none() {
+                                    meta.content_date = Some(*pub_date);
+                                }
+                            }
+                        }
+                    }
 
                     let signal_count_before = ctx.stats.signals_stored;
                     match self
@@ -561,7 +578,8 @@ impl ScrapePhase {
             Vec<(Uuid, Vec<String>)>,
             usize,
             Vec<String>,
-        )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, post_count, mentions)
+            Option<DateTime<Utc>>, // most recent published_at for content_date fallback
+        )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, post_count, mentions, newest_published_at)
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
         struct SocialEntry {
@@ -721,6 +739,11 @@ impl ScrapePhase {
                 };
                 let post_count = posts.len();
 
+                // Find the most recent published_at for content_date fallback
+                let newest_published_at = posts.iter()
+                    .filter_map(|p| p.published_at)
+                    .max();
+
                 // Collect @mentions from posts
                 let source_mentions: Vec<String> = posts.iter()
                     .flat_map(|p| p.mentions.iter().cloned())
@@ -785,6 +808,7 @@ impl ScrapePhase {
                         all_signal_tags,
                         post_count,
                         source_mentions,
+                        newest_published_at,
                     ))
                 } else {
                     // Instagram/Facebook/Twitter/TikTok: combine all posts then extract
@@ -822,6 +846,7 @@ impl ScrapePhase {
                         result.signal_tags,
                         post_count,
                         source_mentions,
+                        newest_published_at,
                     ))
                 }
             }));
@@ -837,12 +862,24 @@ impl ScrapePhase {
                 source_url,
                 result_platform,
                 combined_text,
-                nodes,
+                mut nodes,
                 resource_tags,
                 signal_tags,
                 post_count,
                 mentions,
+                newest_published_at,
             ) = result;
+
+            // Apply social published_at as fallback content_date when LLM didn't extract one
+            if let Some(pub_at) = newest_published_at {
+                for node in &mut nodes {
+                    if let Some(meta) = node.meta_mut() {
+                        if meta.content_date.is_none() {
+                            meta.content_date = Some(pub_at);
+                        }
+                    }
+                }
+            }
 
             // Accumulate mentions for promotion (capped per source)
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {

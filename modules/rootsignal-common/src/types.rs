@@ -235,6 +235,10 @@ pub struct NodeMeta {
     pub location_name: Option<String>,
     pub source_url: String,
     pub extracted_at: DateTime<Utc>,
+    /// When the content was actually published/updated (from LLM extraction, RSS pub_date, or social published_at).
+    /// Falls back to `extracted_at` when unavailable.
+    #[serde(default)]
+    pub content_date: Option<DateTime<Utc>>,
     pub last_confirmed_active: DateTime<Utc>,
     /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
     pub source_diversity: u32,
