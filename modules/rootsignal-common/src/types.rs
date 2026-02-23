@@ -1103,6 +1103,39 @@ pub struct SourceNode {
 }
 
 impl SourceNode {
+    /// Create a new SourceNode with sensible defaults for bookkeeping fields.
+    pub fn new(
+        canonical_key: String,
+        canonical_value: String,
+        url: Option<String>,
+        discovery_method: DiscoveryMethod,
+        weight: f64,
+        source_role: SourceRole,
+        gap_context: Option<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            canonical_key,
+            canonical_value,
+            url,
+            discovery_method,
+            created_at: Utc::now(),
+            last_scraped: None,
+            last_produced_signal: None,
+            signals_produced: 0,
+            signals_corroborated: 0,
+            consecutive_empty_runs: 0,
+            active: true,
+            gap_context,
+            weight,
+            cadence_hours: None,
+            avg_signals_per_scrape: 0.0,
+            quality_penalty: 1.0,
+            source_role,
+            scrape_count: 0,
+        }
+    }
+
     /// Returns the source's primary value: the URL if present, otherwise the canonical_value.
     /// This is the single source of truth for "what is this source."
     pub fn value(&self) -> &str {

@@ -688,7 +688,7 @@ impl MutationRoot {
                     return;
                 }
             };
-            let scanner = rootsignal_scout::news_scanner::NewsScanner::new(
+            let scanner = rootsignal_scout::enrichment::news_scanner::NewsScanner::new(
                 archive,
                 &config_clone.anthropic_api_key,
                 writer,

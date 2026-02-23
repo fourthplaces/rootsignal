@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -49,31 +48,18 @@ impl<'a> Bootstrapper<'a> {
 
         // Step 2: Create WebQuery source nodes for each query
         let mut sources_created = 0u32;
-        let now = Utc::now();
         for (query, role) in &queries {
             let cv = query.clone();
             let ck = sources::make_canonical_key(&cv);
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck,
-                canonical_value: cv,
-                url: None,
-                discovery_method: DiscoveryMethod::ColdStart,
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: None,
-                weight: 0.5,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: role.clone(),
-                scrape_count: 0,
-            };
+            let source = SourceNode::new(
+                ck,
+                cv,
+                None,
+                DiscoveryMethod::ColdStart,
+                0.5,
+                role.clone(),
+                None,
+            );
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
@@ -271,57 +257,32 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         let _slug = &self.region.name;
         let region_name = &self.region.name;
         let region_name_encoded = region_name.replace(' ', "+");
-        let now = Utc::now();
 
         let make_url = |url: &str, role: SourceRole| {
             let ck = sources::make_canonical_key(url);
             let cv = rootsignal_common::canonical_value(url);
-            SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck,
-                canonical_value: cv,
-                url: Some(url.to_string()),
-                discovery_method: DiscoveryMethod::ColdStart,
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: None,
-                weight: 0.5,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: role,
-                scrape_count: 0,
-            }
+            SourceNode::new(
+                ck,
+                cv,
+                Some(url.to_string()),
+                DiscoveryMethod::ColdStart,
+                0.5,
+                role,
+                None,
+            )
         };
 
         let make_query = |query: &str, role: SourceRole| {
             let ck = sources::make_canonical_key(query);
-            SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck,
-                canonical_value: query.to_string(),
-                url: None,
-                discovery_method: DiscoveryMethod::ColdStart,
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: None,
-                weight: 0.5,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: role,
-                scrape_count: 0,
-            }
+            SourceNode::new(
+                ck,
+                query.to_string(),
+                None,
+                DiscoveryMethod::ColdStart,
+                0.5,
+                role,
+                None,
+            )
         };
 
         let mut sources = vec![
@@ -512,7 +473,6 @@ pub async fn tension_seed_queries(
 
     let region_name = &region.name;
     let mut all_sources = Vec::new();
-    let now = Utc::now();
 
     for (title, what_would_help) in &tensions {
         let help_text = what_would_help.as_deref().unwrap_or(title);
@@ -520,27 +480,15 @@ pub async fn tension_seed_queries(
 
         let cv = query.clone();
         let ck = sources::make_canonical_key(&cv);
-        all_sources.push(SourceNode {
-            id: Uuid::new_v4(),
-            canonical_key: ck,
-            canonical_value: cv,
-            url: None,
-            discovery_method: DiscoveryMethod::TensionSeed,
-            created_at: now,
-            last_scraped: None,
-            last_produced_signal: None,
-            signals_produced: 0,
-            signals_corroborated: 0,
-            consecutive_empty_runs: 0,
-            active: true,
-            gap_context: Some(format!("Tension: {title}")),
-            weight: 0.5,
-            cadence_hours: None,
-            avg_signals_per_scrape: 0.0,
-            quality_penalty: 1.0,
-            source_role: SourceRole::Response,
-            scrape_count: 0,
-        });
+        all_sources.push(SourceNode::new(
+            ck,
+            cv,
+            None,
+            DiscoveryMethod::TensionSeed,
+            0.5,
+            SourceRole::Response,
+            Some(format!("Tension: {title}")),
+        ));
     }
 
     info!(

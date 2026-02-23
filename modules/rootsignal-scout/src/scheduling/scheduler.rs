@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use tracing::info;
 
-use rootsignal_common::{is_web_query, SourceNode, SourceRole};
+use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 
 /// Determines which sources to scrape this run based on weight, cadence, and exploration policy.
 pub struct SourceScheduler {
@@ -197,23 +197,43 @@ pub fn cadence_hours_for_weight(weight: f64) -> u32 {
 /// - 2 empties: 2x
 /// - 3 empties: 4x
 /// - 4 empties: 8x
-/// - 5+ empties: dormant (u32::MAX — only resurrected via cold tier scheduling)
-pub fn cadence_hours_with_backoff(weight: f64, consecutive_empty_runs: u32) -> u32 {
+/// - dormancy threshold+: dormant (u32::MAX — only resurrected via cold tier scheduling)
+///
+/// SocialGraphFollow sources use a lower dormancy threshold (3 empty runs)
+/// since they're speculative and should be pruned faster.
+pub fn cadence_hours_with_backoff(
+    weight: f64,
+    consecutive_empty_runs: u32,
+    method: &DiscoveryMethod,
+) -> u32 {
     let base = cadence_hours_for_weight(weight);
+    let threshold = dormancy_threshold(method);
+    if consecutive_empty_runs >= threshold {
+        return u32::MAX; // Dormant
+    }
     let multiplier = match consecutive_empty_runs {
         0..=1 => 1,
         2 => 2,
         3 => 4,
         4 => 8,
-        _ => return u32::MAX, // Dormant
+        _ => return u32::MAX,
     };
     base.saturating_mul(multiplier)
 }
 
-/// Returns true if a web query source should be considered dormant
+/// Number of consecutive empty runs before a source goes dormant.
+/// SocialGraphFollow sources are speculative — they go dormant faster.
+pub fn dormancy_threshold(method: &DiscoveryMethod) -> u32 {
+    match method {
+        DiscoveryMethod::SocialGraphFollow => 3,
+        _ => 5,
+    }
+}
+
+/// Returns true if a source should be considered dormant
 /// (only eligible for resurrection via cold-tier scheduling).
-pub fn is_dormant(consecutive_empty_runs: u32) -> bool {
-    consecutive_empty_runs >= 5
+pub fn is_dormant(consecutive_empty_runs: u32, method: &DiscoveryMethod) -> bool {
+    consecutive_empty_runs >= dormancy_threshold(method)
 }
 
 // =============================================================================
@@ -270,7 +290,7 @@ pub fn schedule_web_queries(
     let mut cold_pool: Vec<&SourceNode> = Vec::new();
 
     for s in &web_queries {
-        if s.last_scraped.is_none() || is_dormant(s.consecutive_empty_runs) {
+        if s.last_scraped.is_none() || is_dormant(s.consecutive_empty_runs, &s.discovery_method) {
             cold_pool.push(s);
         } else {
             let tension_heat = extract_heat_from_gap_context(s.gap_context.as_deref());
@@ -714,46 +734,58 @@ mod tests {
     #[test]
     fn backoff_no_penalty_for_first_empty() {
         let base = cadence_hours_for_weight(0.5); // 72
-        let with_backoff = cadence_hours_with_backoff(0.5, 0);
+        let default = &DiscoveryMethod::GapAnalysis;
+        let with_backoff = cadence_hours_with_backoff(0.5, 0, default);
         assert_eq!(base, with_backoff, "0 empties: no backoff");
-        let with_backoff = cadence_hours_with_backoff(0.5, 1);
+        let with_backoff = cadence_hours_with_backoff(0.5, 1, default);
         assert_eq!(base, with_backoff, "1 empty: no backoff yet");
     }
 
     #[test]
     fn backoff_doubles_at_two_empties() {
         let base = cadence_hours_for_weight(0.5); // 72
-        let with_backoff = cadence_hours_with_backoff(0.5, 2);
+        let with_backoff = cadence_hours_with_backoff(0.5, 2, &DiscoveryMethod::GapAnalysis);
         assert_eq!(with_backoff, base * 2, "2 empties: 2x");
     }
 
     #[test]
     fn backoff_quadruples_at_three_empties() {
         let base = cadence_hours_for_weight(0.5); // 72
-        let with_backoff = cadence_hours_with_backoff(0.5, 3);
+        let with_backoff = cadence_hours_with_backoff(0.5, 3, &DiscoveryMethod::GapAnalysis);
         assert_eq!(with_backoff, base * 4, "3 empties: 4x");
     }
 
     #[test]
     fn backoff_8x_at_four_empties() {
         let base = cadence_hours_for_weight(0.5); // 72
-        let with_backoff = cadence_hours_with_backoff(0.5, 4);
+        let with_backoff = cadence_hours_with_backoff(0.5, 4, &DiscoveryMethod::GapAnalysis);
         assert_eq!(with_backoff, base * 8, "4 empties: 8x");
     }
 
     #[test]
     fn backoff_dormant_at_five_empties() {
-        let cadence = cadence_hours_with_backoff(0.9, 5);
+        let default = &DiscoveryMethod::GapAnalysis;
+        let cadence = cadence_hours_with_backoff(0.9, 5, default);
         assert_eq!(cadence, u32::MAX, "5+ empties: dormant");
-        let cadence = cadence_hours_with_backoff(0.3, 10);
+        let cadence = cadence_hours_with_backoff(0.3, 10, default);
         assert_eq!(cadence, u32::MAX, "10 empties: still dormant");
     }
 
     #[test]
     fn is_dormant_threshold() {
-        assert!(!is_dormant(4));
-        assert!(is_dormant(5));
-        assert!(is_dormant(10));
+        let default = &DiscoveryMethod::GapAnalysis;
+        assert!(!is_dormant(4, default));
+        assert!(is_dormant(5, default));
+        assert!(is_dormant(10, default));
+    }
+
+    #[test]
+    fn social_graph_follow_dormant_at_three() {
+        let sgf = &DiscoveryMethod::SocialGraphFollow;
+        assert!(!is_dormant(2, sgf));
+        assert!(is_dormant(3, sgf));
+        let cadence = cadence_hours_with_backoff(0.5, 3, sgf);
+        assert_eq!(cadence, u32::MAX, "SocialGraphFollow: dormant at 3 empties");
     }
 
     // --- Web Query Tiered Scheduling ---

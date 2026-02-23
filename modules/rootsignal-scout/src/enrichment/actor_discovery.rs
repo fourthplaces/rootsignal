@@ -159,25 +159,16 @@ pub async fn create_actor_from_page(
     for (_, _, social_url) in &social_links {
         let cv = rootsignal_common::canonical_value(social_url);
         let source = SourceNode {
-            id: Uuid::new_v4(),
-            canonical_key: cv.clone(),
-            canonical_value: cv.clone(),
-            url: Some(social_url.clone()),
-            discovery_method: DiscoveryMethod::ActorAccount,
-            created_at: chrono::Utc::now(),
-            last_scraped: None,
-            last_produced_signal: None,
-            signals_produced: 0,
-            signals_corroborated: 0,
-            consecutive_empty_runs: 0,
-            active: true,
-            gap_context: Some(format!("Actor account: {name}")),
-            weight: 0.7,
             cadence_hours: Some(12),
-            avg_signals_per_scrape: 0.0,
-            quality_penalty: 1.0,
-            source_role: SourceRole::Mixed,
-            scrape_count: 0,
+            ..SourceNode::new(
+                cv.clone(),
+                cv.clone(),
+                Some(social_url.clone()),
+                DiscoveryMethod::ActorAccount,
+                0.7,
+                SourceRole::Mixed,
+                Some(format!("Actor account: {name}")),
+            )
         };
         if let Err(e) = writer.upsert_source(&source).await {
             warn!(error = %e, "Failed to create actor source");

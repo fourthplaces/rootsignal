@@ -116,7 +116,7 @@ async fn run_scrape_from_deps(
     let budget = crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    let pipeline = crate::scout::ScrapePipeline::new(
+    let pipeline = crate::pipeline::scrape_pipeline::ScrapePipeline::new(
         writer,
         extractor,
         embedder,
@@ -129,7 +129,7 @@ async fn run_scrape_from_deps(
         deps.pg_pool.clone(),
     );
 
-    let mut run_log = crate::run_log::RunLog::new(run_id, scope.name.clone());
+    let mut run_log = crate::infra::run_log::RunLog::new(run_id, scope.name.clone());
 
     let _ = status.send("Reaping expired signals...".into());
     pipeline.reap_expired_signals(&mut run_log).await;
