@@ -681,6 +681,107 @@ impl SignalExtractor for MockExtractor {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+/// Create a Tension node with just a title (no location).
+pub fn tension(title: &str) -> Node {
+    use rootsignal_common::types::{Severity, TensionNode, NodeMeta};
+    use rootsignal_common::safety::SensitivityLevel;
+    Node::Tension(TensionNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        severity: Severity::Medium,
+        category: None,
+        what_would_help: None,
+    })
+}
+
+/// Create a Tension node with a title and geographic coordinates.
+pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
+    use rootsignal_common::types::{Severity, TensionNode, NodeMeta, GeoPoint};
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::GeoPrecision;
+    Node::Tension(TensionNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        severity: Severity::Medium,
+        category: None,
+        what_would_help: None,
+    })
+}
+
+/// Create a Need node with just a title (no location).
+pub fn need(title: &str) -> Node {
+    use rootsignal_common::types::{Urgency, NeedNode, NodeMeta};
+    use rootsignal_common::safety::SensitivityLevel;
+    Node::Need(NeedNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        urgency: Urgency::Medium,
+        what_needed: None,
+        action_url: None,
+        goal: None,
+    })
+}
+
 /// Create a Minneapolis-area ScoutScope for testing.
 pub fn mpls_region() -> ScoutScope {
     ScoutScope {

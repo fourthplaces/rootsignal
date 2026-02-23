@@ -41,7 +41,11 @@ rand = "0.9"
 futures = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 
+[features]
+test-support = []
+
 [dev-dependencies]
+rootsignal-scout = { path = ".", features = ["test-support"] }
 rootsignal-graph = { workspace = true, features = ["test-utils"] }
 simweb = { workspace = true }
 testcontainers = { workspace = true }
