@@ -47,15 +47,17 @@ impl fmt::Display for WorkflowPhase {
 // Requests
 // ---------------------------------------------------------------------------
 
-/// Input for workflows that operate on a region.
+/// Input for workflows that operate on a specific task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegionRequest {
+pub struct TaskRequest {
+    pub task_id: String,
     pub scope: ScoutScope,
 }
 
 /// Input for workflows that receive a running budget total.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetedRegionRequest {
+pub struct BudgetedTaskRequest {
+    pub task_id: String,
     pub scope: ScoutScope,
     /// Cumulative cents spent by prior workflows in the pipeline.
     pub spent_cents: u64,
@@ -179,8 +181,8 @@ pub struct DiscoverActorsBatchResult {
 // Restate serde impls
 // ---------------------------------------------------------------------------
 
-crate::impl_restate_serde!(RegionRequest);
-crate::impl_restate_serde!(BudgetedRegionRequest);
+crate::impl_restate_serde!(TaskRequest);
+crate::impl_restate_serde!(BudgetedTaskRequest);
 crate::impl_restate_serde!(EmptyRequest);
 crate::impl_restate_serde!(BootstrapResult);
 crate::impl_restate_serde!(ActorDiscoveryResult);

@@ -256,9 +256,9 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a location query. Geocodes on backend, dispatches via Restate.
+    /// Run scout for a task. Loads task by ID, derives scope, dispatches via Restate.
     #[graphql(guard = "AdminGuard")]
-    async fn run_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
+    async fn run_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
 
         // Check API keys
@@ -272,41 +272,48 @@ impl MutationRoot {
             });
         }
 
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let restate = require_restate(ctx)?;
 
-        // Geocode the query
-        let (lat, lng, display_name) = geocode_location(&query)
+        // Load the task
+        let task = writer
+            .get_scout_task(&task_id)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load task: {e}")))?
+            .ok_or_else(|| async_graphql::Error::new(format!("Scout task {task_id} not found")))?;
 
-        let slug = rootsignal_common::slugify(&query);
+        // Concurrency guard: reject if another task for the same region is already running
+        let running = writer
+            .is_region_task_running(&task.context)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to check running status: {e}")))?;
+        if running {
+            return Ok(ScoutResult {
+                success: false,
+                message: Some("Another task for this region is already running".to_string()),
+            });
+        }
 
-        let scope = ScoutScope {
-            center_lat: lat,
-            center_lng: lng,
-            radius_km: 30.0,
-            name: display_name.clone(),
-            geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
-        };
+        let scope = ScoutScope::from(&task);
 
         restate
-            .run_scout(&slug, &scope)
+            .run_scout(&task_id, &scope)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(ScoutResult {
             success: true,
-            message: Some(format!("Scout started via Restate for {display_name}")),
+            message: Some(format!("Scout started via Restate for {}", task.context)),
         })
     }
 
-    /// Run an individual scout workflow phase for a location query.
+    /// Run an individual scout workflow phase for a task.
     #[graphql(guard = "AdminGuard")]
     async fn run_scout_phase(
         &self,
         ctx: &Context<'_>,
         phase: super::types::ScoutPhase,
-        query: String,
+        task_id: String,
     ) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
 
@@ -320,46 +327,51 @@ impl MutationRoot {
             });
         }
 
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let restate = require_restate(ctx)?;
         let restate_phase: crate::restate_client::ScoutPhase = phase.into();
 
-        // Geocode the query
-        let (lat, lng, display_name) = geocode_location(&query)
+        // Load the task
+        let task = writer
+            .get_scout_task(&task_id)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load task: {e}")))?
+            .ok_or_else(|| async_graphql::Error::new(format!("Scout task {task_id} not found")))?;
 
-        let slug = rootsignal_common::slugify(&query);
+        // Concurrency guard
+        let running = writer
+            .is_region_task_running(&task.context)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to check running status: {e}")))?;
+        if running {
+            return Ok(ScoutResult {
+                success: false,
+                message: Some("Another task for this region is already running".to_string()),
+            });
+        }
 
-        let scope = ScoutScope {
-            center_lat: lat,
-            center_lng: lng,
-            radius_km: 30.0,
-            name: display_name.clone(),
-            geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
-        };
+        let scope = ScoutScope::from(&task);
 
         restate
-            .run_phase(restate_phase, &slug, &scope)
+            .run_phase(restate_phase, &task_id, &scope)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(ScoutResult {
             success: true,
-            message: Some(format!("{:?} started via Restate for {display_name}", phase)),
+            message: Some(format!("{:?} started via Restate for {}", phase, task.context)),
         })
     }
 
     /// Stop a running scout workflow via Restate cancellation.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
+    async fn stop_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let restate = require_restate(ctx)?;
 
-        let slug = rootsignal_common::slugify(&query);
-
-        match restate.cancel_scout(&slug).await {
+        match restate.cancel_scout(&task_id).await {
             Ok(()) => Ok(ScoutResult {
                 success: true,
-                message: Some(format!("Cancel signal sent for {slug}")),
+                message: Some(format!("Cancel signal sent for task {task_id}")),
             }),
             Err(crate::restate_client::RestateError::Ingress { status, body }) => {
                 warn!(status, body = %body, "Restate cancel failed");
@@ -372,14 +384,13 @@ impl MutationRoot {
         }
     }
 
-    /// Reset a stuck scout run status to idle.
+    /// Reset a stuck scout task status to idle.
     #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_status(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
+    async fn reset_scout_status(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let slug = rootsignal_common::slugify(&query);
-        info!(slug = slug.as_str(), "Scout status reset requested");
+        info!(task_id = task_id.as_str(), "Scout status reset requested");
         writer
-            .reset_region_run_status(&slug)
+            .reset_task_phase_status(&task_id)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to reset status: {e}")))?;
         Ok(ScoutResult {
@@ -583,6 +594,7 @@ impl MutationRoot {
             priority: priority.unwrap_or(1.0),
             source: rootsignal_common::ScoutTaskSource::Manual,
             status: rootsignal_common::ScoutTaskStatus::Pending,
+            phase_status: "idle".to_string(),
             created_at: chrono::Utc::now(),
             completed_at: None,
         };

@@ -10,13 +10,13 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
-use super::types::{EmptyRequest, RegionRequest, SupervisorResult};
+use super::types::{EmptyRequest, TaskRequest, SupervisorResult};
 use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "SupervisorWorkflow"]
 pub trait SupervisorWorkflow {
-    async fn run(req: RegionRequest) -> Result<SupervisorResult, HandlerError>;
+    async fn run(req: TaskRequest) -> Result<SupervisorResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -35,16 +35,18 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: RegionRequest,
+        req: TaskRequest,
     ) -> Result<SupervisorResult, HandlerError> {
+        let task_id = req.task_id.clone();
+
         // Status transition guard (journaled so it's skipped on replay)
-        let slug = rootsignal_common::slugify(&req.scope.name);
+        let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
             let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
-                .transition_region_status(
-                    &slug,
+                .transition_task_phase_status(
+                    &tid,
                     &["situation_weaver_complete", "complete"],
                     "running_supervisor",
                 )
@@ -56,7 +58,6 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
             Ok(())
         })
         .await?;
-        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting supervisor...".to_string());
 
@@ -73,13 +74,12 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_phase_status(&self.deps, &slug, "idle").await;
+                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        let region_key = rootsignal_common::slugify(&req.scope.name);
-        super::write_phase_status(&self.deps, &region_key, "complete").await;
+        super::write_task_phase_status(&self.deps, &task_id, "complete").await;
 
         ctx.set(
             "status",

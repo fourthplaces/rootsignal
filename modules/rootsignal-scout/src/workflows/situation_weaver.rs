@@ -12,13 +12,13 @@ use rootsignal_graph::GraphWriter;
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
-use super::types::{BudgetedRegionRequest, EmptyRequest, SituationWeaverResult};
+use super::types::{BudgetedTaskRequest, EmptyRequest, SituationWeaverResult};
 use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "SituationWeaverWorkflow"]
 pub trait SituationWeaverWorkflow {
-    async fn run(req: BudgetedRegionRequest) -> Result<SituationWeaverResult, HandlerError>;
+    async fn run(req: BudgetedTaskRequest) -> Result<SituationWeaverResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -37,16 +37,18 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: BudgetedRegionRequest,
+        req: BudgetedTaskRequest,
     ) -> Result<SituationWeaverResult, HandlerError> {
+        let task_id = req.task_id.clone();
+
         // Status transition guard (journaled so it's skipped on replay)
-        let slug = rootsignal_common::slugify(&req.scope.name);
+        let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
             let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
-                .transition_region_status(
-                    &slug,
+                .transition_task_phase_status(
+                    &tid,
                     &["synthesis_complete", "situation_weaver_complete", "complete"],
                     "running_situation_weaver",
                 )
@@ -58,7 +60,6 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
             Ok(())
         })
         .await?;
-        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting situation weaving...".to_string());
 
@@ -76,13 +77,12 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_phase_status(&self.deps, &slug, "idle").await;
+                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        let region_key = rootsignal_common::slugify(&req.scope.name);
-        super::write_phase_status(&self.deps, &region_key, "situation_weaver_complete").await;
+        super::write_task_phase_status(&self.deps, &task_id, "situation_weaver_complete").await;
 
         ctx.set("status", "Situation weaving complete".to_string());
         info!("SituationWeaverWorkflow complete");

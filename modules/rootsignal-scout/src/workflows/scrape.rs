@@ -12,13 +12,13 @@ use tracing::info;
 
 use rootsignal_graph::GraphWriter;
 
-use super::types::{EmptyRequest, RegionRequest, ScrapeResult};
+use super::types::{EmptyRequest, TaskRequest, ScrapeResult};
 use super::{create_archive, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "ScrapeWorkflow"]
 pub trait ScrapeWorkflow {
-    async fn run(req: RegionRequest) -> Result<ScrapeResult, HandlerError>;
+    async fn run(req: TaskRequest) -> Result<ScrapeResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -37,16 +37,18 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: RegionRequest,
+        req: TaskRequest,
     ) -> Result<ScrapeResult, HandlerError> {
+        let task_id = req.task_id.clone();
+
         // Status transition guard (journaled so it's skipped on replay)
-        let slug = rootsignal_common::slugify(&req.scope.name);
+        let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
             let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
-                .transition_region_status(
-                    &slug,
+                .transition_task_phase_status(
+                    &tid,
                     &[
                         "actor_discovery_complete", "scrape_complete", "synthesis_complete",
                         "situation_weaver_complete", "complete",
@@ -61,7 +63,6 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
             Ok(())
         })
         .await?;
-        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting scrape pipeline...".to_string());
 
@@ -78,13 +79,12 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_phase_status(&self.deps, &slug, "idle").await;
+                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        let region_key = rootsignal_common::slugify(&req.scope.name);
-        super::write_phase_status(&self.deps, &region_key, "scrape_complete").await;
+        super::write_task_phase_status(&self.deps, &task_id, "scrape_complete").await;
 
         ctx.set(
             "status",

@@ -34,8 +34,8 @@ export const ADD_SOURCE = gql`
 `;
 
 export const RUN_SCOUT = gql`
-  mutation RunScout($query: String!) {
-    runScout(query: $query) {
+  mutation RunScout($taskId: String!) {
+    runScout(taskId: $taskId) {
       success
       message
     }
@@ -43,8 +43,8 @@ export const RUN_SCOUT = gql`
 `;
 
 export const STOP_SCOUT = gql`
-  mutation StopScout {
-    stopScout {
+  mutation StopScout($taskId: String!) {
+    stopScout(taskId: $taskId) {
       success
       message
     }
@@ -52,8 +52,8 @@ export const STOP_SCOUT = gql`
 `;
 
 export const RESET_SCOUT_STATUS = gql`
-  mutation ResetScoutStatus($query: String!) {
-    resetScoutStatus(query: $query) {
+  mutation ResetScoutStatus($taskId: String!) {
+    resetScoutStatus(taskId: $taskId) {
       success
       message
     }
@@ -61,8 +61,8 @@ export const RESET_SCOUT_STATUS = gql`
 `;
 
 export const RUN_SCOUT_PHASE = gql`
-  mutation RunScoutPhase($phase: ScoutPhase!, $query: String!) {
-    runScoutPhase(phase: $phase, query: $query) {
+  mutation RunScoutPhase($phase: ScoutPhase!, $taskId: String!) {
+    runScoutPhase(phase: $phase, taskId: $taskId) {
       success
       message
     }

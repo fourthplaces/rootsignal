@@ -1061,20 +1061,20 @@ pub struct GqlScoutTask {
 }
 
 impl GqlScoutTask {
-    pub fn from_task(t: rootsignal_common::ScoutTask, phase_status: String) -> Self {
+    pub fn from_task(t: rootsignal_common::ScoutTask) -> Self {
         GqlScoutTask {
             id: t.id.to_string(),
             center_lat: t.center_lat,
             center_lng: t.center_lng,
             radius_km: t.radius_km,
-            context: t.context,
+            context: t.context.clone(),
             geo_terms: t.geo_terms,
             priority: t.priority,
             source: t.source.to_string(),
             status: t.status.to_string(),
             created_at: t.created_at.to_rfc3339(),
             completed_at: t.completed_at.map(|dt| dt.to_rfc3339()),
-            phase_status,
+            phase_status: t.phase_status,
         }
     }
 }

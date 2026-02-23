@@ -118,13 +118,13 @@ impl SupervisorState {
         Ok(())
     }
 
-    /// Check if any scout is currently running (RegionScoutRun with running_* status).
+    /// Check if any scout task is currently running (ScoutTask with running_* phase_status).
     pub async fn is_scout_running(&self) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "MATCH (r:RegionScoutRun) \
-             WHERE r.status STARTS WITH 'running_' \
-               AND r.updated_at >= datetime() - duration('PT30M') \
-             RETURN count(r) > 0 AS running"
+            "MATCH (t:ScoutTask) \
+             WHERE t.phase_status STARTS WITH 'running_' \
+               AND t.phase_status_updated_at >= datetime() - duration('PT30M') \
+             RETURN count(t) > 0 AS running"
         );
         let mut stream = self.client.inner().execute(q).await?;
         if let Some(row) = stream.next().await? {

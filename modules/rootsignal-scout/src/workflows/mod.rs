@@ -98,12 +98,12 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
 // Workflow helpers — shared across all 7 workflows
 // ---------------------------------------------------------------------------
 
-/// Write phase status to the Neo4j RegionScoutRun node.
+/// Write phase status to the ScoutTask node.
 /// Called by individual workflows to persist completion status for the admin UI.
-pub async fn write_phase_status(deps: &ScoutDeps, region: &str, status: &str) {
+pub async fn write_task_phase_status(deps: &ScoutDeps, task_id: &str, status: &str) {
     let writer = rootsignal_graph::GraphWriter::new(deps.graph_client.clone());
-    if let Err(e) = writer.set_region_run_status(region, status).await {
-        tracing::warn!(%e, region, status, "Failed to write phase status to graph");
+    if let Err(e) = writer.set_task_phase_status(task_id, status).await {
+        tracing::warn!(%e, task_id, status, "Failed to write task phase status to graph");
     }
 }
 

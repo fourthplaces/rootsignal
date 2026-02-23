@@ -53,7 +53,6 @@ export const ADMIN_DASHBOARD = gql`
         lastScouted
         sourcesDue
         running
-        phaseStatus
       }
       signalVolumeByDay {
         day

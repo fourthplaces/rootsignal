@@ -13,13 +13,13 @@ use rootsignal_graph::{GraphWriter, SimilarityBuilder};
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
-use super::types::{BudgetedRegionRequest, EmptyRequest, SynthesisResult};
+use super::types::{BudgetedTaskRequest, EmptyRequest, SynthesisResult};
 use super::{create_archive, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "SynthesisWorkflow"]
 pub trait SynthesisWorkflow {
-    async fn run(req: BudgetedRegionRequest) -> Result<SynthesisResult, HandlerError>;
+    async fn run(req: BudgetedTaskRequest) -> Result<SynthesisResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -38,16 +38,18 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: BudgetedRegionRequest,
+        req: BudgetedTaskRequest,
     ) -> Result<SynthesisResult, HandlerError> {
+        let task_id = req.task_id.clone();
+
         // Status transition guard (journaled so it's skipped on replay)
-        let slug = rootsignal_common::slugify(&req.scope.name);
+        let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
             let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
-                .transition_region_status(
-                    &slug,
+                .transition_task_phase_status(
+                    &tid,
                     &[
                         "scrape_complete", "synthesis_complete",
                         "situation_weaver_complete", "complete",
@@ -62,7 +64,6 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
             Ok(())
         })
         .await?;
-        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting synthesis...".to_string());
 
@@ -80,13 +81,12 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_phase_status(&self.deps, &slug, "idle").await;
+                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        let region_key = rootsignal_common::slugify(&req.scope.name);
-        super::write_phase_status(&self.deps, &region_key, "synthesis_complete").await;
+        super::write_task_phase_status(&self.deps, &task_id, "synthesis_complete").await;
 
         ctx.set("status", "Synthesis complete".to_string());
         info!("SynthesisWorkflow complete");

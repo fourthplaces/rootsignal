@@ -270,8 +270,22 @@ async fn main() -> Result<()> {
         }
 
         tokio::spawn(async move {
+            let addr: std::net::SocketAddr = restate_addr.parse().expect("Invalid Restate address");
+            let listener = loop {
+                match tokio::net::TcpListener::bind(addr).await {
+                    Ok(l) => break l,
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                        tracing::warn!("Restate port {addr} in use, retrying in 3s");
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Restate endpoint failed to bind {addr}: {e}");
+                        return;
+                    }
+                }
+            };
             restate_sdk::http_server::HttpServer::new(endpoint)
-                .listen_and_serve(restate_addr.parse().expect("Invalid Restate address"))
+                .serve(listener)
                 .await;
         });
     }

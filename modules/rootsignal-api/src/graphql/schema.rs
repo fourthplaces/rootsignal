@@ -397,8 +397,7 @@ impl QueryRoot {
             gap_stats,
             sources,
             due_sources,
-            scout_running,
-            phase_status,
+            region_running,
         ) = tokio::join!(
             reader.total_count(),
             reader.story_count(),
@@ -415,8 +414,7 @@ impl QueryRoot {
             writer.get_gap_type_stats(),
             writer.get_active_sources(),
             writer.count_due_sources(),
-            writer.is_scout_running(&region),
-            writer.get_region_run_status(&region),
+            writer.is_region_task_running(&region),
         );
 
         let sources = sources.unwrap_or_default();
@@ -427,8 +425,7 @@ impl QueryRoot {
             region_slug: region.clone(),
             last_scouted: None,
             sources_due: due_sources.unwrap_or(0),
-            running: scout_running.unwrap_or(false),
-            phase_status: phase_status.unwrap_or_else(|_| "idle".to_string()),
+            running: region_running.unwrap_or(false),
         }];
 
         let by_type = by_type.unwrap_or_default();
@@ -589,10 +586,9 @@ impl QueryRoot {
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let (running, due, phase_status) = tokio::join!(
-            writer.is_scout_running(&region_slug),
+        let (running, due) = tokio::join!(
+            writer.is_region_task_running(&region_slug),
             writer.count_due_sources(),
-            writer.get_region_run_status(&region_slug),
         );
 
         Ok(RegionScoutStatus {
@@ -601,7 +597,6 @@ impl QueryRoot {
             last_scouted: None,
             sources_due: due.unwrap_or(0),
             running: running.unwrap_or(false),
-            phase_status: phase_status.unwrap_or_else(|_| "idle".to_string()),
         })
     }
 
@@ -719,28 +714,9 @@ impl QueryRoot {
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
 
-        // Collect unique region slugs and batch-fetch their phase statuses
-        let slugs: std::collections::HashSet<String> = tasks
-            .iter()
-            .map(|t| rootsignal_common::slugify(&t.context))
-            .collect();
-
-        let mut status_map = std::collections::HashMap::new();
-        for slug in slugs {
-            let ps = writer
-                .get_region_run_status(&slug)
-                .await
-                .unwrap_or_else(|_| "idle".to_string());
-            status_map.insert(slug, ps);
-        }
-
         Ok(tasks
             .into_iter()
-            .map(|t| {
-                let slug = rootsignal_common::slugify(&t.context);
-                let ps = status_map.get(&slug).cloned().unwrap_or_else(|| "idle".to_string());
-                GqlScoutTask::from_task(t, ps)
-            })
+            .map(GqlScoutTask::from_task)
             .collect())
     }
 
@@ -1081,8 +1057,6 @@ pub struct RegionScoutStatus {
     pub last_scouted: Option<DateTime<Utc>>,
     pub sources_due: u32,
     pub running: bool,
-    /// Current phase status: "idle", "bootstrap_complete", "running_scrape", etc.
-    pub phase_status: String,
 }
 
 #[derive(SimpleObject)]

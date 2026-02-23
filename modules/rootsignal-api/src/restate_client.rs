@@ -64,13 +64,13 @@ impl RestateClient {
         }
     }
 
-    /// Start a `FullScoutRunWorkflow` for the given region slug.
-    pub async fn run_scout(&self, slug: &str, scope: &ScoutScope) -> Result<(), RestateError> {
-        let key = format!("{slug}-{}", chrono::Utc::now().timestamp());
-        let url = format!("{}/FullScoutRunWorkflow/{key}/run", self.ingress_url);
-        info!(url = url.as_str(), "Dispatching scout via Restate");
+    /// Start a `FullScoutRunWorkflow` for the given task.
+    /// Restate key = task_id (UUID, inherently unique, one-shot).
+    pub async fn run_scout(&self, task_id: &str, scope: &ScoutScope) -> Result<(), RestateError> {
+        let url = format!("{}/FullScoutRunWorkflow/{task_id}/run", self.ingress_url);
+        info!(url = url.as_str(), task_id, "Dispatching scout via Restate");
 
-        let body = serde_json::json!({ "scope": scope });
+        let body = serde_json::json!({ "task_id": task_id, "scope": scope });
         let resp = self.http.post(&url).json(&body).send().await?;
 
         if resp.status().is_success() {
@@ -83,23 +83,22 @@ impl RestateClient {
     }
 
     /// Dispatch an individual scout workflow phase via Restate ingress.
-    /// Uses a timestamped key to avoid collision with Full Run sub-workflows.
+    /// Restate key = task_id (different workflow types have separate key spaces).
     pub async fn run_phase(
         &self,
         phase: ScoutPhase,
-        slug: &str,
+        task_id: &str,
         scope: &ScoutScope,
     ) -> Result<(), RestateError> {
         let workflow_name = phase.workflow_name();
-        let key = format!("{slug}-{}", chrono::Utc::now().timestamp());
-        let url = format!("{}/{workflow_name}/{key}/run", self.ingress_url);
-        info!(url = url.as_str(), phase = ?phase, "Dispatching individual phase via Restate");
+        let url = format!("{}/{workflow_name}/{task_id}/run", self.ingress_url);
+        info!(url = url.as_str(), phase = ?phase, task_id, "Dispatching individual phase via Restate");
 
         let body = match phase {
             ScoutPhase::Synthesis | ScoutPhase::SituationWeaver => {
-                serde_json::json!({ "scope": scope, "spent_cents": 0u64 })
+                serde_json::json!({ "task_id": task_id, "scope": scope, "spent_cents": 0u64 })
             }
-            _ => serde_json::json!({ "scope": scope }),
+            _ => serde_json::json!({ "task_id": task_id, "scope": scope }),
         };
 
         let resp = self.http.post(&url).json(&body).send().await?;
@@ -212,12 +211,12 @@ impl RestateClient {
     }
 
     /// Cancel a running `FullScoutRunWorkflow`.
-    pub async fn cancel_scout(&self, slug: &str) -> Result<(), RestateError> {
+    pub async fn cancel_scout(&self, task_id: &str) -> Result<(), RestateError> {
         let url = format!(
-            "{}/restate/workflow/FullScoutRunWorkflow/{slug}/cancel",
+            "{}/restate/workflow/FullScoutRunWorkflow/{task_id}/cancel",
             self.ingress_url
         );
-        info!(url = url.as_str(), "Cancelling scout via Restate");
+        info!(url = url.as_str(), task_id, "Cancelling scout via Restate");
 
         let resp = self.http.delete(&url).send().await?;
 
