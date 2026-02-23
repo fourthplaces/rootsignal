@@ -5,7 +5,8 @@ import {
   ADMIN_SCOUT_RUNS,
   ADMIN_REGION_SOURCES,
   ADMIN_SCOUT_TASKS,
-  ADMIN_DASHBOARD,
+  SUPERVISOR_FINDINGS,
+  SUPERVISOR_SUMMARY,
 } from "@/graphql/queries";
 import {
   ADD_SOURCE,
@@ -14,13 +15,15 @@ import {
   RESET_SCOUT_STATUS,
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
+  DISMISS_FINDING,
 } from "@/graphql/mutations";
 
-type Tab = "runs" | "sources" | "tasks";
+type Tab = "runs" | "sources" | "tasks" | "findings";
 const TABS: { key: Tab; label: string }[] = [
   { key: "runs", label: "Runs" },
   { key: "sources", label: "Sources" },
   { key: "tasks", label: "Tasks" },
+  { key: "findings", label: "Findings" },
 ];
 
 type ScoutRunStats = {
@@ -49,6 +52,7 @@ type ScoutTask = {
   priority: number;
   source: string;
   status: string;
+  phaseStatus: string;
   createdAt: string;
   completedAt: string | null;
 };
@@ -192,13 +196,6 @@ export function ScoutPage() {
   // Phase selection state per task
   const [selectedPhase, setSelectedPhase] = useState<Record<string, ScoutPhaseValue>>({});
 
-  // Dashboard data for phase status (keyed by region slug)
-  const { data: dashData } = useQuery(ADMIN_DASHBOARD, {
-    variables: { region: "" },
-    skip: tab !== "tasks",
-  });
-  const phaseStatus: string = dashData?.adminDashboard?.scoutStatuses?.[0]?.phaseStatus ?? "idle";
-
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskLocation.trim()) return;
@@ -240,6 +237,59 @@ export function ScoutPage() {
   const handleResetStatus = async (context: string) => {
     await resetStatus({ variables: { query: context } });
     refetchTasks();
+  };
+
+  // --- Findings ---
+  const region = "twincities";
+  const [findingsStatusFilter, setFindingsStatusFilter] = useState<string | undefined>(undefined);
+  const [findingsSeverityFilter, setFindingsSeverityFilter] = useState<string | undefined>(undefined);
+  const [findingsTypeFilter, setFindingsTypeFilter] = useState<string | undefined>(undefined);
+  const { data: findingsSummaryData, refetch: refetchFindingsSummary } = useQuery(
+    SUPERVISOR_SUMMARY,
+    { variables: { region }, skip: tab !== "findings" },
+  );
+  const { data: findingsData, loading: findingsLoading, refetch: refetchFindings } = useQuery(
+    SUPERVISOR_FINDINGS,
+    { variables: { region, status: findingsStatusFilter, limit: 200 }, skip: tab !== "findings" },
+  );
+  const [dismissFinding] = useMutation(DISMISS_FINDING);
+
+  type Finding = {
+    id: string;
+    issueType: string;
+    severity: string;
+    targetId: string;
+    targetLabel: string;
+    description: string;
+    suggestedAction: string;
+    status: string;
+    createdAt: string;
+    resolvedAt: string | null;
+  };
+
+  const findingsSummary = findingsSummaryData?.supervisorSummary as
+    | { totalOpen: number; totalResolved: number; totalDismissed: number }
+    | undefined;
+  const findings: Finding[] = findingsData?.supervisorFindings ?? [];
+
+  const filteredFindings = findings.filter((f) => {
+    if (findingsSeverityFilter && f.severity !== findingsSeverityFilter) return false;
+    if (findingsTypeFilter && f.issueType !== findingsTypeFilter) return false;
+    return true;
+  });
+
+  const findingsIssueTypes = [...new Set(findings.map((f) => f.issueType))].sort();
+
+  const handleDismissFinding = async (id: string) => {
+    await dismissFinding({ variables: { id } });
+    refetchFindings();
+    refetchFindingsSummary();
+  };
+
+  const SEVERITY_COLORS: Record<string, string> = {
+    error: "bg-red-500/10 text-red-400 border-red-500/20",
+    warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    info: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   };
 
   return (
@@ -400,22 +450,7 @@ export function ScoutPage() {
       {tab === "tasks" && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-sm font-medium">Scout Tasks</h2>
-              <span
-                className={`text-xs px-2 py-0.5 rounded-full ${
-                  phaseStatus.startsWith("running_")
-                    ? "bg-green-900 text-green-300"
-                    : phaseStatus === "complete"
-                      ? "bg-secondary text-muted-foreground"
-                      : phaseStatus === "idle"
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-blue-500/10 text-blue-400"
-                }`}
-              >
-                {phaseStatusLabel(phaseStatus)}
-              </span>
-            </div>
+            <h2 className="text-sm font-medium">Scout Tasks</h2>
             <button
               onClick={() => setShowCreateTask(!showCreateTask)}
               className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
@@ -484,19 +519,34 @@ export function ScoutPage() {
                       <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
                       <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
                       <td className="px-4 py-2">
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full ${
-                            t.status === "pending"
-                              ? "bg-amber-500/10 text-amber-400"
-                              : t.status === "running"
-                                ? "bg-green-900 text-green-300"
-                                : t.status === "completed"
-                                  ? "bg-secondary text-muted-foreground"
-                                  : "bg-red-500/10 text-red-400"
-                          }`}
-                        >
-                          {t.status}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
+                              t.status === "pending"
+                                ? "bg-amber-500/10 text-amber-400"
+                                : t.status === "running"
+                                  ? "bg-green-900 text-green-300"
+                                  : t.status === "completed"
+                                    ? "bg-secondary text-muted-foreground"
+                                    : "bg-red-500/10 text-red-400"
+                            }`}
+                          >
+                            {t.status}
+                          </span>
+                          {t.phaseStatus !== "idle" && (
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded-full w-fit ${
+                                t.phaseStatus.startsWith("running_")
+                                  ? "bg-green-900 text-green-300"
+                                  : t.phaseStatus === "complete"
+                                    ? "bg-secondary text-muted-foreground"
+                                    : "bg-blue-500/10 text-blue-400"
+                              }`}
+                            >
+                              {phaseStatusLabel(t.phaseStatus)}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                         {formatDate(t.createdAt)}
@@ -519,7 +569,7 @@ export function ScoutPage() {
                                   <option
                                     key={p.value}
                                     value={p.value}
-                                    disabled={!phaseEnabled(p.value, phaseStatus)}
+                                    disabled={!phaseEnabled(p.value, t.phaseStatus)}
                                   >
                                     {p.label}
                                   </option>
@@ -555,6 +605,119 @@ export function ScoutPage() {
                             </>
                           )}
                         </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Findings tab */}
+      {tab === "findings" && (
+        <div className="space-y-4">
+          {/* Summary cards */}
+          {findingsSummary && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Open", value: findingsSummary.totalOpen },
+                { label: "Resolved", value: findingsSummary.totalResolved },
+                { label: "Dismissed", value: findingsSummary.totalDismissed },
+                { label: "Total", value: findingsSummary.totalOpen + findingsSummary.totalResolved + findingsSummary.totalDismissed },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-lg border border-border p-4">
+                  <p className="text-xs text-muted-foreground">{stat.label}</p>
+                  <p className="text-2xl font-semibold mt-1">{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Filters */}
+          <div className="flex gap-3">
+            <select
+              value={findingsStatusFilter ?? ""}
+              onChange={(e) => setFindingsStatusFilter(e.target.value || undefined)}
+              className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+            >
+              <option value="">All statuses</option>
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+            </select>
+            <select
+              value={findingsSeverityFilter ?? ""}
+              onChange={(e) => setFindingsSeverityFilter(e.target.value || undefined)}
+              className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+            >
+              <option value="">All severities</option>
+              <option value="error">Error</option>
+              <option value="warning">Warning</option>
+              <option value="info">Info</option>
+            </select>
+            <select
+              value={findingsTypeFilter ?? ""}
+              onChange={(e) => setFindingsTypeFilter(e.target.value || undefined)}
+              className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+            >
+              <option value="">All types</option>
+              {findingsIssueTypes.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Findings table */}
+          {findingsLoading ? (
+            <p className="text-muted-foreground">Loading findings...</p>
+          ) : filteredFindings.length === 0 ? (
+            <p className="text-muted-foreground">No findings match the current filters.</p>
+          ) : (
+            <div className="rounded-lg border border-border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    <th className="text-left px-4 py-2 font-medium">Severity</th>
+                    <th className="text-left px-4 py-2 font-medium">Type</th>
+                    <th className="text-left px-4 py-2 font-medium">Target</th>
+                    <th className="text-left px-4 py-2 font-medium">Description</th>
+                    <th className="text-left px-4 py-2 font-medium">Created</th>
+                    <th className="text-left px-4 py-2 font-medium">Status</th>
+                    <th className="text-right px-4 py-2 font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredFindings.map((f) => (
+                    <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                      <td className="px-4 py-2">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs border ${SEVERITY_COLORS[f.severity] ?? "bg-muted text-muted-foreground"}`}>
+                          {f.severity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground">{f.issueType}</td>
+                      <td className="px-4 py-2"><span className="font-medium">{f.targetLabel}</span></td>
+                      <td className="px-4 py-2 max-w-md truncate text-muted-foreground">{f.description}</td>
+                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{formatDate(f.createdAt)}</td>
+                      <td className="px-4 py-2">
+                        <span className={`text-xs ${
+                          f.status === "open" ? "text-amber-400"
+                            : f.status === "resolved" ? "text-green-400"
+                            : "text-muted-foreground"
+                        }`}>
+                          {f.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {f.status === "open" && (
+                          <button
+                            onClick={() => handleDismissFinding(f.id)}
+                            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                          >
+                            Dismiss
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -8,8 +8,6 @@ const navItems = [
   { to: "/", label: "Dashboard" },
   { to: "/scout", label: "Scout" },
   { to: "/archive", label: "Archive" },
-  { to: "/situations", label: "Situations" },
-  { to: "/findings", label: "Findings" },
 ];
 
 export function AdminLayout() {
