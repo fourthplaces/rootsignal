@@ -123,6 +123,7 @@ mod tests {
             location_name: Some("Powderhorn Park".to_string()),
             source_url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
+            content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,

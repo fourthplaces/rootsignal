@@ -46,6 +46,7 @@ fn test_meta(title: &str) -> NodeMeta {
         location_name: Some("Powderhorn Park, Minneapolis".into()),
         source_url: "https://example.com/test".into(),
         extracted_at: Utc::now(),
+        content_date: None,
         last_confirmed_active: Utc::now(),
         source_diversity: 1,
         external_ratio: 0.0,

@@ -142,6 +142,7 @@ fn convert_response(response: &ExtractionResponse, _source_url: &str) -> Extract
             location_name: signal.location_name.clone(),
             source_url: signal.source_url.clone().unwrap_or_default(),
             extracted_at: now,
+            content_date: None,
             last_confirmed_active: now,
             source_diversity: 1,
             external_ratio: 0.0,

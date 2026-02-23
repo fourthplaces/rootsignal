@@ -9,6 +9,7 @@ function getSignalFields(s: Record<string, unknown>) {
     title: s.title as string,
     confidence: s.confidence as number,
     extractedAt: s.extractedAt as string,
+    contentDate: (s.contentDate as string) ?? null,
     __typename: s.__typename as string,
   };
 }
@@ -32,7 +33,7 @@ export function SignalsPage() {
               <th className="pb-2 font-medium">Title</th>
               <th className="pb-2 font-medium">Type</th>
               <th className="pb-2 font-medium">Confidence</th>
-              <th className="pb-2 font-medium">Extracted</th>
+              <th className="pb-2 font-medium">Date</th>
             </tr>
           </thead>
           <tbody>
@@ -53,7 +54,7 @@ export function SignalsPage() {
                   </td>
                   <td className="py-2">{(s.confidence * 100).toFixed(0)}%</td>
                   <td className="py-2 text-muted-foreground">
-                    {new Date(s.extractedAt).toLocaleDateString()}
+                    {new Date(s.contentDate ?? s.extractedAt).toLocaleDateString()}
                   </td>
                 </tr>
               );

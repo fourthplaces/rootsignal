@@ -274,6 +274,9 @@ macro_rules! signal_meta_resolvers {
         async fn extracted_at(&self) -> DateTime<Utc> {
             self.meta().extracted_at
         }
+        async fn content_date(&self) -> Option<DateTime<Utc>> {
+            self.meta().content_date
+        }
         async fn source_diversity(&self) -> u32 {
             self.meta().source_diversity
         }
@@ -344,6 +347,7 @@ impl GqlGatheringSignal {
     async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
@@ -399,6 +403,7 @@ impl GqlAidSignal {
     async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
@@ -448,6 +453,7 @@ impl GqlNeedSignal {
     async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
@@ -500,6 +506,7 @@ impl GqlNoticeSignal {
     async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
@@ -552,6 +559,7 @@ impl GqlTensionSignal {
     async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
+    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }

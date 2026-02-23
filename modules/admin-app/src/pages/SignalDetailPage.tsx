@@ -19,7 +19,7 @@ export function SignalDetailPage() {
         <p className="text-sm text-muted-foreground mb-1">
           <span className="px-2 py-0.5 rounded-full bg-secondary">{typeName}</span>
           {" "}&middot; {(signal.confidence * 100).toFixed(0)}% confidence
-          {" "}&middot; {new Date(signal.extractedAt).toLocaleDateString()}
+          {" "}&middot; {new Date(signal.contentDate ?? signal.extractedAt).toLocaleDateString()}
         </p>
         <h1 className="text-xl font-semibold">{signal.title}</h1>
         <p className="mt-2 text-muted-foreground">{signal.summary}</p>

@@ -143,6 +143,7 @@ mod tests {
             location_name: location_name.map(|s| s.to_string()),
             source_url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
+            content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
