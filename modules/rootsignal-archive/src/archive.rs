@@ -128,8 +128,4 @@ impl Archive {
         self.source(query).await?.search(query).await
     }
 
-    /// Run database migrations.
-    pub async fn migrate(&self) -> Result<()> {
-        self.inner.store.migrate().await
-    }
 }

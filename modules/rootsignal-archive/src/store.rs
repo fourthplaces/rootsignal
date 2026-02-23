@@ -101,15 +101,6 @@ impl Store {
         Self { pool }
     }
 
-    /// Run the embedded SQL migrations.
-    pub(crate) async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations")
-            .run(&self.pool)
-            .await
-            .map_err(|e| crate::error::ArchiveError::Database(e.into()))?;
-        Ok(())
-    }
-
     // --- Sources ---
 
     /// Get or create a source by normalized URL.
