@@ -15,6 +15,7 @@ use super::loaders::{
 };
 use super::mutations::MutationRoot;
 use super::types::*;
+use crate::restate_client::RestateClient;
 
 pub type ApiSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -422,6 +423,7 @@ impl QueryRoot {
             sources,
             due_sources,
             scout_running,
+            phase_status,
         ) = tokio::join!(
             reader.total_count(),
             reader.story_count(),
@@ -439,6 +441,7 @@ impl QueryRoot {
             writer.get_active_sources(),
             writer.count_due_sources(),
             writer.is_scout_running(&region),
+            writer.get_region_run_status(&region),
         );
 
         let sources = sources.unwrap_or_default();
@@ -450,6 +453,7 @@ impl QueryRoot {
             last_scouted: None,
             sources_due: due_sources.unwrap_or(0),
             running: scout_running.unwrap_or(false),
+            phase_status: phase_status.unwrap_or_else(|_| "idle".to_string()),
         }];
 
         let by_type = by_type.unwrap_or_default();
@@ -610,15 +614,19 @@ impl QueryRoot {
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let running = writer.is_scout_running(&region_slug).await.unwrap_or(false);
-        let due = writer.count_due_sources().await.unwrap_or(0);
+        let (running, due, phase_status) = tokio::join!(
+            writer.is_scout_running(&region_slug),
+            writer.count_due_sources(),
+            writer.get_region_run_status(&region_slug),
+        );
 
         Ok(RegionScoutStatus {
             region_name: region_slug.clone(),
             region_slug,
             last_scouted: None,
-            sources_due: due,
-            running,
+            sources_due: due.unwrap_or(0),
+            running: running.unwrap_or(false),
+            phase_status: phase_status.unwrap_or_else(|_| "idle".to_string()),
         })
     }
 
@@ -654,74 +662,44 @@ impl QueryRoot {
             .collect())
     }
 
-    /// List recent scout runs for a region (reads JSON files from disk).
+    /// List recent scout runs for a region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_runs(
         &self,
-        _ctx: &Context<'_>,
+        ctx: &Context<'_>,
         region: String,
         limit: Option<u32>,
     ) -> Result<Vec<ScoutRun>> {
-        let limit = limit.unwrap_or(20).min(100) as usize;
-        let dir = rootsignal_scout::run_log::data_dir()
-            .join("scout-runs")
-            .join(&region);
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool.as_ref().ok_or_else(|| {
+            async_graphql::Error::new("Postgres not configured")
+        })?;
+        let limit = limit.unwrap_or(20).min(100);
 
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
+        let rows = crate::db::scout_run::list_by_region(pool, &region, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
 
-        let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
-            .collect();
-
-        // Sort by modified time descending (most recent first)
-        entries.sort_by(|a, b| {
-            b.metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                .cmp(
-                    &a.metadata()
-                        .and_then(|m| m.modified())
-                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-                )
-        });
-
-        let mut runs = Vec::new();
-        for entry in entries.into_iter().take(limit) {
-            let content = std::fs::read_to_string(entry.path())?;
-            if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
-                runs.push(ScoutRun::from(run));
-            }
-        }
-        Ok(runs)
+        Ok(rows.into_iter().map(ScoutRun::from).collect())
     }
 
-    /// Get a single scout run by run_id (searches all region dirs).
+    /// Get a single scout run by run_id.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_run(
         &self,
-        _ctx: &Context<'_>,
+        ctx: &Context<'_>,
         run_id: String,
     ) -> Result<Option<ScoutRun>> {
-        let base = rootsignal_scout::run_log::data_dir().join("scout-runs");
-        if !base.exists() {
-            return Ok(None);
-        }
-        for region_dir in std::fs::read_dir(&base)?.filter_map(|e| e.ok()) {
-            if !region_dir.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let path = region_dir.path().join(format!("{run_id}.json"));
-            if path.exists() {
-                let content = std::fs::read_to_string(&path)?;
-                if let Ok(run) = serde_json::from_str::<ScoutRunJson>(&content) {
-                    return Ok(Some(ScoutRun::from(run)));
-                }
-            }
-        }
-        Ok(None)
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool.as_ref().ok_or_else(|| {
+            async_graphql::Error::new("Postgres not configured")
+        })?;
+
+        let row = crate::db::scout_run::find_by_id(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query scout run: {e}")))?;
+
+        Ok(row.map(ScoutRun::from))
     }
 
     /// Aggregate summary of supervisor findings for a region.
@@ -806,6 +784,8 @@ pub struct RegionScoutStatus {
     pub last_scouted: Option<DateTime<Utc>>,
     pub sources_due: u32,
     pub running: bool,
+    /// Current phase status: "idle", "bootstrap_complete", "running_scrape", etc.
+    pub phase_status: String,
 }
 
 #[derive(SimpleObject)]
@@ -881,70 +861,7 @@ pub struct AdminSource {
 
 // ========== Scout Run Types ==========
 
-/// JSON shape on disk (deserialization target).
-#[derive(serde::Deserialize)]
-struct ScoutRunJson {
-    run_id: String,
-    region: String,
-    started_at: DateTime<Utc>,
-    finished_at: DateTime<Utc>,
-    stats: ScoutRunStatsJson,
-    events: Vec<ScoutRunEventJson>,
-}
-
-#[derive(serde::Deserialize)]
-struct ScoutRunStatsJson {
-    urls_scraped: Option<u32>,
-    urls_unchanged: Option<u32>,
-    urls_failed: Option<u32>,
-    signals_extracted: Option<u32>,
-    signals_deduplicated: Option<u32>,
-    signals_stored: Option<u32>,
-    social_media_posts: Option<u32>,
-    expansion_queries_collected: Option<u32>,
-    expansion_sources_created: Option<u32>,
-}
-
-#[derive(serde::Deserialize)]
-struct ScoutRunEventJson {
-    seq: u32,
-    ts: DateTime<Utc>,
-    #[serde(rename = "type")]
-    event_type: String,
-    // Flat optional fields that vary by event type
-    query: Option<String>,
-    url: Option<String>,
-    provider: Option<String>,
-    platform: Option<String>,
-    identifier: Option<String>,
-    signal_type: Option<String>,
-    title: Option<String>,
-    result_count: Option<u32>,
-    post_count: Option<u32>,
-    items: Option<u32>,
-    content_bytes: Option<u64>,
-    content_chars: Option<u64>,
-    signals_extracted: Option<u32>,
-    implied_queries: Option<u32>,
-    similarity: Option<f64>,
-    confidence: Option<f64>,
-    success: Option<bool>,
-    action: Option<String>,
-    node_id: Option<String>,
-    matched_id: Option<String>,
-    existing_id: Option<String>,
-    source_url: Option<String>,
-    new_source_url: Option<String>,
-    canonical_key: Option<String>,
-    gatherings: Option<u64>,
-    needs: Option<u64>,
-    stale: Option<u64>,
-    sources_created: Option<u64>,
-    spent_cents: Option<u64>,
-    remaining_cents: Option<u64>,
-    topics: Option<Vec<String>>,
-    posts_found: Option<u32>,
-}
+use crate::db::scout_run::{ScoutRunRow, StatsJson, EventJson};
 
 /// GraphQL output type for a scout run.
 #[derive(SimpleObject)]
@@ -1010,31 +927,37 @@ struct ScoutRunEvent {
     posts_found: Option<u32>,
 }
 
-impl From<ScoutRunJson> for ScoutRun {
-    fn from(j: ScoutRunJson) -> Self {
+impl From<ScoutRunRow> for ScoutRun {
+    fn from(r: ScoutRunRow) -> Self {
         Self {
-            run_id: j.run_id,
-            region: j.region,
-            started_at: j.started_at,
-            finished_at: j.finished_at,
-            stats: ScoutRunStats {
-                urls_scraped: j.stats.urls_scraped.unwrap_or(0),
-                urls_unchanged: j.stats.urls_unchanged.unwrap_or(0),
-                urls_failed: j.stats.urls_failed.unwrap_or(0),
-                signals_extracted: j.stats.signals_extracted.unwrap_or(0),
-                signals_deduplicated: j.stats.signals_deduplicated.unwrap_or(0),
-                signals_stored: j.stats.signals_stored.unwrap_or(0),
-                social_media_posts: j.stats.social_media_posts.unwrap_or(0),
-                expansion_queries_collected: j.stats.expansion_queries_collected.unwrap_or(0),
-                expansion_sources_created: j.stats.expansion_sources_created.unwrap_or(0),
-            },
-            events: j.events.into_iter().map(ScoutRunEvent::from).collect(),
+            run_id: r.run_id,
+            region: r.region,
+            started_at: r.started_at,
+            finished_at: r.finished_at,
+            stats: ScoutRunStats::from(r.stats),
+            events: r.events.into_iter().map(ScoutRunEvent::from).collect(),
         }
     }
 }
 
-impl From<ScoutRunEventJson> for ScoutRunEvent {
-    fn from(j: ScoutRunEventJson) -> Self {
+impl From<StatsJson> for ScoutRunStats {
+    fn from(s: StatsJson) -> Self {
+        Self {
+            urls_scraped: s.urls_scraped.unwrap_or(0),
+            urls_unchanged: s.urls_unchanged.unwrap_or(0),
+            urls_failed: s.urls_failed.unwrap_or(0),
+            signals_extracted: s.signals_extracted.unwrap_or(0),
+            signals_deduplicated: s.signals_deduplicated.unwrap_or(0),
+            signals_stored: s.signals_stored.unwrap_or(0),
+            social_media_posts: s.social_media_posts.unwrap_or(0),
+            expansion_queries_collected: s.expansion_queries_collected.unwrap_or(0),
+            expansion_sources_created: s.expansion_sources_created.unwrap_or(0),
+        }
+    }
+}
+
+impl From<EventJson> for ScoutRunEvent {
+    fn from(j: EventJson) -> Self {
         Self {
             seq: j.seq,
             ts: j.ts,
@@ -1131,7 +1054,8 @@ pub fn build_schema(
     rate_limiter: super::mutations::RateLimiter,
     graph_client: Arc<rootsignal_graph::GraphClient>,
     cache_store: Arc<rootsignal_graph::CacheStore>,
-    restate_ingress: super::mutations::RestateIngress,
+    restate_client: Option<RestateClient>,
+    pg_pool: Option<sqlx::PgPool>,
 ) -> ApiSchema {
     let evidence_loader = DataLoader::new(
         EvidenceBySignalLoader {
@@ -1188,7 +1112,8 @@ pub fn build_schema(
         .data(situations_loader)
         .data(tags_loader)
         .data(embedder)
-        .data(restate_ingress)
+        .data(restate_client)
+        .data(pg_pool)
         .finish()
 }
 

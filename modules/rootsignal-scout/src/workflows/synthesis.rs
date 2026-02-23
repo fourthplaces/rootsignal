@@ -50,6 +50,9 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         })
         .await?;
 
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "synthesis_complete").await;
+
         ctx.set("status", "Synthesis complete".to_string());
         info!("SynthesisWorkflow complete");
 
@@ -74,7 +77,7 @@ async fn run_synthesis_from_deps(
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let region_slug = rootsignal_common::slugify(&scope.name);
-    let archive = create_archive(deps, &region_slug);
+    let archive = create_archive(deps);
     let budget = crate::scheduling::budget::BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 

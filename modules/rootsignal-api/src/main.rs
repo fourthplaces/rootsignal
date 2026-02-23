@@ -22,14 +22,17 @@ use rootsignal_common::Config;
 use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphWriter, PublicGraphReader};
 use twilio::TwilioService;
 
+mod db;
 mod graphql;
 mod jwt;
 mod link_preview;
+mod restate_client;
 
 use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
 use graphql::{build_schema, ApiSchema};
 use jwt::JwtService;
+use restate_client::RestateClient;
 
 pub struct AppState {
     pub schema: ApiSchema,
@@ -153,34 +156,8 @@ async fn main() -> Result<()> {
         None
     };
 
-    let restate_ingress = graphql::mutations::RestateIngress(
-        std::env::var("RESTATE_INGRESS_URL").ok().filter(|s| !s.is_empty()),
-    );
-    if restate_ingress.0.is_some() {
-        info!("Restate ingress configured — runScout will dispatch via Restate");
-    }
-
-    let schema = build_schema(
-        reader.clone(),
-        writer.clone(),
-        jwt_service.clone(),
-        Arc::new(config.clone()),
-        twilio.clone(),
-        RateLimiter(Mutex::new(HashMap::new())),
-        Arc::new(client.clone()),
-        cache_store.clone(),
-        restate_ingress,
-    );
-
-    // ========== Restate endpoint ==========
-    // Runs on a separate port alongside the Axum GraphQL server.
-    // Workflows will be bound here as they are implemented (Phase 2+).
-    let restate_port: u16 = std::env::var("RESTATE_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9080);
-
-    // Connect to Postgres for the web archive (needed by scout workflows)
+    // ========== Postgres ==========
+    // Connect to Postgres for the web archive, scout runs, and Restate workflows.
     let pg_pool = match std::env::var("DATABASE_URL") {
         Ok(database_url) => {
             match sqlx::postgres::PgPoolOptions::new()
@@ -201,7 +178,46 @@ async fn main() -> Result<()> {
         }
     };
 
-    if let Some(pool) = pg_pool {
+    // Run SQL migrations if Postgres is available
+    if let Some(ref pool) = pg_pool {
+        sqlx::migrate!("./migrations")
+            .run(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Postgres migration failed: {e}"))?;
+        info!("Postgres migrations applied");
+    }
+
+    let restate_client = std::env::var("RESTATE_INGRESS_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(RestateClient::new);
+    if restate_client.is_some() {
+        info!("Restate ingress configured — runScout will dispatch via Restate");
+    }
+
+    let schema = build_schema(
+        reader.clone(),
+        writer.clone(),
+        jwt_service.clone(),
+        Arc::new(config.clone()),
+        twilio.clone(),
+        RateLimiter(Mutex::new(HashMap::new())),
+        Arc::new(client.clone()),
+        cache_store.clone(),
+        restate_client,
+        pg_pool.clone(),
+    );
+
+    // ========== Restate endpoint ==========
+    // Runs on a separate port alongside the Axum GraphQL server.
+    // Workflows will be bound here as they are implemented (Phase 2+).
+    let restate_port: u16 = std::env::var("RESTATE_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9080);
+
+    if let Some(ref pool) = pg_pool {
+        let pool = pool.clone();
         let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
             client.clone(),
             pool,
@@ -233,7 +249,7 @@ async fn main() -> Result<()> {
             .bind(SynthesisWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(SituationWeaverWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(FullScoutRunWorkflowImpl::new().serve())
+            .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
             .build();
 
         let restate_addr = format!("0.0.0.0:{restate_port}");
@@ -244,37 +260,7 @@ async fn main() -> Result<()> {
             let self_url = std::env::var("RESTATE_SELF_URL")
                 .unwrap_or_else(|_| format!("http://localhost:{restate_port}"));
             let auth_token = std::env::var("RESTATE_AUTH_TOKEN").ok();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                info!(
-                    admin_url = %admin_url,
-                    self_url = %self_url,
-                    "Auto-registering with Restate"
-                );
-                let client = reqwest::Client::new();
-                let mut request = client
-                    .post(format!("{}/deployments", admin_url))
-                    .json(&serde_json::json!({
-                        "uri": self_url,
-                        "force": true
-                    }));
-                if let Some(token) = &auth_token {
-                    request = request.bearer_auth(token);
-                }
-                match request.send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        info!("Restate registration successful");
-                    }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        let body = resp.text().await.unwrap_or_default();
-                        tracing::warn!(status = %status, body = %body, "Restate registration failed");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to connect to Restate admin");
-                    }
-                }
-            });
+            tokio::spawn(register_with_restate(admin_url, self_url, auth_token));
         }
 
         tokio::spawn(async move {
@@ -379,4 +365,37 @@ async fn main() -> Result<()> {
     .await?;
 
     Ok(())
+}
+
+/// Register this deployment with the Restate admin API after a brief delay.
+async fn register_with_restate(admin_url: String, self_url: String, auth_token: Option<String>) {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    info!(
+        admin_url = %admin_url,
+        self_url = %self_url,
+        "Auto-registering with Restate"
+    );
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(format!("{}/deployments", admin_url))
+        .json(&serde_json::json!({
+            "uri": self_url,
+            "force": true
+        }));
+    if let Some(token) = &auth_token {
+        request = request.bearer_auth(token);
+    }
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("Restate registration successful");
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(status = %status, body = %body, "Restate registration failed");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to connect to Restate admin");
+        }
+    }
 }

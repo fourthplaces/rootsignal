@@ -47,6 +47,9 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         })
         .await?;
 
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "complete").await;
+
         ctx.set(
             "status",
             format!("Supervisor complete: {} issues", result.issues_found),

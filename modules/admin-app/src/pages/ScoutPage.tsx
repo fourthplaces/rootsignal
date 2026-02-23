@@ -5,11 +5,13 @@ import {
   ADMIN_SCOUT_RUNS,
   ADMIN_REGION_SOURCES,
   ADMIN_SCOUT_TASKS,
+  ADMIN_DASHBOARD,
 } from "@/graphql/queries";
 import {
   ADD_SOURCE,
   RUN_SCOUT,
-  RESET_SCOUT_LOCK,
+  RUN_SCOUT_PHASE,
+  RESET_SCOUT_STATUS,
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
 } from "@/graphql/mutations";
@@ -50,6 +52,81 @@ type ScoutTask = {
   createdAt: string;
   completedAt: string | null;
 };
+
+type ScoutPhaseValue =
+  | "FULL_RUN"
+  | "BOOTSTRAP"
+  | "ACTOR_DISCOVERY"
+  | "SCRAPE"
+  | "SYNTHESIS"
+  | "SITUATION_WEAVER"
+  | "SUPERVISOR";
+
+const PHASES: { value: ScoutPhaseValue; label: string }[] = [
+  { value: "FULL_RUN", label: "Full Run" },
+  { value: "BOOTSTRAP", label: "Bootstrap" },
+  { value: "ACTOR_DISCOVERY", label: "Actor Discovery" },
+  { value: "SCRAPE", label: "Scrape" },
+  { value: "SYNTHESIS", label: "Synthesis" },
+  { value: "SITUATION_WEAVER", label: "Situation Weaver" },
+  { value: "SUPERVISOR", label: "Supervisor" },
+];
+
+/** Check if a phase can run given the current region status. Full Run is always allowed (unless running). */
+function phaseEnabled(phase: ScoutPhaseValue, status: string): boolean {
+  if (status.startsWith("running_")) return false;
+  if (phase === "FULL_RUN") return true;
+
+  switch (phase) {
+    case "BOOTSTRAP":
+      return true; // Always runnable when not running
+    case "ACTOR_DISCOVERY":
+      return [
+        "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
+        "synthesis_complete", "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SCRAPE":
+      return [
+        "actor_discovery_complete", "scrape_complete", "synthesis_complete",
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SYNTHESIS":
+      return [
+        "scrape_complete", "synthesis_complete",
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SITUATION_WEAVER":
+      return [
+        "synthesis_complete", "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SUPERVISOR":
+      return [
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    default:
+      return false;
+  }
+}
+
+/** Human-readable label for a phase status string. */
+function phaseStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    idle: "Idle",
+    running_bootstrap: "Running Bootstrap",
+    bootstrap_complete: "Bootstrap Done",
+    running_actor_discovery: "Running Actor Discovery",
+    actor_discovery_complete: "Actor Discovery Done",
+    running_scrape: "Running Scrape",
+    scrape_complete: "Scrape Done",
+    running_synthesis: "Running Synthesis",
+    synthesis_complete: "Synthesis Done",
+    running_situation_weaver: "Running Situation Weaver",
+    situation_weaver_complete: "Situation Weaver Done",
+    running_supervisor: "Running Supervisor",
+    complete: "Complete",
+  };
+  return labels[status] || status;
+}
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", {
@@ -112,6 +189,16 @@ export function ScoutPage() {
   const [taskCreating, setTaskCreating] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
 
+  // Phase selection state per task
+  const [selectedPhase, setSelectedPhase] = useState<Record<string, ScoutPhaseValue>>({});
+
+  // Dashboard data for phase status (keyed by region slug)
+  const { data: dashData } = useQuery(ADMIN_DASHBOARD, {
+    variables: { region: "" },
+    skip: tab !== "tasks",
+  });
+  const phaseStatus: string = dashData?.adminDashboard?.scoutStatuses?.[0]?.phaseStatus ?? "idle";
+
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskLocation.trim()) return;
@@ -138,15 +225,21 @@ export function ScoutPage() {
 
   // --- Task actions ---
   const [runScout] = useMutation(RUN_SCOUT);
-  const [resetLock] = useMutation(RESET_SCOUT_LOCK);
+  const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+  const [resetStatus] = useMutation(RESET_SCOUT_STATUS);
 
-  const handleRunTask = async (context: string) => {
-    await runScout({ variables: { query: context } });
+  const handleRunPhase = async (context: string, phase: ScoutPhaseValue) => {
+    if (phase === "FULL_RUN") {
+      await runScout({ variables: { query: context } });
+    } else {
+      await runScoutPhase({ variables: { phase, query: context } });
+    }
     refetchTasks();
   };
 
-  const handleResetTask = async (context: string) => {
-    await resetLock({ variables: { query: context } });
+  const handleResetStatus = async (context: string) => {
+    await resetStatus({ variables: { query: context } });
+    refetchTasks();
   };
 
   return (
@@ -307,7 +400,22 @@ export function ScoutPage() {
       {tab === "tasks" && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium">Scout Tasks</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-medium">Scout Tasks</h2>
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full ${
+                  phaseStatus.startsWith("running_")
+                    ? "bg-green-900 text-green-300"
+                    : phaseStatus === "complete"
+                      ? "bg-secondary text-muted-foreground"
+                      : phaseStatus === "idle"
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-blue-500/10 text-blue-400"
+                }`}
+              >
+                {phaseStatusLabel(phaseStatus)}
+              </span>
+            </div>
             <button
               onClick={() => setShowCreateTask(!showCreateTask)}
               className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
@@ -393,31 +501,60 @@ export function ScoutPage() {
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                         {formatDate(t.createdAt)}
                       </td>
-                      <td className="px-4 py-2 text-right flex gap-1 justify-end">
-                        {t.status === "pending" && (
-                          <button
-                            onClick={() => handleRunTask(t.context)}
-                            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                          >
-                            Run
-                          </button>
-                        )}
-                        {(t.status === "pending" || t.status === "running") && (
-                          <>
-                            <button
-                              onClick={() => handleResetTask(t.context)}
-                              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                            >
-                              Reset Lock
-                            </button>
-                            <button
-                              onClick={() => handleCancelTask(t.id)}
-                              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        )}
+                      <td className="px-4 py-2 text-right">
+                        <div className="flex gap-1 justify-end items-center">
+                          {t.status === "pending" && (
+                            <>
+                              <select
+                                value={selectedPhase[t.id] || "FULL_RUN"}
+                                onChange={(e) =>
+                                  setSelectedPhase({
+                                    ...selectedPhase,
+                                    [t.id]: e.target.value as ScoutPhaseValue,
+                                  })
+                                }
+                                className="text-xs px-1 py-1 rounded border border-border bg-background text-muted-foreground"
+                              >
+                                {PHASES.map((p) => (
+                                  <option
+                                    key={p.value}
+                                    value={p.value}
+                                    disabled={!phaseEnabled(p.value, phaseStatus)}
+                                  >
+                                    {p.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() =>
+                                  handleRunPhase(
+                                    t.context,
+                                    selectedPhase[t.id] || "FULL_RUN",
+                                  )
+                                }
+                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                              >
+                                Run
+                              </button>
+                            </>
+                          )}
+                          {(t.status === "pending" || t.status === "running") && (
+                            <>
+                              <button
+                                onClick={() => handleResetStatus(t.context)}
+                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                              >
+                                Reset Status
+                              </button>
+                              <button
+                                onClick={() => handleCancelTask(t.id)}
+                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

@@ -5,10 +5,13 @@
 //!
 //! Budget flows as `spent_cents` between workflows.
 
+use std::sync::Arc;
+
 use restate_sdk::prelude::*;
 use tracing::info;
 
 use super::types::*;
+use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "FullScoutRunWorkflow"]
@@ -18,11 +21,13 @@ pub trait FullScoutRunWorkflow {
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
 
-pub struct FullScoutRunWorkflowImpl;
+pub struct FullScoutRunWorkflowImpl {
+    deps: Arc<ScoutDeps>,
+}
 
 impl FullScoutRunWorkflowImpl {
-    pub fn new() -> Self {
-        Self
+    pub fn with_deps(deps: Arc<ScoutDeps>) -> Self {
+        Self { deps }
     }
 }
 
@@ -37,6 +42,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 1. Bootstrap
         ctx.set("status", WorkflowPhase::Bootstrap.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_bootstrap").await;
         let bootstrap_result: BootstrapResult = ctx
             .workflow_client::<super::bootstrap::BootstrapWorkflowClient>(&region_key)
             .run(RegionRequest {
@@ -51,6 +57,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 2. Actor Discovery
         ctx.set("status", WorkflowPhase::ActorDiscovery.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_actor_discovery").await;
         let discovery_result: ActorDiscoveryResult = ctx
             .workflow_client::<super::actor_discovery::ActorDiscoveryWorkflowClient>(&region_key)
             .run(RegionRequest {
@@ -65,6 +72,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 3. Scrape
         ctx.set("status", WorkflowPhase::Scraping.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_scrape").await;
         let scrape_result: ScrapeResult = ctx
             .workflow_client::<super::scrape::ScrapeWorkflowClient>(&region_key)
             .run(RegionRequest {
@@ -82,6 +90,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 4. Synthesis
         ctx.set("status", WorkflowPhase::Synthesis.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_synthesis").await;
         let synthesis_result: SynthesisResult = ctx
             .workflow_client::<super::synthesis::SynthesisWorkflowClient>(&region_key)
             .run(BudgetedRegionRequest {
@@ -95,6 +104,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 5. Situation Weaving
         ctx.set("status", WorkflowPhase::SituationWeaving.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_situation_weaver").await;
         let _weaver_result: SituationWeaverResult = ctx
             .workflow_client::<super::situation_weaver::SituationWeaverWorkflowClient>(&region_key)
             .run(BudgetedRegionRequest {
@@ -107,6 +117,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 6. Supervisor
         ctx.set("status", WorkflowPhase::Supervisor.to_string());
+        super::write_phase_status(&self.deps, &region_key, "running_supervisor").await;
         let supervisor_result: SupervisorResult = ctx
             .workflow_client::<super::supervisor::SupervisorWorkflowClient>(&region_key)
             .run(RegionRequest {

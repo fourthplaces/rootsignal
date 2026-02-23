@@ -40,7 +40,7 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
         ctx.set("status", "Discovering actors...".to_string());
 
         let writer = GraphWriter::new(self.deps.graph_client.clone());
-        let archive = create_archive(&self.deps, "actor-discovery");
+        let archive = create_archive(&self.deps);
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
@@ -56,6 +56,9 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
                 Ok::<_, HandlerError>(discovered.len() as u32)
             })
             .await?;
+
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "actor_discovery_complete").await;
 
         ctx.set(
             "status",

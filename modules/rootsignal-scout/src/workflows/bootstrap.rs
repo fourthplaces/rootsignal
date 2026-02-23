@@ -40,7 +40,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         ctx.set("status", "Starting bootstrap...".to_string());
 
         let writer = GraphWriter::new(self.deps.graph_client.clone());
-        let archive = create_archive(&self.deps, "bootstrap");
+        let archive = create_archive(&self.deps);
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
@@ -60,6 +60,9 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                     })
             })
             .await?;
+
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "bootstrap_complete").await;
 
         ctx.set(
             "status",
