@@ -15,6 +15,7 @@ import {
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
   DISMISS_FINDING,
+  RESET_SCOUT_STATUS,
 } from "@/graphql/mutations";
 
 type Tab = "tasks" | "runs" | "sources" | "findings";
@@ -173,17 +174,20 @@ function TaskRow({
   task: t,
   runScout,
   runScoutPhase,
+  resetStatus,
   onCancel,
   onRefetch,
 }: {
   task: ScoutTask;
   runScout: MutationFn;
   runScoutPhase: MutationFn;
+  resetStatus: MutationFn;
   onCancel: (id: string) => void;
   onRefetch: () => void;
 }) {
   const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
   const [running, setRunning] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleRun = async () => {
@@ -200,6 +204,19 @@ function TaskRow({
       setError(err instanceof Error ? err.message : "Failed to run");
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setResetting(true);
+    setError(null);
+    try {
+      await resetStatus({ variables: { query: t.context } });
+      onRefetch();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to reset");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -277,6 +294,15 @@ function TaskRow({
                 {running ? "Running..." : "Run"}
               </button>
             </>
+          )}
+          {t.phaseStatus.startsWith("running_") && (
+            <button
+              onClick={handleReset}
+              disabled={resetting}
+              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+            >
+              {resetting ? "Resetting..." : "Reset Status"}
+            </button>
           )}
           {(t.status === "pending" || t.status === "running") && (
             <button
@@ -427,6 +453,7 @@ export function ScoutPage() {
   // --- Task actions ---
   const [runScout] = useMutation(RUN_SCOUT);
   const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+  const [resetScoutStatus] = useMutation(RESET_SCOUT_STATUS);
 
   // --- Findings ---
   const region = "twincities";
@@ -665,6 +692,7 @@ export function ScoutPage() {
                       task={t}
                       runScout={runScout}
                       runScoutPhase={runScoutPhase}
+                      resetStatus={resetScoutStatus}
                       onCancel={handleCancelTask}
                       onRefetch={refetchTasks}
                     />

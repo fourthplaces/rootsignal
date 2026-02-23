@@ -40,10 +40,11 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: BudgetedRegionRequest,
     ) -> Result<SynthesisResult, HandlerError> {
-        // Status transition guard
+        // Status transition guard (journaled so it's skipped on replay)
         let slug = rootsignal_common::slugify(&req.scope.name);
-        {
-            let writer = rootsignal_graph::GraphWriter::new(self.deps.graph_client.clone());
+        let graph_client = self.deps.graph_client.clone();
+        ctx.run(|| async move {
+            let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
                 .transition_region_status(
                     &slug,
@@ -58,7 +59,10 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
             if !transitioned {
                 return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
             }
-        }
+            Ok(())
+        })
+        .await?;
+        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting synthesis...".to_string());
 
@@ -66,15 +70,18 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         let scope = req.scope.clone();
         let spent_cents = req.spent_cents;
 
-        let result = match super::spawn_workflow("Synthesis", async move {
-            run_synthesis_from_deps(&deps, &scope, spent_cents).await
-        })
-        .await
+        let result = match ctx
+            .run(|| async {
+                run_synthesis_from_deps(&deps, &scope, spent_cents)
+                    .await
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+            })
+            .await
         {
             Ok(v) => v,
             Err(e) => {
                 super::write_phase_status(&self.deps, &slug, "idle").await;
-                return Err(e);
+                return Err(e.into());
             }
         };
 

@@ -18,7 +18,6 @@ pub mod supervisor;
 pub mod synthesis;
 pub mod types;
 
-use std::future::Future;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
@@ -119,23 +118,6 @@ pub async fn read_workflow_status(ctx: &SharedWorkflowContext<'_>) -> Result<Str
         .unwrap_or_else(|| "pending".to_string()))
 }
 
-/// Spawn a blocking async task and flatten the double-error (JoinError + anyhow) into HandlerError.
-///
-/// Several workflows use `tokio::spawn` + two `map_err` calls; this consolidates that pattern.
-pub async fn spawn_workflow<T, F>(label: &str, fut: F) -> Result<T, HandlerError>
-where
-    T: Send + 'static,
-    F: Future<Output = anyhow::Result<T>> + Send + 'static,
-{
-    tokio::spawn(fut)
-        .await
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(format!("{label} task panicked: {e}")).into()
-        })?
-        .map_err(|e| -> HandlerError {
-            TerminalError::new(e.to_string()).into()
-        })
-}
 
 // ---------------------------------------------------------------------------
 // Restate serde bridge macros (from mntogether)
@@ -172,30 +154,3 @@ macro_rules! impl_restate_serde {
     };
 }
 
-/// Implement Restate SDK serialization traits for `Vec<T>`.
-#[macro_export]
-macro_rules! impl_restate_serde_vec {
-    ($type:ty) => {
-        impl restate_sdk::serde::Serialize for Vec<$type> {
-            type Error = serde_json::Error;
-
-            fn serialize(&self) -> Result<bytes::Bytes, Self::Error> {
-                serde_json::to_vec(self).map(bytes::Bytes::from)
-            }
-        }
-
-        impl restate_sdk::serde::Deserialize for Vec<$type> {
-            type Error = serde_json::Error;
-
-            fn deserialize(bytes: &mut bytes::Bytes) -> Result<Self, Self::Error> {
-                serde_json::from_slice(bytes)
-            }
-        }
-
-        impl restate_sdk::serde::WithContentType for Vec<$type> {
-            fn content_type() -> &'static str {
-                "application/json"
-            }
-        }
-    };
-}

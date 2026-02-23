@@ -198,3 +198,13 @@ crate::impl_restate_serde!(CreateFromPageResult);
 crate::impl_restate_serde!(CreateManualActorResult);
 crate::impl_restate_serde!(AddAccountResult);
 crate::impl_restate_serde!(DiscoverActorsBatchResult);
+
+// Newtype wrappers for ctx.run() journaling (orphan rule prevents impl on Vec<String> etc.)
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct UrlList(pub Vec<String>);
+crate::impl_restate_serde!(UrlList);
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MaybeActor(pub Option<CreateFromPageResult>);
+crate::impl_restate_serde!(MaybeActor);

@@ -12,6 +12,7 @@ use rootsignal_graph::GraphWriter;
 
 use super::types::{
     CreateFromPageResult, DiscoverActorsBatchRequest, DiscoverActorsBatchResult, EmptyRequest,
+    MaybeActor, UrlList,
 };
 use super::{create_archive, ScoutDeps};
 
@@ -48,16 +49,18 @@ impl ActorDiscoveryBatchWorkflow for ActorDiscoveryBatchWorkflowImpl {
         let max_results = req.max_results;
 
         // 1. Web search — collect URLs
-        let urls: Vec<String> = super::spawn_workflow(
-            "ActorDiscoveryBatch/search",
-            async move {
+        let UrlList(urls) = ctx
+            .run(|| async move {
                 let archive = create_archive(&deps);
-                let handle = archive.source(&query).await?;
-                let search = handle.search(&query).max_results(max_results).await?;
-                Ok(search.results.into_iter().map(|r| r.url).collect())
-            },
-        )
-        .await?;
+                let handle = archive.source(&query).await.map_err(|e| -> HandlerError {
+                    TerminalError::new(e.to_string()).into()
+                })?;
+                let search = handle.search(&query).max_results(max_results).await.map_err(|e| -> HandlerError {
+                    TerminalError::new(e.to_string()).into()
+                })?;
+                Ok(UrlList(search.results.into_iter().map(|r| r.url).collect()))
+            })
+            .await?;
 
         ctx.set(
             "status",
@@ -71,8 +74,8 @@ impl ActorDiscoveryBatchWorkflow for ActorDiscoveryBatchWorkflowImpl {
             let url = url.clone();
             let region = req.region.clone();
 
-            let result: Result<Option<CreateFromPageResult>, HandlerError> =
-                super::spawn_workflow("ActorDiscoveryBatch/create_actor", async move {
+            let result = ctx
+                .run(|| async move {
                     let archive = create_archive(&deps);
                     let writer = GraphWriter::new(deps.graph_client.clone());
 
@@ -88,22 +91,22 @@ impl ActorDiscoveryBatchWorkflow for ActorDiscoveryBatchWorkflowImpl {
                     )
                     .await
                     {
-                        Ok(Some(r)) => Ok(Some(CreateFromPageResult {
+                        Ok(Some(r)) => Ok(MaybeActor(Some(CreateFromPageResult {
                             actor_id: Some(r.actor_id.to_string()),
                             location_name: Some(r.location_name),
-                        })),
-                        Ok(None) => Ok(None),
+                        }))),
+                        Ok(None) => Ok(MaybeActor(None)),
                         Err(e) => {
                             warn!(url = url.as_str(), error = %e, "Failed to process search result");
-                            Ok(None)
+                            Ok(MaybeActor(None))
                         }
                     }
                 })
                 .await;
 
             match result {
-                Ok(Some(actor)) => actors.push(actor),
-                Ok(None) => {}
+                Ok(MaybeActor(Some(actor))) => actors.push(actor),
+                Ok(MaybeActor(None)) => {}
                 Err(e) => {
                     warn!(error = ?e, "Actor creation failed for URL");
                 }
