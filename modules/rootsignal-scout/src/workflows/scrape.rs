@@ -40,6 +40,26 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: RegionRequest,
     ) -> Result<ScrapeResult, HandlerError> {
+        // Status transition guard
+        let slug = rootsignal_common::slugify(&req.scope.name);
+        {
+            let writer = rootsignal_graph::GraphWriter::new(self.deps.graph_client.clone());
+            let transitioned = writer
+                .transition_region_status(
+                    &slug,
+                    &[
+                        "actor_discovery_complete", "scrape_complete", "synthesis_complete",
+                        "situation_weaver_complete", "complete",
+                    ],
+                    "running_scrape",
+                )
+                .await
+                .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
+            if !transitioned {
+                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+            }
+        }
+
         ctx.set("status", "Starting scrape pipeline...".to_string());
 
         let deps = self.deps.clone();

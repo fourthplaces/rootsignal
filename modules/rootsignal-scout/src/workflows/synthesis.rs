@@ -40,6 +40,26 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: BudgetedRegionRequest,
     ) -> Result<SynthesisResult, HandlerError> {
+        // Status transition guard
+        let slug = rootsignal_common::slugify(&req.scope.name);
+        {
+            let writer = rootsignal_graph::GraphWriter::new(self.deps.graph_client.clone());
+            let transitioned = writer
+                .transition_region_status(
+                    &slug,
+                    &[
+                        "scrape_complete", "synthesis_complete",
+                        "situation_weaver_complete", "complete",
+                    ],
+                    "running_synthesis",
+                )
+                .await
+                .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
+            if !transitioned {
+                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+            }
+        }
+
         ctx.set("status", "Starting synthesis...".to_string());
 
         let deps = self.deps.clone();

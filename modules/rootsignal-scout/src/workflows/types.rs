@@ -118,6 +118,64 @@ pub struct FullRunResult {
 }
 
 // ---------------------------------------------------------------------------
+// Actor service requests/responses
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFromPageRequest {
+    pub url: String,
+    pub fallback_region: String,
+    pub require_social_links: bool,
+    pub region_center_lat: f64,
+    pub region_center_lng: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateManualActorRequest {
+    pub name: String,
+    pub actor_type: Option<String>,
+    pub location: String,
+    pub bio: Option<String>,
+    pub social_accounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddAccountRequest {
+    pub actor_id: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverActorsBatchRequest {
+    pub query: String,
+    pub region: String,
+    pub max_results: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFromPageResult {
+    pub actor_id: Option<String>,
+    pub location_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateManualActorResult {
+    pub actor_id: String,
+    pub location_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddAccountResult {
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverActorsBatchResult {
+    pub discovered: u32,
+    pub actors: Vec<CreateFromPageResult>,
+}
+
+// ---------------------------------------------------------------------------
 // Restate serde impls
 // ---------------------------------------------------------------------------
 
@@ -132,3 +190,11 @@ crate::impl_restate_serde!(SituationWeaverResult);
 crate::impl_restate_serde!(SupervisorResult);
 crate::impl_restate_serde!(NewsScanResult);
 crate::impl_restate_serde!(FullRunResult);
+crate::impl_restate_serde!(CreateFromPageRequest);
+crate::impl_restate_serde!(CreateManualActorRequest);
+crate::impl_restate_serde!(AddAccountRequest);
+crate::impl_restate_serde!(DiscoverActorsBatchRequest);
+crate::impl_restate_serde!(CreateFromPageResult);
+crate::impl_restate_serde!(CreateManualActorResult);
+crate::impl_restate_serde!(AddAccountResult);
+crate::impl_restate_serde!(DiscoverActorsBatchResult);
