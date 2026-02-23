@@ -280,6 +280,12 @@ impl Extractor {
                 .unwrap_or(source_url)
                 .to_string();
 
+            let content_date = signal
+                .content_date
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+
             let node_id = Uuid::new_v4();
             let meta = NodeMeta {
                 id: node_id,
@@ -293,6 +299,7 @@ impl Extractor {
                 location_name: signal.location_name.clone(),
                 source_url: effective_source_url.clone(),
                 extracted_at: now,
+                content_date,
                 last_confirmed_active: now,
                 source_diversity: 1,
                 external_ratio: 0.0,
@@ -709,6 +716,7 @@ mod tests {
             location_name: None,
             source_url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
+            content_date: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
@@ -741,6 +749,7 @@ mod tests {
             location_name: None,
             source_url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
+            content_date: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
