@@ -13,6 +13,8 @@ export function StoryDetailPage() {
   const [untagStory] = useMutation(UNTAG_STORY);
 
   const [tagInput, setTagInput] = useState("");
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [busyTag, setBusyTag] = useState<string | null>(null);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -32,14 +34,30 @@ export function StoryDetailPage() {
     : [];
 
   const handleAddTag = async (slug: string) => {
-    await tagStory({ variables: { storyId: id, tagSlug: slug } });
-    setTagInput("");
-    refetch();
+    setBusyTag(slug);
+    setTagError(null);
+    try {
+      await tagStory({ variables: { storyId: id, tagSlug: slug } });
+      setTagInput("");
+      refetch();
+    } catch (err: unknown) {
+      setTagError(err instanceof Error ? err.message : "Failed to add tag");
+    } finally {
+      setBusyTag(null);
+    }
   };
 
   const handleRemoveTag = async (slug: string) => {
-    await untagStory({ variables: { storyId: id, tagSlug: slug } });
-    refetch();
+    setBusyTag(slug);
+    setTagError(null);
+    try {
+      await untagStory({ variables: { storyId: id, tagSlug: slug } });
+      refetch();
+    } catch (err: unknown) {
+      setTagError(err instanceof Error ? err.message : "Failed to remove tag");
+    } finally {
+      setBusyTag(null);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -78,7 +96,8 @@ export function StoryDetailPage() {
               {tag.name}
               <button
                 onClick={() => handleRemoveTag(tag.slug)}
-                className="text-muted-foreground hover:text-foreground"
+                disabled={busyTag === tag.slug}
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
                 title={`Remove ${tag.name}`}
               >
                 &times;
@@ -89,6 +108,7 @@ export function StoryDetailPage() {
             <span className="text-xs text-muted-foreground">No tags</span>
           )}
         </div>
+        {tagError && <p className="text-xs text-red-400 mb-2">{tagError}</p>}
         <div className="relative">
           <input
             type="text"

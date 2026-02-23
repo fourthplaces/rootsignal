@@ -1578,7 +1578,7 @@ impl GraphWriter {
         }
     }
 
-    /// List scout tasks, optionally filtered by status. Ordered by priority descending.
+    /// List scout tasks, optionally filtered by status. Ordered by newest first.
     pub async fn list_scout_tasks(
         &self,
         status: Option<&str>,
@@ -1591,7 +1591,7 @@ impl GraphWriter {
                     t.geo_terms AS geo_terms, t.priority AS priority,
                     t.source AS source, t.status AS status,
                     t.created_at AS created_at, t.completed_at AS completed_at
-             ORDER BY t.priority DESC
+             ORDER BY t.created_at DESC
              LIMIT $limit"
         } else {
             "MATCH (t:ScoutTask)
@@ -1600,7 +1600,7 @@ impl GraphWriter {
                     t.geo_terms AS geo_terms, t.priority AS priority,
                     t.source AS source, t.status AS status,
                     t.created_at AS created_at, t.completed_at AS completed_at
-             ORDER BY t.priority DESC
+             ORDER BY t.created_at DESC
              LIMIT $limit"
         };
 

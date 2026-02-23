@@ -12,7 +12,6 @@ import {
   ADD_SOURCE,
   RUN_SCOUT,
   RUN_SCOUT_PHASE,
-  RESET_SCOUT_STATUS,
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
   DISMISS_FINDING,
@@ -65,6 +64,25 @@ type ScoutPhaseValue =
   | "SYNTHESIS"
   | "SITUATION_WEAVER"
   | "SUPERVISOR";
+
+type ScoutFinding = {
+  id: string;
+  issueType: string;
+  severity: string;
+  targetId: string;
+  targetLabel: string;
+  description: string;
+  suggestedAction: string;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+const SEVERITY_COLORS: Record<string, string> = {
+  error: "bg-red-500/10 text-red-400 border-red-500/20",
+  warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  info: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+};
 
 const PHASES: { value: ScoutPhaseValue; label: string }[] = [
   { value: "FULL_RUN", label: "Full Run" },
@@ -148,6 +166,194 @@ const duration = (start: string, end: string) => {
   return `${mins}m ${secs % 60}s`;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MutationFn = (options?: any) => Promise<any>;
+
+function TaskRow({
+  task: t,
+  runScout,
+  runScoutPhase,
+  onCancel,
+  onRefetch,
+}: {
+  task: ScoutTask;
+  runScout: MutationFn;
+  runScoutPhase: MutationFn;
+  onCancel: (id: string) => void;
+  onRefetch: () => void;
+}) {
+  const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleRun = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      if (selectedPhase === "FULL_RUN") {
+        await runScout({ variables: { query: t.context } });
+      } else {
+        await runScoutPhase({ variables: { phase: selectedPhase, query: t.context } });
+      }
+      onRefetch();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to run");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-muted/30">
+      <td className="px-4 py-2 max-w-[200px] truncate">
+        <Link to={`/scout/tasks/${t.id}`} className="text-blue-400 hover:underline">
+          {t.context}
+        </Link>
+      </td>
+      <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
+        {t.centerLat.toFixed(3)}, {t.centerLng.toFixed(3)}
+      </td>
+      <td className="px-4 py-2 text-right tabular-nums">{t.radiusKm}km</td>
+      <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
+      <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
+      <td className="px-4 py-2">
+        <div className="flex flex-col gap-1">
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
+              t.status === "pending"
+                ? "bg-amber-500/10 text-amber-400"
+                : t.status === "running"
+                  ? "bg-green-900 text-green-300"
+                  : t.status === "completed"
+                    ? "bg-secondary text-muted-foreground"
+                    : "bg-red-500/10 text-red-400"
+            }`}
+          >
+            {t.status}
+          </span>
+          {t.phaseStatus !== "idle" && (
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full w-fit ${
+                t.phaseStatus.startsWith("running_")
+                  ? "bg-green-900 text-green-300"
+                  : t.phaseStatus === "complete"
+                    ? "bg-secondary text-muted-foreground"
+                    : "bg-blue-500/10 text-blue-400"
+              }`}
+            >
+              {phaseStatusLabel(t.phaseStatus)}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+        {formatDate(t.createdAt)}
+      </td>
+      <td className="px-4 py-2 text-right">
+        <div className="flex gap-1 justify-end items-center">
+          {t.status === "pending" && (
+            <>
+              <select
+                value={selectedPhase}
+                onChange={(e) => setSelectedPhase(e.target.value as ScoutPhaseValue)}
+                disabled={running}
+                className="text-xs px-1 py-1 rounded border border-border bg-background text-muted-foreground"
+              >
+                {PHASES.map((p) => (
+                  <option
+                    key={p.value}
+                    value={p.value}
+                    disabled={!phaseEnabled(p.value, t.phaseStatus)}
+                  >
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleRun}
+                disabled={running}
+                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+              >
+                {running ? "Running..." : "Run"}
+              </button>
+            </>
+          )}
+          {(t.status === "pending" || t.status === "running") && (
+            <button
+              onClick={() => onCancel(t.id)}
+              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </td>
+    </tr>
+  );
+}
+
+function ScoutFindingRow({
+  finding: f,
+  dismissFinding,
+  onRefetch,
+}: {
+  finding: ScoutFinding;
+  dismissFinding: MutationFn;
+  onRefetch: () => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDismiss = async () => {
+    setDismissing(true);
+    setError(null);
+    try {
+      await dismissFinding({ variables: { id: f.id } });
+      onRefetch();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to dismiss");
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-muted/30">
+      <td className="px-4 py-2">
+        <span className={`inline-block px-2 py-0.5 rounded text-xs border ${SEVERITY_COLORS[f.severity] ?? "bg-muted text-muted-foreground"}`}>
+          {f.severity}
+        </span>
+      </td>
+      <td className="px-4 py-2 text-muted-foreground">{f.issueType}</td>
+      <td className="px-4 py-2"><span className="font-medium">{f.targetLabel}</span></td>
+      <td className="px-4 py-2 max-w-md truncate text-muted-foreground">{f.description}</td>
+      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{formatDate(f.createdAt)}</td>
+      <td className="px-4 py-2">
+        <span className={`text-xs ${
+          f.status === "open" ? "text-amber-400"
+            : f.status === "resolved" ? "text-green-400"
+            : "text-muted-foreground"
+        }`}>
+          {f.status}
+        </span>
+      </td>
+      <td className="px-4 py-2 text-right">
+        {f.status === "open" && (
+          <button
+            onClick={handleDismiss}
+            disabled={dismissing}
+            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-50"
+          >
+            {dismissing ? "Dismissing..." : "Dismiss"}
+          </button>
+        )}
+        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </td>
+    </tr>
+  );
+}
+
 export function ScoutPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
@@ -191,13 +397,9 @@ export function ScoutPage() {
   const tasks: ScoutTask[] = tasksData?.adminScoutTasks ?? [];
   const [createTask] = useMutation(CREATE_SCOUT_TASK);
   const [cancelTask] = useMutation(CANCEL_SCOUT_TASK);
-  const [showCreateTask, setShowCreateTask] = useState(false);
   const [taskLocation, setTaskLocation] = useState("");
   const [taskCreating, setTaskCreating] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
-
-  // Phase selection state per task
-  const [selectedPhase, setSelectedPhase] = useState<Record<string, ScoutPhaseValue>>({});
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,7 +410,6 @@ export function ScoutPage() {
       await createTask({
         variables: { location: taskLocation.trim() },
       });
-      setShowCreateTask(false);
       setTaskLocation("");
       refetchTasks();
     } catch (err: unknown) {
@@ -226,21 +427,6 @@ export function ScoutPage() {
   // --- Task actions ---
   const [runScout] = useMutation(RUN_SCOUT);
   const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
-  const [resetStatus] = useMutation(RESET_SCOUT_STATUS);
-
-  const handleRunPhase = async (context: string, phase: ScoutPhaseValue) => {
-    if (phase === "FULL_RUN") {
-      await runScout({ variables: { query: context } });
-    } else {
-      await runScoutPhase({ variables: { phase, query: context } });
-    }
-    refetchTasks();
-  };
-
-  const handleResetStatus = async (context: string) => {
-    await resetStatus({ variables: { query: context } });
-    refetchTasks();
-  };
 
   // --- Findings ---
   const region = "twincities";
@@ -257,23 +443,10 @@ export function ScoutPage() {
   );
   const [dismissFinding] = useMutation(DISMISS_FINDING);
 
-  type Finding = {
-    id: string;
-    issueType: string;
-    severity: string;
-    targetId: string;
-    targetLabel: string;
-    description: string;
-    suggestedAction: string;
-    status: string;
-    createdAt: string;
-    resolvedAt: string | null;
-  };
-
   const findingsSummary = findingsSummaryData?.supervisorSummary as
     | { totalOpen: number; totalResolved: number; totalDismissed: number }
     | undefined;
-  const findings: Finding[] = findingsData?.supervisorFindings ?? [];
+  const findings: ScoutFinding[] = findingsData?.supervisorFindings ?? [];
 
   const filteredFindings = findings.filter((f) => {
     if (findingsSeverityFilter && f.severity !== findingsSeverityFilter) return false;
@@ -283,16 +456,9 @@ export function ScoutPage() {
 
   const findingsIssueTypes = [...new Set(findings.map((f) => f.issueType))].sort();
 
-  const handleDismissFinding = async (id: string) => {
-    await dismissFinding({ variables: { id } });
+  const refetchAllFindings = () => {
     refetchFindings();
     refetchFindingsSummary();
-  };
-
-  const SEVERITY_COLORS: Record<string, string> = {
-    error: "bg-red-500/10 text-red-400 border-red-500/20",
-    warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    info: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   };
 
   return (
@@ -452,38 +618,26 @@ export function ScoutPage() {
       {/* Tasks tab */}
       {tab === "tasks" && (
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium">Scout Tasks</h2>
+          <form onSubmit={handleCreateTask} className="mb-4 flex gap-2 items-center">
+            <input
+              type="text"
+              value={taskLocation}
+              onChange={(e) => { setTaskLocation(e.target.value); setTaskError(null); }}
+              placeholder="Location (e.g. Austin, TX)"
+              className="flex-1 max-w-xs px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+              required
+            />
             <button
-              onClick={() => setShowCreateTask(!showCreateTask)}
-              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
+              type="submit"
+              disabled={taskCreating || !taskLocation.trim()}
+              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
             >
-              Create Task
+              {taskCreating ? "Creating..." : "Create Task"}
             </button>
-          </div>
-
-          {showCreateTask && (
-            <form onSubmit={handleCreateTask} className="mb-4 flex gap-2 max-w-lg">
-              <input
-                type="text"
-                value={taskLocation}
-                onChange={(e) => { setTaskLocation(e.target.value); setTaskError(null); }}
-                placeholder="Location (e.g. Austin, TX)"
-                className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
-                required
-              />
-              <button
-                type="submit"
-                disabled={taskCreating || !taskLocation.trim()}
-                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
-              >
-                {taskCreating ? "Creating..." : "Create"}
-              </button>
-            </form>
-          )}
-          {taskError && (
-            <p className="text-sm text-red-400 mb-4">{taskError}</p>
-          )}
+            {taskError && (
+              <span className="text-sm text-red-400">{taskError}</span>
+            )}
+          </form>
 
           {tasksLoading ? (
             <p className="text-muted-foreground">Loading tasks...</p>
@@ -506,110 +660,14 @@ export function ScoutPage() {
                 </thead>
                 <tbody>
                   {tasks.map((t) => (
-                    <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                      <td className="px-4 py-2 max-w-[200px] truncate">
-                        <Link
-                          to={`/scout/tasks/${t.id}`}
-                          className="text-blue-400 hover:underline"
-                        >
-                          {t.context}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
-                        {t.centerLat.toFixed(3)}, {t.centerLng.toFixed(3)}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">{t.radiusKm}km</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
-                      <td className="px-4 py-2">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-                              t.status === "pending"
-                                ? "bg-amber-500/10 text-amber-400"
-                                : t.status === "running"
-                                  ? "bg-green-900 text-green-300"
-                                  : t.status === "completed"
-                                    ? "bg-secondary text-muted-foreground"
-                                    : "bg-red-500/10 text-red-400"
-                            }`}
-                          >
-                            {t.status}
-                          </span>
-                          {t.phaseStatus !== "idle" && (
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-                                t.phaseStatus.startsWith("running_")
-                                  ? "bg-green-900 text-green-300"
-                                  : t.phaseStatus === "complete"
-                                    ? "bg-secondary text-muted-foreground"
-                                    : "bg-blue-500/10 text-blue-400"
-                              }`}
-                            >
-                              {phaseStatusLabel(t.phaseStatus)}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                        {formatDate(t.createdAt)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <div className="flex gap-1 justify-end items-center">
-                          {t.status === "pending" && (
-                            <>
-                              <select
-                                value={selectedPhase[t.id] || "FULL_RUN"}
-                                onChange={(e) =>
-                                  setSelectedPhase({
-                                    ...selectedPhase,
-                                    [t.id]: e.target.value as ScoutPhaseValue,
-                                  })
-                                }
-                                className="text-xs px-1 py-1 rounded border border-border bg-background text-muted-foreground"
-                              >
-                                {PHASES.map((p) => (
-                                  <option
-                                    key={p.value}
-                                    value={p.value}
-                                    disabled={!phaseEnabled(p.value, t.phaseStatus)}
-                                  >
-                                    {p.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                onClick={() =>
-                                  handleRunPhase(
-                                    t.context,
-                                    selectedPhase[t.id] || "FULL_RUN",
-                                  )
-                                }
-                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                              >
-                                Run
-                              </button>
-                            </>
-                          )}
-                          {(t.status === "pending" || t.status === "running") && (
-                            <>
-                              <button
-                                onClick={() => handleResetStatus(t.context)}
-                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                              >
-                                Reset Status
-                              </button>
-                              <button
-                                onClick={() => handleCancelTask(t.id)}
-                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                    <TaskRow
+                      key={t.id}
+                      task={t}
+                      runScout={runScout}
+                      runScoutPhase={runScoutPhase}
+                      onCancel={handleCancelTask}
+                      onRefetch={refetchTasks}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -693,36 +751,12 @@ export function ScoutPage() {
                 </thead>
                 <tbody>
                   {filteredFindings.map((f) => (
-                    <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                      <td className="px-4 py-2">
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs border ${SEVERITY_COLORS[f.severity] ?? "bg-muted text-muted-foreground"}`}>
-                          {f.severity}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground">{f.issueType}</td>
-                      <td className="px-4 py-2"><span className="font-medium">{f.targetLabel}</span></td>
-                      <td className="px-4 py-2 max-w-md truncate text-muted-foreground">{f.description}</td>
-                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{formatDate(f.createdAt)}</td>
-                      <td className="px-4 py-2">
-                        <span className={`text-xs ${
-                          f.status === "open" ? "text-amber-400"
-                            : f.status === "resolved" ? "text-green-400"
-                            : "text-muted-foreground"
-                        }`}>
-                          {f.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {f.status === "open" && (
-                          <button
-                            onClick={() => handleDismissFinding(f.id)}
-                            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
-                          >
-                            Dismiss
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                    <ScoutFindingRow
+                      key={f.id}
+                      finding={f}
+                      dismissFinding={dismissFinding}
+                      onRefetch={refetchAllFindings}
+                    />
                   ))}
                 </tbody>
               </table>
