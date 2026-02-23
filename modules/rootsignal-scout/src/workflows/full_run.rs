@@ -22,12 +22,12 @@ pub trait FullScoutRunWorkflow {
 }
 
 pub struct FullScoutRunWorkflowImpl {
-    deps: Arc<ScoutDeps>,
+    _deps: Arc<ScoutDeps>,
 }
 
 impl FullScoutRunWorkflowImpl {
     pub fn with_deps(deps: Arc<ScoutDeps>) -> Self {
-        Self { deps }
+        Self { _deps: deps }
     }
 }
 
@@ -38,16 +38,14 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         req: RegionRequest,
     ) -> Result<FullRunResult, HandlerError> {
         let scope = req.scope.clone();
-        let region_slug = rootsignal_common::slugify(&scope.name);
         // Sub-workflow keys must be unique per full run — Restate workflows are
         // one-shot, so reusing the bare slug would 409 on subsequent runs.
         // Derive from the parent key (which already has a timestamp).
-        let run_key = ctx.key();
-        let sub_key = format!("{region_slug}-{run_key}");
+        let slug = rootsignal_common::slugify(&scope.name);
+        let sub_key = format!("{slug}-{}", ctx.key());
 
         // 1. Bootstrap
         ctx.set("status", WorkflowPhase::Bootstrap.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_bootstrap").await;
         let bootstrap_result: BootstrapResult = ctx
             .workflow_client::<super::bootstrap::BootstrapWorkflowClient>(&sub_key)
             .run(RegionRequest {
@@ -62,7 +60,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 2. Actor Discovery
         ctx.set("status", WorkflowPhase::ActorDiscovery.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_actor_discovery").await;
         let discovery_result: ActorDiscoveryResult = ctx
             .workflow_client::<super::actor_discovery::ActorDiscoveryWorkflowClient>(&sub_key)
             .run(RegionRequest {
@@ -77,7 +74,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 3. Scrape
         ctx.set("status", WorkflowPhase::Scraping.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_scrape").await;
         let scrape_result: ScrapeResult = ctx
             .workflow_client::<super::scrape::ScrapeWorkflowClient>(&sub_key)
             .run(RegionRequest {
@@ -95,7 +91,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 4. Synthesis
         ctx.set("status", WorkflowPhase::Synthesis.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_synthesis").await;
         let synthesis_result: SynthesisResult = ctx
             .workflow_client::<super::synthesis::SynthesisWorkflowClient>(&sub_key)
             .run(BudgetedRegionRequest {
@@ -109,7 +104,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 5. Situation Weaving
         ctx.set("status", WorkflowPhase::SituationWeaving.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_situation_weaver").await;
         let _weaver_result: SituationWeaverResult = ctx
             .workflow_client::<super::situation_weaver::SituationWeaverWorkflowClient>(&sub_key)
             .run(BudgetedRegionRequest {
@@ -122,7 +116,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         // 6. Supervisor
         ctx.set("status", WorkflowPhase::Supervisor.to_string());
-        super::write_phase_status(&self.deps, &region_slug, "running_supervisor").await;
         let supervisor_result: SupervisorResult = ctx
             .workflow_client::<super::supervisor::SupervisorWorkflowClient>(&sub_key)
             .run(RegionRequest {
