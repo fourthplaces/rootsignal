@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
   ADMIN_SCOUT_RUNS,
@@ -18,11 +18,11 @@ import {
   DISMISS_FINDING,
 } from "@/graphql/mutations";
 
-type Tab = "runs" | "sources" | "tasks" | "findings";
+type Tab = "tasks" | "runs" | "sources" | "findings";
 const TABS: { key: Tab; label: string }[] = [
+  { key: "tasks", label: "Tasks" },
   { key: "runs", label: "Runs" },
   { key: "sources", label: "Sources" },
-  { key: "tasks", label: "Tasks" },
   { key: "findings", label: "Findings" },
 ];
 
@@ -149,7 +149,10 @@ const duration = (start: string, end: string) => {
 };
 
 export function ScoutPage() {
-  const [tab, setTab] = useState<Tab>("runs");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "tasks") as Tab;
+  const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
 
   // --- Runs ---
   const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {

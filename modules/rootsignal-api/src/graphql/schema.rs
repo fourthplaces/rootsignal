@@ -11,7 +11,7 @@ use rootsignal_graph::{CachedReader, GraphWriter};
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
     ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
-    TagsByStoryLoader,
+    TagsBySituationLoader, TagsByStoryLoader,
 };
 use super::mutations::MutationRoot;
 use super::types::*;
@@ -53,31 +53,6 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// Find signals near a point, returned as a GeoJSON FeatureCollection string.
-    async fn signals_near_geo_json(
-        &self,
-        ctx: &Context<'_>,
-        lat: f64,
-        lng: f64,
-        radius_km: f64,
-        types: Option<Vec<SignalType>>,
-    ) -> Result<String> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let node_types: Option<Vec<NodeType>> =
-            types.map(|t| t.into_iter().map(|st| st.to_node_type()).collect());
-        let radius = radius_km.min(50.0);
-        let nodes = reader
-            .find_nodes_near(lat, lng, radius, node_types.as_deref())
-            .await?;
-        Ok(serde_json::to_string(&nodes_to_geojson(&nodes))?)
-    }
-
-    /// Get story signals as a GeoJSON FeatureCollection string.
-    async fn story_signals_geo_json(&self, ctx: &Context<'_>, story_id: Uuid) -> Result<String> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let signals = reader.get_story_signals(story_id).await?;
-        Ok(serde_json::to_string(&nodes_to_geojson(&signals))?)
-    }
 
     /// List recent signals, ordered by triangulation quality.
     async fn signals_recent(
@@ -1442,38 +1417,6 @@ fn source_label_from_value(value: &str) -> String {
     domain.strip_prefix("www.").unwrap_or(domain).to_string()
 }
 
-fn nodes_to_geojson(nodes: &[Node]) -> serde_json::Value {
-    let features: Vec<serde_json::Value> = nodes
-        .iter()
-        .filter_map(|node| {
-            let meta = node.meta()?;
-            let loc = meta.location?;
-            Some(serde_json::json!({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [loc.lng, loc.lat]
-                },
-                "properties": {
-                    "id": meta.id.to_string(),
-                    "title": meta.title,
-                    "summary": meta.summary,
-                    "node_type": format!("{}", node.node_type()),
-                    "confidence": meta.confidence,
-                    "corroboration_count": meta.corroboration_count,
-                    "source_diversity": meta.source_diversity,
-                    "cause_heat": meta.cause_heat,
-                }
-            }))
-        })
-        .collect();
-
-    serde_json::json!({
-        "type": "FeatureCollection",
-        "features": features,
-    })
-}
-
 pub fn build_schema(
     reader: Arc<CachedReader>,
     writer: Arc<GraphWriter>,
@@ -1516,6 +1459,12 @@ pub fn build_schema(
         },
         tokio::spawn,
     );
+    let situation_tags_loader = DataLoader::new(
+        TagsBySituationLoader {
+            reader: reader.clone(),
+        },
+        tokio::spawn,
+    );
 
     // Create Voyage AI embedder for semantic search (if API key is available)
     let embedder = {
@@ -1540,6 +1489,7 @@ pub fn build_schema(
         .data(story_loader)
         .data(situations_loader)
         .data(tags_loader)
+        .data(situation_tags_loader)
         .data(embedder)
         .data(restate_client)
         .data(pg_pool)

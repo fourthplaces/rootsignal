@@ -1,6 +1,4 @@
-import { useEffect, useRef } from "react";
-import { useQuery } from "@apollo/client";
-import { SIGNALS_NEAR_GEO_JSON } from "@/graphql/queries";
+import { useEffect, useRef, useState, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { FeatureCollection } from "geojson";
@@ -15,22 +13,54 @@ const TYPE_COLORS: Record<string, string> = {
   Tension: "#ef4444",
 };
 
-interface RegionMapProps {
-  region: { centerLat: number; centerLng: number; radiusKm: number };
+export type MapSignal = {
+  __typename: string;
+  id: string;
+  title: string;
+  summary: string;
+  confidence: number;
+  causeHeat: number | null;
+  location: { lat: number; lng: number } | null;
+};
+
+function signalsToGeoJson(signals: MapSignal[]): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: signals
+      .filter((s) => s.location != null)
+      .map((s) => {
+        const nodeType = s.__typename.replace("Gql", "").replace("Signal", "");
+        return {
+          type: "Feature" as const,
+          geometry: {
+            type: "Point" as const,
+            coordinates: [s.location!.lng, s.location!.lat],
+          },
+          properties: {
+            id: s.id,
+            title: s.title,
+            summary: s.summary,
+            node_type: nodeType,
+            confidence: s.confidence,
+            cause_heat: s.causeHeat,
+          },
+        };
+      }),
+  };
 }
 
-export function RegionMap({ region }: RegionMapProps) {
+interface RegionMapProps {
+  region: { centerLat: number; centerLng: number; radiusKm: number };
+  signals: MapSignal[];
+}
+
+export function RegionMap({ region, signals }: RegionMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
-  const { data: geoData } = useQuery(SIGNALS_NEAR_GEO_JSON, {
-    variables: { lat: region.centerLat, lng: region.centerLng, radiusKm: region.radiusKm },
-  });
-
-  const geojson: FeatureCollection | null = geoData?.signalsNearGeoJson
-    ? JSON.parse(geoData.signalsNearGeoJson)
-    : null;
+  const geojson = useMemo(() => signalsToGeoJson(signals), [signals]);
 
   // Initialize map
   useEffect(() => {
@@ -137,12 +167,25 @@ export function RegionMap({ region }: RegionMapProps) {
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
         const coords = feature.geometry.coordinates.slice() as [number, number];
-        const title = feature.properties?.title ?? "";
-        const type = feature.properties?.node_type ?? "";
+        const props = feature.properties ?? {};
+        const title = props.title ?? "Untitled";
+        const type = props.node_type ?? "";
+        const summary = props.summary ?? "";
+        const confidence = props.confidence != null ? `${Math.round(props.confidence * 100)}%` : "";
+        const color = TYPE_COLORS[type] ?? "#6366f1";
         popupRef.current?.remove();
-        popupRef.current = new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
+        popupRef.current = new mapboxgl.Popup({ closeButton: true, closeOnClick: true, maxWidth: "320px" })
           .setLngLat(coords)
-          .setHTML(`<b>${title}</b><br/>${type}`)
+          .setHTML(
+            `<div style="font-family: system-ui, sans-serif; color: #e4e4e7; background: #18181b; padding: 8px 10px; border-radius: 6px; max-width: 300px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${color};"></span>
+                <span style="font-size: 11px; color: #a1a1aa;">${type}${confidence ? ` · ${confidence}` : ""}</span>
+              </div>
+              <div style="font-weight: 600; font-size: 13px; line-height: 1.3; margin-bottom: 4px;">${title}</div>
+              ${summary ? `<div style="font-size: 12px; color: #a1a1aa; line-height: 1.4;">${summary.length > 200 ? summary.slice(0, 200) + "…" : summary}</div>` : ""}
+            </div>`,
+          )
           .addTo(map);
       });
 
@@ -150,6 +193,8 @@ export function RegionMap({ region }: RegionMapProps) {
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
       }
+
+      setMapReady(true);
     });
 
     return () => {
@@ -160,12 +205,11 @@ export function RegionMap({ region }: RegionMapProps) {
 
   // Update GeoJSON data
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("signals") as mapboxgl.GeoJSONSource | undefined;
+    if (!mapReady) return;
+    const source = mapRef.current?.getSource("signals") as mapboxgl.GeoJSONSource | undefined;
     if (!source) return;
-    source.setData(geojson ?? { type: "FeatureCollection", features: [] });
-  }, [geojson]);
+    source.setData(geojson);
+  }, [geojson, mapReady]);
 
   return (
     <div

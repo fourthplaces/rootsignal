@@ -1,9 +1,9 @@
 import { useState, useMemo } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS } from "@/graphql/queries";
-import { RUN_SCOUT } from "@/graphql/mutations";
-import { RegionMap } from "@/pages/MapPage";
+import { RUN_SCOUT, RUN_SCOUT_PHASE } from "@/graphql/mutations";
+import { RegionMap, type MapSignal } from "@/pages/MapPage";
 
 type Tab = "map" | "signals" | "situations" | "actors";
 const TABS: { key: Tab; label: string }[] = [
@@ -23,6 +23,7 @@ type Signal = {
   locationName: string | null;
   sourceUrl: string | null;
   causeHeat: number | null;
+  location: { lat: number; lng: number } | null;
   actors: { id: string; name: string; actorType: string }[];
 };
 
@@ -54,9 +55,64 @@ type ScoutTask = {
   priority: number;
   source: string;
   status: string;
+  phaseStatus: string;
   createdAt: string;
   completedAt: string | null;
 };
+
+type ScoutPhaseValue =
+  | "FULL_RUN"
+  | "BOOTSTRAP"
+  | "ACTOR_DISCOVERY"
+  | "SCRAPE"
+  | "SYNTHESIS"
+  | "SITUATION_WEAVER"
+  | "SUPERVISOR";
+
+const PHASES: { value: ScoutPhaseValue; label: string }[] = [
+  { value: "FULL_RUN", label: "Full Run" },
+  { value: "BOOTSTRAP", label: "Bootstrap" },
+  { value: "ACTOR_DISCOVERY", label: "Actor Discovery" },
+  { value: "SCRAPE", label: "Scrape" },
+  { value: "SYNTHESIS", label: "Synthesis" },
+  { value: "SITUATION_WEAVER", label: "Situation Weaver" },
+  { value: "SUPERVISOR", label: "Supervisor" },
+];
+
+function phaseEnabled(phase: ScoutPhaseValue, status: string): boolean {
+  if (status.startsWith("running_")) return false;
+  if (phase === "FULL_RUN") return true;
+
+  switch (phase) {
+    case "BOOTSTRAP":
+      return true;
+    case "ACTOR_DISCOVERY":
+      return [
+        "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
+        "synthesis_complete", "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SCRAPE":
+      return [
+        "actor_discovery_complete", "scrape_complete", "synthesis_complete",
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SYNTHESIS":
+      return [
+        "scrape_complete", "synthesis_complete",
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SITUATION_WEAVER":
+      return [
+        "synthesis_complete", "situation_weaver_complete", "complete",
+      ].includes(status);
+    case "SUPERVISOR":
+      return [
+        "situation_weaver_complete", "complete",
+      ].includes(status);
+    default:
+      return false;
+  }
+}
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", {
@@ -99,7 +155,11 @@ function toBounds(lat: number, lng: number, radiusKm: number) {
 
 export function ScoutTaskDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [tab, setTab] = useState<Tab>("map");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "map") as Tab;
+  const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
+  const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
 
   // Fetch all tasks, find the one matching our ID
   const { data: tasksData, loading: taskLoading } = useQuery(ADMIN_SCOUT_TASKS, {
@@ -108,6 +168,18 @@ export function ScoutTaskDetailPage() {
   const task: ScoutTask | undefined = (tasksData?.adminScoutTasks ?? []).find(
     (t: ScoutTask) => t.id === id,
   );
+
+  const [runScout] = useMutation(RUN_SCOUT);
+  const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+
+  const handleRunPhase = async () => {
+    if (!task) return;
+    if (selectedPhase === "FULL_RUN") {
+      await runScout({ variables: { query: task.context } });
+    } else {
+      await runScoutPhase({ variables: { phase: selectedPhase, query: task.context } });
+    }
+  };
 
   // Fetch signals near the task's center
   const { data: signalsData, loading: signalsLoading } = useQuery(SIGNALS_NEAR, {
@@ -167,6 +239,31 @@ export function ScoutTaskDetailPage() {
           <span className={`text-xs px-2 py-0.5 rounded-full ${statusColor}`}>
             {task.status}
           </span>
+          {task.status !== "completed" && (
+            <div className="flex gap-1 items-center ml-auto">
+              <select
+                value={selectedPhase}
+                onChange={(e) => setSelectedPhase(e.target.value as ScoutPhaseValue)}
+                className="text-xs px-1 py-1 rounded border border-border bg-background text-muted-foreground"
+              >
+                {PHASES.map((p) => (
+                  <option
+                    key={p.value}
+                    value={p.value}
+                    disabled={!phaseEnabled(p.value, task.phaseStatus)}
+                  >
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleRunPhase}
+                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              >
+                Run
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -255,6 +352,7 @@ export function ScoutTaskDetailPage() {
             centerLng: task.centerLng,
             radiusKm: task.radiusKm,
           }}
+          signals={signals as MapSignal[]}
         />
       )}
 

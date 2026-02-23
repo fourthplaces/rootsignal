@@ -198,16 +198,6 @@ export const SIGNALS_NEAR = gql`
   }
 `;
 
-export const SIGNALS_NEAR_GEO_JSON = gql`
-  query SignalsNearGeoJson(
-    $lat: Float!
-    $lng: Float!
-    $radiusKm: Float!
-    $types: [SignalType!]
-  ) {
-    signalsNearGeoJson(lat: $lat, lng: $lng, radiusKm: $radiusKm, types: $types)
-  }
-`;
 
 export const SIGNALS_RECENT = gql`
   query SignalsRecent($limit: Int, $types: [SignalType!]) {
