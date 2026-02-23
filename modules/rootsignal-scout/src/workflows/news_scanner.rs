@@ -41,10 +41,13 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 
         let deps = self.deps.clone();
 
-        let result = super::spawn_workflow("NewsScan", async move {
-            run_news_scan_from_deps(&deps).await
-        })
-        .await?;
+        let result = ctx
+            .run(|| async {
+                run_news_scan_from_deps(&deps)
+                    .await
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+            })
+            .await?;
 
         ctx.set(
             "status",

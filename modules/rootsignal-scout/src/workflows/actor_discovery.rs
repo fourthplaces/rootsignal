@@ -37,31 +37,39 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: RegionRequest,
     ) -> Result<ActorDiscoveryResult, HandlerError> {
-        // Status transition guard
+        // Status transition guard (journaled so it's skipped on replay)
         let slug = rootsignal_common::slugify(&req.scope.name);
-        let writer = GraphWriter::new(self.deps.graph_client.clone());
-        let transitioned = writer
-            .transition_region_status(
-                &slug,
-                &[
-                    "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
-                    "synthesis_complete", "situation_weaver_complete", "complete",
-                ],
-                "running_actor_discovery",
-            )
-            .await
-            .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
-        if !transitioned {
-            return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
-        }
+        let graph_client = self.deps.graph_client.clone();
+        ctx.run(|| async move {
+            let writer = GraphWriter::new(graph_client);
+            let transitioned = writer
+                .transition_region_status(
+                    &slug,
+                    &[
+                        "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
+                        "synthesis_complete", "situation_weaver_complete", "complete",
+                    ],
+                    "running_actor_discovery",
+                )
+                .await
+                .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
+            if !transitioned {
+                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+            }
+            Ok(())
+        })
+        .await?;
+        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Discovering actors...".to_string());
         let archive = create_archive(&self.deps);
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
+        let graph_client = self.deps.graph_client.clone();
 
         let actors_discovered = match ctx
             .run(|| async {
+                let writer = GraphWriter::new(graph_client);
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
                     archive,

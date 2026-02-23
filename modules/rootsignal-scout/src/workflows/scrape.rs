@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
-use tokio::sync::watch;
 use tracing::info;
 
 use rootsignal_graph::GraphWriter;
@@ -40,10 +39,11 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         ctx: WorkflowContext<'_>,
         req: RegionRequest,
     ) -> Result<ScrapeResult, HandlerError> {
-        // Status transition guard
+        // Status transition guard (journaled so it's skipped on replay)
         let slug = rootsignal_common::slugify(&req.scope.name);
-        {
-            let writer = rootsignal_graph::GraphWriter::new(self.deps.graph_client.clone());
+        let graph_client = self.deps.graph_client.clone();
+        ctx.run(|| async move {
+            let writer = rootsignal_graph::GraphWriter::new(graph_client);
             let transitioned = writer
                 .transition_region_status(
                     &slug,
@@ -58,40 +58,28 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
             if !transitioned {
                 return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
             }
-        }
+            Ok(())
+        })
+        .await?;
+        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Starting scrape pipeline...".to_string());
 
         let deps = self.deps.clone();
         let scope = req.scope.clone();
 
-        let (status_tx, mut status_rx) = watch::channel("Starting...".to_string());
-
-        let mut handle = tokio::spawn(async move {
-            run_scrape_from_deps(&deps, &scope, status_tx).await
-        });
-
-        let result = loop {
-            tokio::select! {
-                result = &mut handle => {
-                    match result
-                        .map_err(|e| -> HandlerError {
-                            TerminalError::new(format!("Scrape task panicked: {e}")).into()
-                        })
-                        .and_then(|r| r.map_err(|e| -> HandlerError {
-                            TerminalError::new(e.to_string()).into()
-                        }))
-                    {
-                        Ok(v) => break v,
-                        Err(e) => {
-                            super::write_phase_status(&self.deps, &slug, "idle").await;
-                            return Err(e);
-                        }
-                    }
-                }
-                Ok(()) = status_rx.changed() => {
-                    ctx.set("status", status_rx.borrow_and_update().clone());
-                }
+        let result = match ctx
+            .run(|| async {
+                run_scrape_from_deps(&deps, &scope)
+                    .await
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+            })
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e.into());
             }
         };
 
@@ -126,7 +114,6 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
 async fn run_scrape_from_deps(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
-    status: watch::Sender<String>,
 ) -> anyhow::Result<ScrapeResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
     let extractor: Arc<dyn crate::pipeline::extractor::SignalExtractor> =
@@ -158,22 +145,11 @@ async fn run_scrape_from_deps(
 
     let mut run_log = crate::infra::run_log::RunLog::new(run_id, scope.name.clone());
 
-    let _ = status.send("Reaping expired signals...".into());
     pipeline.reap_expired_signals(&mut run_log).await;
-
-    let _ = status.send("Loading and scheduling sources...".into());
     let (run, mut ctx) = pipeline.load_and_schedule_sources(&mut run_log).await?;
-
-    let _ = status.send("Scraping tension sources...".into());
     pipeline.scrape_tension_sources(&run, &mut ctx, &mut run_log).await;
-
-    let _ = status.send("Discovering new sources...".into());
     let (_, social_topics) = pipeline.discover_mid_run_sources().await;
-
-    let _ = status.send("Scraping response sources...".into());
     pipeline.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
-
-    let _ = status.send("Updating metrics and expanding...".into());
     pipeline.update_source_metrics(&run, &ctx).await;
     pipeline.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
 
