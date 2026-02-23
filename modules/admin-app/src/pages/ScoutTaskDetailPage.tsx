@@ -162,7 +162,7 @@ export function ScoutTaskDetailPage() {
   const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
 
   // Fetch all tasks, find the one matching our ID
-  const { data: tasksData, loading: taskLoading } = useQuery(ADMIN_SCOUT_TASKS, {
+  const { data: tasksData, loading: taskLoading, refetch: refetchTasks } = useQuery(ADMIN_SCOUT_TASKS, {
     variables: { limit: 200 },
   });
   const task: ScoutTask | undefined = (tasksData?.adminScoutTasks ?? []).find(
@@ -171,13 +171,24 @@ export function ScoutTaskDetailPage() {
 
   const [runScout] = useMutation(RUN_SCOUT);
   const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+  const [runLoading, setRunLoading] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const handleRunPhase = async () => {
     if (!task) return;
-    if (selectedPhase === "FULL_RUN") {
-      await runScout({ variables: { query: task.context } });
-    } else {
-      await runScoutPhase({ variables: { phase: selectedPhase, query: task.context } });
+    setRunLoading(true);
+    setRunError(null);
+    try {
+      if (selectedPhase === "FULL_RUN") {
+        await runScout({ variables: { query: task.context } });
+      } else {
+        await runScoutPhase({ variables: { phase: selectedPhase, query: task.context } });
+      }
+      refetchTasks();
+    } catch (err: unknown) {
+      setRunError(err instanceof Error ? err.message : "Failed to run phase");
+    } finally {
+      setRunLoading(false);
     }
   };
 
@@ -258,11 +269,15 @@ export function ScoutTaskDetailPage() {
               </select>
               <button
                 onClick={handleRunPhase}
-                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                disabled={runLoading}
+                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
               >
-                Run
+                {runLoading ? "Running..." : "Run"}
               </button>
             </div>
+          )}
+          {runError && (
+            <p className="text-xs text-red-400 mt-1">{runError}</p>
           )}
         </div>
       </div>

@@ -66,7 +66,8 @@ impl RestateClient {
 
     /// Start a `FullScoutRunWorkflow` for the given region slug.
     pub async fn run_scout(&self, slug: &str, scope: &ScoutScope) -> Result<(), RestateError> {
-        let url = format!("{}/FullScoutRunWorkflow/{slug}/run", self.ingress_url);
+        let key = format!("{slug}-{}", chrono::Utc::now().timestamp());
+        let url = format!("{}/FullScoutRunWorkflow/{key}/run", self.ingress_url);
         info!(url = url.as_str(), "Dispatching scout via Restate");
 
         let body = serde_json::json!({ "scope": scope });

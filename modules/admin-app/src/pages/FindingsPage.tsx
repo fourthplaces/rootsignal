@@ -25,6 +25,92 @@ type Finding = {
   resolvedAt: string | null;
 };
 
+const formatDate = (d: string | null) => {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MutationFn = (options?: any) => Promise<any>;
+
+function FindingRow({
+  finding: f,
+  dismissFinding,
+  onRefetch,
+}: {
+  finding: Finding;
+  dismissFinding: MutationFn;
+  onRefetch: () => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDismiss = async () => {
+    setDismissing(true);
+    setError(null);
+    try {
+      await dismissFinding({ variables: { id: f.id } });
+      onRefetch();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to dismiss");
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-muted/30">
+      <td className="px-4 py-2">
+        <span
+          className={`inline-block px-2 py-0.5 rounded text-xs border ${SEVERITY_COLORS[f.severity] ?? "bg-muted text-muted-foreground"}`}
+        >
+          {f.severity}
+        </span>
+      </td>
+      <td className="px-4 py-2 text-muted-foreground">{f.issueType}</td>
+      <td className="px-4 py-2">
+        <span className="font-medium">{f.targetLabel}</span>
+      </td>
+      <td className="px-4 py-2 max-w-md truncate text-muted-foreground">
+        {f.description}
+      </td>
+      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+        {formatDate(f.createdAt)}
+      </td>
+      <td className="px-4 py-2">
+        <span
+          className={`text-xs ${
+            f.status === "open"
+              ? "text-amber-400"
+              : f.status === "resolved"
+                ? "text-green-400"
+                : "text-muted-foreground"
+          }`}
+        >
+          {f.status}
+        </span>
+      </td>
+      <td className="px-4 py-2 text-right">
+        {f.status === "open" && (
+          <button
+            onClick={handleDismiss}
+            disabled={dismissing}
+            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-50"
+          >
+            {dismissing ? "Dismissing..." : "Dismiss"}
+          </button>
+        )}
+        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </td>
+    </tr>
+  );
+}
+
 type Summary = {
   totalOpen: number;
   totalResolved: number;
@@ -67,20 +153,9 @@ export function FindingsPage() {
     return true;
   });
 
-  const handleDismiss = async (id: string) => {
-    await dismissFinding({ variables: { id } });
+  const refetchAll = () => {
     refetchFindings();
     refetchSummary();
-  };
-
-  const formatDate = (d: string | null) => {
-    if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
   };
 
   const issueTypes = [
@@ -181,50 +256,12 @@ export function FindingsPage() {
             </thead>
             <tbody>
               {filtered.map((f) => (
-                <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-2">
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded text-xs border ${SEVERITY_COLORS[f.severity] ?? "bg-muted text-muted-foreground"}`}
-                    >
-                      {f.severity}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
-                    {f.issueType}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className="font-medium">{f.targetLabel}</span>
-                  </td>
-                  <td className="px-4 py-2 max-w-md truncate text-muted-foreground">
-                    {f.description}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                    {formatDate(f.createdAt)}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs ${
-                        f.status === "open"
-                          ? "text-amber-400"
-                          : f.status === "resolved"
-                            ? "text-green-400"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {f.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {f.status === "open" && (
-                      <button
-                        onClick={() => handleDismiss(f.id)}
-                        className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
-                      >
-                        Dismiss
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                <FindingRow
+                  key={f.id}
+                  finding={f}
+                  dismissFinding={dismissFinding}
+                  onRefetch={refetchAll}
+                />
               ))}
             </tbody>
           </table>
