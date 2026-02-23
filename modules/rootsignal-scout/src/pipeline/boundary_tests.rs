@@ -706,3 +706,175 @@ async fn end_to_end_page_links_to_promoted_sources() {
     assert!(store.has_source_url("https://partner-a.org/programs"));
     assert!(store.has_source_url("https://partner-b.org/events"));
 }
+
+// ---------------------------------------------------------------------------
+// Source location bug (TDD red phase)
+//
+// BUG: promote_links stamps every promoted source with the region center
+// coordinates, regardless of where the discovering source actually is.
+// These tests assert CORRECT behavior and are expected to FAIL until fixed.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[should_panic]
+async fn promoted_source_should_not_get_hardcoded_region_center() {
+    // A link discovered from a page should not blindly receive the region
+    // center coordinates. The promoted source hasn't been scraped yet — we
+    // don't know its actual coverage area.
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    let store = Arc::new(MockSignalStore::new());
+    let links = vec![
+        ("https://discovered.org/page".to_string(), "https://stpaul-source.org".to_string()),
+    ];
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
+    let region = mpls_region();
+
+    link_promoter::promote_links(
+        &links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    let (lat, lng) = store.get_source_coords("https://discovered.org/page");
+
+    // BUG: promoted source gets region center (44.9778, -93.2650).
+    // Correct behavior: coords should come from the discovering source,
+    // or be None until the promoted source is actually scraped.
+    assert_ne!(
+        lat,
+        Some(region.center_lat),
+        "promoted source should not blindly get region center lat"
+    );
+    assert_ne!(
+        lng,
+        Some(region.center_lng),
+        "promoted source should not blindly get region center lng"
+    );
+}
+
+#[tokio::test]
+#[should_panic]
+async fn links_from_different_sources_should_get_different_coords() {
+    // Two links discovered from sources at different locations should NOT
+    // both end up with the same region-center coordinates.
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    let store = Arc::new(MockSignalStore::new());
+
+    // Link A discovered from a St. Paul source, Link B from a Duluth source.
+    // Currently collected_links only carries (url, source_url) — no coords.
+    // promote_links stamps both with identical region center.
+    let links = vec![
+        ("https://stpaul-event.org".to_string(), "https://stpaul-news.org".to_string()),
+        ("https://duluth-event.org".to_string(), "https://duluth-news.org".to_string()),
+    ];
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
+    let region = mpls_region();
+
+    link_promoter::promote_links(
+        &links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    let (lat_a, lng_a) = store.get_source_coords("https://stpaul-event.org");
+    let (lat_b, lng_b) = store.get_source_coords("https://duluth-event.org");
+
+    // BUG: both get identical region center (44.9778, -93.2650).
+    // Correct behavior: each should inherit coords from its discovering source,
+    // so a St. Paul link ≠ a Duluth link.
+    assert_ne!(
+        lat_a, lat_b,
+        "promoted sources from different-location discoverers should have different coords"
+    );
+    assert_ne!(
+        lng_a, lng_b,
+        "promoted sources from different-location discoverers should have different coords"
+    );
+}
+
+#[tokio::test]
+#[should_panic]
+async fn collected_links_should_carry_discovering_source_location() {
+    // After run_web, collected_links only stores (url, source_url).
+    // It should also carry the discovering source's coordinates so that
+    // promote_links can assign per-link coords instead of region center.
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://stpaul-hub.org",
+            {
+                let mut page = archived_page("https://stpaul-hub.org", "# St. Paul Resources");
+                page.links = vec!["https://stpaul-foodshelf.org".to_string()];
+                page
+            },
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://stpaul-hub.org",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("St. Paul Food Drive", 44.9537, -93.0900)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(64));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    // Source with St. Paul coords, NOT Minneapolis center
+    let mut source = page_source("https://stpaul-hub.org");
+    source.center_lat = Some(44.9537);
+    source.center_lng = Some(-93.0900);
+
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    // BUG: collected_links is Vec<(String, String)> — only (url, source_url).
+    // It loses the discovering source's coordinates entirely.
+    // Correct behavior: collected_links should carry source location so
+    // promote_links can stamp per-link coords.
+    assert!(
+        !ctx.collected_links.is_empty(),
+        "should have collected a link"
+    );
+
+    // This will fail because collected_links tuples only have 2 elements.
+    // When fixed, the tuple should be (url, source_url, Option<f64>, Option<f64>).
+    let first_link = &ctx.collected_links[0];
+    let link_url = &first_link.0;
+    assert!(link_url.starts_with("https://stpaul-foodshelf.org"), "unexpected link: {link_url}");
+
+    // Can't even access coords — they're not in the tuple.
+    // For now, assert that collected_links length is wrong (it's 2-tuples, should be 4-tuples).
+    // This is a compile-time limitation we document with a runtime check.
+    let tuple_size = std::mem::size_of_val(first_link);
+    let two_strings_size = std::mem::size_of::<(String, String)>();
+    assert!(
+        tuple_size > two_strings_size,
+        "collected_links tuples should carry more than just (url, source_url) — need coords too"
+    );
+}

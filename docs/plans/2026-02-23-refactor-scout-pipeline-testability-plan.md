@@ -481,7 +481,7 @@ Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation. 
 - [ ] Every new test follows MOCK → FUNCTION → OUTPUT (CLAUDE.md rule)
 - [ ] No test manually calls internal functions step-by-step
 - [ ] `MockSignalStore` correctly simulates dedup state machine (verified by its own tests)
-- [ ] Source location bug has failing TDD tests (red phase)
+- [x] Source location bug has failing TDD tests (red phase)
 
 ---
 

@@ -301,6 +301,16 @@ impl MockSignalStore {
         let cv = canonical_value(url);
         inner.sources.contains_key(&cv)
     }
+
+    pub fn get_source_coords(&self, url: &str) -> (Option<f64>, Option<f64>) {
+        let inner = self.inner.lock().unwrap();
+        let cv = canonical_value(url);
+        inner
+            .sources
+            .get(&cv)
+            .map(|s| (s.center_lat, s.center_lng))
+            .unwrap_or((None, None))
+    }
 }
 
 #[async_trait]
