@@ -1037,35 +1037,35 @@ impl GraphWriter {
     /// Atomically transition a region's scout run status. Returns false if the current
     /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
     /// Cleans up stale running statuses (>5 min) before attempting transition.
-    pub async fn transition_region_status(
+    // --- Task-scoped phase status operations ---
+
+    /// CAS guard: only transitions if current phase_status is in allowed_from set.
+    /// Also auto-resets stale running statuses (>5 min) on the same task.
+    pub async fn transition_task_phase_status(
         &self,
-        region: &str,
+        task_id: &str,
         allowed_from: &[&str],
         new_status: &str,
     ) -> Result<bool, neo4rs::Error> {
-        // Clean up stale running statuses for this region (>5 min).
-        // If a workflow is genuinely still running, Restate will retry on failure;
-        // the guard only needs to block truly concurrent attempts.
+        // Clean up stale running status for this task (>5 min).
         self.client
             .graph
             .run(query(
-                "MATCH (r:RegionScoutRun {region: $region}) \
-                 WHERE r.status STARTS WITH 'running_' \
-                   AND r.updated_at < datetime() - duration('PT5M') \
-                 SET r.status = 'idle', r.updated_at = datetime()"
-            ).param("region", region))
+                "MATCH (t:ScoutTask {id: $id}) \
+                 WHERE t.phase_status STARTS WITH 'running_' \
+                   AND t.phase_status_updated_at < datetime() - duration('PT5M') \
+                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
+            ).param("id", task_id))
             .await?;
 
-        // Atomic MERGE + conditional SET: only transitions if current status is allowed
+        // Atomic conditional SET: only transitions if current phase_status is allowed
         let q = query(
-            "MERGE (r:RegionScoutRun {region: $region})
-             ON CREATE SET r.status = 'idle', r.started_at = datetime(), r.updated_at = datetime()
-             WITH r
-             WHERE r.status IN $allowed_from
-             SET r.status = $new_status, r.updated_at = datetime()
+            "MATCH (t:ScoutTask {id: $id})
+             WHERE t.phase_status IN $allowed_from
+             SET t.phase_status = $new_status, t.phase_status_updated_at = datetime()
              RETURN true AS transitioned",
         )
-        .param("region", region)
+        .param("id", task_id)
         .param("allowed_from", allowed_from.to_vec())
         .param("new_status", new_status);
 
@@ -1075,61 +1075,45 @@ impl GraphWriter {
             return Ok(transitioned);
         }
 
-        // No row returned means the WHERE filtered it out (status not in allowed set)
+        // No row returned means the WHERE filtered it out
         Ok(false)
     }
 
-    /// Read the current region run status. Returns "idle" if no node exists.
-    pub async fn get_region_run_status(&self, region: &str) -> Result<String, neo4rs::Error> {
-        let q = query(
-            "OPTIONAL MATCH (r:RegionScoutRun {region: $region})
-             RETURN r.status AS status"
-        ).param("region", region);
-
-        let mut result = self.client.graph.execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let status: String = row.get("status").unwrap_or_else(|_| "idle".to_string());
-            return Ok(status);
-        }
-        Ok("idle".to_string())
-    }
-
-    /// Directly set a region's run status (used by workflows to write completion status).
-    pub async fn set_region_run_status(
+    /// Directly set a task's phase status.
+    pub async fn set_task_phase_status(
         &self,
-        region: &str,
+        task_id: &str,
         status: &str,
     ) -> Result<(), neo4rs::Error> {
         self.client
             .graph
             .run(query(
-                "MERGE (r:RegionScoutRun {region: $region})
-                 ON CREATE SET r.started_at = datetime()
-                 SET r.status = $status, r.updated_at = datetime()"
-            ).param("region", region).param("status", status))
+                "MATCH (t:ScoutTask {id: $id})
+                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()"
+            ).param("id", task_id).param("status", status))
             .await?;
         Ok(())
     }
 
-    /// Reset a stuck region status to "idle". Replaces release_scout_lock.
-    pub async fn reset_region_run_status(&self, region: &str) -> Result<(), neo4rs::Error> {
+    /// Reset a stuck task's phase status to "idle".
+    pub async fn reset_task_phase_status(&self, task_id: &str) -> Result<(), neo4rs::Error> {
         self.client
             .graph
             .run(query(
-                "MATCH (r:RegionScoutRun {region: $region}) SET r.status = 'idle', r.updated_at = datetime()"
-            ).param("region", region))
+                "MATCH (t:ScoutTask {id: $id}) SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
+            ).param("id", task_id))
             .await?;
         Ok(())
     }
 
-    /// Clean up all stale running statuses (>30 min) across all regions.
-    pub async fn cleanup_stale_region_statuses(&self) -> Result<u32, neo4rs::Error> {
+    /// Clean up all stale running task statuses (>30 min).
+    pub async fn cleanup_stale_task_statuses(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
-            "MATCH (r:RegionScoutRun)
-             WHERE r.status STARTS WITH 'running_'
-               AND r.updated_at < datetime() - duration('PT30M')
-             SET r.status = 'idle', r.updated_at = datetime()
-             RETURN count(r) AS cleaned"
+            "MATCH (t:ScoutTask)
+             WHERE t.phase_status STARTS WITH 'running_'
+               AND t.phase_status_updated_at < datetime() - duration('PT30M')
+             SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()
+             RETURN count(t) AS cleaned"
         );
 
         let mut result = self.client.graph.execute(q).await?;
@@ -1140,14 +1124,14 @@ impl GraphWriter {
         Ok(0)
     }
 
-    /// Check if a scout is currently running for a region.
-    pub async fn is_scout_running(&self, region: &str) -> Result<bool, neo4rs::Error> {
+    /// Check if any task for a region (by context) is currently running.
+    pub async fn is_region_task_running(&self, context: &str) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "OPTIONAL MATCH (r:RegionScoutRun {region: $region})
-             WHERE r.status STARTS WITH 'running_'
-               AND r.updated_at >= datetime() - duration('PT30M')
-             RETURN r IS NOT NULL AS running"
-        ).param("region", region);
+            "MATCH (t:ScoutTask {context: $context})
+             WHERE t.phase_status STARTS WITH 'running_'
+               AND t.phase_status_updated_at >= datetime() - duration('PT30M')
+             RETURN count(t) > 0 AS running"
+        ).param("context", context);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1172,35 +1156,6 @@ impl GraphWriter {
             return Ok(due as u32);
         }
         Ok(0)
-    }
-
-    /// Batch check scout running status for multiple regions in a single query.
-    pub async fn batch_scout_running(
-        &self,
-        slugs: &[String],
-    ) -> Result<std::collections::HashMap<String, bool>, neo4rs::Error> {
-        let mut map = std::collections::HashMap::new();
-        if slugs.is_empty() {
-            return Ok(map);
-        }
-
-        let q = query(
-            "UNWIND $slugs AS slug
-             OPTIONAL MATCH (r:RegionScoutRun {region: slug})
-             WHERE r.status STARTS WITH 'running_'
-               AND r.updated_at >= datetime() - duration('PT30M')
-             RETURN slug, r IS NOT NULL AS running",
-        )
-        .param("slugs", slugs.to_vec());
-
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let slug: String = row.get("slug").unwrap_or_default();
-            let running: bool = row.get("running").unwrap_or(false);
-            map.insert(slug, running);
-        }
-
-        Ok(map)
     }
 
     /// Batch count due sources for multiple cities in a single query.
@@ -1567,6 +1522,7 @@ impl GraphWriter {
                  t.priority = $priority,
                  t.source = $source,
                  t.status = $status,
+                 t.phase_status = coalesce(t.phase_status, $phase_status),
                  t.created_at = datetime($created_at)",
         )
         .param("id", task.id.to_string())
@@ -1578,6 +1534,7 @@ impl GraphWriter {
         .param("priority", task.priority)
         .param("source", task.source.to_string())
         .param("status", task.status.to_string())
+        .param("phase_status", task.phase_status.as_str())
         .param("created_at", format_datetime(&task.created_at));
 
         self.client.graph.run(q).await?;
@@ -1593,7 +1550,8 @@ impl GraphWriter {
                     t.radius_km AS radius_km, t.context AS context,
                     t.geo_terms AS geo_terms, t.priority AS priority,
                     t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at",
+                    t.created_at AS created_at, t.completed_at AS completed_at,
+                    t.phase_status AS phase_status",
         )
         .param("id", id);
 
@@ -1617,7 +1575,8 @@ impl GraphWriter {
                     t.radius_km AS radius_km, t.context AS context,
                     t.geo_terms AS geo_terms, t.priority AS priority,
                     t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at
+                    t.created_at AS created_at, t.completed_at AS completed_at,
+                    t.phase_status AS phase_status
              ORDER BY t.created_at DESC
              LIMIT $limit"
         } else {
@@ -1626,7 +1585,8 @@ impl GraphWriter {
                     t.radius_km AS radius_km, t.context AS context,
                     t.geo_terms AS geo_terms, t.priority AS priority,
                     t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at
+                    t.created_at AS created_at, t.completed_at AS completed_at,
+                    t.phase_status AS phase_status
              ORDER BY t.created_at DESC
              LIMIT $limit"
         };
@@ -1672,27 +1632,6 @@ impl GraphWriter {
         .param("id", id);
 
         self.client.graph.run(q).await
-    }
-
-    /// Claim a pending scout task by context (location name), setting status to running.
-    /// Returns the task id if found, None otherwise.
-    pub async fn claim_scout_task_by_context(&self, context: &str) -> Result<Option<String>, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {status: 'pending'})
-             WHERE t.context = $context
-             SET t.status = 'running'
-             RETURN t.id AS id
-             LIMIT 1",
-        )
-        .param("context", context);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            if id.is_empty() { Ok(None) } else { Ok(Some(id)) }
-        } else {
-            Ok(None)
-        }
     }
 
     /// Claim a scout task by setting its status from pending → running.
@@ -1803,6 +1742,7 @@ impl GraphWriter {
                 priority: 0.5,
                 source: ScoutTaskSource::DriverA,
                 status: ScoutTaskStatus::Pending,
+                phase_status: "idle".to_string(),
                 created_at: chrono::Utc::now(),
                 completed_at: None,
             };
@@ -5297,6 +5237,8 @@ pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
     let source_str: String = row.get("source").unwrap_or_default();
     let status_str: String = row.get("status").unwrap_or_default();
 
+    let phase_status: String = row.get("phase_status").unwrap_or_else(|_| "idle".to_string());
+
     ScoutTask {
         id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
         center_lat: row.get("center_lat").unwrap_or(0.0),
@@ -5309,6 +5251,7 @@ pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
         status: status_str.parse().unwrap_or(ScoutTaskStatus::Pending),
         created_at: row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now),
         completed_at: row_datetime_opt(row, "completed_at"),
+        phase_status,
     }
 }
 

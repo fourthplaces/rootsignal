@@ -16,7 +16,7 @@ use super::ScoutDeps;
 #[restate_sdk::workflow]
 #[name = "FullScoutRunWorkflow"]
 pub trait FullScoutRunWorkflow {
-    async fn run(req: RegionRequest) -> Result<FullRunResult, HandlerError>;
+    async fn run(req: TaskRequest) -> Result<FullRunResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -35,12 +35,13 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: RegionRequest,
+        req: TaskRequest,
     ) -> Result<FullRunResult, HandlerError> {
+        let task_id = req.task_id.clone();
         let scope = req.scope.clone();
         // Sub-workflow keys must be unique per full run — Restate workflows are
         // one-shot, so reusing the bare slug would 409 on subsequent runs.
-        // Derive from the parent key (which already has a timestamp).
+        // ctx.key() = task_id (UUID), so sub_key = "{slug}-{task_id}" — unique per task.
         let slug = rootsignal_common::slugify(&scope.name);
         let sub_key = format!("{slug}-{}", ctx.key());
 
@@ -48,7 +49,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::Bootstrap.to_string());
         let bootstrap_result: BootstrapResult = ctx
             .workflow_client::<super::bootstrap::BootstrapWorkflowClient>(&sub_key)
-            .run(RegionRequest {
+            .run(TaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
             })
             .call()
@@ -62,7 +64,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::ActorDiscovery.to_string());
         let discovery_result: ActorDiscoveryResult = ctx
             .workflow_client::<super::actor_discovery::ActorDiscoveryWorkflowClient>(&sub_key)
-            .run(RegionRequest {
+            .run(TaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
             })
             .call()
@@ -76,7 +79,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::Scraping.to_string());
         let scrape_result: ScrapeResult = ctx
             .workflow_client::<super::scrape::ScrapeWorkflowClient>(&sub_key)
-            .run(RegionRequest {
+            .run(TaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
             })
             .call()
@@ -93,7 +97,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::Synthesis.to_string());
         let synthesis_result: SynthesisResult = ctx
             .workflow_client::<super::synthesis::SynthesisWorkflowClient>(&sub_key)
-            .run(BudgetedRegionRequest {
+            .run(BudgetedTaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
                 spent_cents,
             })
@@ -106,7 +111,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::SituationWeaving.to_string());
         let _weaver_result: SituationWeaverResult = ctx
             .workflow_client::<super::situation_weaver::SituationWeaverWorkflowClient>(&sub_key)
-            .run(BudgetedRegionRequest {
+            .run(BudgetedTaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
                 spent_cents,
             })
@@ -118,7 +124,8 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", WorkflowPhase::Supervisor.to_string());
         let supervisor_result: SupervisorResult = ctx
             .workflow_client::<super::supervisor::SupervisorWorkflowClient>(&sub_key)
-            .run(RegionRequest {
+            .run(TaskRequest {
+                task_id: task_id.clone(),
                 scope: scope.clone(),
             })
             .call()

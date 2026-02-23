@@ -586,6 +586,21 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         }
     }
 
+    // --- Delete RegionScoutRun nodes (phase_status now lives on ScoutTask) ---
+    match g.run(query("MATCH (r:RegionScoutRun) DELETE r")).await {
+        Ok(_) => info!("Deleted RegionScoutRun nodes (phase_status moved to ScoutTask)"),
+        Err(e) => warn!("RegionScoutRun cleanup failed (non-fatal): {e}"),
+    }
+
+    // --- Backfill phase_status on existing ScoutTask nodes ---
+    match g.run(query(
+        "MATCH (t:ScoutTask) WHERE t.phase_status IS NULL \
+         SET t.phase_status = 'idle'"
+    )).await {
+        Ok(_) => info!("Backfilled phase_status on ScoutTask nodes"),
+        Err(e) => warn!("ScoutTask phase_status backfill failed (non-fatal): {e}"),
+    }
+
     info!("Schema migration complete");
     Ok(())
 }

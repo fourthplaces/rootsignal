@@ -10,13 +10,13 @@ use tracing::info;
 
 use rootsignal_graph::GraphWriter;
 
-use super::types::{ActorDiscoveryResult, EmptyRequest, RegionRequest};
+use super::types::{ActorDiscoveryResult, EmptyRequest, TaskRequest};
 use super::{create_archive, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "ActorDiscoveryWorkflow"]
 pub trait ActorDiscoveryWorkflow {
-    async fn run(req: RegionRequest) -> Result<ActorDiscoveryResult, HandlerError>;
+    async fn run(req: TaskRequest) -> Result<ActorDiscoveryResult, HandlerError>;
     #[shared]
     async fn get_status(req: EmptyRequest) -> Result<String, HandlerError>;
 }
@@ -35,16 +35,18 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: RegionRequest,
+        req: TaskRequest,
     ) -> Result<ActorDiscoveryResult, HandlerError> {
+        let task_id = req.task_id.clone();
+
         // Status transition guard (journaled so it's skipped on replay)
-        let slug = rootsignal_common::slugify(&req.scope.name);
+        let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
             let writer = GraphWriter::new(graph_client);
             let transitioned = writer
-                .transition_region_status(
-                    &slug,
+                .transition_task_phase_status(
+                    &tid,
                     &[
                         "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
                         "synthesis_complete", "situation_weaver_complete", "complete",
@@ -59,7 +61,6 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
             Ok(())
         })
         .await?;
-        let slug = rootsignal_common::slugify(&req.scope.name);
 
         ctx.set("status", "Discovering actors...".to_string());
         let archive = create_archive(&self.deps);
@@ -83,13 +84,12 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_phase_status(&self.deps, &slug, "idle").await;
+                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        let region_key = rootsignal_common::slugify(&req.scope.name);
-        super::write_phase_status(&self.deps, &region_key, "actor_discovery_complete").await;
+        super::write_task_phase_status(&self.deps, &task_id, "actor_discovery_complete").await;
 
         ctx.set(
             "status",

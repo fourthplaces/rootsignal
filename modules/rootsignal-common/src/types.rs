@@ -541,7 +541,8 @@ impl std::str::FromStr for ScoutTaskStatus {
 }
 
 /// An ephemeral unit of work for the scout swarm.
-/// An ephemeral unit of work for the scout swarm.
+/// Each task owns its own phase_status (idle → running_bootstrap → ... → complete).
+/// Tasks are one-shot and append-only — if a run fails, create a new task rather than retrying.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoutTask {
     pub id: Uuid,
@@ -555,6 +556,13 @@ pub struct ScoutTask {
     pub status: ScoutTaskStatus,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// Workflow phase status: "idle", "running_bootstrap", "bootstrap_complete", etc.
+    #[serde(default = "default_phase_status")]
+    pub phase_status: String,
+}
+
+fn default_phase_status() -> String {
+    "idle".to_string()
 }
 
 impl From<&ScoutTask> for ScoutScope {

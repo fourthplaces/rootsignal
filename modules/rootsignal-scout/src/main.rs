@@ -142,26 +142,17 @@ async fn main() -> Result<()> {
         .build();
 
     let writer = GraphWriter::new(deps.graph_client.clone());
-    let region_slug = rootsignal_common::slugify(&region.name);
 
-    // Transition region status to running (acts as lock)
-    let allowed = &["idle", "bootstrap_complete", "actor_discovery_complete",
-        "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete"];
-    if !writer
-        .transition_region_status(&region_slug, allowed, "running_bootstrap")
+    // Check if any task for this region is already running
+    if writer
+        .is_region_task_running(&region.name)
         .await
-        .context("Failed to check region run status")?
+        .context("Failed to check running status")?
     {
         anyhow::bail!("Another scout run is in progress for {}", region.name);
     }
 
     let result = run_full_scout(&deps, region).await;
-
-    // Set status to complete or reset to idle on failure
-    let final_status = if result.is_ok() { "complete" } else { "idle" };
-    if let Err(e) = writer.set_region_run_status(&region_slug, final_status).await {
-        tracing::error!("Failed to set region run status: {e}");
-    }
 
     let stats = result?;
     info!("Scout run complete. {stats}");

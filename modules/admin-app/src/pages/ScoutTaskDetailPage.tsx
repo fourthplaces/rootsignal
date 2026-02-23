@@ -181,9 +181,9 @@ export function ScoutTaskDetailPage() {
     setRunError(null);
     try {
       if (selectedPhase === "FULL_RUN") {
-        await runScout({ variables: { query: task.context } });
+        await runScout({ variables: { taskId: task.id } });
       } else {
-        await runScoutPhase({ variables: { phase: selectedPhase, query: task.context } });
+        await runScoutPhase({ variables: { phase: selectedPhase, taskId: task.id } });
       }
       refetchTasks();
     } catch (err: unknown) {

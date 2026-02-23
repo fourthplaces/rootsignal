@@ -144,6 +144,7 @@ pub async fn detect_beacons(
             priority,
             source: ScoutTaskSource::Beacon,
             status: ScoutTaskStatus::Pending,
+            phase_status: "idle".to_string(),
             created_at: chrono::Utc::now(),
             completed_at: None,
         };
@@ -236,6 +237,7 @@ pub async fn create_beacons_from_news(
             priority,
             source: ScoutTaskSource::DriverB,
             status: ScoutTaskStatus::Pending,
+            phase_status: "idle".to_string(),
             created_at: chrono::Utc::now(),
             completed_at: None,
         };

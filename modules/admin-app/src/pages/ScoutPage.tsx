@@ -195,9 +195,9 @@ function TaskRow({
     setError(null);
     try {
       if (selectedPhase === "FULL_RUN") {
-        await runScout({ variables: { query: t.context } });
+        await runScout({ variables: { taskId: t.id } });
       } else {
-        await runScoutPhase({ variables: { phase: selectedPhase, query: t.context } });
+        await runScoutPhase({ variables: { phase: selectedPhase, taskId: t.id } });
       }
       onRefetch();
     } catch (err: unknown) {
@@ -211,7 +211,7 @@ function TaskRow({
     setResetting(true);
     setError(null);
     try {
-      await resetStatus({ variables: { query: t.context } });
+      await resetStatus({ variables: { taskId: t.id } });
       onRefetch();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to reset");
