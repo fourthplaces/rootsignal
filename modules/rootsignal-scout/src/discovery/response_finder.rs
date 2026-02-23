@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
+    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
     NodeMeta, NodeType, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
@@ -21,8 +21,7 @@ use rootsignal_archive::Archive;
 
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::ResourceTag;
-use crate::pipeline::sources;
-use crate::discovery::tension_linker::{ReadPageTool, WebSearchTool};
+use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -914,7 +913,7 @@ impl<'a> ResponseFinder<'a> {
         stats: &mut ResponseFinderStats,
     ) -> Result<()> {
         let cv = query.to_string();
-        let ck = sources::make_canonical_key(&cv);
+        let ck = canonical_value(&cv);
         let gap_context = format!(
             "Response finder: response discovery for \"{}\"",
             target.title,

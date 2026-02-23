@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ActorContext, ScoutScope,
+    canonical_value, channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ActorContext, ScoutScope,
     DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
     SocialPlatform, SourceNode, SourceRole,
 };
@@ -31,7 +31,6 @@ use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::stats::ScoutStats;
 use rootsignal_archive::Archive;
 
-use crate::pipeline::sources;
 use crate::infra::util::{content_hash, sanitize_url};
 
 // ---------------------------------------------------------------------------
@@ -1063,7 +1062,7 @@ impl ScrapePhase {
 
                 // Create a Source node with correct platform type
                 let cv = rootsignal_common::canonical_value(&source_url);
-                let ck = sources::make_canonical_key(&source_url);
+                let ck = canonical_value(&source_url);
                 let gap_context = format!(
                     "Topic: {}",
                     topics.first().map(|t| t.as_str()).unwrap_or("unknown")

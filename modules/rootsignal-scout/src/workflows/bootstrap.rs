@@ -46,7 +46,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
 
         let sources_created = ctx
             .run(|| async {
-                let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
+                let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
                     archive,
                     &api_key,

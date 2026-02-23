@@ -15,7 +15,7 @@ use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Archive;
 
-use rootsignal_scout::enrichment::actor_discovery::{
+use rootsignal_scout::discovery::actor_discovery::{
     create_actor_from_page, geocode_location,
 };
 
@@ -688,7 +688,7 @@ impl MutationRoot {
                     return;
                 }
             };
-            let scanner = rootsignal_scout::enrichment::news_scanner::NewsScanner::new(
+            let scanner = rootsignal_scout::pipeline::news_scanner::NewsScanner::new(
                 archive,
                 &config_clone.anthropic_api_key,
                 writer,

@@ -4,14 +4,13 @@ use schemars::JsonSchema;
 use serde::{de, Deserialize};
 use tracing::{info, warn};
 use ai_client::claude::Claude;
-use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SituationBrief, SourceBrief,
     StoryBrief, TensionResponseShape, UnmetTension,
 };
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
-use crate::pipeline::sources;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_CURIOSITY_QUERIES: usize = 7;
@@ -553,7 +552,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let ck = sources::make_canonical_key(&url);
+                let ck = canonical_value(&url);
                 let cv = rootsignal_common::canonical_value(&url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
@@ -589,7 +588,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let ck = sources::make_canonical_key(social_url);
+                let ck = canonical_value(social_url);
                 let cv = rootsignal_common::canonical_value(social_url);
                 if existing_keys.contains(&ck) {
                     stats.duplicates_skipped += 1;
@@ -750,7 +749,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = dq.query.clone();
-            let ck = sources::make_canonical_key(&cv);
+            let ck = canonical_value(&cv);
 
             let gap_context = format!(
                 "Curiosity: {} | Gap: {} | Related: {}",
@@ -952,7 +951,7 @@ impl<'a> SourceFinder<'a> {
             }
 
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&cv);
+            let ck = canonical_value(&cv);
 
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));

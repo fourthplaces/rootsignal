@@ -68,7 +68,7 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
     }
 }
 
-async fn run_situation_weaving_from_deps(
+pub async fn run_situation_weaving_from_deps(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,

@@ -4,12 +4,11 @@ use anyhow::Result;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{canonical_value, ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Archive;
 
-use crate::pipeline::sources;
 
 /// Handles cold-start bootstrapping for a brand-new region.
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
@@ -50,7 +49,7 @@ impl<'a> Bootstrapper<'a> {
         let mut sources_created = 0u32;
         for (query, role) in &queries {
             let cv = query.clone();
-            let ck = sources::make_canonical_key(&cv);
+            let ck = canonical_value(&cv);
             let source = SourceNode::new(
                 ck,
                 cv,
@@ -128,7 +127,7 @@ impl<'a> Bootstrapper<'a> {
                 if !seen_urls.insert(url.clone()) {
                     continue; // already processed this URL from a previous query
                 }
-                match crate::enrichment::actor_discovery::create_actor_from_page(
+                match crate::discovery::actor_discovery::create_actor_from_page(
                     &self.archive,
                     self.writer,
                     &self.anthropic_api_key,
@@ -259,7 +258,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         let region_name_encoded = region_name.replace(' ', "+");
 
         let make_url = |url: &str, role: SourceRole| {
-            let ck = sources::make_canonical_key(url);
+            let ck = canonical_value(url);
             let cv = rootsignal_common::canonical_value(url);
             SourceNode::new(
                 ck,
@@ -273,7 +272,7 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         };
 
         let make_query = |query: &str, role: SourceRole| {
-            let ck = sources::make_canonical_key(query);
+            let ck = canonical_value(query);
             SourceNode::new(
                 ck,
                 query.to_string(),
@@ -479,7 +478,7 @@ pub async fn tension_seed_queries(
         let query = format!("organizations helping with {} in {}", help_text, region_name);
 
         let cv = query.clone();
-        let ck = sources::make_canonical_key(&cv);
+        let ck = canonical_value(&cv);
         all_sources.push(SourceNode::new(
             ck,
             cv,

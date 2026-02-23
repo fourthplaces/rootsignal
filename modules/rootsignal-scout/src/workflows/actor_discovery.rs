@@ -46,7 +46,7 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
 
         let actors_discovered = ctx
             .run(|| async {
-                let bootstrapper = crate::scheduling::bootstrap::Bootstrapper::new(
+                let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
                     archive,
                     &api_key,

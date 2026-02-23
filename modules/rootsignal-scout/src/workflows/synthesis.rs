@@ -69,7 +69,7 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
     }
 }
 
-async fn run_synthesis_from_deps(
+pub async fn run_synthesis_from_deps(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,
@@ -191,7 +191,7 @@ async fn run_synthesis_from_deps(
         async {
             if run_investigation {
                 info!("Starting investigation phase...");
-                let investigator = crate::enrichment::investigator::Investigator::new(
+                let investigator = crate::discovery::investigator::Investigator::new(
                     &writer,
                     archive.clone(),
                     &deps.anthropic_api_key,

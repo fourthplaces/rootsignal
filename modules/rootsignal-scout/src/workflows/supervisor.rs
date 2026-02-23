@@ -68,7 +68,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
     }
 }
 
-async fn run_supervisor_pipeline(
+pub async fn run_supervisor_pipeline(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<SupervisorResult> {
