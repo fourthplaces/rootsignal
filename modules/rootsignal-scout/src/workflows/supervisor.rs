@@ -59,10 +59,17 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         let deps = self.deps.clone();
         let scope = req.scope.clone();
 
-        let result = super::spawn_workflow("Supervisor", async move {
+        let result = match super::spawn_workflow("Supervisor", async move {
             run_supervisor_pipeline(&deps, &scope).await
         })
-        .await?;
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e);
+            }
+        };
 
         let region_key = rootsignal_common::slugify(&req.scope.name);
         super::write_phase_status(&self.deps, &region_key, "complete").await;

@@ -62,10 +62,17 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         let scope = req.scope.clone();
         let spent_cents = req.spent_cents;
 
-        let result = super::spawn_workflow("Situation weaver", async move {
+        let result = match super::spawn_workflow("Situation weaver", async move {
             run_situation_weaving_from_deps(&deps, &scope, spent_cents).await
         })
-        .await?;
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e);
+            }
+        };
 
         let region_key = rootsignal_common::slugify(&req.scope.name);
         super::write_phase_status(&self.deps, &region_key, "situation_weaver_complete").await;
