@@ -147,11 +147,11 @@ Add a test that calls all three systems on the same URL and documents where they
 
 ---
 
-### Phase 2: Trait Abstractions
+### Phase 2: Trait Abstractions ✅
 
 **Unlocks all organ-level, boundary, and chain testing.**
 
-#### 2a. `ContentFetcher` trait
+#### 2a. `ContentFetcher` trait ✅
 
 **New file:** `modules/rootsignal-scout/src/pipeline/traits.rs`
 
@@ -183,7 +183,7 @@ impl ContentFetcher for Archive {
 
 **Refactor `discover_from_topics`:** Replace `self.archive.source(platform_url).await?.search_topics(...)` with `self.fetcher.search_topics(platform_url, topics, limit)`. Replace `search_handle.search(&query).max_results(n).await` with `self.fetcher.site_search(&query, n)`. This eliminates all `SourceHandle` usage in `ScrapePhase`.
 
-#### 2b. `SignalStore` trait
+#### 2b. `SignalStore` trait ✅
 
 **Same file:** `modules/rootsignal-scout/src/pipeline/traits.rs`
 
@@ -200,7 +200,7 @@ impl SignalStore for GraphWriter {
 
 **Also update `promote_links`** in `link_promoter.rs` to take `&dyn SignalStore` instead of `&GraphWriter`. It only calls `upsert_source`, which is on the trait.
 
-#### 2c. Refactor `ScrapePhase`
+#### 2c. Refactor `ScrapePhase` ✅
 
 ```rust
 // Before
@@ -222,7 +222,7 @@ Update `new()`, every `self.writer.` call becomes `self.store.`, every `self.arc
 
 Update `ScrapePipeline` to construct `ScrapePhase` with `Arc::new(writer) as Arc<dyn SignalStore>` and `archive.clone() as Arc<dyn ContentFetcher>`.
 
-#### 2d. Mocks
+#### 2d. Mocks ✅
 
 **New file:** `modules/rootsignal-scout/src/testing.rs` (gated behind `#[cfg(test)]`)
 

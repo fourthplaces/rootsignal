@@ -12,7 +12,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
-use rootsignal_graph::GraphWriter;
+
+use crate::pipeline::traits::SignalStore;
 
 pub struct PromotionConfig {
     pub max_per_source: usize,
@@ -123,7 +124,7 @@ pub fn strip_tracking_params(url: &str) -> String {
 /// Returns the count of newly created sources.
 pub async fn promote_links(
     links: &[(String, String)],
-    writer: &GraphWriter,
+    writer: &dyn SignalStore,
     config: &PromotionConfig,
     center_lat: f64,
     center_lng: f64,

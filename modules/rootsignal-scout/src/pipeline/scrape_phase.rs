@@ -21,16 +21,12 @@ use rootsignal_common::{
     SocialPlatform, SourceNode, SourceRole,
 };
 use crate::enrichment::link_promoter;
-use rootsignal_graph::GraphWriter;
-
 use super::geo_filter;
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
 use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::stats::ScoutStats;
-use rootsignal_archive::Archive;
-
 use crate::infra::util::{content_hash, sanitize_url};
 
 // ---------------------------------------------------------------------------
@@ -180,28 +176,28 @@ pub(crate) fn normalize_title(title: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ScrapePhase {
-    writer: GraphWriter,
+    store: Arc<dyn super::traits::SignalStore>,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
-    archive: Arc<Archive>,
+    fetcher: Arc<dyn super::traits::ContentFetcher>,
     region: ScoutScope,
     run_id: String,
 }
 
 impl ScrapePhase {
     pub fn new(
-        writer: GraphWriter,
+        store: Arc<dyn super::traits::SignalStore>,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
-        archive: Arc<Archive>,
+        fetcher: Arc<dyn super::traits::ContentFetcher>,
         region: ScoutScope,
         run_id: String,
     ) -> Self {
         Self {
-            writer,
+            store,
             extractor,
             embedder,
-            archive,
+            fetcher,
             region,
             run_id,
         }
@@ -243,15 +239,15 @@ impl ScrapePhase {
                 queries = api_queries.len(),
                 "Resolving web search queries..."
             );
-            let archive = self.archive.clone();
+            let fetcher = self.fetcher.clone();
             let query_inputs: Vec<_> = api_queries
                 .iter()
                 .map(|source| (source.canonical_key.clone(), source.canonical_value.clone()))
                 .collect();
             let search_results: Vec<_> = stream::iter(query_inputs.into_iter().map(|(canonical_key, query_str)| {
-                let archive = archive.clone();
+                let fetcher = fetcher.clone();
                 async move {
-                    let result = archive.search(&query_str).await;
+                    let result = fetcher.search(&query_str).await;
                     (canonical_key, query_str, result)
                 }
             }))
@@ -300,7 +296,7 @@ impl ScrapePhase {
                 _ => None,
             };
             if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
-                let html = match self.archive.page(url).await {
+                let html = match self.fetcher.page(url).await {
                     Ok(page) => Some(page.raw_html),
                     Err(e) => {
                         warn!(url = url.as_str(), error = %e, "Query scrape failed");
@@ -335,7 +331,7 @@ impl ScrapePhase {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    let feed_result = self.archive.feed(feed_url).await;
+                    let feed_result = self.fetcher.feed(feed_url).await;
                     match feed_result {
                         Ok(archived) => {
                             run_log.log(EventKind::ScrapeFeed {
@@ -369,7 +365,7 @@ impl ScrapePhase {
 
         // Filter blocked URLs (single batch query instead of N sequential checks)
         let blocked = self
-            .writer
+            .store
             .blocked_urls(&phase_urls)
             .await
             .unwrap_or_default();
@@ -389,17 +385,17 @@ impl ScrapePhase {
         }
 
         // Scrape + extract in parallel
-        let archive = self.archive.clone();
-        let writer = self.writer.clone();
+        let fetcher = self.fetcher.clone();
+        let store = self.store.clone();
         let extractor = self.extractor.clone();
         let pipeline_results: Vec<_> = stream::iter(phase_urls.into_iter().map(|url| {
-            let archive = archive.clone();
-            let writer = writer.clone();
+            let fetcher = fetcher.clone();
+            let store = store.clone();
             let extractor = extractor.clone();
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let (content, page_links) = match archive.page(&url).await {
+                let (content, page_links) = match fetcher.page(&url).await {
                     Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
                     Ok(_) => return (clean_url, ScrapeOutcome::Failed, Vec::new()),
                     Err(e) => {
@@ -409,7 +405,7 @@ impl ScrapePhase {
                 };
 
                 let hash = format!("{:x}", content_hash(&content));
-                match writer.content_already_processed(&hash, &clean_url).await {
+                match store.content_already_processed(&hash, &clean_url).await {
                     Ok(true) => {
                         info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
                         return (clean_url, ScrapeOutcome::Unchanged, page_links);
@@ -543,7 +539,7 @@ impl ScrapePhase {
                     }
                 }
                 ScrapeOutcome::Unchanged => {
-                    match self.writer.refresh_url_signals(&url, now).await {
+                    match self.store.refresh_url_signals(&url, now).await {
                         Ok(n) if n > 0 => {
                             info!(url, refreshed = n, "Refreshed unchanged signals")
                         }
@@ -712,7 +708,7 @@ impl ScrapePhase {
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send>>> =
             Vec::new();
 
-        let archive = self.archive.clone();
+        let fetcher = self.fetcher.clone();
         let extractor = self.extractor.clone();
         for (canonical_key, source_url, account) in &accounts {
             let canonical_key = canonical_key.clone();
@@ -725,12 +721,12 @@ impl ScrapePhase {
             } else {
                 None
             };
-            let archive = archive.clone();
+            let fetcher = fetcher.clone();
             let extractor = extractor.clone();
             let identifier = account.identifier.clone();
 
             futures.push(Box::pin(async move {
-                let posts = match archive.posts(&identifier, 20).await {
+                let posts = match fetcher.posts(&identifier, 20).await {
                     Ok(posts) => posts,
                     Err(e) => {
                         warn!(source_url, error = %e, "Social media scrape failed");
@@ -952,7 +948,7 @@ impl ScrapePhase {
 
         // Load existing sources for dedup across all platforms
         let existing_sources = self
-            .writer
+            .store
             .get_active_sources()
             .await
             .unwrap_or_default();
@@ -981,14 +977,7 @@ impl ScrapePhase {
                 break;
             }
 
-            let source_handle = match self.archive.source(platform_url).await {
-                Ok(h) => h,
-                Err(e) => {
-                    warn!(platform = platform_name, error = %e, "Failed to create source handle for topic search");
-                    continue;
-                }
-            };
-            let discovered_posts = match source_handle.search_topics(&topic_strs, POSTS_PER_SEARCH).await {
+            let discovered_posts = match self.fetcher.search_topics(platform_url, &topic_strs, POSTS_PER_SEARCH).await {
                 Ok(posts) => posts,
                 Err(e) => {
                     warn!(platform = platform_name, error = %e, "Topic discovery failed for platform");
@@ -1124,7 +1113,7 @@ impl ScrapePhase {
 
                 *ctx.source_signal_counts.entry(ck).or_default() += produced;
 
-                match self.writer.upsert_source(&source).await {
+                match self.store.upsert_source(&source).await {
                     Ok(()) => {
                         new_accounts += 1;
                         info!(
@@ -1156,15 +1145,7 @@ impl ScrapePhase {
             for topic in topics.iter().take(MAX_SITE_SEARCH_TOPICS) {
                 let query = format!("{} {}", site_prefix, topic);
 
-                // Use a search source handle for the query
-                let search_handle = match self.archive.source(&query).await {
-                    Ok(h) => h,
-                    Err(e) => {
-                        warn!(query, error = %e, "Site-scoped search source failed");
-                        continue;
-                    }
-                };
-                let search_results = match search_handle.search(&query).max_results(SITE_SEARCH_RESULTS).await {
+                let search_results = match self.fetcher.site_search(&query, SITE_SEARCH_RESULTS).await {
                     Ok(r) => r,
                     Err(e) => {
                         warn!(query, error = %e, "Site-scoped search failed");
@@ -1183,7 +1164,7 @@ impl ScrapePhase {
                         continue;
                     }
 
-                    let page = match self.archive.page(&result.url).await {
+                    let page = match self.fetcher.page(&result.url).await {
                         Ok(p) => p,
                         Err(e) => {
                             warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
@@ -1334,7 +1315,7 @@ impl ScrapePhase {
 
         // --- Layer 2: URL-based title dedup against existing database ---
         let existing_titles: HashSet<String> = self
-            .writer
+            .store
             .existing_titles_for_url(&url)
             .await
             .unwrap_or_default()
@@ -1371,7 +1352,7 @@ impl ScrapePhase {
             .collect();
 
         let global_matches = self
-            .writer
+            .store
             .find_by_titles_and_types(&title_type_pairs)
             .await
             .unwrap_or_default();
@@ -1395,7 +1376,7 @@ impl ScrapePhase {
                         new_source = url.as_str(),
                         "Global title+type match from different source, corroborating"
                     );
-                    self.writer
+                    self.store
                         .corroborate(*existing_id, node.node_type(), now, &entity_mappings)
                         .await?;
                     let evidence = EvidenceNode {
@@ -1408,7 +1389,7 @@ impl ScrapePhase {
                         evidence_confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
-                    self.writer
+                    self.store
                         .create_evidence(&evidence, *existing_id)
                         .await?;
                     ctx.stats.signals_deduplicated += 1;
@@ -1429,7 +1410,7 @@ impl ScrapePhase {
                         source = url.as_str(),
                         "Same-source title match, refreshing (no corroboration)"
                     );
-                    self.writer
+                    self.store
                         .refresh_signal(*existing_id, node.node_type(), now)
                         .await?;
                     let evidence = EvidenceNode {
@@ -1442,7 +1423,7 @@ impl ScrapePhase {
                         evidence_confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
-                    self.writer
+                    self.store
                         .create_evidence(&evidence, *existing_id)
                         .await?;
                     ctx.stats.signals_deduplicated += 1;
@@ -1547,7 +1528,7 @@ impl ScrapePhase {
                         source = "cache",
                         "Same-source duplicate in cache, refreshing (no corroboration)"
                     );
-                    self.writer
+                    self.store
                         .refresh_signal(cached_id, cached_type, now)
                         .await?;
 
@@ -1561,7 +1542,7 @@ impl ScrapePhase {
                         evidence_confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
-                    self.writer.create_evidence(&evidence, cached_id).await?;
+                    self.store.create_evidence(&evidence, cached_id).await?;
 
                     ctx.stats.signals_deduplicated += 1;
                     continue;
@@ -1579,7 +1560,7 @@ impl ScrapePhase {
                         source = "cache",
                         "Cross-source duplicate in cache, corroborating"
                     );
-                    self.writer
+                    self.store
                         .corroborate(cached_id, cached_type, now, &entity_mappings)
                         .await?;
 
@@ -1593,7 +1574,7 @@ impl ScrapePhase {
                         evidence_confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
-                    self.writer.create_evidence(&evidence, cached_id).await?;
+                    self.store.create_evidence(&evidence, cached_id).await?;
 
                     ctx.stats.signals_deduplicated += 1;
                     continue;
@@ -1605,7 +1586,7 @@ impl ScrapePhase {
             let lng_delta = self.region.radius_km
                 / (111.0 * self.region.center_lat.to_radians().cos());
             match self
-                .writer
+                .store
                 .find_duplicate(
                     &embedding,
                     node_type,
@@ -1635,7 +1616,7 @@ impl ScrapePhase {
                             source = "graph",
                             "Same-source duplicate in graph, refreshing (no corroboration)"
                         );
-                        self.writer
+                        self.store
                             .refresh_signal(dup.id, dup.node_type, now)
                             .await?;
 
@@ -1649,7 +1630,7 @@ impl ScrapePhase {
                             evidence_confidence: None,
                             channel_type: Some(channel_type(&url)),
                         };
-                        self.writer.create_evidence(&evidence, dup.id).await?;
+                        self.store.create_evidence(&evidence, dup.id).await?;
 
                         ctx.embed_cache
                             .add(embedding, dup.id, dup.node_type, dominated_url);
@@ -1672,7 +1653,7 @@ impl ScrapePhase {
                             source = "graph",
                             "Cross-source duplicate in graph, corroborating"
                         );
-                        self.writer
+                        self.store
                             .corroborate(dup.id, dup.node_type, now, &entity_mappings)
                             .await?;
 
@@ -1686,7 +1667,7 @@ impl ScrapePhase {
                             evidence_confidence: None,
                             channel_type: Some(channel_type(&url)),
                         };
-                        self.writer.create_evidence(&evidence, dup.id).await?;
+                        self.store.create_evidence(&evidence, dup.id).await?;
 
                         ctx.embed_cache
                             .add(embedding, dup.id, dup.node_type, dominated_url);
@@ -1703,7 +1684,7 @@ impl ScrapePhase {
             }
 
             // Create new node
-            let node_id = self.writer.create_node(&node, &embedding, "scraper", &self.run_id).await?;
+            let node_id = self.store.create_node(&node, &embedding, "scraper", &self.run_id).await?;
 
             run_log.log(EventKind::SignalCreated {
                 node_id: node_id.to_string(),
@@ -1727,12 +1708,12 @@ impl ScrapePhase {
                 evidence_confidence: None,
                 channel_type: Some(channel_type(&url)),
             };
-            self.writer.create_evidence(&evidence, node_id).await?;
+            self.store.create_evidence(&evidence, node_id).await?;
 
             // Resolve mentioned actors → Actor nodes + ACTED_IN edges
             if let Some(meta) = node.meta() {
                 for actor_name in &meta.mentioned_actors {
-                    let actor_id = match self.writer.find_actor_by_name(actor_name).await {
+                    let actor_id = match self.store.find_actor_by_name(actor_name).await {
                         Ok(Some(id)) => id,
                         Ok(None) => {
                             let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
@@ -1757,7 +1738,7 @@ impl ScrapePhase {
                                 location_lng: loc_lng,
                                 location_name: loc_name,
                             };
-                            if let Err(e) = self.writer.upsert_actor(&actor).await {
+                            if let Err(e) = self.store.upsert_actor(&actor).await {
                                 warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
                                 continue;
                             }
@@ -1769,7 +1750,7 @@ impl ScrapePhase {
                         }
                     };
                     if let Err(e) = self
-                        .writer
+                        .store
                         .link_actor_to_signal(actor_id, node_id, "mentioned")
                         .await
                     {
@@ -1783,7 +1764,7 @@ impl ScrapePhase {
                 if let Some(author_name) = &meta.author_actor {
                     let author_name = author_name.trim();
                     if !author_name.is_empty() {
-                        let actor_id = match self.writer.find_actor_by_name(author_name).await {
+                        let actor_id = match self.store.find_actor_by_name(author_name).await {
                             Ok(Some(id)) => Some(id),
                             Ok(None) => {
                                 let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
@@ -1808,7 +1789,7 @@ impl ScrapePhase {
                                     location_lng: loc_lng,
                                     location_name: loc_name,
                                 };
-                                match self.writer.upsert_actor(&actor).await {
+                                match self.store.upsert_actor(&actor).await {
                                     Ok(_) => Some(actor.id),
                                     Err(e) => {
                                         warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
@@ -1823,7 +1804,7 @@ impl ScrapePhase {
                         };
                         if let Some(actor_id) = actor_id {
                             if let Err(e) = self
-                                .writer
+                                .store
                                 .link_actor_to_signal(actor_id, node_id, "authored")
                                 .await
                             {
@@ -1844,7 +1825,7 @@ impl ScrapePhase {
                             None => continue, // Embedding failed in batch, skip
                         };
                         let resource_id = match self
-                            .writer
+                            .store
                             .find_or_create_resource(
                                 &tag.slug,
                                 &slug,
@@ -1862,7 +1843,7 @@ impl ScrapePhase {
                         let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
                         let edge_result = match tag.role.as_str() {
                             "requires" => {
-                                self.writer
+                                self.store
                                     .create_requires_edge(
                                         node_id,
                                         resource_id,
@@ -1873,12 +1854,12 @@ impl ScrapePhase {
                                     .await
                             }
                             "prefers" => {
-                                self.writer
+                                self.store
                                     .create_prefers_edge(node_id, resource_id, confidence)
                                     .await
                             }
                             "offers" => {
-                                self.writer
+                                self.store
                                     .create_offers_edge(
                                         node_id,
                                         resource_id,
@@ -1904,7 +1885,7 @@ impl ScrapePhase {
                 if let Some(slugs) = tag_map.get(&meta.id) {
                     if !slugs.is_empty() {
                         if let Err(e) =
-                            self.writer.batch_tag_signals(node_id, slugs).await
+                            self.store.batch_tag_signals(node_id, slugs).await
                         {
                             warn!(error = %e, "Signal tag creation failed (non-fatal)");
                         }

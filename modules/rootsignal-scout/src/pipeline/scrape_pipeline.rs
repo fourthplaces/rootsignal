@@ -281,10 +281,10 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         let phase = ScrapePhase::new(
-            self.writer.clone(),
+            Arc::new(self.writer.clone()) as Arc<dyn crate::pipeline::traits::SignalStore>,
             self.extractor.clone(),
             self.embedder.clone(),
-            self.archive.clone(),
+            self.archive.clone() as Arc<dyn crate::pipeline::traits::ContentFetcher>,
             self.region.clone(),
             self.run_id.clone(),
         );
@@ -310,7 +310,7 @@ impl<'a> ScrapePipeline<'a> {
         let config = PromotionConfig::default();
         match link_promoter::promote_links(
             &ctx.collected_links,
-            &self.writer,
+            &self.writer as &dyn crate::pipeline::traits::SignalStore,
             &config,
             self.region.center_lat,
             self.region.center_lng,
