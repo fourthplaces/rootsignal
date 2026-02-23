@@ -291,7 +291,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     let actor_indexes = [
         "CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)",
-        // actor_city index removed — actors are linked to regions via :DISCOVERED relationship
     ];
 
     for idx in &actor_indexes {

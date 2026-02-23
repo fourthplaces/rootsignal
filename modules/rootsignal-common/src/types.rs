@@ -1031,6 +1031,8 @@ pub enum DiscoveryMethod {
     ActorAccount,
     /// Discovered via a known actor's social graph
     SocialGraphFollow,
+    /// Discovered as an outbound link on a scraped page
+    LinkedFrom,
 }
 
 impl std::fmt::Display for DiscoveryMethod {
@@ -1046,6 +1048,7 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
             DiscoveryMethod::ActorAccount => write!(f, "actor_account"),
             DiscoveryMethod::SocialGraphFollow => write!(f, "social_graph_follow"),
+            DiscoveryMethod::LinkedFrom => write!(f, "linked_from"),
         }
     }
 }

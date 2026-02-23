@@ -225,7 +225,7 @@ pub fn cadence_hours_with_backoff(
 /// SocialGraphFollow sources are speculative — they go dormant faster.
 pub fn dormancy_threshold(method: &DiscoveryMethod) -> u32 {
     match method {
-        DiscoveryMethod::SocialGraphFollow => 3,
+        DiscoveryMethod::SocialGraphFollow | DiscoveryMethod::LinkedFrom => 3,
         _ => 5,
     }
 }

@@ -492,6 +492,11 @@ impl PageRequest {
     pub async fn send(self) -> Result<ArchivedPage> {
         let source_id = self.source.id;
 
+        // Google Docs: fetch the HTML export directly instead of using Chrome
+        if let Some(export_url) = google_docs_export_url(&self.source.url) {
+            return self.fetch_google_doc(source_id, &export_url).await;
+        }
+
         let fetched = if let Some(ref svc) = self.inner.browserless_page {
             svc.fetch(&self.source.url, source_id)
                 .await
@@ -521,6 +526,54 @@ impl PageRequest {
             fetched_at: Utc::now(),
             content_hash: page.content_hash,
             raw_html: fetched.raw_html,
+            markdown: page.markdown,
+            title: page.title,
+            links,
+        })
+    }
+}
+
+impl PageRequest {
+    async fn fetch_google_doc(&self, source_id: Uuid, export_url: &str) -> Result<ArchivedPage> {
+        info!(url = %self.source.url, export_url, "page: fetching Google Doc HTML export");
+
+        let resp = reqwest::get(export_url)
+            .await
+            .map_err(|e| ArchiveError::Other(e.into()))?;
+
+        if !resp.status().is_success() {
+            return Err(ArchiveError::Other(anyhow::anyhow!(
+                "Google Docs export returned HTTP {}",
+                resp.status()
+            )));
+        }
+
+        let html = resp
+            .text()
+            .await
+            .map_err(|e| ArchiveError::Other(e.into()))?;
+
+        let markdown = crate::readability::html_to_markdown(html.as_bytes(), Some(export_url));
+        let hash = rootsignal_common::content_hash(&html).to_string();
+        let title = crate::services::page::extract_title(&html);
+        let links = crate::links::extract_all_links(&html, &self.source.url);
+
+        let page = crate::store::InsertPage {
+            source_id,
+            content_hash: hash,
+            markdown,
+            title,
+            links: links.clone(),
+        };
+        let page_id = self.inner.store.insert_page(&page).await?;
+        self.inner.store.update_last_scraped(source_id, "pages").await?;
+
+        Ok(ArchivedPage {
+            id: page_id,
+            source_id,
+            fetched_at: Utc::now(),
+            content_hash: page.content_hash,
+            raw_html: html,
             markdown: page.markdown,
             title: page.title,
             links,
@@ -889,6 +942,28 @@ impl IntoFuture for CrawlRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Google Docs helper
+// ---------------------------------------------------------------------------
+
+/// If this is a Google Docs URL, return the HTML export URL.
+/// Works on normalized URLs (no scheme) since source.url is normalized.
+fn google_docs_export_url(url: &str) -> Option<String> {
+    if !url.contains("docs.google.com/document/d/") {
+        return None;
+    }
+    let d_idx = url.find("/d/")? + 3;
+    let rest = &url[d_idx..];
+    let doc_id = rest.split(&['/', '?', '#'][..]).next()?;
+    if doc_id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "https://docs.google.com/document/d/{}/export?format=html",
+        doc_id
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Crawl helpers
 // ---------------------------------------------------------------------------
 
@@ -1054,5 +1129,86 @@ mod crawl_tests {
         assert_eq!(ensure_scheme("example.com/page"), "https://example.com/page");
         assert_eq!(ensure_scheme("https://example.com"), "https://example.com");
         assert_eq!(ensure_scheme("http://example.com"), "http://example.com");
+    }
+}
+
+#[cfg(test)]
+mod google_docs_tests {
+    use super::google_docs_export_url;
+
+    const DOC_ID: &str = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms";
+
+    fn expected(id: &str) -> String {
+        format!("https://docs.google.com/document/d/{id}/export?format=html")
+    }
+
+    #[test]
+    fn normalized_edit() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/edit");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn full_url_with_scheme() {
+        let url = format!("https://docs.google.com/document/d/{DOC_ID}/edit");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn with_fragment() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/edit#heading=h.abc");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn view_suffix() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/view");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn pub_suffix() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/pub");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn no_suffix() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn trailing_slash() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn with_query_params() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/edit?usp=sharing");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn already_export_url() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/export?format=html");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn mobilebasic() {
+        let url = format!("docs.google.com/document/d/{DOC_ID}/mobilebasic");
+        assert_eq!(google_docs_export_url(&url).unwrap(), expected(DOC_ID));
+    }
+
+    #[test]
+    fn non_google_docs_url() {
+        assert!(google_docs_export_url("example.com/page").is_none());
+    }
+
+    #[test]
+    fn malformed_missing_id() {
+        assert!(google_docs_export_url("docs.google.com/document/d/").is_none());
     }
 }

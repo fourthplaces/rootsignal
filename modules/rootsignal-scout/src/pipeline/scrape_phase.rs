@@ -20,7 +20,7 @@ use rootsignal_common::{
     DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
     SocialPlatform, SourceNode, SourceRole,
 };
-use crate::enrichment::mention_promoter;
+use crate::enrichment::link_promoter;
 use rootsignal_graph::GraphWriter;
 
 use super::geo_filter;
@@ -55,8 +55,8 @@ pub(crate) struct RunContext {
     pub actor_contexts: HashMap<String, ActorContext>,
     /// RSS/Atom pub_date keyed by article URL, used as fallback content_date.
     pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
-    /// Mentions collected during scraping: (platform, handle, mentioned_by_source).
-    pub collected_mentions: Vec<(SocialPlatform, String, String)>,
+    /// Links collected during scraping: (url, discovered_on_url).
+    pub collected_links: Vec<(String, String)>,
 }
 
 impl RunContext {
@@ -79,7 +79,7 @@ impl RunContext {
             query_api_errors: HashSet::new(),
             actor_contexts: HashMap::new(),
             url_to_pub_date: HashMap::new(),
-            collected_mentions: Vec::new(),
+            collected_links: Vec::new(),
         }
     }
 
@@ -460,10 +460,10 @@ impl ScrapePhase {
         let now = Utc::now();
         let known_urls = ctx.known_urls();
         for (url, outcome, page_links) in pipeline_results {
-            // Extract social handles from page links for mention promotion
-            let social_handles = mention_promoter::extract_social_handles_from_links(&page_links);
-            for (platform, handle) in social_handles {
-                ctx.collected_mentions.push((platform, handle, url.clone()));
+            // Extract outbound links for promotion as new sources
+            let discovered = link_promoter::extract_links(&page_links);
+            for link_url in discovered {
+                ctx.collected_links.push((link_url, url.clone()));
             }
 
             let ck = ctx
@@ -855,7 +855,7 @@ impl ScrapePhase {
         let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
         let known_urls = ctx.known_urls();
-        let promotion_config = mention_promoter::PromotionConfig::default();
+        let promotion_config = link_promoter::PromotionConfig::default();
         for result in results.into_iter().flatten() {
             let (
                 canonical_key,
@@ -881,9 +881,10 @@ impl ScrapePhase {
                 }
             }
 
-            // Accumulate mentions for promotion (capped per source)
+            // Accumulate mentions as URLs for promotion (capped per source)
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
-                ctx.collected_mentions.push((result_platform, handle, source_url.clone()));
+                let url = link_promoter::platform_url(&result_platform, &handle);
+                ctx.collected_links.push((url, source_url.clone()));
             }
 
             run_log.log(EventKind::SocialScrape {

@@ -2319,7 +2319,10 @@ impl GraphWriter {
              ON MATCH SET
                 a.name = $name,
                 a.last_active = datetime($last_active),
-                a.signal_count = a.signal_count + 1",
+                a.signal_count = a.signal_count + 1,
+                a.location_lat = COALESCE(a.location_lat, $location_lat),
+                a.location_lng = COALESCE(a.location_lng, $location_lng),
+                a.location_name = COALESCE(a.location_name, $location_name)",
         )
         .param("id", actor.id.to_string())
         .param("entity_id", actor.entity_id.as_str())
@@ -2333,82 +2336,9 @@ impl GraphWriter {
         .param("last_active", format_datetime(&actor.last_active))
         .param("typical_roles", actor.typical_roles.clone())
         .param("bio", actor.bio.clone().unwrap_or_default())
-        .param("location_lat", actor.location_lat.unwrap_or(0.0))
-        .param("location_lng", actor.location_lng.unwrap_or(0.0))
-        .param("location_name", actor.location_name.clone().unwrap_or_default());
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Create or update an actor with location and profile.
-    /// Used by the createActor GraphQL mutation. Returns the actor's UUID.
-    pub async fn upsert_actor_with_profile(
-        &self,
-        actor: &ActorNode,
-    ) -> Result<Uuid, neo4rs::Error> {
-        let q = query(
-            "MERGE (a:Actor {entity_id: $entity_id})
-             ON CREATE SET
-                a.id = $id,
-                a.name = $name,
-                a.actor_type = $actor_type,
-                a.domains = $domains,
-                a.social_urls = $social_urls,
-                a.description = $description,
-                a.signal_count = 0,
-                a.first_seen = datetime($now),
-                a.last_active = datetime($now),
-                a.typical_roles = $typical_roles,
-                a.bio = $bio,
-                a.location_lat = $location_lat,
-                a.location_lng = $location_lng,
-                a.location_name = $location_name
-             ON MATCH SET
-                a.name = $name,
-                a.bio = $bio,
-                a.location_lat = $location_lat,
-                a.location_lng = $location_lng,
-                a.location_name = $location_name
-             RETURN a.id AS id",
-        )
-        .param("id", actor.id.to_string())
-        .param("entity_id", actor.entity_id.as_str())
-        .param("name", actor.name.as_str())
-        .param("actor_type", actor.actor_type.to_string())
-        .param("domains", actor.domains.clone())
-        .param("social_urls", actor.social_urls.clone())
-        .param("description", actor.description.clone())
-        .param("now", format_datetime(&actor.first_seen))
-        .param("typical_roles", actor.typical_roles.clone())
-        .param("bio", actor.bio.clone().unwrap_or_default())
-        .param("location_lat", actor.location_lat.unwrap_or(0.0))
-        .param("location_lng", actor.location_lng.unwrap_or(0.0))
-        .param("location_name", actor.location_name.clone().unwrap_or_default());
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(id);
-            }
-        }
-        Ok(actor.id)
-    }
-
-    /// Link an actor to a source via HAS_ACCOUNT edge.
-    pub async fn link_actor_account(
-        &self,
-        actor_id: Uuid,
-        source_canonical_key: &str,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $actor_id})
-             MATCH (s:Source {canonical_key: $canonical_key})
-             MERGE (a)-[:HAS_ACCOUNT]->(s)",
-        )
-        .param("actor_id", actor_id.to_string())
-        .param("canonical_key", source_canonical_key);
+        .param::<Option<f64>>("location_lat", actor.location_lat)
+        .param::<Option<f64>>("location_lng", actor.location_lng)
+        .param::<Option<String>>("location_name", actor.location_name.clone());
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -2499,6 +2429,7 @@ impl GraphWriter {
                     "curated" => DiscoveryMethod::Curated,
                     "actor_account" => DiscoveryMethod::ActorAccount,
                     "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
+                    "linked_from" => DiscoveryMethod::LinkedFrom,
                     "human_submission" => DiscoveryMethod::HumanSubmission,
                     _ => DiscoveryMethod::ActorAccount,
                 };
@@ -2566,46 +2497,6 @@ impl GraphWriter {
              RETURN a.id AS id LIMIT 1",
         )
         .param("name", name);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(Some(id));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Find an actor by entity_id.
-    pub async fn find_actor_by_entity_id(
-        &self,
-        entity_id: &str,
-    ) -> Result<Option<Uuid>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {entity_id: $entity_id})
-             RETURN a.id AS id LIMIT 1",
-        )
-        .param("entity_id", entity_id);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(Some(id));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Find an actor by domain match.
-    pub async fn find_actor_by_domain(&self, domain: &str) -> Result<Option<Uuid>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor)
-             WHERE any(d IN a.domains WHERE $domain CONTAINS d)
-             RETURN a.id AS id LIMIT 1",
-        )
-        .param("domain", domain);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -5184,6 +5075,7 @@ fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
         "signal_expansion" => DiscoveryMethod::SignalExpansion,
         "actor_account" => DiscoveryMethod::ActorAccount,
         "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
+        "linked_from" => DiscoveryMethod::LinkedFrom,
         _ => DiscoveryMethod::Curated,
     };
 

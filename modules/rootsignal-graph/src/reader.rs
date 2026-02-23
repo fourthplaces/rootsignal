@@ -609,31 +609,6 @@ impl PublicGraphReader {
 
     // --- Actor queries ---
 
-    /// List actors active in a region.
-    pub async fn actors_active_in_area(
-        &self,
-        region_slug: &str,
-        limit: u32,
-    ) -> Result<Vec<rootsignal_common::ActorNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {region: $region_slug})
-             RETURN a
-             ORDER BY a.last_active DESC
-             LIMIT $limit",
-        )
-        .param("region_slug", region_slug)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(actor) = row_to_actor(&row) {
-                results.push(actor);
-            }
-        }
-        Ok(results)
-    }
-
     /// Get a single actor by ID with recent signals.
     pub async fn actor_detail(
         &self,

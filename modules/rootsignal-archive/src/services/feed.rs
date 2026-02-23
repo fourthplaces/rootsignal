@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::store::InsertFeed;
 
-const RSS_MAX_ITEMS: usize = 10;
+const RSS_MAX_ITEMS: usize = 20;
 const RSS_MAX_AGE_DAYS: i64 = 30;
 
 pub(crate) struct FetchedFeed {

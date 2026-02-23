@@ -24,7 +24,7 @@ use crate::scheduling::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::SignalExtractor;
 use crate::pipeline::expansion::Expansion;
-use crate::enrichment::mention_promoter::{self, PromotionConfig};
+use crate::enrichment::link_promoter::{self, PromotionConfig};
 use crate::scheduling::metrics::Metrics;
 use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
@@ -301,15 +301,15 @@ impl<'a> ScrapePipeline<'a> {
         Ok((run, ctx))
     }
 
-    /// Promote any mentions collected during scraping into new SourceNodes.
-    /// Clears the collected_mentions buffer after processing.
-    async fn promote_collected_mentions(&self, ctx: &mut RunContext) {
-        if ctx.collected_mentions.is_empty() {
+    /// Promote any links collected during scraping into new SourceNodes.
+    /// Clears the collected_links buffer after processing.
+    async fn promote_collected_links(&self, ctx: &mut RunContext) {
+        if ctx.collected_links.is_empty() {
             return;
         }
         let config = PromotionConfig::default();
-        match mention_promoter::promote_mentioned_accounts(
-            &ctx.collected_mentions,
+        match link_promoter::promote_links(
+            &ctx.collected_links,
             &self.writer,
             &config,
             self.region.center_lat,
@@ -317,11 +317,11 @@ impl<'a> ScrapePipeline<'a> {
         )
         .await
         {
-            Ok(n) if n > 0 => info!(promoted = n, "Promoted mentioned accounts"),
+            Ok(n) if n > 0 => info!(promoted = n, "Promoted linked URLs"),
             Ok(_) => {}
-            Err(e) => warn!(error = %e, "Mention promotion failed"),
+            Err(e) => warn!(error = %e, "Link promotion failed"),
         }
-        ctx.collected_mentions.clear();
+        ctx.collected_links.clear();
     }
 
     /// Scrape tension + mixed sources (web pages, search queries, social accounts).
@@ -352,7 +352,7 @@ impl<'a> ScrapePipeline<'a> {
             run.phase.run_social(&phase_a_social, ctx, run_log).await;
         }
 
-        self.promote_collected_mentions(ctx).await;
+        self.promote_collected_links(ctx).await;
     }
 
     /// Find new sources from graph analysis (actor-linked accounts, coverage gaps).
@@ -438,7 +438,7 @@ impl<'a> ScrapePipeline<'a> {
             run.phase.run_social(&phase_b_social, ctx, run_log).await;
         }
 
-        self.promote_collected_mentions(ctx).await;
+        self.promote_collected_links(ctx).await;
 
         check_cancelled_flag(&self.cancelled)?;
 

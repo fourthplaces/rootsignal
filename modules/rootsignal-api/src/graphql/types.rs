@@ -773,6 +773,15 @@ impl GqlActor {
     async fn typical_roles(&self) -> &[String] {
         &self.0.typical_roles
     }
+    async fn location_lat(&self) -> Option<f64> {
+        self.0.location_lat
+    }
+    async fn location_lng(&self) -> Option<f64> {
+        self.0.location_lng
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.0.location_name.as_deref()
+    }
 
     async fn stories(&self, ctx: &Context<'_>) -> Result<Vec<GqlStory>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();

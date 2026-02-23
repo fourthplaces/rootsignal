@@ -200,8 +200,8 @@ async fn run_actor_extraction_inner(
                         last_active: Utc::now(),
                         typical_roles: vec![],
                         bio: None,
-                        location_lat: None,
-                        location_lng: None,
+                        location_lat: Some((min_lat + max_lat) / 2.0),
+                        location_lng: Some((min_lng + max_lng) / 2.0),
                         location_name: None,
                     };
                     if let Err(e) = writer.upsert_actor(&actor).await {

@@ -297,14 +297,23 @@ export const STORY_DETAIL = gql`
   }
 `;
 
-export const ACTORS = gql`
-  query Actors($region: String!, $limit: Int) {
-    actors(region: $region, limit: $limit) {
+export const ACTORS_IN_BOUNDS = gql`
+  query ActorsInBounds(
+    $minLat: Float!, $maxLat: Float!,
+    $minLng: Float!, $maxLng: Float!,
+    $limit: Int
+  ) {
+    actorsInBounds(
+      minLat: $minLat, maxLat: $maxLat,
+      minLng: $minLng, maxLng: $maxLng,
+      limit: $limit
+    ) {
       id
       name
       actorType
       description
       signalCount
+      locationName
     }
   }
 `;

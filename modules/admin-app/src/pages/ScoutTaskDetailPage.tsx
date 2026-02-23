@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useParams, Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS } from "@/graphql/queries";
+import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS, ACTORS_IN_BOUNDS } from "@/graphql/queries";
 import { RUN_SCOUT, RUN_SCOUT_PHASE } from "@/graphql/mutations";
 import { RegionMap, type MapSignal } from "@/pages/MapPage";
 
@@ -44,6 +44,7 @@ type Actor = {
   name: string;
   actorType: string;
   signalCount: number;
+  locationName: string | null;
 };
 
 type ScoutTask = {
@@ -203,21 +204,12 @@ export function ScoutTaskDetailPage() {
   });
   const situations: Situation[] = situationsData?.situationsInBounds ?? [];
 
-  // Deduplicate actors from signals
-  const actors: Actor[] = useMemo(() => {
-    const map = new Map<string, Actor>();
-    for (const sig of signals) {
-      for (const a of sig.actors ?? []) {
-        const existing = map.get(a.id);
-        if (existing) {
-          existing.signalCount += 1;
-        } else {
-          map.set(a.id, { ...a, signalCount: 1 });
-        }
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => b.signalCount - a.signalCount);
-  }, [signals]);
+  // Fetch actors in the task's bounding box
+  const { data: actorsData, loading: actorsLoading } = useQuery(ACTORS_IN_BOUNDS, {
+    variables: bounds ? { ...bounds, limit: 100 } : undefined,
+    skip: !bounds,
+  });
+  const actors: Actor[] = actorsData?.actorsInBounds ?? [];
 
   if (taskLoading) return <p className="text-muted-foreground">Loading...</p>;
   if (!task) return <p className="text-muted-foreground">Task not found</p>;
@@ -482,10 +474,10 @@ export function ScoutTaskDetailPage() {
 
       {/* Actors tab */}
       {tab === "actors" && (
-        signalsLoading ? (
+        actorsLoading ? (
           <p className="text-muted-foreground">Loading actors...</p>
         ) : actors.length === 0 ? (
-          <p className="text-muted-foreground">No actors found in signals for this area.</p>
+          <p className="text-muted-foreground">No actors found in this area.</p>
         ) : (
           <div className="rounded-lg border border-border overflow-hidden">
             <table className="w-full text-sm">
@@ -493,7 +485,8 @@ export function ScoutTaskDetailPage() {
                 <tr className="border-b border-border bg-muted/50">
                   <th className="text-left px-4 py-2 font-medium">Name</th>
                   <th className="text-left px-4 py-2 font-medium">Type</th>
-                  <th className="text-right px-4 py-2 font-medium">Mentions</th>
+                  <th className="text-left px-4 py-2 font-medium">Location</th>
+                  <th className="text-right px-4 py-2 font-medium">Signals</th>
                 </tr>
               </thead>
               <tbody>
@@ -501,6 +494,7 @@ export function ScoutTaskDetailPage() {
                   <tr key={a.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2">{a.name}</td>
                     <td className="px-4 py-2 text-muted-foreground">{a.actorType}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{a.locationName ?? "—"}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{a.signalCount}</td>
                   </tr>
                 ))}

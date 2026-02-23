@@ -14,8 +14,8 @@ use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use rootsignal_archive::Archive;
 
-const MAX_SEARCH_QUERIES_PER_RUN: usize = 10;
-const MAX_SIGNALS_INVESTIGATED: usize = 5;
+const MAX_SEARCH_QUERIES_PER_RUN: usize = 15;
+const MAX_SIGNALS_INVESTIGATED: usize = 8;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
@@ -263,7 +263,7 @@ impl<'a> Investigator<'a> {
 
             match async {
                 let handle = self.archive.source(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                let search = handle.search(query).max_results(10).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let search = handle.search(query).max_results(15).await.map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(search.results)
             }
             .await

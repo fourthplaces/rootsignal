@@ -253,7 +253,7 @@ pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Ve
 }
 
 /// Simple title extraction from HTML <title> tag.
-fn extract_title(html: &str) -> Option<String> {
+pub(crate) fn extract_title(html: &str) -> Option<String> {
     let start = html.find("<title")?.checked_add(6)?;
     let rest = &html[start..];
     let tag_end = rest.find('>')?;

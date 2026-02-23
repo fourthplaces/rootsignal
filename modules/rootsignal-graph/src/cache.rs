@@ -43,9 +43,6 @@ pub struct SignalCache {
     pub tags_by_story: HashMap<Uuid, Vec<usize>>,
     pub tags_by_situation: HashMap<Uuid, Vec<usize>>,
 
-    /// Region slug → actor indices (from :DISCOVERED relationships).
-    pub actors_by_region: HashMap<String, Vec<usize>>,
-
     pub loaded_at: DateTime<Utc>,
 }
 
@@ -97,7 +94,7 @@ impl SignalCache {
             .collect();
 
         // Load relationships concurrently
-        let (evidence_result, actor_signal_result, story_signal_result, tension_resp_result, story_tag_result, situation_tag_result, region_actor_result) =
+        let (evidence_result, actor_signal_result, story_signal_result, tension_resp_result, story_tag_result, situation_tag_result) =
             tokio::join!(
                 load_evidence(client),
                 load_actor_signal_edges(client),
@@ -105,7 +102,6 @@ impl SignalCache {
                 load_tension_responses(client),
                 load_story_tag_edges(client),
                 load_situation_tag_edges(client),
-                load_region_actor_edges(client),
             );
 
         let evidence_by_signal = evidence_result?;
@@ -169,18 +165,6 @@ impl SignalCache {
 
         let tension_responses = tension_resp_result?;
 
-        // Build actors_by_region map (region_slug -> vec of actor indices)
-        let region_actor_edges = region_actor_result?;
-        let mut actors_by_region: HashMap<String, Vec<usize>> = HashMap::new();
-        for (region_slug, actor_id) in &region_actor_edges {
-            if let Some(&actor_idx) = actor_by_id.get(actor_id) {
-                actors_by_region
-                    .entry(region_slug.clone())
-                    .or_default()
-                    .push(actor_idx);
-            }
-        }
-
         // Build tags_by_story map (story_id -> vec of tag indices)
         let story_tag_edges = story_tag_result?;
         let mut tags_by_story: HashMap<Uuid, Vec<usize>> = HashMap::new();
@@ -235,7 +219,6 @@ impl SignalCache {
             tag_by_id,
             tags_by_story,
             tags_by_situation,
-            actors_by_region,
             loaded_at: Utc::now(),
         })
     }
@@ -528,22 +511,3 @@ async fn load_situation_tag_edges(
     Ok(edges)
 }
 
-/// Load Actor nodes with region property as (region_slug, actor_id) pairs.
-async fn load_region_actor_edges(
-    client: &GraphClient,
-) -> Result<Vec<(String, Uuid)>, neo4rs::Error> {
-    let cypher = "MATCH (a:Actor) WHERE a.region IS NOT NULL
-         RETURN a.region AS region_slug, a.id AS actor_id";
-    let q = query(cypher);
-    let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
-
-    while let Some(row) = stream.next().await? {
-        let slug: String = row.get("region_slug").unwrap_or_default();
-        let aid_str: String = row.get("actor_id").unwrap_or_default();
-        if let Ok(aid) = Uuid::parse_str(&aid_str) {
-            edges.push((slug, aid));
-        }
-    }
-    Ok(edges)
-}

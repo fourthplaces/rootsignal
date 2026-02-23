@@ -353,16 +353,19 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// List actors in a region.
-    async fn actors(
+    /// Find actors within a bounding box, sorted by last_active.
+    async fn actors_in_bounds(
         &self,
         ctx: &Context<'_>,
-        region: String,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
         limit: Option<u32>,
     ) -> Result<Vec<GqlActor>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
-        let actors = reader.actors_active_in_area(&region, limit).await?;
+        let actors = reader.actors_in_bounds(min_lat, max_lat, min_lng, max_lng, limit).await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 

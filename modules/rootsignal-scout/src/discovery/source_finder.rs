@@ -13,7 +13,7 @@ use rootsignal_graph::{
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
-const MAX_CURIOSITY_QUERIES: usize = 7;
+const MAX_CURIOSITY_QUERIES: usize = 12;
 
 /// Stats from a discovery run.
 #[derive(Debug, Default)]
@@ -370,6 +370,8 @@ pub fn initial_weight_for_method(method: DiscoveryMethod, gap_type: Option<&str>
         DiscoveryMethod::SignalExpansion => 0.2,
         // Social graph follow: promoted from mentions, unproven
         DiscoveryMethod::SocialGraphFollow => 0.2,
+        // Linked from a scraped page: speculative, unproven
+        DiscoveryMethod::LinkedFrom => 0.25,
         // Everything else (HashtagDiscovery, SignalReference, etc.)
         _ => 0.3,
     }
@@ -1618,7 +1620,7 @@ mod tests {
                 related_tension: None,
             })
             .collect();
-        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), 7);
+        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), 12);
     }
 
     #[test]
