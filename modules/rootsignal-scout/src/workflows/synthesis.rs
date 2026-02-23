@@ -1,16 +1,17 @@
 //! Restate durable workflow for synthesis.
 //!
-//! Wraps step 7 from `Scout::run_inner()`: similarity edges + parallel
-//! finders (response mapping, tension linker, response finder,
-//! gathering finder, investigation).
+//! Runs similarity edges + parallel finders (response mapping, tension linker,
+//! response finder, gathering finder, investigation).
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
-use tracing::info;
+use tracing::{info, warn};
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::{GraphWriter, SimilarityBuilder};
+
+use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
 use super::types::{BudgetedRegionRequest, EmptyRequest, SynthesisResult};
 use super::{create_archive, ScoutDeps};
@@ -76,23 +77,138 @@ async fn run_synthesis_from_deps(
     let writer = GraphWriter::new(deps.graph_client.clone());
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
-    let region_slug = rootsignal_common::slugify(&scope.name);
     let archive = create_archive(deps);
-    let budget = crate::scheduling::budget::BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
+    let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
+    let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    crate::scout::run_synthesis(
-        &deps.graph_client,
-        &writer,
-        &*embedder,
-        archive,
-        &deps.anthropic_api_key,
-        scope,
-        &budget,
-        Arc::new(AtomicBool::new(false)),
-        &run_id,
-    )
-    .await?;
+    // Parallel synthesis — similarity edges + finders run concurrently.
+    // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
+    info!("Starting parallel synthesis (similarity edges, response mapping, tension linker, response finder, gathering finder, investigation)...");
+
+    let run_response_mapping = budget
+        .has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10);
+    let run_tension_linker = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
+    );
+    let run_response_finder = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
+    );
+    let run_gathering_finder = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
+    );
+    let run_investigation = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
+    );
+
+    let run_id_owned = run_id.to_string();
+
+    let (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+        async {
+            info!("Building similarity edges...");
+            let similarity = SimilarityBuilder::new(deps.graph_client.clone());
+            similarity.clear_edges().await.unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to clear similarity edges");
+                0
+            });
+            match similarity.build_edges().await {
+                Ok(edges) => info!(edges, "Similarity edges built"),
+                Err(e) => warn!(error = %e, "Similarity edge building failed (non-fatal)"),
+            }
+        },
+        async {
+            if run_response_mapping {
+                info!("Starting response mapping...");
+                let response_mapper = rootsignal_graph::response::ResponseMapper::new(
+                    deps.graph_client.clone(),
+                    &deps.anthropic_api_key,
+                    scope.center_lat,
+                    scope.center_lng,
+                    scope.radius_km,
+                );
+                match response_mapper.map_responses().await {
+                    Ok(rm_stats) => info!("{rm_stats}"),
+                    Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
+                }
+            } else if budget.is_active() {
+                info!("Skipping response mapping (budget exhausted)");
+            }
+        },
+        async {
+            if run_tension_linker {
+                info!("Starting tension linker...");
+                let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    scope.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let tl_stats = tension_linker.run().await;
+                info!("{tl_stats}");
+            } else if budget.is_active() {
+                info!("Skipping tension linker (budget exhausted)");
+            }
+        },
+        async {
+            if run_response_finder {
+                info!("Starting response finder...");
+                let response_finder = crate::discovery::response_finder::ResponseFinder::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    scope.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let rf_stats = response_finder.run().await;
+                info!("{rf_stats}");
+            } else if budget.is_active() {
+                info!("Skipping response finder (budget exhausted)");
+            }
+        },
+        async {
+            if run_gathering_finder {
+                info!("Starting gathering finder...");
+                let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    scope.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let gf_stats = gathering_finder.run().await;
+                info!("{gf_stats}");
+            } else if budget.is_active() {
+                info!("Skipping gathering finder (budget exhausted)");
+            }
+        },
+        async {
+            if run_investigation {
+                info!("Starting investigation phase...");
+                let investigator = crate::enrichment::investigator::Investigator::new(
+                    &writer,
+                    archive.clone(),
+                    &deps.anthropic_api_key,
+                    scope,
+                    cancelled.clone(),
+                );
+                let investigation_stats = investigator.run().await;
+                info!("{investigation_stats}");
+            } else if budget.is_active() {
+                info!("Skipping investigation (budget exhausted)");
+            }
+        },
+    );
+
+    let _ = (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result);
+
+    info!("Parallel synthesis complete");
 
     Ok(SynthesisResult {
         spent_cents: budget.total_spent(),

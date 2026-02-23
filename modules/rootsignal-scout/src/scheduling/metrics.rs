@@ -92,7 +92,7 @@ impl<'a> Metrics<'a> {
                 source.consecutive_empty_runs
             };
             let cadence = if is_web_query(&source.canonical_value) {
-                crate::scheduling::scheduler::cadence_hours_with_backoff(new_weight, empty_runs)
+                crate::scheduling::scheduler::cadence_hours_with_backoff(new_weight, empty_runs, &source.discovery_method)
             } else {
                 crate::scheduling::scheduler::cadence_hours_for_weight(new_weight)
             };

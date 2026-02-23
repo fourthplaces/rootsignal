@@ -1,3 +1,6 @@
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Serialize;
@@ -11,9 +14,14 @@ use rootsignal_graph::{
     migrate::{backfill_source_canonical_keys, backfill_source_diversity, migrate},
     query,
     reader::{node_type_label, row_to_node},
-    GraphClient, GraphWriter, PublicGraphReader,
+    GraphClient, GraphWriter, PublicGraphReader, SimilarityBuilder,
 };
-use rootsignal_scout::scout::{Scout, ScoutParams};
+
+use rootsignal_scout::infra::embedder::{Embedder, TextEmbedder};
+use rootsignal_scout::pipeline::extractor::{Extractor, SignalExtractor};
+use rootsignal_scout::pipeline::scrape_pipeline::ScrapePipeline;
+use rootsignal_scout::scheduling::budget::{BudgetTracker, OperationCost};
+use rootsignal_scout::workflows::{create_archive, ScoutDeps};
 
 #[derive(Parser)]
 #[command(about = "Run the Root Signal scout for a region")]
@@ -108,7 +116,7 @@ async fn main() -> Result<()> {
     // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
     backfill_source_diversity(&client, &[]).await?;
 
-    // Save region geo bounds before moving region into Scout
+    // Save region geo bounds before moving region into pipeline
     let region_name_key = region.name.clone();
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
@@ -121,28 +129,46 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect to Postgres")?;
 
-    // Create and run scout
-    let scout = Scout::from_params(
-        ScoutParams::builder()
-            .graph_client(client.clone())
-            .pool(pool)
-            .anthropic_api_key(config.anthropic_api_key.clone())
-            .voyage_api_key(config.voyage_api_key.clone())
-            .serper_api_key(config.serper_api_key.clone())
-            .apify_api_key(config.apify_api_key.clone())
-            .region(region)
-            .daily_budget_cents(config.daily_budget_cents)
-            .browserless_url(config.browserless_url.clone())
-            .browserless_token(config.browserless_token.clone())
-            .build(),
-    )?;
+    // Build shared deps (same struct the Restate workflows use)
+    let deps = ScoutDeps::builder()
+        .graph_client(client.clone())
+        .pg_pool(pool)
+        .anthropic_api_key(config.anthropic_api_key.clone())
+        .voyage_api_key(config.voyage_api_key.clone())
+        .serper_api_key(config.serper_api_key.clone())
+        .apify_api_key(config.apify_api_key.clone())
+        .daily_budget_cents(config.daily_budget_cents)
+        .browserless_url(config.browserless_url.clone())
+        .browserless_token(config.browserless_token.clone())
+        .build();
 
-    let stats = scout.run().await?;
+    let writer = GraphWriter::new(deps.graph_client.clone());
+    let region_slug = rootsignal_common::slugify(&region.name);
+
+    // Transition region status to running (acts as lock)
+    let allowed = &["idle", "bootstrap_complete", "actor_discovery_complete",
+        "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete"];
+    if !writer
+        .transition_region_status(&region_slug, allowed, "running_bootstrap")
+        .await
+        .context("Failed to check region run status")?
+    {
+        anyhow::bail!("Another scout run is in progress for {}", region.name);
+    }
+
+    let result = run_full_scout(&deps, region).await;
+
+    // Set status to complete or reset to idle on failure
+    let final_status = if result.is_ok() { "complete" } else { "idle" };
+    if let Err(e) = writer.set_region_run_status(&region_slug, final_status).await {
+        tracing::error!("Failed to set region run status: {e}");
+    }
+
+    let stats = result?;
     info!("Scout run complete. {stats}");
 
-    // Merge near-duplicate tensions before computing heat
-    let writer_ref = GraphWriter::new(client.clone());
-    let merged = writer_ref
+    // Post-run: merge near-duplicate tensions before computing heat
+    let merged = writer
         .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
         .await?;
     if merged > 0 {
@@ -152,7 +178,7 @@ async fn main() -> Result<()> {
     // Actor extraction — extract actors from signals that have none
     info!("Starting actor extraction...");
     let sweep_stats = rootsignal_scout::enrichment::actor_extractor::run_actor_extraction(
-        &writer_ref,
+        &writer,
         &client,
         &config.anthropic_api_key,
         &region_name_key,
@@ -168,6 +194,206 @@ async fn main() -> Result<()> {
     compute_cause_heat(&client, 0.7, min_lat, max_lat, min_lng, max_lng).await?;
 
     Ok(())
+}
+
+/// Run a full scout cycle: scrape → synthesis → situation weaving.
+async fn run_full_scout(
+    deps: &ScoutDeps,
+    region: ScoutScope,
+) -> Result<rootsignal_scout::pipeline::stats::ScoutStats> {
+    let writer = GraphWriter::new(deps.graph_client.clone());
+    let extractor: Arc<dyn SignalExtractor> = Arc::new(Extractor::new(
+        &deps.anthropic_api_key,
+        region.name.as_str(),
+        region.center_lat,
+        region.center_lng,
+    ));
+    let embedder: Arc<dyn TextEmbedder> =
+        Arc::new(Embedder::new(&deps.voyage_api_key));
+    let archive = create_archive(deps);
+    let budget = BudgetTracker::new(deps.daily_budget_cents);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let run_id = uuid::Uuid::new_v4().to_string();
+
+    // === Scrape pipeline ===
+    let pipeline = ScrapePipeline::new(
+        writer.clone(),
+        extractor,
+        embedder.clone(),
+        archive.clone(),
+        deps.anthropic_api_key.clone(),
+        region.clone(),
+        &budget,
+        cancelled.clone(),
+        run_id.clone(),
+        deps.pg_pool.clone(),
+    );
+    let stats = pipeline.run_all().await?;
+
+    // === Synthesis ===
+    info!("Starting parallel synthesis...");
+
+    let run_response_mapping = budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10);
+    let run_tension_linker = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
+    );
+    let run_response_finder = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
+    );
+    let run_gathering_finder = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
+    );
+    let run_investigation = budget.has_budget(
+        OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
+    );
+
+    let run_id_owned = run_id.clone();
+
+    tokio::join!(
+        async {
+            info!("Building similarity edges...");
+            let similarity = SimilarityBuilder::new(deps.graph_client.clone());
+            similarity.clear_edges().await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to clear similarity edges");
+                0
+            });
+            match similarity.build_edges().await {
+                Ok(edges) => info!(edges, "Similarity edges built"),
+                Err(e) => tracing::warn!(error = %e, "Similarity edge building failed (non-fatal)"),
+            }
+        },
+        async {
+            if run_response_mapping {
+                info!("Starting response mapping...");
+                let response_mapper = rootsignal_graph::response::ResponseMapper::new(
+                    deps.graph_client.clone(),
+                    &deps.anthropic_api_key,
+                    region.center_lat,
+                    region.center_lng,
+                    region.radius_km,
+                );
+                match response_mapper.map_responses().await {
+                    Ok(rm_stats) => info!("{rm_stats}"),
+                    Err(e) => tracing::warn!(error = %e, "Response mapping failed (non-fatal)"),
+                }
+            } else if budget.is_active() {
+                info!("Skipping response mapping (budget exhausted)");
+            }
+        },
+        async {
+            if run_tension_linker {
+                info!("Starting tension linker...");
+                let tension_linker = rootsignal_scout::discovery::tension_linker::TensionLinker::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    region.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let tl_stats = tension_linker.run().await;
+                info!("{tl_stats}");
+            } else if budget.is_active() {
+                info!("Skipping tension linker (budget exhausted)");
+            }
+        },
+        async {
+            if run_response_finder {
+                info!("Starting response finder...");
+                let response_finder = rootsignal_scout::discovery::response_finder::ResponseFinder::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    region.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let rf_stats = response_finder.run().await;
+                info!("{rf_stats}");
+            } else if budget.is_active() {
+                info!("Skipping response finder (budget exhausted)");
+            }
+        },
+        async {
+            if run_gathering_finder {
+                info!("Starting gathering finder...");
+                let gathering_finder = rootsignal_scout::discovery::gathering_finder::GatheringFinder::new(
+                    &writer,
+                    archive.clone(),
+                    &*embedder,
+                    &deps.anthropic_api_key,
+                    region.clone(),
+                    cancelled.clone(),
+                    run_id_owned.clone(),
+                );
+                let gf_stats = gathering_finder.run().await;
+                info!("{gf_stats}");
+            } else if budget.is_active() {
+                info!("Skipping gathering finder (budget exhausted)");
+            }
+        },
+        async {
+            if run_investigation {
+                info!("Starting investigation phase...");
+                let investigator = rootsignal_scout::enrichment::investigator::Investigator::new(
+                    &writer,
+                    archive.clone(),
+                    &deps.anthropic_api_key,
+                    &region,
+                    cancelled.clone(),
+                );
+                let investigation_stats = investigator.run().await;
+                info!("{investigation_stats}");
+            } else if budget.is_active() {
+                info!("Skipping investigation (budget exhausted)");
+            }
+        },
+    );
+    info!("Parallel synthesis complete");
+
+    // === Situation weaving ===
+    info!("Starting situation weaving...");
+    let situation_weaver = rootsignal_graph::SituationWeaver::new(
+        deps.graph_client.clone(),
+        &deps.anthropic_api_key,
+        embedder.clone(),
+        region.clone(),
+    );
+    let has_situation_budget = budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
+    match situation_weaver.run(&run_id, has_situation_budget).await {
+        Ok(sit_stats) => info!("{sit_stats}"),
+        Err(e) => tracing::warn!(error = %e, "Situation weaving failed (non-fatal)"),
+    }
+
+    // Source boost for hot situations
+    match writer.get_situation_landscape(20).await {
+        Ok(situations) => {
+            let hot: Vec<_> = situations.iter()
+                .filter(|s| s.temperature >= 0.6 && s.sensitivity != "SENSITIVE" && s.sensitivity != "RESTRICTED")
+                .collect();
+            if !hot.is_empty() {
+                info!(count = hot.len(), "Hot situations boosting source cadence");
+                for sit in &hot {
+                    if let Err(e) = writer.boost_sources_for_situation_headline(&sit.headline, 1.2).await {
+                        tracing::warn!(error = %e, headline = sit.headline.as_str(), "Failed to boost sources");
+                    }
+                }
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "Failed to fetch situation landscape"),
+    }
+
+    // Curiosity re-investigation
+    match writer.trigger_situation_curiosity().await {
+        Ok(0) => {}
+        Ok(n) => info!(count = n, "Situations triggered curiosity re-investigation"),
+        Err(e) => tracing::warn!(error = %e, "Failed to trigger situation curiosity"),
+    }
+
+    budget.log_status();
+    Ok(stats)
 }
 
 /// Dump all situations and signals for a region as raw JSON to stdout.

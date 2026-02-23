@@ -8,10 +8,6 @@ license.workspace = true
 name = "scout"
 path = "src/main.rs"
 
-[[bin]]
-name = "diagnose_reddit"
-path = "src/bin/diagnose_reddit.rs"
-
 [dependencies]
 rootsignal-common = { workspace = true }
 rootsignal-graph = { workspace = true }

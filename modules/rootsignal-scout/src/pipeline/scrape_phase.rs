@@ -20,14 +20,15 @@ use rootsignal_common::{
     DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
     SocialPlatform, SourceNode, SourceRole,
 };
+use crate::enrichment::mention_promoter;
 use rootsignal_graph::GraphWriter;
 
 use super::geo_filter;
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
-use crate::run_log::{EventKind, RunLog};
-use crate::scout::ScoutStats;
+use crate::infra::run_log::{EventKind, RunLog};
+use crate::pipeline::stats::ScoutStats;
 use rootsignal_archive::Archive;
 
 use crate::pipeline::sources;
@@ -53,6 +54,8 @@ pub(crate) struct RunContext {
     /// a known actor via HAS_ACCOUNT, its context is stored here for location
     /// fallback during signal extraction.
     pub actor_contexts: HashMap<String, ActorContext>,
+    /// Mentions collected during scraping: (platform, handle, mentioned_by_source).
+    pub collected_mentions: Vec<(SocialPlatform, String, String)>,
 }
 
 impl RunContext {
@@ -74,6 +77,7 @@ impl RunContext {
             stats: ScoutStats::default(),
             query_api_errors: HashSet::new(),
             actor_contexts: HashMap::new(),
+            collected_mentions: Vec::new(),
         }
     }
 
@@ -390,12 +394,12 @@ impl ScrapePhase {
             async move {
                 let clean_url = sanitize_url(&url);
 
-                let content = match archive.page(&url).await.map(|p| p.markdown) {
-                    Ok(c) if !c.is_empty() => c,
-                    Ok(_) => return (clean_url, ScrapeOutcome::Failed),
+                let (content, page_links) = match archive.page(&url).await {
+                    Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
+                    Ok(_) => return (clean_url, ScrapeOutcome::Failed, Vec::new()),
                     Err(e) => {
                         warn!(url, error = %e, "Scrape failed");
-                        return (clean_url, ScrapeOutcome::Failed);
+                        return (clean_url, ScrapeOutcome::Failed, Vec::new());
                     }
                 };
 
@@ -403,7 +407,7 @@ impl ScrapePhase {
                 match writer.content_already_processed(&hash, &clean_url).await {
                     Ok(true) => {
                         info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
-                        return (clean_url, ScrapeOutcome::Unchanged);
+                        return (clean_url, ScrapeOutcome::Unchanged, page_links);
                     }
                     Ok(false) => {}
                     Err(e) => {
@@ -434,10 +438,11 @@ impl ScrapePhase {
                             resource_tags: result.resource_tags,
                             signal_tags: result.signal_tags,
                         },
+                        page_links,
                     ),
                     Err(e) => {
                         warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
-                        (clean_url, ScrapeOutcome::Failed)
+                        (clean_url, ScrapeOutcome::Failed, page_links)
                     }
                 }
             }
@@ -449,7 +454,13 @@ impl ScrapePhase {
         // Process results
         let now = Utc::now();
         let known_urls = ctx.known_urls();
-        for (url, outcome) in pipeline_results {
+        for (url, outcome, page_links) in pipeline_results {
+            // Extract social handles from page links for mention promotion
+            let social_handles = mention_promoter::extract_social_handles_from_links(&page_links);
+            for (platform, handle) in social_handles {
+                ctx.collected_mentions.push((platform, handle, url.clone()));
+            }
+
             let ck = ctx
                 .url_to_canonical_key
                 .get(&url)
@@ -544,12 +555,14 @@ impl ScrapePhase {
         type SocialResult = Option<(
             String,
             String,
+            SocialPlatform,
             String,
             Vec<Node>,
             Vec<(Uuid, Vec<ResourceTag>)>,
             Vec<(Uuid, Vec<String>)>,
             usize,
-        )>; // (canonical_key, source_url, combined_text, nodes, resource_tags, signal_tags, post_count)
+            Vec<String>,
+        )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, post_count, mentions)
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
         struct SocialEntry {
@@ -687,7 +700,8 @@ impl ScrapePhase {
         for (canonical_key, source_url, account) in &accounts {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
-            let is_reddit = matches!(account.platform, SocialPlatform::Reddit);
+            let platform = account.platform;
+            let is_reddit = matches!(platform, SocialPlatform::Reddit);
             let actor_prefix = actor_prefixes.get(&canonical_key).cloned();
             let firsthand_prefix = if actor_prefix.is_none() {
                 Some(firsthand_filter.to_string())
@@ -707,6 +721,11 @@ impl ScrapePhase {
                     }
                 };
                 let post_count = posts.len();
+
+                // Collect @mentions from posts
+                let source_mentions: Vec<String> = posts.iter()
+                    .flat_map(|p| p.mentions.iter().cloned())
+                    .collect();
 
                 // Format a post header including the specific post URL when available.
                 let post_header = |i: usize, p: &Post| -> String {
@@ -760,11 +779,13 @@ impl ScrapePhase {
                     Some((
                         canonical_key,
                         source_url,
+                        platform,
                         combined_all,
                         all_nodes,
                         all_resource_tags,
                         all_signal_tags,
                         post_count,
+                        source_mentions,
                     ))
                 } else {
                     // Instagram/Facebook/Twitter/TikTok: combine all posts then extract
@@ -795,11 +816,13 @@ impl ScrapePhase {
                     Some((
                         canonical_key,
                         source_url,
+                        platform,
                         combined_text,
                         result.nodes,
                         result.resource_tags,
                         result.signal_tags,
                         post_count,
+                        source_mentions,
                     ))
                 }
             }));
@@ -808,16 +831,24 @@ impl ScrapePhase {
         let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
         let known_urls = ctx.known_urls();
+        let promotion_config = mention_promoter::PromotionConfig::default();
         for result in results.into_iter().flatten() {
             let (
                 canonical_key,
                 source_url,
+                result_platform,
                 combined_text,
                 nodes,
                 resource_tags,
                 signal_tags,
                 post_count,
+                mentions,
             ) = result;
+
+            // Accumulate mentions for promotion (capped per source)
+            for handle in mentions.into_iter().take(promotion_config.max_per_source) {
+                ctx.collected_mentions.push((result_platform, handle, source_url.clone()));
+            }
 
             run_log.log(EventKind::SocialScrape {
                 platform: "social".to_string(),
@@ -1038,25 +1069,18 @@ impl ScrapePhase {
                     topics.first().map(|t| t.as_str()).unwrap_or("unknown")
                 );
                 let source = SourceNode {
-                    id: Uuid::new_v4(),
-                    canonical_key: ck.clone(),
-                    canonical_value: cv,
-                    url: Some(source_url.clone()),
-                    discovery_method: DiscoveryMethod::HashtagDiscovery,
-                    created_at: Utc::now(),
                     last_scraped: Some(Utc::now()),
                     last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
                     signals_produced: produced,
-                    signals_corroborated: 0,
-                    consecutive_empty_runs: 0,
-                    active: true,
-                    gap_context: Some(gap_context),
-                    weight: 0.3,
-                    cadence_hours: None,
-                    avg_signals_per_scrape: 0.0,
-                    quality_penalty: 1.0,
-                    source_role: SourceRole::default(),
-                    scrape_count: 0,
+                    ..SourceNode::new(
+                        ck.clone(),
+                        cv,
+                        Some(source_url.clone()),
+                        DiscoveryMethod::HashtagDiscovery,
+                        0.3,
+                        SourceRole::default(),
+                        Some(gap_context),
+                    )
                 };
 
                 *ctx.source_signal_counts.entry(ck).or_default() += produced;

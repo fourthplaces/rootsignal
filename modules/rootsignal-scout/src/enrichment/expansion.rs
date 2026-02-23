@@ -7,13 +7,11 @@
 use std::collections::HashSet;
 
 use tracing::{info, warn};
-use uuid::Uuid;
-
 use rootsignal_common::{DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::infra::embedder::TextEmbedder;
-use crate::run_log::{EventKind, RunLog};
+use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::scrape_phase::RunContext;
 use crate::pipeline::sources;
 
@@ -93,7 +91,6 @@ impl<'a> Expansion<'a> {
             .take(MAX_EXPANSION_QUERIES_PER_RUN)
             .collect();
 
-        let now_expansion = chrono::Utc::now();
         let mut created = 0u32;
         let mut expansion_dupes_skipped = 0u32;
         for query_text in &deduped {
@@ -123,32 +120,18 @@ impl<'a> Expansion<'a> {
 
             let cv = query_text.clone();
             let ck = sources::make_canonical_key(&cv);
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck.clone(),
-                canonical_value: cv,
-                url: None,
-                discovery_method: DiscoveryMethod::SignalExpansion,
-                created_at: now_expansion,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: Some(
-                    "Signal expansion: implied query from extracted signal".to_string(),
-                ),
-                weight: crate::discovery::source_finder::initial_weight_for_method(
+            let source = SourceNode::new(
+                ck.clone(),
+                cv,
+                None,
+                DiscoveryMethod::SignalExpansion,
+                crate::discovery::source_finder::initial_weight_for_method(
                     DiscoveryMethod::SignalExpansion,
                     None,
                 ),
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
-                source_role: rootsignal_common::SourceRole::Response,
-                scrape_count: 0,
-            };
+                rootsignal_common::SourceRole::Response,
+                Some("Signal expansion: implied query from extracted signal".to_string()),
+            );
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     run_log.log(EventKind::ExpansionSourceCreated {

@@ -1,11 +1,8 @@
 use std::collections::HashSet;
 
-use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{de, Deserialize};
 use tracing::{info, warn};
-use uuid::Uuid;
-
 use ai_client::claude::Claude;
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
@@ -372,6 +369,8 @@ pub fn initial_weight_for_method(method: DiscoveryMethod, gap_type: Option<&str>
         },
         // Signal expansion: derived from existing signals, lower novelty
         DiscoveryMethod::SignalExpansion => 0.2,
+        // Social graph follow: promoted from mentions, unproven
+        DiscoveryMethod::SocialGraphFollow => 0.2,
         // Everything else (HashtagDiscovery, SignalReference, etc.)
         _ => 0.3,
     }
@@ -538,7 +537,6 @@ impl<'a> SourceFinder<'a> {
         let existing_keys: HashSet<String> =
             existing.iter().map(|s| s.canonical_key.clone()).collect();
 
-        let now = Utc::now();
         for (actor_name, domains, social_urls, dominant_role) in &actors {
             let source_role = SourceRole::from_str_loose(dominant_role);
 
@@ -562,28 +560,15 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source = SourceNode {
-                    id: Uuid::new_v4(),
-                    canonical_key: ck,
-                    canonical_value: cv,
-                    url: Some(url.clone()),
-                    discovery_method: DiscoveryMethod::SignalReference,
-
-                    created_at: now,
-                    last_scraped: None,
-                    last_produced_signal: None,
-                    signals_produced: 0,
-                    signals_corroborated: 0,
-                    consecutive_empty_runs: 0,
-                    active: true,
-                    gap_context: Some(format!("Actor: {actor_name}")),
-                    weight: 0.3,
-                    cadence_hours: None,
-                    avg_signals_per_scrape: 0.0,
-                    quality_penalty: 1.0,
+                let source = SourceNode::new(
+                    ck,
+                    cv,
+                    Some(url.clone()),
+                    DiscoveryMethod::SignalReference,
+                    0.3,
                     source_role,
-                    scrape_count: 0,
-                };
+                    Some(format!("Actor: {actor_name}")),
+                );
 
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
@@ -611,28 +596,15 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source = SourceNode {
-                    id: Uuid::new_v4(),
-                    canonical_key: ck,
-                    canonical_value: cv,
-                    url: Some(social_url.clone()),
-                    discovery_method: DiscoveryMethod::SignalReference,
-
-                    created_at: now,
-                    last_scraped: None,
-                    last_produced_signal: None,
-                    signals_produced: 0,
-                    signals_corroborated: 0,
-                    consecutive_empty_runs: 0,
-                    active: true,
-                    gap_context: Some(format!("Actor: {actor_name}")),
-                    weight: 0.3,
-                    cadence_hours: None,
-                    avg_signals_per_scrape: 0.0,
-                    quality_penalty: 1.0,
+                let source = SourceNode::new(
+                    ck,
+                    cv,
+                    Some(social_url.clone()),
+                    DiscoveryMethod::SignalReference,
+                    0.3,
                     source_role,
-                    scrape_count: 0,
-                };
+                    Some(format!("Actor: {actor_name}")),
+                );
 
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
@@ -729,7 +701,6 @@ impl<'a> SourceFinder<'a> {
             .map(|q| q.to_lowercase())
             .collect();
 
-        let now = Utc::now();
         for dq in plan.queries.into_iter().take(MAX_CURIOSITY_QUERIES) {
             let query_lower = dq.query.to_lowercase();
 
@@ -800,27 +771,15 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
 
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck.clone(),
-                canonical_value: cv,
-                url: None,
-                discovery_method: DiscoveryMethod::GapAnalysis,
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: Some(gap_context),
+            let source = SourceNode::new(
+                ck.clone(),
+                cv,
+                None,
+                DiscoveryMethod::GapAnalysis,
                 weight,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
                 source_role,
-                scrape_count: 0,
-            };
+                Some(gap_context),
+            );
 
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
@@ -971,7 +930,6 @@ impl<'a> SourceFinder<'a> {
             .map(|s| s.canonical_value.to_lowercase())
             .collect();
 
-        let now = Utc::now();
         let mut gap_count = 0u32;
         const MAX_GAP_QUERIES: u32 = 5;
 
@@ -999,28 +957,16 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
 
-            let source = SourceNode {
-                id: Uuid::new_v4(),
-                canonical_key: ck,
-                canonical_value: cv,
-                url: None,
-                discovery_method: DiscoveryMethod::GapAnalysis,
-                created_at: now,
-                last_scraped: None,
-                last_produced_signal: None,
-                signals_produced: 0,
-                signals_corroborated: 0,
-                consecutive_empty_runs: 0,
-                active: true,
-                gap_context: Some(format!("Tension: {}", t.title)),
+            let source = SourceNode::new(
+                ck,
+                cv,
+                None,
+                DiscoveryMethod::GapAnalysis,
                 weight,
-                cadence_hours: None,
-                avg_signals_per_scrape: 0.0,
-                quality_penalty: 1.0,
                 // Mechanical gap queries seek responses to tensions
-                source_role: SourceRole::Response,
-                scrape_count: 0,
-            };
+                SourceRole::Response,
+                Some(format!("Tension: {}", t.title)),
+            );
 
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {

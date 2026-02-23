@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::info;
 
-use crate::scout::ScoutStats;
+use crate::pipeline::stats::ScoutStats;
 
 // ---------------------------------------------------------------------------
 // RunLog
