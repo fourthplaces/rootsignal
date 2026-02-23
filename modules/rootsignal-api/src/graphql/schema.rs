@@ -1057,8 +1057,6 @@ pub struct RegionScoutStatus {
     pub last_scouted: Option<DateTime<Utc>>,
     pub sources_due: u32,
     pub running: bool,
-    /// Current phase status: "idle", "bootstrap_complete", "running_scrape", etc.
-    pub phase_status: String,
 }
 
 #[derive(SimpleObject)]
