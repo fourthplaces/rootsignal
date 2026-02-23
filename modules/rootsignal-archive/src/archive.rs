@@ -128,4 +128,10 @@ impl Archive {
         self.source(query).await?.search(query).await
     }
 
+    /// Crawl a website via BFS, following links from the seed URL.
+    /// Uses sensible defaults: max_depth=2, limit=20.
+    pub async fn crawl(&self, url: &str) -> Result<Vec<rootsignal_common::types::ArchivedPage>> {
+        self.source(url).await?.crawl().await
+    }
+
 }

@@ -3,6 +3,7 @@
 // methods on it. Each method returns a request builder that implements
 // IntoFuture for ergonomic .await.
 
+use std::collections::{HashSet, VecDeque};
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use rootsignal_common::types::{
     ArchivedFeed, ArchivedPage, ArchivedSearchResults, FeedItem, LongVideo, Post,
     SearchResult, ShortVideo, Source, Story,
 };
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::error::{ArchiveError, Result};
@@ -131,6 +133,17 @@ impl SourceHandle {
             source: self.source.clone(),
             query: query.to_string(),
             max_results: 5,
+        }
+    }
+
+    pub fn crawl(&self) -> CrawlRequest {
+        CrawlRequest {
+            inner: self.inner.clone(),
+            seed_url: self.source.url.clone(),
+            max_depth: 2,
+            limit: 20,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
         }
     }
 
@@ -724,5 +737,322 @@ impl IntoFuture for TopicSearchRequest {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.send())
+    }
+}
+
+pub struct CrawlRequest {
+    inner: Arc<ArchiveInner>,
+    seed_url: String,
+    max_depth: usize,
+    limit: usize,
+    include_patterns: Vec<String>,
+    exclude_patterns: Vec<String>,
+}
+
+impl CrawlRequest {
+    pub fn max_depth(mut self, n: usize) -> Self {
+        self.max_depth = n;
+        self
+    }
+
+    pub fn limit(mut self, n: usize) -> Self {
+        self.limit = n;
+        self
+    }
+
+    pub fn include(mut self, pattern: &str) -> Self {
+        self.include_patterns.push(pattern.to_string());
+        self
+    }
+
+    pub fn exclude(mut self, pattern: &str) -> Self {
+        self.exclude_patterns.push(pattern.to_string());
+        self
+    }
+
+    pub async fn send(self) -> Result<Vec<ArchivedPage>> {
+        if self.limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let seed_full_url = ensure_scheme(&self.seed_url);
+        let seed_host = extract_host(&seed_full_url);
+
+        info!(
+            url = %seed_full_url, max_depth = self.max_depth, limit = self.limit,
+            "crawl: starting BFS"
+        );
+
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+        let mut pages: Vec<ArchivedPage> = Vec::new();
+
+        queue.push_back((seed_full_url.clone(), 0));
+        visited.insert(normalize_crawl_url(&seed_full_url));
+
+        while let Some((url, depth)) = queue.pop_front() {
+            if pages.len() >= self.limit {
+                break;
+            }
+
+            // Fetch page through archive's normal pipeline (browserless/Chrome)
+            let page = match self.fetch_page(&url).await {
+                Ok(p) => p,
+                Err(e) => {
+                    // Seed failure is a hard error
+                    if pages.is_empty() && depth == 0 {
+                        return Err(e);
+                    }
+                    warn!(url = %url, error = %e, "crawl: skipping failed page");
+                    continue;
+                }
+            };
+
+            // Extract child links if we haven't reached max depth
+            if depth < self.max_depth {
+                for link in &page.links {
+                    let normalized = normalize_crawl_url(link);
+                    if visited.contains(&normalized) {
+                        continue;
+                    }
+                    if !same_host(link, &seed_host) {
+                        continue;
+                    }
+                    if !matches_patterns(link, &self.include_patterns, &self.exclude_patterns) {
+                        continue;
+                    }
+                    visited.insert(normalized);
+                    queue.push_back((link.clone(), depth + 1));
+                }
+            }
+
+            pages.push(page);
+        }
+
+        info!(
+            seed = %self.seed_url, pages_crawled = pages.len(),
+            urls_visited = visited.len(), "crawl: BFS complete"
+        );
+
+        Ok(pages)
+    }
+
+    /// Fetch a single page through the archive page pipeline.
+    async fn fetch_page(&self, url: &str) -> Result<ArchivedPage> {
+        let normalized = crate::router::normalize_url(url);
+        let source = self.inner.store.upsert_source(&normalized).await?;
+        let source_id = source.id;
+
+        let fetched = if let Some(ref svc) = self.inner.browserless_page {
+            svc.fetch(url, source_id)
+                .await
+                .map_err(ArchiveError::Other)?
+        } else if let Some(ref svc) = self.inner.chrome_page {
+            svc.fetch(url, source_id)
+                .await
+                .map_err(ArchiveError::Other)?
+        } else {
+            return Err(ArchiveError::Unsupported("No page fetcher configured".into()));
+        };
+
+        let links = crate::links::extract_all_links(&fetched.raw_html, url);
+        let page = crate::store::InsertPage {
+            source_id,
+            content_hash: fetched.page.content_hash,
+            markdown: fetched.page.markdown,
+            title: fetched.page.title,
+            links: links.clone(),
+        };
+        let page_id = self.inner.store.insert_page(&page).await?;
+        self.inner.store.update_last_scraped(source_id, "pages").await?;
+
+        Ok(ArchivedPage {
+            id: page_id,
+            source_id,
+            fetched_at: Utc::now(),
+            content_hash: page.content_hash,
+            raw_html: fetched.raw_html,
+            markdown: page.markdown,
+            title: page.title,
+            links,
+        })
+    }
+}
+
+impl IntoFuture for CrawlRequest {
+    type Output = Result<Vec<ArchivedPage>>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.send())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Crawl helpers
+// ---------------------------------------------------------------------------
+
+/// Ensure a URL has an https:// scheme. Archive's normalize_url strips the
+/// scheme, so we need to add it back for fetching.
+fn ensure_scheme(url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("https://{url}")
+    }
+}
+
+/// Extract the host from a URL for same-host comparison.
+fn extract_host(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+        .unwrap_or_default()
+}
+
+/// Normalize a URL for the crawl visited set.
+/// Strips fragments and trailing slashes, lowercases host.
+pub(crate) fn normalize_crawl_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut parsed) => {
+            parsed.set_fragment(None);
+            let mut s = parsed.to_string();
+            if s.ends_with('/') && s.len() > parsed.scheme().len() + 3 {
+                // Don't strip trailing slash from bare domain (https://example.com/)
+                let path = parsed.path();
+                if path != "/" {
+                    s.pop();
+                }
+            }
+            s
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Check if a URL belongs to the same host.
+fn same_host(url: &str, seed_host: &str) -> bool {
+    extract_host(url) == *seed_host
+}
+
+/// Check if a URL passes include/exclude pattern filters.
+/// Include patterns are OR'd (any match passes). Exclude patterns reject on any match.
+/// Empty include = allow all. Patterns are substring matches on the URL path.
+fn matches_patterns(url: &str, include: &[String], exclude: &[String]) -> bool {
+    let path = url::Url::parse(url)
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+
+    // Exclude takes priority
+    if exclude.iter().any(|p| path.contains(p.as_str())) {
+        return false;
+    }
+
+    // Empty include = allow all
+    if include.is_empty() {
+        return true;
+    }
+
+    include.iter().any(|p| path.contains(p.as_str()))
+}
+
+#[cfg(test)]
+mod crawl_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_strips_fragment() {
+        assert_eq!(
+            normalize_crawl_url("https://example.com/page#section"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_trailing_slash_on_path() {
+        assert_eq!(
+            normalize_crawl_url("https://example.com/about/"),
+            "https://example.com/about"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_trailing_slash_on_bare_domain() {
+        assert_eq!(
+            normalize_crawl_url("https://example.com/"),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_query_strings() {
+        assert_eq!(
+            normalize_crawl_url("https://example.com/news?page=2"),
+            "https://example.com/news?page=2"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_fragment_and_trailing_slash() {
+        assert_eq!(
+            normalize_crawl_url("https://example.com/about/#team"),
+            "https://example.com/about"
+        );
+    }
+
+    #[test]
+    fn same_host_matches() {
+        assert!(same_host("https://example.com/about", "example.com"));
+    }
+
+    #[test]
+    fn same_host_rejects_subdomain() {
+        assert!(!same_host("https://blog.example.com/post", "example.com"));
+    }
+
+    #[test]
+    fn same_host_rejects_different_domain() {
+        assert!(!same_host("https://other.com/page", "example.com"));
+    }
+
+    #[test]
+    fn patterns_empty_allows_all() {
+        assert!(matches_patterns("https://example.com/anything", &[], &[]));
+    }
+
+    #[test]
+    fn patterns_include_filters() {
+        let include = vec!["/about".to_string(), "/contact".to_string()];
+        assert!(matches_patterns("https://example.com/about", &include, &[]));
+        assert!(matches_patterns("https://example.com/contact", &include, &[]));
+        assert!(!matches_patterns("https://example.com/blog", &include, &[]));
+    }
+
+    #[test]
+    fn patterns_exclude_rejects() {
+        let exclude = vec!["/login".to_string()];
+        assert!(!matches_patterns("https://example.com/login", &[], &exclude));
+        assert!(matches_patterns("https://example.com/about", &[], &exclude));
+    }
+
+    #[test]
+    fn patterns_exclude_takes_priority() {
+        let include = vec!["/admin".to_string()];
+        let exclude = vec!["/admin".to_string()];
+        assert!(!matches_patterns("https://example.com/admin", &include, &exclude));
+    }
+
+    #[test]
+    fn patterns_substring_match() {
+        let include = vec!["/about".to_string()];
+        assert!(matches_patterns("https://example.com/about-us", &include, &[]));
+        assert!(matches_patterns("https://example.com/info/about/team", &include, &[]));
+    }
+
+    #[test]
+    fn ensure_scheme_adds_https() {
+        assert_eq!(ensure_scheme("example.com/page"), "https://example.com/page");
+        assert_eq!(ensure_scheme("https://example.com"), "https://example.com");
+        assert_eq!(ensure_scheme("http://example.com"), "http://example.com");
     }
 }
