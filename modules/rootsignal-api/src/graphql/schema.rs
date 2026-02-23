@@ -743,7 +743,329 @@ impl QueryRoot {
             .list_scout_tasks(status.as_deref(), lim)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
-        Ok(tasks.into_iter().map(GqlScoutTask::from).collect())
+
+        // Collect unique region slugs and batch-fetch their phase statuses
+        let slugs: std::collections::HashSet<String> = tasks
+            .iter()
+            .map(|t| rootsignal_common::slugify(&t.context))
+            .collect();
+
+        let mut status_map = std::collections::HashMap::new();
+        for slug in slugs {
+            let ps = writer
+                .get_region_run_status(&slug)
+                .await
+                .unwrap_or_else(|_| "idle".to_string());
+            status_map.insert(slug, ps);
+        }
+
+        Ok(tasks
+            .into_iter()
+            .map(|t| {
+                let slug = rootsignal_common::slugify(&t.context);
+                let ps = status_map.get(&slug).cloned().unwrap_or_else(|| "idle".to_string());
+                GqlScoutTask::from_task(t, ps)
+            })
+            .collect())
+    }
+
+    // ========== Archive queries ==========
+
+    /// Total row counts for all archive content types.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_counts(&self, ctx: &Context<'_>) -> Result<GqlArchiveCounts> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let counts = crate::db::archive::count_all(pool)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive counts: {e}")))?;
+
+        Ok(GqlArchiveCounts {
+            posts: counts.posts,
+            short_videos: counts.short_videos,
+            stories: counts.stories,
+            long_videos: counts.long_videos,
+            pages: counts.pages,
+            feeds: counts.feeds,
+            search_results: counts.search_results,
+            files: counts.files,
+        })
+    }
+
+    /// Daily ingestion volume for the last N days, broken down by content type.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_volume(
+        &self,
+        ctx: &Context<'_>,
+        days: Option<u32>,
+    ) -> Result<Vec<GqlArchiveVolumeDay>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let days = days.unwrap_or(7);
+        let rows = crate::db::archive::volume_by_day(pool, days)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive volume: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveVolumeDay {
+                day: r.day,
+                posts: r.posts,
+                short_videos: r.short_videos,
+                stories: r.stories,
+                long_videos: r.long_videos,
+                pages: r.pages,
+                feeds: r.feeds,
+                search_results: r.search_results,
+                files: r.files,
+            })
+            .collect())
+    }
+
+    /// Recent posts from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_posts(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchivePost>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_posts(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive posts: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchivePost {
+                id: r.id,
+                source_url: r.source_url.clone(),
+                permalink: r.permalink,
+                author: r.author,
+                text_preview: crate::db::archive::truncate_text(&r.text, 150),
+                platform: crate::db::archive::platform_from_url(&r.source_url),
+                hashtags: r.hashtags,
+                engagement_summary: crate::db::archive::format_engagement(&r.engagement),
+                published_at: r.published_at,
+            })
+            .collect())
+    }
+
+    /// Recent short videos (reels) from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_short_videos(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveShortVideo>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_short_videos(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive short videos: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveShortVideo {
+                id: r.id,
+                source_url: r.source_url.clone(),
+                permalink: r.permalink,
+                text_preview: crate::db::archive::truncate_text(&r.text, 150),
+                engagement_summary: crate::db::archive::format_engagement(&r.engagement),
+                published_at: r.published_at,
+            })
+            .collect())
+    }
+
+    /// Recent stories from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_stories(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveStory>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_stories(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive stories: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveStory {
+                id: r.id,
+                source_url: r.source_url,
+                permalink: r.permalink,
+                text_preview: crate::db::archive::truncate_text(&r.text, 150),
+                location: r.location,
+                expires_at: r.expires_at,
+                fetched_at: r.fetched_at,
+            })
+            .collect())
+    }
+
+    /// Recent long videos from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_long_videos(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveLongVideo>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_long_videos(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive long videos: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveLongVideo {
+                id: r.id,
+                source_url: r.source_url.clone(),
+                permalink: r.permalink,
+                text_preview: crate::db::archive::truncate_text(&r.text, 150),
+                engagement_summary: crate::db::archive::format_engagement(&r.engagement),
+                published_at: r.published_at,
+            })
+            .collect())
+    }
+
+    /// Recent pages from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_pages(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchivePage>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_pages(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive pages: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchivePage {
+                id: r.id,
+                source_url: r.source_url,
+                title: r.title,
+                fetched_at: r.fetched_at,
+            })
+            .collect())
+    }
+
+    /// Recent feeds from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_feeds(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveFeed>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_feeds(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive feeds: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveFeed {
+                id: r.id,
+                source_url: r.source_url,
+                title: r.title,
+                item_count: r.item_count,
+                fetched_at: r.fetched_at,
+            })
+            .collect())
+    }
+
+    /// Recent search results from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_search_results(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveSearchResult>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_search_results(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive search results: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveSearchResult {
+                id: r.id,
+                query: r.query,
+                result_count: r.result_count,
+                fetched_at: r.fetched_at,
+            })
+            .collect())
+    }
+
+    /// Recent files from the archive.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_archive_files(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlArchiveFile>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let limit = limit.unwrap_or(50);
+        let rows = crate::db::archive::recent_files(pool, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive files: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| GqlArchiveFile {
+                id: r.id,
+                url: r.url,
+                title: r.title,
+                mime_type: r.mime_type,
+                duration: r.duration,
+                page_count: r.page_count,
+                fetched_at: r.fetched_at,
+            })
+            .collect())
     }
 }
 
@@ -857,6 +1179,113 @@ pub struct AdminSource {
     pub cadence_hours: f64,
     pub signals_produced: u32,
     pub active: bool,
+}
+
+// ========== Archive GQL Types ==========
+
+#[derive(SimpleObject)]
+struct GqlArchiveCounts {
+    posts: i64,
+    short_videos: i64,
+    stories: i64,
+    long_videos: i64,
+    pages: i64,
+    feeds: i64,
+    search_results: i64,
+    files: i64,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveVolumeDay {
+    day: String,
+    posts: i64,
+    short_videos: i64,
+    stories: i64,
+    long_videos: i64,
+    pages: i64,
+    feeds: i64,
+    search_results: i64,
+    files: i64,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchivePost {
+    id: Uuid,
+    source_url: String,
+    permalink: Option<String>,
+    author: Option<String>,
+    text_preview: Option<String>,
+    platform: String,
+    hashtags: Vec<String>,
+    engagement_summary: String,
+    published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveShortVideo {
+    id: Uuid,
+    source_url: String,
+    permalink: Option<String>,
+    text_preview: Option<String>,
+    engagement_summary: String,
+    published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveStory {
+    id: Uuid,
+    source_url: String,
+    permalink: Option<String>,
+    text_preview: Option<String>,
+    location: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    fetched_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveLongVideo {
+    id: Uuid,
+    source_url: String,
+    permalink: Option<String>,
+    text_preview: Option<String>,
+    engagement_summary: String,
+    published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchivePage {
+    id: Uuid,
+    source_url: String,
+    title: Option<String>,
+    fetched_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveFeed {
+    id: Uuid,
+    source_url: String,
+    title: Option<String>,
+    item_count: i64,
+    fetched_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveSearchResult {
+    id: Uuid,
+    query: String,
+    result_count: i64,
+    fetched_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject)]
+struct GqlArchiveFile {
+    id: Uuid,
+    url: String,
+    title: Option<String>,
+    mime_type: String,
+    duration: Option<f64>,
+    page_count: Option<i32>,
+    fetched_at: DateTime<Utc>,
 }
 
 // ========== Scout Run Types ==========
