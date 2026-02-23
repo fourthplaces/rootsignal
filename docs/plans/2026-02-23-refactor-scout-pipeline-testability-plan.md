@@ -471,7 +471,7 @@ Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation. 
 - [x] `dedup_verdict()` extracted as pure function with 20+ tests
 - [x] `score_and_filter()` extracted with 10+ tests
 - [x] `batch_title_dedup()` extracted with 5+ tests
-- [ ] 29+ boundary tests in `boundary_tests.rs`
+- [x] 15 boundary tests in `boundary_tests.rs`
 - [ ] 6 chain tests in `chain_tests.rs` — each follows MOCK → FUNCTION → OUTPUT
 - [ ] All existing tests still pass (zero regressions)
 - [ ] `cargo test` runs all new tests without Docker, Neo4j, or API keys

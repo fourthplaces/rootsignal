@@ -494,3 +494,215 @@ async fn content_unchanged_skips_extraction() {
 
     assert_eq!(store.signals_created(), 0, "unchanged content should skip extraction");
 }
+
+// ---------------------------------------------------------------------------
+// Fetcher → Link Discoverer boundary
+//
+// Page links flow into ctx.collected_links, then promote_links creates sources.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn page_links_collected_for_promotion() {
+    let mut page = archived_page("https://linktree.org", "# Links page");
+    page.links = vec![
+        "https://localorg.org/events".to_string(),
+        "https://foodshelf.org/volunteer".to_string(),
+        "javascript:void(0)".to_string(), // should be filtered by extract_links
+    ];
+
+    let fetcher = MockFetcher::new()
+        .on_page("https://linktree.org", page);
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://linktree.org",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Community Links", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(64));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://linktree.org");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    // javascript: links should be filtered out
+    assert!(
+        ctx.collected_links.len() >= 2,
+        "at least 2 content links should be collected, got {}",
+        ctx.collected_links.len()
+    );
+    let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|(u, _)| u.as_str()).collect();
+    assert!(collected_urls.contains(&"https://localorg.org/events"));
+    assert!(collected_urls.contains(&"https://foodshelf.org/volunteer"));
+    assert!(
+        !collected_urls.iter().any(|u| u.starts_with("javascript:")),
+        "javascript: links should be filtered"
+    );
+}
+
+#[tokio::test]
+async fn promote_links_creates_source_nodes() {
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    let store = Arc::new(MockSignalStore::new());
+
+    let links = vec![
+        ("https://localorg.org/events".to_string(), "https://linktree.org".to_string()),
+        ("https://foodshelf.org/volunteer".to_string(), "https://linktree.org".to_string()),
+    ];
+
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
+    let region = mpls_region();
+
+    let promoted = link_promoter::promote_links(
+        &links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(promoted, 2);
+    assert_eq!(store.sources_promoted(), 2);
+    assert!(store.has_source_url("https://localorg.org/events"));
+    assert!(store.has_source_url("https://foodshelf.org/volunteer"));
+}
+
+#[tokio::test]
+async fn promote_links_deduplicates_same_url() {
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    let store = Arc::new(MockSignalStore::new());
+
+    let links = vec![
+        ("https://localorg.org/events".to_string(), "https://page-a.org".to_string()),
+        ("https://localorg.org/events".to_string(), "https://page-b.org".to_string()), // same URL, different source
+        ("https://other.org/page".to_string(), "https://page-c.org".to_string()),
+    ];
+
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
+    let region = mpls_region();
+
+    let promoted = link_promoter::promote_links(
+        &links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(promoted, 2, "duplicate URLs should be deduped to 2 unique sources");
+}
+
+#[tokio::test]
+async fn promote_links_respects_max_per_run() {
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    let store = Arc::new(MockSignalStore::new());
+
+    let links: Vec<(String, String)> = (0..10)
+        .map(|i| (format!("https://site-{i}.org"), "https://source.org".to_string()))
+        .collect();
+
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 3 };
+    let region = mpls_region();
+
+    let promoted = link_promoter::promote_links(
+        &links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(promoted, 3, "should respect max_per_run cap");
+}
+
+#[tokio::test]
+async fn end_to_end_page_links_to_promoted_sources() {
+    use crate::enrichment::link_promoter::{self, PromotionConfig};
+
+    // Full flow: fetch page with links → run_web → collected_links → promote_links
+
+    let mut page = archived_page("https://hub.org", "# Hub page");
+    page.links = vec![
+        "https://partner-a.org/programs".to_string(),
+        "https://partner-b.org/events".to_string(),
+    ];
+
+    let fetcher = MockFetcher::new()
+        .on_page("https://hub.org", page);
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://hub.org",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Hub Signal", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(64));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://hub.org");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    // Step 1: run_web collects links
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+    assert!(!ctx.collected_links.is_empty(), "links should be collected");
+
+    // Step 2: promote_links creates source nodes
+    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
+    let region = mpls_region();
+    let promoted = link_promoter::promote_links(
+        &ctx.collected_links,
+        store.as_ref(),
+        &config,
+        region.center_lat,
+        region.center_lng,
+    )
+    .await
+    .unwrap();
+
+    assert!(promoted >= 2, "at least 2 links should be promoted");
+    assert!(store.has_source_url("https://partner-a.org/programs"));
+    assert!(store.has_source_url("https://partner-b.org/events"));
+}
