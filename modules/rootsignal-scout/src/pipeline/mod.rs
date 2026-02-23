@@ -6,3 +6,5 @@ pub mod scrape_phase;
 pub mod scrape_pipeline;
 pub mod stats;
 pub mod traits;
+#[cfg(test)]
+mod boundary_tests;
