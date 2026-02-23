@@ -27,6 +27,22 @@ use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
 use crate::pipeline::traits::{ContentFetcher, SignalStore};
 
 // ---------------------------------------------------------------------------
+// Test constants
+// ---------------------------------------------------------------------------
+
+/// Standard embedding dimension for test vectors.
+pub const TEST_EMBEDDING_DIM: usize = 64;
+
+/// St. Paul, MN coordinates.
+pub const ST_PAUL: (f64, f64) = (44.9537, -93.0900);
+/// Duluth, MN coordinates.
+pub const DULUTH: (f64, f64) = (46.7867, -92.1005);
+/// New York, NY coordinates.
+pub const NYC: (f64, f64) = (40.7128, -74.0060);
+/// Dallas, TX coordinates.
+pub const DALLAS: (f64, f64) = (32.7767, -96.7970);
+
+// ---------------------------------------------------------------------------
 // MockFetcher
 // ---------------------------------------------------------------------------
 
@@ -58,6 +74,7 @@ impl MockFetcher {
         self
     }
 
+    #[allow(dead_code)] // scaffolding for future feed scrape tests
     pub fn on_feed(mut self, url: &str, feed: ArchivedFeed) -> Self {
         self.feeds.insert(url.to_string(), feed);
         self
@@ -73,11 +90,13 @@ impl MockFetcher {
         self
     }
 
+    #[allow(dead_code)] // scaffolding for future topic search tests
     pub fn on_topic_search(mut self, platform_url: &str, posts: Vec<Post>) -> Self {
         self.topic_searches.insert(platform_url.to_string(), posts);
         self
     }
 
+    #[allow(dead_code)] // scaffolding for future site search tests
     pub fn on_site_search(mut self, query: &str, results: ArchivedSearchResults) -> Self {
         self.site_searches.insert(query.to_string(), results);
         self
@@ -178,6 +197,7 @@ struct MockSignalStoreInner {
     tags: HashMap<Uuid, Vec<String>>,
     blocked: HashSet<String>,
     processed_hashes: HashSet<(String, String)>,
+    fail_on_create: bool,
 }
 
 /// Stateful in-memory graph mock. Thread-safe via interior Mutex.
@@ -203,8 +223,15 @@ impl MockSignalStore {
                 tags: HashMap::new(),
                 blocked: HashSet::new(),
                 processed_hashes: HashSet::new(),
+                fail_on_create: false,
             }),
         }
+    }
+
+    /// Make `create_node` return an error for every call.
+    pub fn failing_creates(self) -> Self {
+        self.inner.lock().unwrap().fail_on_create = true;
+        self
     }
 
     /// Pre-populate a blocked URL pattern.
@@ -316,6 +343,45 @@ impl MockSignalStore {
         inner.sources.contains_key(&cv)
     }
 
+    pub fn has_resource_edge(&self, signal_title: &str, resource_slug: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let normalized = signal_title.trim().to_lowercase();
+        let signal_id = match inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+        {
+            Some(s) => s.id,
+            None => return false,
+        };
+        let resource_id = match inner.resources.get(resource_slug) {
+            Some(id) => *id,
+            None => return false,
+        };
+        inner
+            .resource_edges
+            .iter()
+            .any(|(sid, rid, _)| *sid == signal_id && *rid == resource_id)
+    }
+
+    pub fn has_tag(&self, signal_title: &str, tag: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let normalized = signal_title.trim().to_lowercase();
+        let signal_id = match inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+        {
+            Some(s) => s.id,
+            None => return false,
+        };
+        inner
+            .tags
+            .get(&signal_id)
+            .map(|tags| tags.iter().any(|t| t == tag))
+            .unwrap_or(false)
+    }
+
     pub fn get_source_coords(&self, url: &str) -> (Option<f64>, Option<f64>) {
         let inner = self.inner.lock().unwrap();
         let cv = canonical_value(url);
@@ -352,6 +418,9 @@ impl SignalStore for MockSignalStore {
         _run_id: &str,
     ) -> Result<Uuid> {
         let mut inner = self.inner.lock().unwrap();
+        if inner.fail_on_create {
+            bail!("MockSignalStore: create_node forced failure");
+        }
         let id = Uuid::new_v4();
         let title = node.title().to_string();
         let node_type = node.node_type();
@@ -841,6 +910,213 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
     })
 }
 
+/// Create a Gathering node with just a title (no location).
+pub fn gathering(title: &str) -> Node {
+    use rootsignal_common::types::{GatheringNode, NodeMeta};
+    use rootsignal_common::safety::SensitivityLevel;
+    Node::Gathering(GatheringNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        starts_at: None,
+        ends_at: None,
+        action_url: String::new(),
+        organizer: None,
+        is_recurring: false,
+    })
+}
+
+/// Create a Gathering node with a title and geographic coordinates.
+pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
+    use rootsignal_common::types::{GatheringNode, NodeMeta, GeoPoint};
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::GeoPrecision;
+    Node::Gathering(GatheringNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        starts_at: None,
+        ends_at: None,
+        action_url: String::new(),
+        organizer: None,
+        is_recurring: false,
+    })
+}
+
+/// Create an Aid node with just a title (no location).
+pub fn aid(title: &str) -> Node {
+    use rootsignal_common::types::{AidNode, NodeMeta};
+    use rootsignal_common::safety::SensitivityLevel;
+    Node::Aid(AidNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        action_url: String::new(),
+        availability: None,
+        is_ongoing: false,
+    })
+}
+
+/// Create an Aid node with a title and geographic coordinates.
+pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
+    use rootsignal_common::types::{AidNode, NodeMeta, GeoPoint};
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::GeoPrecision;
+    Node::Aid(AidNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        action_url: String::new(),
+        availability: None,
+        is_ongoing: false,
+    })
+}
+
+/// Create a Notice node with just a title (no location).
+pub fn notice(title: &str) -> Node {
+    use rootsignal_common::types::{NoticeNode, NodeMeta, Severity};
+    use rootsignal_common::safety::SensitivityLevel;
+    Node::Notice(NoticeNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: None,
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        severity: Severity::Medium,
+        category: None,
+        effective_date: None,
+        source_authority: None,
+    })
+}
+
+/// Create a Notice node with a title and geographic coordinates.
+pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
+    use rootsignal_common::types::{NoticeNode, NodeMeta, GeoPoint, Severity};
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::GeoPrecision;
+    Node::Notice(NoticeNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            freshness_score: 0.9,
+            corroboration_count: 0,
+            location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            location_name: None,
+            source_url: String::new(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            external_ratio: 0.0,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            mentioned_actors: Vec::new(),
+            author_actor: None,
+        },
+        severity: Severity::Medium,
+        category: None,
+        effective_date: None,
+        source_authority: None,
+    })
+}
+
 /// Create a Minneapolis-area ScoutScope for testing.
 pub fn mpls_region() -> ScoutScope {
     ScoutScope {
@@ -963,6 +1239,11 @@ pub fn archived_page(url: &str, markdown: &str) -> ArchivedPage {
     }
 }
 
+/// Create a RunLog for tests (encapsulates "test-run" and "Minneapolis").
+pub fn run_log() -> crate::infra::run_log::RunLog {
+    crate::infra::run_log::RunLog::new("test-run".to_string(), "Minneapolis".to_string())
+}
+
 /// Create a minimal ArchivedSearchResults for testing.
 pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
     ArchivedSearchResults {
@@ -989,43 +1270,19 @@ pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootsignal_common::types::{NodeMeta, Severity, TensionNode};
-    use rootsignal_common::safety::SensitivityLevel;
 
-    fn make_tension(title: &str, source_url: &str) -> Node {
-        Node::Tension(TensionNode {
-            meta: NodeMeta {
-                id: Uuid::new_v4(),
-                title: title.to_string(),
-                summary: "test summary".to_string(),
-                sensitivity: SensitivityLevel::General,
-                confidence: 0.8,
-                freshness_score: 0.9,
-                corroboration_count: 0,
-                location: None,
-                location_name: None,
-                source_url: source_url.to_string(),
-                extracted_at: Utc::now(),
-                content_date: None,
-                last_confirmed_active: Utc::now(),
-                source_diversity: 1,
-                external_ratio: 0.0,
-                cause_heat: 0.0,
-                implied_queries: Vec::new(),
-                channel_diversity: 1,
-                mentioned_actors: Vec::new(),
-                author_actor: None,
-            },
-            severity: Severity::Medium,
-            category: None,
-            what_would_help: None,
-        })
+    fn tension_with_url(title: &str, source_url: &str) -> Node {
+        let mut node = tension(title);
+        if let Some(meta) = node.meta_mut() {
+            meta.source_url = source_url.to_string();
+        }
+        node
     }
 
     #[tokio::test]
     async fn create_then_find_returns_created_signal() {
         let store = MockSignalStore::new();
-        let node = make_tension("Housing Crisis Downtown", "https://example.com");
+        let node = tension_with_url("Housing Crisis Downtown", "https://example.com");
         let id = store
             .create_node(&node, &[0.1, 0.2, 0.3], "test", "run-1")
             .await
@@ -1049,7 +1306,7 @@ mod tests {
     #[tokio::test]
     async fn corroborate_increments_count() {
         let store = MockSignalStore::new();
-        let node = make_tension("Bus Route Cut", "https://example.com");
+        let node = tension_with_url("Bus Route Cut", "https://example.com");
         let id = store
             .create_node(&node, &[0.1, 0.2, 0.3], "test", "run-1")
             .await
@@ -1093,7 +1350,7 @@ mod tests {
     #[tokio::test]
     async fn actor_lifecycle() {
         let store = MockSignalStore::new();
-        let node = make_tension("Free Legal Clinic", "https://example.com");
+        let node = tension_with_url("Free Legal Clinic", "https://example.com");
         let signal_id = store
             .create_node(&node, &[0.1, 0.2], "test", "run-1")
             .await

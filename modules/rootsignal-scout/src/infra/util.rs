@@ -48,6 +48,8 @@ pub fn sanitize_url(url: &str) -> String {
         "utm_content",
         "modal",
         "ref",
+        "si",
+        "source",
         "mc_cid",
         "mc_eid",
     ];

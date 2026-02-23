@@ -9,14 +9,9 @@ use std::sync::Arc;
 use rootsignal_common::types::ActorContext;
 use rootsignal_common::canonical_value;
 
-use crate::infra::run_log::RunLog;
 use crate::pipeline::extractor::ExtractionResult;
 use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
-
-fn run_log() -> RunLog {
-    RunLog::new("test-run".to_string(), "Minneapolis".to_string())
-}
 
 // ---------------------------------------------------------------------------
 // Chain Test 1: Linktree Discovery
@@ -26,7 +21,7 @@ fn run_log() -> RunLog {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn linktree_search_collects_outbound_links() {
+async fn linktree_page_discovers_outbound_links() {
     let query = "site:linktr.ee mutual aid Minneapolis";
 
     let fetcher = MockFetcher::new()
@@ -74,7 +69,7 @@ async fn linktree_search_collects_outbound_links() {
         });
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -124,7 +119,7 @@ async fn linktree_search_collects_outbound_links() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn page_produces_signal_with_actors_and_evidence() {
+async fn page_creates_signal_wires_actors_and_records_evidence() {
     let url = "https://localorg.org/resources";
 
     let fetcher = MockFetcher::new()
@@ -152,7 +147,7 @@ async fn page_produces_signal_with_actors_and_evidence() {
         });
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -201,7 +196,7 @@ async fn page_produces_signal_with_actors_and_evidence() {
 
 /// Signal in Dallas extracted from a page. Minneapolis scout filters it.
 #[tokio::test]
-async fn out_of_region_signal_produces_nothing() {
+async fn dallas_signal_is_dropped_by_minneapolis_scout() {
     let url = "https://texasorg.org/events";
 
     let fetcher = MockFetcher::new()
@@ -209,14 +204,14 @@ async fn out_of_region_signal_produces_nothing() {
 
     let extractor = MockExtractor::new()
         .on_url(url, ExtractionResult {
-            nodes: vec![tension_at("Dallas Community Dinner", 32.7767, -96.7970)],
+            nodes: vec![tension_at("Dallas Community Dinner", DALLAS.0, DALLAS.1)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
             signal_tags: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -246,7 +241,7 @@ async fn out_of_region_signal_produces_nothing() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn three_sources_corroborate_to_one_signal() {
+async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations() {
     let urls = [
         "https://org-a.org/events",
         "https://org-b.org/calendar",
@@ -268,8 +263,8 @@ async fn three_sources_corroborate_to_one_signal() {
 
     // All three signals get near-identical embeddings → vector dedup fires
     let embedder = Arc::new(
-        FixedEmbedder::new(64)
-            .on_text("Community Garden Cleanup ", vec![0.5f32; 64]),
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text("Community Garden Cleanup ", vec![0.5f32; TEST_EMBEDDING_DIM]),
     );
 
     let store = Arc::new(MockSignalStore::new());
@@ -309,7 +304,7 @@ async fn three_sources_corroborate_to_one_signal() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn instagram_posts_get_actor_fallback_and_mentions_collected() {
+async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     let ig_url = "https://www.instagram.com/northsidemutualaid";
 
     let mut post1 = test_post("Food distribution this Saturday at MLK Park!");
@@ -343,7 +338,7 @@ async fn instagram_posts_get_actor_fallback_and_mentions_collected() {
         });
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -398,7 +393,7 @@ async fn instagram_posts_get_actor_fallback_and_mentions_collected() {
 
 /// Actor in NYC, signal has no location. Fallback puts it in NYC → filtered.
 #[tokio::test]
-async fn out_of_region_actor_fallback_gets_filtered() {
+async fn nyc_actor_fallback_is_dropped_by_minneapolis_scout() {
     let ig_url = "https://www.instagram.com/nycorg";
 
     let fetcher = MockFetcher::new()
@@ -418,7 +413,7 @@ async fn out_of_region_actor_fallback_gets_filtered() {
         });
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -440,8 +435,8 @@ async fn out_of_region_actor_fallback_gets_filtered() {
             actor_name: "NYC Org".to_string(),
             bio: None,
             location_name: Some("New York, NY".to_string()),
-            location_lat: Some(40.7128),
-            location_lng: Some(-74.0060),
+            location_lat: Some(NYC.0),
+            location_lng: Some(NYC.1),
         },
     );
 
@@ -459,7 +454,7 @@ async fn out_of_region_actor_fallback_gets_filtered() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn unchanged_content_skips_extraction_but_collects_links() {
+async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     let url = "https://localorg.org/resources";
     let content = "Free legal clinic every Tuesday...";
 
@@ -490,7 +485,7 @@ async fn unchanged_content_skips_extraction_but_collects_links() {
     // run_web sanitizes the URL before checking — pre-populate with sanitized URL
     let clean_url = crate::infra::util::sanitize_url(url);
     let store = Arc::new(MockSignalStore::new().with_processed_hash(&hash, &clean_url));
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -529,7 +524,7 @@ async fn unchanged_content_skips_extraction_but_collects_links() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn phase_a_discovers_source_phase_b_scrapes_it() {
+async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     use crate::enrichment::link_promoter::{self, PromotionConfig};
 
     let fetcher = Arc::new(
@@ -570,7 +565,7 @@ async fn phase_a_discovers_source_phase_b_scrapes_it() {
     );
 
     let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(64));
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     // --- Phase A: scrape the Linktree ---
     let phase_a = ScrapePhase::new(

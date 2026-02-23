@@ -590,7 +590,7 @@ impl ScrapePhase {
 
                 let (content, page_links) = match fetcher.page(&url).await {
                     Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
-                    Ok(_) => return (clean_url, ScrapeOutcome::Failed, Vec::new()),
+                    Ok(p) => return (clean_url, ScrapeOutcome::Failed, p.links),
                     Err(e) => {
                         warn!(url, error = %e, "Scrape failed");
                         return (clean_url, ScrapeOutcome::Failed, Vec::new());
@@ -1833,7 +1833,11 @@ impl ScrapePhase {
 
             // Resolve mentioned actors → Actor nodes + ACTED_IN edges
             if let Some(meta) = node.meta() {
-                for actor_name in &meta.mentioned_actors {
+                for raw_name in &meta.mentioned_actors {
+                    let actor_name = raw_name.trim();
+                    if actor_name.is_empty() {
+                        continue;
+                    }
                     let actor_id = match self.store.find_actor_by_name(actor_name).await {
                         Ok(Some(id)) => id,
                         Ok(None) => {
@@ -1844,7 +1848,7 @@ impl ScrapePhase {
                             };
                             let actor = ActorNode {
                                 id: Uuid::new_v4(),
-                                name: actor_name.clone(),
+                                name: actor_name.to_string(),
                                 actor_type: ActorType::Organization,
                                 entity_id: actor_name.to_lowercase().replace(' ', "-"),
                                 domains: vec![],
@@ -1860,13 +1864,13 @@ impl ScrapePhase {
                                 location_name: loc_name,
                             };
                             if let Err(e) = self.store.upsert_actor(&actor).await {
-                                warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
+                                warn!(error = %e, actor = %actor_name, "Failed to create actor (non-fatal)");
                                 continue;
                             }
                             actor.id
                         }
                         Err(e) => {
-                            warn!(error = %e, actor = actor_name, "Actor lookup failed (non-fatal)");
+                            warn!(error = %e, actor = %actor_name, "Actor lookup failed (non-fatal)");
                             continue;
                         }
                     };
@@ -1875,7 +1879,7 @@ impl ScrapePhase {
                         .link_actor_to_signal(actor_id, node_id, "mentioned")
                         .await
                     {
-                        warn!(error = %e, actor = actor_name, "Failed to link actor to signal (non-fatal)");
+                        warn!(error = %e, actor = %actor_name, "Failed to link actor to signal (non-fatal)");
                     }
                 }
             }
