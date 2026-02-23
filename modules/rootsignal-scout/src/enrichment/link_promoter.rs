@@ -13,6 +13,7 @@ use url::Url;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
 
+use crate::pipeline::scrape_phase::CollectedLink;
 use crate::pipeline::traits::SignalStore;
 
 pub struct PromotionConfig {
@@ -117,50 +118,47 @@ pub fn strip_tracking_params(url: &str) -> String {
 
 /// Promote discovered links to SourceNodes in the graph.
 ///
-/// Takes a pre-collected list of `(url, discovered_on_url)` tuples,
-/// deduplicates by `canonical_value()`, applies the per-run cap, and upserts
-/// each unique link as a new source with MERGE semantics (idempotent).
+/// Each `CollectedLink` carries the discovering source's coordinates. The promoted
+/// source inherits those coordinates — not the region center.
 ///
 /// Returns the count of newly created sources.
 pub async fn promote_links(
-    links: &[(String, String)],
+    links: &[CollectedLink],
     writer: &dyn SignalStore,
     config: &PromotionConfig,
-    center_lat: f64,
-    center_lng: f64,
 ) -> Result<u32> {
     if links.is_empty() {
         return Ok(0);
     }
 
-    // Deduplicate by canonical_value
+    // Deduplicate by canonical_value, keeping the first occurrence's coords
     let mut seen = HashSet::new();
-    let unique: Vec<&(String, String)> = links
+    let unique: Vec<&CollectedLink> = links
         .iter()
-        .filter(|(url, _)| seen.insert(canonical_value(url)))
+        .filter(|link| seen.insert(canonical_value(&link.url)))
         .take(config.max_per_run)
         .collect();
 
     let mut created = 0u32;
-    for (url, discovered_on) in unique {
-        let cv = canonical_value(url);
+    for link in unique {
+        let cv = canonical_value(&link.url);
 
         let mut source = SourceNode::new(
             cv.clone(),
-            canonical_value(url),
-            Some(url.clone()),
+            canonical_value(&link.url),
+            Some(link.url.clone()),
             DiscoveryMethod::LinkedFrom,
             0.25,
             SourceRole::Mixed,
-            Some(format!("Linked from {discovered_on}")),
+            Some(format!("Linked from {}", link.discovered_on)),
         );
-        source.center_lat = Some(center_lat);
-        source.center_lng = Some(center_lng);
+        source.center_lat = link.lat;
+        source.center_lng = link.lng;
 
         match writer.upsert_source(&source).await {
             Ok(_) => {
                 created += 1;
-                info!(canonical_key = cv, discovered_on, "Promoted linked URL");
+                info!(canonical_key = cv, discovered_on = link.discovered_on, "Promoted linked URL");
             }
             Err(e) => warn!(canonical_key = cv, error = %e, "Failed to promote linked URL"),
         }

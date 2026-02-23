@@ -95,7 +95,7 @@ async fn linktree_search_collects_outbound_links() {
     // No signals from Linktree pages
     assert_eq!(store.signals_created(), 0);
 
-    let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|(u, _)| u.as_str()).collect();
+    let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
 
     // Content links collected
     assert!(
@@ -194,7 +194,7 @@ async fn page_produces_signal_with_actors_and_evidence() {
     );
 
     // Outbound links collected for promotion
-    let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|(u, _)| u.as_str()).collect();
+    let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
     assert!(collected_urls.iter().any(|u| u.contains("facebook.com/localorg")));
     assert!(collected_urls.iter().any(|u| u.contains("sabathani.org/events")));
 }
@@ -385,7 +385,7 @@ async fn instagram_posts_get_actor_fallback_and_mentions_collected() {
     );
 
     // @mentions collected for promotion
-    let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|(u, _)| u.as_str()).collect();
+    let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
     assert!(
         mention_urls.iter().any(|u| u.contains("instagram.com/mplsfoodshelf")),
         "mplsfoodshelf mention should be promoted"
@@ -514,7 +514,7 @@ async fn unchanged_content_skips_extraction_but_collects_links() {
 
     // But outbound links still collected
     assert!(
-        ctx.collected_links.iter().any(|(u, _)| u.contains("newpartner.org")),
+        ctx.collected_links.iter().any(|l| l.url.contains("newpartner.org")),
         "links should still be collected even when content unchanged"
     );
 }
@@ -591,20 +591,17 @@ async fn phase_a_discovers_source_phase_b_scrapes_it() {
 
     // After Phase A: localorg.org discovered in collected_links
     assert!(
-        ctx.collected_links.iter().any(|(u, _)| u.contains("localorg.org")),
+        ctx.collected_links.iter().any(|l| l.url.contains("localorg.org")),
         "org site should be in collected_links"
     );
     assert_eq!(store.signals_created(), 0, "no signals from Linktree");
 
     // Promote collected links → creates SourceNodes in store
     let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
-    let region = mpls_region();
     let promoted = link_promoter::promote_links(
         &ctx.collected_links,
         store.as_ref(),
         &config,
-        region.center_lat,
-        region.center_lng,
     )
     .await
     .unwrap();
@@ -635,7 +632,7 @@ async fn phase_a_discovers_source_phase_b_scrapes_it() {
 
     // Phase B also collected facebook link for future promotion
     assert!(
-        ctx_b.collected_links.iter().any(|(u, _)| u.contains("facebook.com/localorg")),
+        ctx_b.collected_links.iter().any(|l| l.url.contains("facebook.com/localorg")),
         "facebook link should be collected in Phase B"
     );
 }

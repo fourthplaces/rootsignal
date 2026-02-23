@@ -30,6 +30,19 @@ use crate::pipeline::stats::ScoutStats;
 use crate::infra::util::{content_hash, sanitize_url};
 
 // ---------------------------------------------------------------------------
+// CollectedLink — a discovered outbound link with its provenance
+// ---------------------------------------------------------------------------
+
+/// A link discovered during scraping, carrying the discovering source's coordinates.
+/// Used by `promote_links` to assign per-source location rather than a blanket region center.
+pub struct CollectedLink {
+    pub url: String,
+    pub discovered_on: String,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+}
+
+// ---------------------------------------------------------------------------
 // RunContext — shared mutable state for the entire scout run
 // ---------------------------------------------------------------------------
 
@@ -51,8 +64,8 @@ pub(crate) struct RunContext {
     pub actor_contexts: HashMap<String, ActorContext>,
     /// RSS/Atom pub_date keyed by article URL, used as fallback content_date.
     pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
-    /// Links collected during scraping: (url, discovered_on_url).
-    pub collected_links: Vec<(String, String)>,
+    /// Links collected during scraping, carrying the discovering source's coordinates.
+    pub collected_links: Vec<CollectedLink>,
 }
 
 impl RunContext {
@@ -397,6 +410,16 @@ impl ScrapePhase {
             .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::WebPage))
             .collect();
 
+        // Build URL → source coords lookup for link promotion
+        let source_coords: HashMap<String, (Option<f64>, Option<f64>)> = sources
+            .iter()
+            .filter_map(|s| {
+                s.url.as_ref().map(|u| {
+                    (sanitize_url(u), (s.center_lat, s.center_lng))
+                })
+            })
+            .collect();
+
         let mut phase_urls: Vec<String> = Vec::new();
 
         // Resolve query sources → URLs
@@ -628,8 +651,17 @@ impl ScrapePhase {
         for (url, outcome, page_links) in pipeline_results {
             // Extract outbound links for promotion as new sources
             let discovered = link_promoter::extract_links(&page_links);
+            let (lat, lng) = source_coords
+                .get(&url)
+                .copied()
+                .unwrap_or((None, None));
             for link_url in discovered {
-                ctx.collected_links.push((link_url, url.clone()));
+                ctx.collected_links.push(CollectedLink {
+                    url: link_url,
+                    discovered_on: url.clone(),
+                    lat,
+                    lng,
+                });
             }
 
             let ck = ctx
@@ -746,6 +778,16 @@ impl ScrapePhase {
             Vec<String>,
             Option<DateTime<Utc>>, // most recent published_at for content_date fallback
         )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, post_count, mentions, newest_published_at)
+
+        // Build URL → source coords lookup for link promotion
+        let source_coords: HashMap<String, (Option<f64>, Option<f64>)> = social_sources
+            .iter()
+            .filter_map(|s| {
+                s.url.as_ref().map(|u| {
+                    (sanitize_url(u), (s.center_lat, s.center_lng))
+                })
+            })
+            .collect();
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
         struct SocialEntry {
@@ -1048,9 +1090,18 @@ impl ScrapePhase {
             }
 
             // Accumulate mentions as URLs for promotion (capped per source)
+            let (lat, lng) = source_coords
+                .get(&sanitize_url(&source_url))
+                .copied()
+                .unwrap_or((None, None));
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
-                let url = link_promoter::platform_url(&result_platform, &handle);
-                ctx.collected_links.push((url, source_url.clone()));
+                let mention_url = link_promoter::platform_url(&result_platform, &handle);
+                ctx.collected_links.push(CollectedLink {
+                    url: mention_url,
+                    discovered_on: source_url.clone(),
+                    lat,
+                    lng,
+                });
             }
 
             run_log.log(EventKind::SocialScrape {

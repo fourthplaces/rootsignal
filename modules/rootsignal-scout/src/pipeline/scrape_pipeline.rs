@@ -312,8 +312,6 @@ impl<'a> ScrapePipeline<'a> {
             &ctx.collected_links,
             &self.writer as &dyn crate::pipeline::traits::SignalStore,
             &config,
-            self.region.center_lat,
-            self.region.center_lng,
         )
         .await
         {
