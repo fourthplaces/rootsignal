@@ -420,7 +420,11 @@ Extend the existing snapshot infrastructure in `tests/extraction_test.rs`:
 
 **`SimulatedWeb` implements `ContentFetcher`. 8 existing scenarios plug in.**
 
-**File:** `modules/simweb/src/content_fetcher.rs` (new, thin adapter)
+**Adapter:** Done — `modules/rootsignal-scout/src/pipeline/simweb_adapter.rs` (gated `#[cfg(test)]` since `simweb` is a dev-dependency). Placed in scout (not simweb) to avoid circular dependency. Uses `Site.links_to` for page links since SimWeb doesn't generate raw HTML. Includes 4 unit tests for URL parsing.
+
+**Remaining:** Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation (requires scenario snapshots).
+
+**Original plan file:** `modules/simweb/src/content_fetcher.rs` (new, thin adapter)
 
 ```rust
 #[async_trait]
@@ -472,15 +476,15 @@ Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation. 
 - [x] `score_and_filter()` extracted with 10+ tests
 - [x] `batch_title_dedup()` extracted with 5+ tests
 - [x] 15 boundary tests in `boundary_tests.rs`
-- [ ] 6 chain tests in `chain_tests.rs` — each follows MOCK → FUNCTION → OUTPUT
-- [ ] All existing tests still pass (zero regressions)
-- [ ] `cargo test` runs all new tests without Docker, Neo4j, or API keys
+- [x] 6 chain tests in `chain_tests.rs` — each follows MOCK → FUNCTION → OUTPUT
+- [x] All existing tests still pass (zero regressions)
+- [x] `cargo test` runs all new tests without Docker, Neo4j, or API keys
 
 ### Quality Gates
 
-- [ ] Every new test follows MOCK → FUNCTION → OUTPUT (CLAUDE.md rule)
-- [ ] No test manually calls internal functions step-by-step
-- [ ] `MockSignalStore` correctly simulates dedup state machine (verified by its own tests)
+- [x] Every new test follows MOCK → FUNCTION → OUTPUT (CLAUDE.md rule)
+- [x] No test manually calls internal functions step-by-step
+- [x] `MockSignalStore` correctly simulates dedup state machine (verified by its own tests)
 - [x] Source location bug has failing TDD tests (red phase)
 
 ---
