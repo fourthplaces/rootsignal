@@ -461,16 +461,16 @@ Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation. 
 - [x] `canonical_value()` has 30+ tests covering social platforms, web URLs, edge cases
 - [x] `extract_all_links()` has 15+ tests covering hrefs, relative URLs, empty/malformed
 - [x] `normalize_title()` is `pub(crate)` with tests
-- [ ] `ContentFetcher` trait exists with 6 methods and `impl for Archive`
-- [ ] `SignalStore` trait exists with 20 methods and `impl for GraphWriter`
-- [ ] `ScrapePhase` accepts `Arc<dyn SignalStore>` and `Arc<dyn ContentFetcher>`
-- [ ] `promote_links` accepts `&dyn SignalStore`
-- [ ] `discover_from_topics` uses `ContentFetcher` methods (no `SourceHandle`)
-- [ ] `MockFetcher`, `MockSignalStore`, `FixedEmbedder`, `MockExtractor` exist in `testing.rs`
-- [ ] `MockSignalStore` has its own unit tests
-- [ ] `dedup_verdict()` extracted as pure function with 20+ tests
-- [ ] `score_and_filter()` extracted with 10+ tests
-- [ ] `batch_title_dedup()` extracted with 5+ tests
+- [x] `ContentFetcher` trait exists with 6 methods and `impl for Archive`
+- [x] `SignalStore` trait exists with 20 methods and `impl for GraphWriter`
+- [x] `ScrapePhase` accepts `Arc<dyn SignalStore>` and `Arc<dyn ContentFetcher>`
+- [x] `promote_links` accepts `&dyn SignalStore`
+- [x] `discover_from_topics` uses `ContentFetcher` methods (no `SourceHandle`)
+- [x] `MockFetcher`, `MockSignalStore`, `FixedEmbedder`, `MockExtractor` exist in `testing.rs`
+- [x] `MockSignalStore` has its own unit tests
+- [x] `dedup_verdict()` extracted as pure function with 20+ tests
+- [x] `score_and_filter()` extracted with 10+ tests
+- [x] `batch_title_dedup()` extracted with 5+ tests
 - [ ] 29+ boundary tests in `boundary_tests.rs`
 - [ ] 6 chain tests in `chain_tests.rs` — each follows MOCK → FUNCTION → OUTPUT
 - [ ] All existing tests still pass (zero regressions)

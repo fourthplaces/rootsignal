@@ -171,6 +171,176 @@ pub(crate) fn normalize_title(title: &str) -> String {
     title.trim().to_lowercase()
 }
 
+/// Within-batch dedup by (normalized_title, node_type).
+/// Keeps the first occurrence of each (title, type) pair, drops duplicates.
+pub(crate) fn batch_title_dedup(nodes: Vec<Node>) -> Vec<Node> {
+    let mut seen = HashSet::new();
+    nodes
+        .into_iter()
+        .filter(|n| seen.insert((normalize_title(n.title()), n.node_type())))
+        .collect()
+}
+
+/// Scores quality, applies geo-filtering, backfills actor location, and removes Evidence nodes.
+///
+/// Pure pipeline step: given raw extracted nodes, returns only the signal nodes
+/// that survive quality scoring and geographic filtering.
+pub(crate) fn score_and_filter(
+    mut nodes: Vec<Node>,
+    url: &str,
+    geo_config: &geo_filter::GeoFilterConfig,
+    actor_ctx: Option<&ActorContext>,
+) -> (Vec<Node>, geo_filter::GeoFilterStats) {
+    // Score quality and stamp source URL
+    for node in &mut nodes {
+        let q = quality::score(node);
+        if let Some(meta) = node.meta_mut() {
+            meta.confidence = q.confidence;
+            meta.source_url = url.to_string();
+        }
+    }
+
+    // Geographic filtering
+    let (mut nodes, geo_stats) = geo_filter::filter_nodes(nodes, geo_config);
+
+    // Actor-location fallback: backfill coordinates from actor context
+    if let Some(actor) = actor_ctx {
+        if let (Some(lat), Some(lng)) = (actor.location_lat, actor.location_lng) {
+            for node in &mut nodes {
+                if let Some(meta) = node.meta_mut() {
+                    if meta.location.is_none() {
+                        meta.location = Some(rootsignal_common::GeoPoint {
+                            lat,
+                            lng,
+                            precision: rootsignal_common::GeoPrecision::Approximate,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Filter to signal nodes only (skip Evidence)
+    let nodes = nodes
+        .into_iter()
+        .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
+        .collect();
+
+    (nodes, geo_stats)
+}
+
+// ---------------------------------------------------------------------------
+// DedupVerdict — pure decision function for multi-layer deduplication
+// ---------------------------------------------------------------------------
+
+/// Threshold for cross-source corroboration via vector similarity.
+/// Same-source matches always refresh regardless of similarity (as long as
+/// they passed the 0.85 entry threshold from the caller).
+const CROSS_SOURCE_SIM_THRESHOLD: f64 = 0.92;
+
+/// The outcome of the multi-layer deduplication check for a single signal node.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DedupVerdict {
+    /// No existing match — create a new signal node.
+    Create,
+    /// Cross-source match — corroborate the existing signal.
+    Corroborate {
+        existing_id: Uuid,
+        existing_type: NodeType,
+        similarity: f64,
+    },
+    /// Same-source match — refresh (re-confirm) the existing signal.
+    Refresh {
+        existing_id: Uuid,
+        existing_type: NodeType,
+        similarity: f64,
+    },
+}
+
+impl DedupVerdict {
+    /// Returns the existing signal ID if the verdict is not Create.
+    #[cfg(test)]
+    fn existing_id(&self) -> Option<Uuid> {
+        match self {
+            DedupVerdict::Create => None,
+            DedupVerdict::Corroborate { existing_id, .. } => Some(*existing_id),
+            DedupVerdict::Refresh { existing_id, .. } => Some(*existing_id),
+        }
+    }
+}
+
+/// Pure decision function for the multi-layer dedup pipeline.
+///
+/// Layers are checked in priority order:
+/// 1. Global exact title+type match (similarity = 1.0)
+/// 2. In-memory embed cache match (≥0.85 entry, ≥0.92 cross-source)
+/// 3. Graph vector index match (≥0.85 entry, ≥0.92 cross-source)
+/// 4. No match → Create
+///
+/// Within each layer, same-source → Refresh, cross-source above threshold → Corroborate.
+/// All URLs should be pre-sanitized before calling.
+pub(crate) fn dedup_verdict(
+    current_url: &str,
+    node_type: NodeType,
+    global_match: Option<(Uuid, &str)>,
+    cache_match: Option<(Uuid, NodeType, &str, f64)>,
+    graph_match: Option<(Uuid, NodeType, &str, f64)>,
+) -> DedupVerdict {
+    // Layer 2.5: Global exact title+type match — always acts (no threshold)
+    if let Some((existing_id, existing_url)) = global_match {
+        return if existing_url != current_url {
+            DedupVerdict::Corroborate {
+                existing_id,
+                existing_type: node_type,
+                similarity: 1.0,
+            }
+        } else {
+            DedupVerdict::Refresh {
+                existing_id,
+                existing_type: node_type,
+                similarity: 1.0,
+            }
+        };
+    }
+
+    // Layer 3a: In-memory embed cache
+    if let Some((cached_id, cached_type, cached_url, sim)) = cache_match {
+        if cached_url == current_url {
+            return DedupVerdict::Refresh {
+                existing_id: cached_id,
+                existing_type: cached_type,
+                similarity: sim,
+            };
+        } else if sim >= CROSS_SOURCE_SIM_THRESHOLD {
+            return DedupVerdict::Corroborate {
+                existing_id: cached_id,
+                existing_type: cached_type,
+                similarity: sim,
+            };
+        }
+    }
+
+    // Layer 3b: Graph vector index
+    if let Some((dup_id, dup_type, dup_url, sim)) = graph_match {
+        if dup_url == current_url {
+            return DedupVerdict::Refresh {
+                existing_id: dup_id,
+                existing_type: dup_type,
+                similarity: sim,
+            };
+        } else if sim >= CROSS_SOURCE_SIM_THRESHOLD {
+            return DedupVerdict::Corroborate {
+                existing_id: dup_id,
+                existing_type: dup_type,
+                similarity: sim,
+            };
+        }
+    }
+
+    // Layer 4: No match
+    DedupVerdict::Create
+}
+
 // ---------------------------------------------------------------------------
 // ScrapePhase — the core scrape-extract-store-dedup pipeline
 // ---------------------------------------------------------------------------
@@ -1242,76 +1412,35 @@ impl ScrapePhase {
         // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
         let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
 
-        // Score quality, set confidence, and apply sanitized URL
-        for node in &mut nodes {
-            let q = quality::score(node);
-            if let Some(meta) = node.meta_mut() {
-                meta.confidence = q.confidence;
-                meta.source_url = url.clone();
-            }
-        }
-
-        // Geographic filtering: reject off-geography signals and backfill
-        // region-center coordinates on survivors that lack coords.
+        // Score, geo-filter, actor-location fallback, evidence removal
         let geo_config = geo_filter::GeoFilterConfig {
             center_lat: self.region.center_lat,
             center_lng: self.region.center_lng,
             radius_km: self.region.radius_km,
             geo_terms: &self.region.geo_terms,
         };
-        let before_geo = nodes.len();
-        let (mut nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config);
-        ctx.stats.geo_filtered += geo_stats.filtered;
-        let geo_filtered = before_geo - nodes.len();
-        if geo_filtered > 0 {
-            info!(
-                url = url.as_str(),
-                filtered = geo_filtered,
-                "Off-geography signals dropped"
-            );
-        }
-
-        // Actor-location fallback: for signals that passed the geo-filter but
-        // have no coordinates, use the actor's known location if the signal
-        // came from an actor source. Never fabricate coordinates from the
-        // region center — that causes cross-region contamination.
         let ck_for_fallback = ctx
             .url_to_canonical_key
             .get(&url)
             .cloned()
             .unwrap_or_else(|| url.clone());
-        if let Some(actor_ctx) = ctx.actor_contexts.get(&ck_for_fallback) {
-            if let (Some(actor_lat), Some(actor_lng)) = (actor_ctx.location_lat, actor_ctx.location_lng) {
-                for node in &mut nodes {
-                    if let Some(meta) = node.meta_mut() {
-                        if meta.location.is_none() {
-                            meta.location = Some(rootsignal_common::GeoPoint {
-                                lat: actor_lat,
-                                lng: actor_lng,
-                                precision: rootsignal_common::GeoPrecision::Approximate,
-                            });
-                        }
-                    }
-                }
-            }
+        let actor_ctx = ctx.actor_contexts.get(&ck_for_fallback);
+        let (nodes, geo_stats) = score_and_filter(nodes, &url, &geo_config, actor_ctx);
+        ctx.stats.geo_filtered += geo_stats.filtered;
+        if geo_stats.filtered > 0 {
+            info!(
+                url = url.as_str(),
+                filtered = geo_stats.filtered,
+                "Off-geography signals dropped"
+            );
         }
-
-        // Filter to signal nodes only (skip Evidence)
-        let nodes: Vec<_> = nodes
-            .into_iter()
-            .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
-            .collect();
 
         if nodes.is_empty() {
             return Ok(());
         }
 
         // --- Layer 1: Within-batch dedup by (normalized_title, node_type) ---
-        let mut seen = HashSet::new();
-        let nodes: Vec<_> = nodes
-            .into_iter()
-            .filter(|n| seen.insert((normalize_title(n.title()), n.node_type())))
-            .collect();
+        let nodes = batch_title_dedup(nodes);
 
         // --- Layer 2: URL-based title dedup against existing database ---
         let existing_titles: HashSet<String> = self
@@ -1360,24 +1489,26 @@ impl ScrapePhase {
         let mut remaining_nodes = Vec::new();
         for node in nodes {
             let key = (normalize_title(node.title()), node.node_type());
-            if let Some((existing_id, existing_url)) = global_matches.get(&key) {
-                if *existing_url != url {
-                    // Cross-source: different URL confirms the same signal — real corroboration
+            let global_hit = global_matches
+                .get(&key)
+                .map(|(id, u)| (*id, u.as_str()));
+
+            match dedup_verdict(&url, node.node_type(), global_hit, None, None) {
+                DedupVerdict::Corroborate { existing_id, existing_type, similarity } => {
                     run_log.log(EventKind::SignalCorroborated {
                         existing_id: existing_id.to_string(),
                         signal_type: format!("{}", node.node_type()),
                         new_source_url: url.clone(),
-                        similarity: 1.0,
+                        similarity,
                     });
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
-                        existing_source = existing_url.as_str(),
                         new_source = url.as_str(),
                         "Global title+type match from different source, corroborating"
                     );
                     self.store
-                        .corroborate(*existing_id, node.node_type(), now, &entity_mappings)
+                        .corroborate(existing_id, existing_type, now, &entity_mappings)
                         .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1390,18 +1521,16 @@ impl ScrapePhase {
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store
-                        .create_evidence(&evidence, *existing_id)
+                        .create_evidence(&evidence, existing_id)
                         .await?;
                     ctx.stats.signals_deduplicated += 1;
-                    continue;
-                } else {
-                    // Same-source re-scrape: signal already exists from this URL.
-                    // Refresh to prove it's still active, but don't inflate corroboration.
+                }
+                DedupVerdict::Refresh { existing_id, existing_type, similarity } => {
                     run_log.log(EventKind::SignalDeduplicated {
                         signal_type: format!("{}", node.node_type()),
                         title: node.title().to_string(),
                         matched_id: existing_id.to_string(),
-                        similarity: 1.0,
+                        similarity,
                         action: "refresh".to_string(),
                     });
                     info!(
@@ -1411,7 +1540,7 @@ impl ScrapePhase {
                         "Same-source title match, refreshing (no corroboration)"
                     );
                     self.store
-                        .refresh_signal(*existing_id, node.node_type(), now)
+                        .refresh_signal(existing_id, existing_type, now)
                         .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1424,13 +1553,14 @@ impl ScrapePhase {
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store
-                        .create_evidence(&evidence, *existing_id)
+                        .create_evidence(&evidence, existing_id)
                         .await?;
                     ctx.stats.signals_deduplicated += 1;
-                    continue;
+                }
+                DedupVerdict::Create => {
+                    remaining_nodes.push(node);
                 }
             }
-            remaining_nodes.push(node);
         }
         let nodes = remaining_nodes;
 
@@ -1509,83 +1639,13 @@ impl ScrapePhase {
             };
 
             // 3a: Check in-memory cache first (catches cross-batch dupes not yet indexed)
-            if let Some((cached_id, cached_type, cached_url, sim)) =
-                ctx.embed_cache.find_match(&embedding, 0.85)
-            {
-                let is_same_source = cached_url == url;
-                if is_same_source {
-                    run_log.log(EventKind::SignalDeduplicated {
-                        signal_type: format!("{}", node_type),
-                        title: node.title().to_string(),
-                        matched_id: cached_id.to_string(),
-                        similarity: sim,
-                        action: "refresh".to_string(),
-                    });
-                    info!(
-                        existing_id = %cached_id,
-                        similarity = sim,
-                        title = node.title(),
-                        source = "cache",
-                        "Same-source duplicate in cache, refreshing (no corroboration)"
-                    );
-                    self.store
-                        .refresh_signal(cached_id, cached_type, now)
-                        .await?;
-
-                    let evidence = EvidenceNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        evidence_confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, cached_id).await?;
-
-                    ctx.stats.signals_deduplicated += 1;
-                    continue;
-                } else if sim >= 0.92 {
-                    run_log.log(EventKind::SignalCorroborated {
-                        existing_id: cached_id.to_string(),
-                        signal_type: format!("{}", cached_type),
-                        new_source_url: url.clone(),
-                        similarity: sim,
-                    });
-                    info!(
-                        existing_id = %cached_id,
-                        similarity = sim,
-                        title = node.title(),
-                        source = "cache",
-                        "Cross-source duplicate in cache, corroborating"
-                    );
-                    self.store
-                        .corroborate(cached_id, cached_type, now, &entity_mappings)
-                        .await?;
-
-                    let evidence = EvidenceNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        evidence_confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, cached_id).await?;
-
-                    ctx.stats.signals_deduplicated += 1;
-                    continue;
-                }
-            }
+            let cache_hit = ctx.embed_cache.find_match(&embedding, 0.85);
 
             // 3b: Check graph index (catches dupes from previous runs, region-scoped)
             let lat_delta = self.region.radius_km / 111.0;
             let lng_delta = self.region.radius_km
                 / (111.0 * self.region.center_lat.to_radians().cos());
-            match self
+            let graph_hit = match self
                 .store
                 .find_duplicate(
                     &embedding,
@@ -1599,88 +1659,98 @@ impl ScrapePhase {
                 .await
             {
                 Ok(Some(dup)) => {
-                    let dominated_url = sanitize_url(&dup.source_url);
-                    let is_same_source = dominated_url == url;
-                    if is_same_source {
-                        run_log.log(EventKind::SignalDeduplicated {
-                            signal_type: format!("{}", dup.node_type),
-                            title: node.title().to_string(),
-                            matched_id: dup.id.to_string(),
-                            similarity: dup.similarity,
-                            action: "refresh".to_string(),
-                        });
-                        info!(
-                            existing_id = %dup.id,
-                            similarity = dup.similarity,
-                            title = node.title(),
-                            source = "graph",
-                            "Same-source duplicate in graph, refreshing (no corroboration)"
-                        );
-                        self.store
-                            .refresh_signal(dup.id, dup.node_type, now)
-                            .await?;
-
-                        let evidence = EvidenceNode {
-                            id: Uuid::new_v4(),
-                            source_url: url.clone(),
-                            retrieved_at: now,
-                            content_hash: content_hash_str.clone(),
-                            snippet: node.meta().map(|m| m.summary.clone()),
-                            relevance: None,
-                            evidence_confidence: None,
-                            channel_type: Some(channel_type(&url)),
-                        };
-                        self.store.create_evidence(&evidence, dup.id).await?;
-
-                        ctx.embed_cache
-                            .add(embedding, dup.id, dup.node_type, dominated_url);
-
-                        ctx.stats.signals_deduplicated += 1;
-                        continue;
-                    } else if dup.similarity >= 0.92 {
-                        let cross_type = dup.node_type != node_type;
-                        run_log.log(EventKind::SignalCorroborated {
-                            existing_id: dup.id.to_string(),
-                            signal_type: format!("{}", dup.node_type),
-                            new_source_url: url.clone(),
-                            similarity: dup.similarity,
-                        });
-                        info!(
-                            existing_id = %dup.id,
-                            similarity = dup.similarity,
-                            title = node.title(),
-                            cross_type,
-                            source = "graph",
-                            "Cross-source duplicate in graph, corroborating"
-                        );
-                        self.store
-                            .corroborate(dup.id, dup.node_type, now, &entity_mappings)
-                            .await?;
-
-                        let evidence = EvidenceNode {
-                            id: Uuid::new_v4(),
-                            source_url: url.clone(),
-                            retrieved_at: now,
-                            content_hash: content_hash_str.clone(),
-                            snippet: node.meta().map(|m| m.summary.clone()),
-                            relevance: None,
-                            evidence_confidence: None,
-                            channel_type: Some(channel_type(&url)),
-                        };
-                        self.store.create_evidence(&evidence, dup.id).await?;
-
-                        ctx.embed_cache
-                            .add(embedding, dup.id, dup.node_type, dominated_url);
-
-                        ctx.stats.signals_deduplicated += 1;
-                        continue;
-                    }
-                    // Below 0.92 from a different source — not confident enough, create new
+                    let sanitized = sanitize_url(&dup.source_url);
+                    Some((dup.id, dup.node_type, sanitized, dup.similarity))
                 }
-                Ok(None) => {}
+                Ok(None) => None,
                 Err(e) => {
                     warn!(error = %e, "Dedup check failed, proceeding with creation");
+                    None
                 }
+            };
+
+            let cache_match = cache_hit.as_ref().map(|(id, ty, u, s)| (*id, *ty, &**u, *s));
+            let graph_match = graph_hit.as_ref().map(|(id, ty, u, s)| (*id, *ty, &**u, *s));
+
+            match dedup_verdict(&url, node_type, None, cache_match, graph_match) {
+                DedupVerdict::Refresh { existing_id, existing_type, similarity } => {
+                    let source_layer = if cache_hit.is_some() { "cache" } else { "graph" };
+                    run_log.log(EventKind::SignalDeduplicated {
+                        signal_type: format!("{}", existing_type),
+                        title: node.title().to_string(),
+                        matched_id: existing_id.to_string(),
+                        similarity,
+                        action: "refresh".to_string(),
+                    });
+                    info!(
+                        existing_id = %existing_id,
+                        similarity,
+                        title = node.title(),
+                        source = source_layer,
+                        "Same-source duplicate, refreshing (no corroboration)"
+                    );
+                    self.store
+                        .refresh_signal(existing_id, existing_type, now)
+                        .await?;
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
+                    };
+                    self.store.create_evidence(&evidence, existing_id).await?;
+                    // Update embed cache if verdict came from graph
+                    if cache_hit.is_none() {
+                        if let Some((_, _, ref sanitized_url, _)) = graph_hit {
+                            ctx.embed_cache.add(embedding, existing_id, existing_type, sanitized_url.clone());
+                        }
+                    }
+                    ctx.stats.signals_deduplicated += 1;
+                    continue;
+                }
+                DedupVerdict::Corroborate { existing_id, existing_type, similarity } => {
+                    let source_layer = if cache_match.map(|c| c.0) == Some(existing_id) { "cache" } else { "graph" };
+                    run_log.log(EventKind::SignalCorroborated {
+                        existing_id: existing_id.to_string(),
+                        signal_type: format!("{}", existing_type),
+                        new_source_url: url.clone(),
+                        similarity,
+                    });
+                    info!(
+                        existing_id = %existing_id,
+                        similarity,
+                        title = node.title(),
+                        source = source_layer,
+                        "Cross-source duplicate, corroborating"
+                    );
+                    self.store
+                        .corroborate(existing_id, existing_type, now, &entity_mappings)
+                        .await?;
+                    let evidence = EvidenceNode {
+                        id: Uuid::new_v4(),
+                        source_url: url.clone(),
+                        retrieved_at: now,
+                        content_hash: content_hash_str.clone(),
+                        snippet: node.meta().map(|m| m.summary.clone()),
+                        relevance: None,
+                        evidence_confidence: None,
+                        channel_type: Some(channel_type(&url)),
+                    };
+                    self.store.create_evidence(&evidence, existing_id).await?;
+                    // Update embed cache if verdict came from graph
+                    if cache_hit.is_none() {
+                        if let Some((_, _, ref sanitized_url, _)) = graph_hit {
+                            ctx.embed_cache.add(embedding, existing_id, existing_type, sanitized_url.clone());
+                        }
+                    }
+                    ctx.stats.signals_deduplicated += 1;
+                    continue;
+                }
+                DedupVerdict::Create => {}
             }
 
             // Create new node
@@ -1940,5 +2010,578 @@ mod tests {
     #[test]
     fn normalize_title_already_normalized() {
         assert_eq!(normalize_title("food distribution"), "food distribution");
+    }
+
+    // --- batch_title_dedup tests ---
+
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{Severity, Urgency, TensionNode, NeedNode, NodeMeta};
+
+    fn tension(title: &str) -> Node {
+        Node::Tension(TensionNode {
+            meta: NodeMeta {
+                id: Uuid::new_v4(),
+                title: title.to_string(),
+                summary: String::new(),
+                sensitivity: SensitivityLevel::General,
+                confidence: 0.8,
+                freshness_score: 0.9,
+                corroboration_count: 0,
+                location: None,
+                location_name: None,
+                source_url: "https://example.com".to_string(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                last_confirmed_active: Utc::now(),
+                source_diversity: 1,
+                external_ratio: 0.0,
+                cause_heat: 0.0,
+                implied_queries: Vec::new(),
+                channel_diversity: 1,
+                mentioned_actors: Vec::new(),
+                author_actor: None,
+            },
+            severity: Severity::Medium,
+            category: None,
+            what_would_help: None,
+        })
+    }
+
+    fn need(title: &str) -> Node {
+        Node::Need(NeedNode {
+            meta: NodeMeta {
+                id: Uuid::new_v4(),
+                title: title.to_string(),
+                summary: String::new(),
+                sensitivity: SensitivityLevel::General,
+                confidence: 0.8,
+                freshness_score: 0.9,
+                corroboration_count: 0,
+                location: None,
+                location_name: None,
+                source_url: "https://example.com".to_string(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                last_confirmed_active: Utc::now(),
+                source_diversity: 1,
+                external_ratio: 0.0,
+                cause_heat: 0.0,
+                implied_queries: Vec::new(),
+                channel_diversity: 1,
+                mentioned_actors: Vec::new(),
+                author_actor: None,
+            },
+            urgency: Urgency::Medium,
+            what_needed: None,
+            action_url: None,
+            goal: None,
+        })
+    }
+
+    #[test]
+    fn batch_dedup_removes_same_title_same_type() {
+        let nodes = vec![
+            tension("Housing Crisis"),
+            tension("Housing Crisis"),
+            tension("Bus Route Cut"),
+        ];
+        let deduped = batch_title_dedup(nodes);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].title(), "Housing Crisis");
+        assert_eq!(deduped[1].title(), "Bus Route Cut");
+    }
+
+    #[test]
+    fn batch_dedup_keeps_same_title_different_type() {
+        let nodes = vec![
+            tension("Housing Crisis"),
+            need("Housing Crisis"),
+        ];
+        let deduped = batch_title_dedup(nodes);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn batch_dedup_case_insensitive() {
+        let nodes = vec![
+            tension("housing crisis"),
+            tension("HOUSING CRISIS"),
+            tension("Housing Crisis"),
+        ];
+        let deduped = batch_title_dedup(nodes);
+        assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn batch_dedup_whitespace_normalized() {
+        let nodes = vec![
+            tension("  Housing Crisis  "),
+            tension("Housing Crisis"),
+        ];
+        let deduped = batch_title_dedup(nodes);
+        assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn batch_dedup_empty_input() {
+        let deduped = batch_title_dedup(Vec::new());
+        assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn batch_dedup_all_unique() {
+        let nodes = vec![
+            tension("Housing Crisis"),
+            tension("Bus Route Cut"),
+            need("Food Distribution"),
+        ];
+        let deduped = batch_title_dedup(nodes);
+        assert_eq!(deduped.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // dedup_verdict tests
+    // -----------------------------------------------------------------------
+
+    const URL_A: &str = "https://example.com/page-a";
+    const URL_B: &str = "https://other.com/page-b";
+
+    fn id1() -> Uuid {
+        Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
+    }
+    fn id2() -> Uuid {
+        Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap()
+    }
+    fn id3() -> Uuid {
+        Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap()
+    }
+
+    // --- Layer 2.5: Global title match ---
+
+    #[test]
+    fn global_match_cross_source_corroborates() {
+        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_B)), None, None);
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id1(),
+            existing_type: NodeType::Tension,
+            similarity: 1.0,
+        });
+    }
+
+    #[test]
+    fn global_match_same_source_refreshes() {
+        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_A)), None, None);
+        assert_eq!(v, DedupVerdict::Refresh {
+            existing_id: id1(),
+            existing_type: NodeType::Tension,
+            similarity: 1.0,
+        });
+    }
+
+    #[test]
+    fn global_match_uses_new_node_type() {
+        // Global match always uses the new node's type, not a stored type
+        let v = dedup_verdict(URL_A, NodeType::Aid, Some((id1(), URL_B)), None, None);
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id1(),
+            existing_type: NodeType::Aid,
+            similarity: 1.0,
+        });
+    }
+
+    #[test]
+    fn global_match_takes_priority_over_cache() {
+        let v = dedup_verdict(
+            URL_A,
+            NodeType::Tension,
+            Some((id1(), URL_B)),                         // global: corroborate
+            Some((id2(), NodeType::Tension, URL_A, 0.99)), // cache: would refresh
+            None,
+        );
+        assert_eq!(v.existing_id(), Some(id1()), "global match should win over cache");
+    }
+
+    #[test]
+    fn global_match_takes_priority_over_graph() {
+        let v = dedup_verdict(
+            URL_A,
+            NodeType::Tension,
+            Some((id1(), URL_A)),                         // global: refresh
+            None,
+            Some((id3(), NodeType::Tension, URL_B, 0.95)), // graph: would corroborate
+        );
+        assert_eq!(v.existing_id(), Some(id1()), "global match should win over graph");
+    }
+
+    // --- Layer 3a: Cache match ---
+
+    #[test]
+    fn cache_same_source_refreshes() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Need, None,
+            Some((id2(), NodeType::Need, URL_A, 0.88)),
+            None,
+        );
+        assert_eq!(v, DedupVerdict::Refresh {
+            existing_id: id2(),
+            existing_type: NodeType::Need,
+            similarity: 0.88,
+        });
+    }
+
+    #[test]
+    fn cache_cross_source_above_threshold_corroborates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.95)),
+            None,
+        );
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id2(),
+            existing_type: NodeType::Tension,
+            similarity: 0.95,
+        });
+    }
+
+    #[test]
+    fn cache_cross_source_at_threshold_corroborates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Aid, None,
+            Some((id2(), NodeType::Aid, URL_B, 0.92)),
+            None,
+        );
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id2(),
+            existing_type: NodeType::Aid,
+            similarity: 0.92,
+        });
+    }
+
+    #[test]
+    fn cache_cross_source_below_threshold_falls_through() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.91)),
+            None,
+        );
+        assert_eq!(v, DedupVerdict::Create, "0.91 cross-source should fall through to Create");
+    }
+
+    #[test]
+    fn cache_cross_source_at_entry_threshold_falls_through() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.85)),
+            None,
+        );
+        assert_eq!(v, DedupVerdict::Create, "0.85 cross-source should fall through");
+    }
+
+    #[test]
+    fn cache_takes_priority_over_graph() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_A, 0.90)), // cache: same-source refresh
+            Some((id3(), NodeType::Tension, URL_B, 0.95)), // graph: would corroborate
+        );
+        assert_eq!(v.existing_id(), Some(id2()), "cache should win over graph");
+    }
+
+    // --- Layer 3b: Graph match ---
+
+    #[test]
+    fn graph_same_source_refreshes() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Notice, None, None,
+            Some((id3(), NodeType::Notice, URL_A, 0.87)),
+        );
+        assert_eq!(v, DedupVerdict::Refresh {
+            existing_id: id3(),
+            existing_type: NodeType::Notice,
+            similarity: 0.87,
+        });
+    }
+
+    #[test]
+    fn graph_cross_source_above_threshold_corroborates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None, None,
+            Some((id3(), NodeType::Tension, URL_B, 0.95)),
+        );
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id3(),
+            existing_type: NodeType::Tension,
+            similarity: 0.95,
+        });
+    }
+
+    #[test]
+    fn graph_cross_source_at_threshold_corroborates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Gathering, None, None,
+            Some((id3(), NodeType::Gathering, URL_B, 0.92)),
+        );
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id3(),
+            existing_type: NodeType::Gathering,
+            similarity: 0.92,
+        });
+    }
+
+    #[test]
+    fn graph_cross_source_below_threshold_creates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None, None,
+            Some((id3(), NodeType::Tension, URL_B, 0.91)),
+        );
+        assert_eq!(v, DedupVerdict::Create);
+    }
+
+    // --- Layer 4: No match ---
+
+    #[test]
+    fn no_matches_creates() {
+        let v = dedup_verdict(URL_A, NodeType::Tension, None, None, None);
+        assert_eq!(v, DedupVerdict::Create);
+    }
+
+    #[test]
+    fn both_below_threshold_creates() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.87)), // cache: cross-source, below 0.92
+            Some((id3(), NodeType::Tension, URL_B, 0.89)), // graph: cross-source, below 0.92
+        );
+        assert_eq!(v, DedupVerdict::Create);
+    }
+
+    // --- Priority / interaction ---
+
+    #[test]
+    fn cache_below_threshold_falls_to_graph_refresh() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.87)), // cache: cross-source, below threshold → skip
+            Some((id3(), NodeType::Tension, URL_A, 0.90)), // graph: same-source → refresh
+        );
+        assert_eq!(v, DedupVerdict::Refresh {
+            existing_id: id3(),
+            existing_type: NodeType::Tension,
+            similarity: 0.90,
+        });
+    }
+
+    #[test]
+    fn cache_below_threshold_falls_to_graph_corroborate() {
+        let v = dedup_verdict(
+            URL_A, NodeType::Tension, None,
+            Some((id2(), NodeType::Tension, URL_B, 0.88)), // cache: cross-source, below threshold
+            Some((id3(), NodeType::Tension, URL_B, 0.93)), // graph: cross-source, above threshold
+        );
+        assert_eq!(v, DedupVerdict::Corroborate {
+            existing_id: id3(),
+            existing_type: NodeType::Tension,
+            similarity: 0.93,
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // score_and_filter tests
+    // -----------------------------------------------------------------------
+
+    use rootsignal_common::types::GeoPoint;
+    use rootsignal_common::GeoPrecision;
+
+    /// Minneapolis center for test geo config
+    fn mpls_geo_config() -> geo_filter::GeoFilterConfig<'static> {
+        static GEO_TERMS: &[String] = &[];
+        geo_filter::GeoFilterConfig {
+            center_lat: 44.9778,
+            center_lng: -93.2650,
+            radius_km: 30.0,
+            geo_terms: GEO_TERMS,
+        }
+    }
+
+    fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
+        Node::Tension(TensionNode {
+            meta: NodeMeta {
+                id: Uuid::new_v4(),
+                title: title.to_string(),
+                summary: String::new(),
+                sensitivity: SensitivityLevel::General,
+                confidence: 0.0, // will be overwritten by score_and_filter
+                freshness_score: 0.9,
+                corroboration_count: 0,
+                location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+                location_name: None,
+                source_url: String::new(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                last_confirmed_active: Utc::now(),
+                source_diversity: 1,
+                external_ratio: 0.0,
+                cause_heat: 0.0,
+                implied_queries: Vec::new(),
+                channel_diversity: 1,
+                mentioned_actors: Vec::new(),
+                author_actor: None,
+            },
+            severity: Severity::Medium,
+            category: None,
+            what_would_help: None,
+        })
+    }
+
+    #[test]
+    fn score_filter_signal_in_region_survives() {
+        let nodes = vec![tension_at("Pothole on Lake St", 44.9485, -93.2983)]; // Minneapolis
+        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(stats.filtered, 0);
+    }
+
+    #[test]
+    fn score_filter_signal_outside_region_filtered() {
+        let nodes = vec![tension_at("NYC subway delay", 40.7128, -74.0060)]; // New York
+        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        assert_eq!(result.len(), 0);
+        assert_eq!(stats.filtered, 1);
+    }
+
+    #[test]
+    fn score_filter_stamps_source_url() {
+        let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
+        let (result, _) = score_and_filter(nodes, "https://mpls-news.com/article", &mpls_geo_config(), None);
+        assert_eq!(result[0].meta().unwrap().source_url, "https://mpls-news.com/article");
+    }
+
+    #[test]
+    fn score_filter_sets_confidence() {
+        let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
+        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        // quality::score should produce a non-zero confidence for a valid node
+        assert!(result[0].meta().unwrap().confidence > 0.0, "confidence should be set by quality::score");
+    }
+
+    #[test]
+    fn score_filter_removes_evidence_nodes() {
+        use rootsignal_common::EvidenceNode;
+        let evidence = Node::Evidence(EvidenceNode {
+            id: Uuid::new_v4(),
+            source_url: "https://example.com".to_string(),
+            retrieved_at: Utc::now(),
+            content_hash: "abc".to_string(),
+            snippet: None,
+            relevance: None,
+            evidence_confidence: None,
+            channel_type: None,
+        });
+        let nodes = vec![
+            tension_at("Real signal", 44.95, -93.27),
+            evidence,
+        ];
+        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title(), "Real signal");
+    }
+
+    fn tension_with_name(title: &str, location_name: &str) -> Node {
+        Node::Tension(TensionNode {
+            meta: NodeMeta {
+                id: Uuid::new_v4(),
+                title: title.to_string(),
+                summary: String::new(),
+                sensitivity: SensitivityLevel::General,
+                confidence: 0.0,
+                freshness_score: 0.9,
+                corroboration_count: 0,
+                location: None,
+                location_name: Some(location_name.to_string()),
+                source_url: String::new(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                last_confirmed_active: Utc::now(),
+                source_diversity: 1,
+                external_ratio: 0.0,
+                cause_heat: 0.0,
+                implied_queries: Vec::new(),
+                channel_diversity: 1,
+                mentioned_actors: Vec::new(),
+                author_actor: None,
+            },
+            severity: Severity::Medium,
+            category: None,
+            what_would_help: None,
+        })
+    }
+
+    fn mpls_geo_config_with_terms() -> geo_filter::GeoFilterConfig<'static> {
+        // Leak a vec to get 'static — fine for tests
+        let terms: &'static [String] = Box::leak(Box::new(vec!["minneapolis".to_string()]));
+        geo_filter::GeoFilterConfig {
+            center_lat: 44.9778,
+            center_lng: -93.2650,
+            radius_km: 30.0,
+            geo_terms: terms,
+        }
+    }
+
+    #[test]
+    fn score_filter_actor_fallback_backfills_location() {
+        // Node survives geo-filter via geo_term match but has no coordinates.
+        // Actor fallback should backfill location.
+        let nodes = vec![tension_with_name("Local Event", "Minneapolis")];
+        let actor = ActorContext {
+            actor_name: "Local Org".to_string(),
+            bio: None,
+            location_name: Some("Minneapolis".to_string()),
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        };
+        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config_with_terms(), Some(&actor));
+        assert_eq!(result.len(), 1);
+        assert!(result[0].meta().unwrap().location.is_some(), "actor fallback should set location");
+        let loc = result[0].meta().unwrap().location.as_ref().unwrap();
+        assert!((loc.lat - 44.9778).abs() < 0.001);
+    }
+
+    #[test]
+    fn score_filter_no_location_no_actor_filtered() {
+        // Node with no location, no actor context → geo-filter will reject it
+        let nodes = vec![tension("Floating Signal")];
+        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        assert_eq!(result.len(), 0);
+        assert_eq!(stats.filtered, 1);
+    }
+
+    #[test]
+    fn score_filter_actor_preserves_existing_location() {
+        // Node already has a location — actor fallback should NOT overwrite it
+        let nodes = vec![tension_at("Located Signal", 44.95, -93.28)];
+        let actor = ActorContext {
+            actor_name: "Far Away Org".to_string(),
+            bio: None,
+            location_name: None,
+            location_lat: Some(40.7128),  // NYC
+            location_lng: Some(-74.0060),
+        };
+        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), Some(&actor));
+        let loc = result[0].meta().unwrap().location.as_ref().unwrap();
+        assert!((loc.lat - 44.95).abs() < 0.001, "existing location should be preserved");
+    }
+
+    #[test]
+    fn score_filter_mixed_in_and_out_of_region() {
+        let nodes = vec![
+            tension_at("In region", 44.95, -93.27),
+            tension_at("Way outside", 34.05, -118.24), // LA
+            tension_at("Also in region", 44.98, -93.25),
+        ];
+        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(stats.filtered, 1);
+        assert_eq!(result[0].title(), "In region");
+        assert_eq!(result[1].title(), "Also in region");
     }
 }
