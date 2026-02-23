@@ -30,6 +30,7 @@ sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
 twilio = { workspace = true }
 reqwest = { workspace = true }
+thiserror = { workspace = true }
 jsonwebtoken = "9"
 sha2 = "0.10"
 hex = "0.4"
