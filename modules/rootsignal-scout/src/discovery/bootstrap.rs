@@ -412,7 +412,8 @@ Maximum 5 subreddits."#
         Ok(subreddits)
     }
 
-    /// Ask Claude for local news outlets and their RSS feed URLs.
+    /// Ask Claude for local news outlets, then discover their real RSS feed URLs
+    /// by fetching each homepage and looking for `<link rel="alternate">` tags.
     /// Returns (outlet_name, feed_url) pairs.
     async fn discover_news_outlets(&self) -> Result<Vec<(String, String)>> {
         let region_name = &self.region.name;
@@ -423,9 +424,8 @@ Maximum 5 subreddits."#
 Do NOT include national wire services (AP, Reuters, NPR national, CNN, Fox News).
 Only include outlets that primarily cover {region_name} and its surrounding area.
 
-For each outlet, provide the name and RSS/Atom feed URL if you know it.
-Return as JSON array: [{{"name": "Outlet Name", "feed_url": "https://..."}}]
-If you don't know the feed URL, use the homepage URL and append "/feed" as a guess.
+For each outlet, provide the name and homepage URL.
+Return as JSON array: [{{"name": "Outlet Name", "url": "https://..."}}]
 Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
         );
 
@@ -434,7 +434,6 @@ Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
 
         let response = claude.complete(&prompt).await?;
 
-        // Parse JSON response — strip markdown code fences if present
         let json_str = response
             .trim()
             .trim_start_matches("```json")
@@ -444,23 +443,92 @@ Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
 
         let outlets: Vec<NewsOutlet> = serde_json::from_str(json_str)
             .unwrap_or_else(|e| {
-                warn!(error = %e, "Failed to parse news outlet JSON, trying line-by-line fallback");
+                warn!(error = %e, "Failed to parse news outlet JSON");
                 Vec::new()
             });
 
-        Ok(outlets
-            .into_iter()
-            .filter(|o| !o.name.is_empty() && !o.feed_url.is_empty())
-            .map(|o| (o.name, o.feed_url))
-            .take(8)
-            .collect())
+        let mut results = Vec::new();
+
+        for outlet in outlets.into_iter().filter(|o| !o.name.is_empty() && !o.url.is_empty()).take(8) {
+            match self.discover_feed_for_outlet(&outlet.name, &outlet.url).await {
+                Some(feed_url) => {
+                    info!(outlet = outlet.name.as_str(), feed_url = feed_url.as_str(), "Discovered RSS feed");
+                    results.push((outlet.name, feed_url));
+                }
+                None => {
+                    warn!(outlet = outlet.name.as_str(), url = outlet.url.as_str(), "No RSS feed found");
+                }
+            }
+        }
+
+        Ok(results)
     }
+
+    /// Discover a real RSS feed URL for a news outlet by:
+    /// 1. Fetching the homepage via browserless
+    /// 2. Looking for <link rel="alternate" type="application/rss+xml"> tags
+    /// 3. Falling back to common feed paths (/feed, /rss, /rss.xml)
+    async fn discover_feed_for_outlet(&self, name: &str, homepage_url: &str) -> Option<String> {
+        // Step 1: Fetch homepage and look for <link> tags
+        if let Ok(page) = self.archive.page(homepage_url).await {
+            let feed_urls = extract_feed_links(&page.raw_html, homepage_url);
+            if let Some(url) = feed_urls.into_iter().next() {
+                // Validate it's actually a parseable feed
+                if self.archive.feed(&url).await.is_ok() {
+                    return Some(url);
+                }
+            }
+        }
+
+        // Step 2: Try common feed paths
+        let base = homepage_url.trim_end_matches('/');
+        for suffix in ["/feed", "/rss", "/rss.xml", "/feed/rss", "/atom.xml"] {
+            let candidate = format!("{base}{suffix}");
+            if self.archive.feed(&candidate).await.is_ok() {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+}
+
+/// Extract RSS/Atom feed URLs from HTML `<link rel="alternate">` tags.
+fn extract_feed_links(html: &str, base_url: &str) -> Vec<String> {
+    let link_re = regex::Regex::new(
+        r#"<link[^>]+type\s*=\s*["']application/(rss\+xml|atom\+xml)["'][^>]*>"#,
+    )
+    .expect("Invalid RSS link regex");
+    let href_re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("Invalid href regex");
+
+    let mut feeds = Vec::new();
+    for cap in link_re.captures_iter(html) {
+        let tag = cap.get(0).map(|m| m.as_str()).unwrap_or("");
+        if let Some(href_cap) = href_re.captures(tag) {
+            if let Some(href) = href_cap.get(1) {
+                let href_str = href.as_str();
+                let full_url = if href_str.starts_with("http") {
+                    href_str.to_string()
+                } else if href_str.starts_with('/') {
+                    if let Ok(base) = url::Url::parse(base_url) {
+                        format!("{}://{}{}", base.scheme(), base.host_str().unwrap_or(""), href_str)
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                };
+                feeds.push(full_url);
+            }
+        }
+    }
+    feeds
 }
 
 #[derive(serde::Deserialize)]
 struct NewsOutlet {
     name: String,
-    feed_url: String,
+    url: String,
 }
 
 /// Generate tension-seeded follow-up queries from existing tensions.
