@@ -79,6 +79,10 @@ pub struct ExtractedSignal {
     /// Whether this signal is first-hand (from someone directly affected/involved).
     /// Only populated for non-entity search/feed sources. None = not assessed.
     pub is_firsthand: Option<bool>,
+    /// The person, organization, or account that authored/published this content.
+    /// For social posts: the account holder. For org pages: the organization.
+    /// For news: the journalist or publication.
+    pub author_actor: Option<String>,
 }
 
 /// A resource capability extracted from a signal.
@@ -307,6 +311,7 @@ impl Extractor {
                 channel_diversity: 1,
                 mentioned_actors,
                 implied_queries: signal.implied_queries.clone(),
+                author_actor: signal.author_actor.clone(),
             };
 
             let node = match signal.signal_type.as_str() {
@@ -541,10 +546,18 @@ Do NOT classify news reportage as a Need based on the urgency of the topic alone
 - Include the most relevant action URL (registration, donation, event page)
 - If none exists, use the source page URL
 
+## Author Actor
+Set author_actor to the person, organization, or account that authored/published this content.
+- For social posts: the account holder (e.g. "@MutualAidMpls")
+- For org pages: the organization (e.g. "Simpson Housing Services")
+- For news: the journalist or publication (e.g. "Star Tribune")
+- If unclear or anonymous, leave null.
+
 ## Mentioned Actors
 Extract the names of organizations, groups, government bodies, or notable individuals mentioned in each signal. These become Actor nodes in the graph for "who's involved" queries.
 - Include: nonprofits, city departments, coalitions, community groups, churches, businesses offering help
 - Exclude: generic references like "the city" or "local officials" unless a specific body is named
+- Do NOT include the author_actor in mentioned_actors — they are tracked separately
 
 ## Contact Information
 Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs).
@@ -674,6 +687,7 @@ mod tests {
             resources: vec![],
             tags: vec![],
             is_firsthand: None,
+            author_actor: None,
         };
 
         assert_eq!(signal.signal_type, "tension");
@@ -724,6 +738,7 @@ mod tests {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
         let aid = AidNode {
             meta,
@@ -757,6 +772,7 @@ mod tests {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
         let need = NeedNode {
             meta,

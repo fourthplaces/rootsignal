@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use rootsignal_common::{canonical_value, ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
@@ -81,80 +80,8 @@ impl<'a> Bootstrapper<'a> {
             }
         }
 
-        // Step 4: Discover actor pages from web search
-        let actor_pages = self.discover_actor_pages().await;
-        info!(actors_discovered = actor_pages.len(), "Actor page discovery complete");
-        for (id, name) in &actor_pages {
-            info!(actor_id = %id, name = name.as_str(), "Discovered actor from page");
-        }
-
         info!(sources_created, "Cold start bootstrap complete");
         Ok(sources_created)
-    }
-
-    /// Search for organization pages (Linktree, community orgs) and create actors from them.
-    /// Returns list of (actor_id, name) for logging.
-    pub async fn discover_actor_pages(&self) -> Vec<(Uuid, String)> {
-        // Use the first geo_term (short city name) for search queries instead of the
-        // full Nominatim display_name which is too verbose for good search results.
-        let short_name = self
-            .region
-            .geo_terms
-            .first()
-            .unwrap_or(&self.region.name);
-        let queries = [
-            format!("site:linktr.ee mutual aid {short_name}"),
-            format!("site:linktr.ee community {short_name}"),
-            format!("site:linktr.ee {short_name}"),
-            format!("{short_name} community organizations"),
-        ];
-
-        let mut discovered = Vec::new();
-        let mut seen_urls = std::collections::HashSet::new();
-
-        for query in &queries {
-            let urls: Vec<String> = match async {
-                let handle = self.archive.source(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                let search = handle.search(query).max_results(10).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                Ok::<_, anyhow::Error>(search.results.into_iter().map(|r| r.url).collect::<Vec<_>>())
-            }
-            .await
-            {
-                Ok(urls) => urls,
-                Err(e) => {
-                    warn!(query = query.as_str(), error = %e, "Actor discovery search failed");
-                    continue;
-                }
-            };
-
-            for url in &urls {
-                if !seen_urls.insert(url.clone()) {
-                    continue; // already processed this URL from a previous query
-                }
-                match crate::discovery::actor_discovery::create_actor_from_page(
-                    &self.archive,
-                    self.writer,
-                    &self.anthropic_api_key,
-                    url,
-                    short_name,
-                    true, // require social links
-                    self.region.center_lat,
-                    self.region.center_lng,
-                )
-                .await
-                {
-                    Ok(Some(result)) => {
-                        discovered.push((result.actor_id, result.location_name.clone()));
-                    }
-                    Ok(None) => {} // not an actor page
-                    Err(e) => {
-                        warn!(url = url.as_str(), error = %e, "Failed to process actor page");
-                    }
-                }
-            }
-        }
-
-        discovered
     }
 
     /// Use Claude Haiku to generate seed web search queries for the region.
@@ -315,6 +242,23 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
             // Site-scoped search: Serper will query `site:gofundme.com/f/ {region} {topic}`
             make_query(
                 &format!("site:gofundme.com/f/ {}", region_name),
+                SourceRole::Response,
+            ),
+            // Community org discovery (Linktree, org directories)
+            make_query(
+                &format!("site:linktr.ee mutual aid {}", region_name),
+                SourceRole::Response,
+            ),
+            make_query(
+                &format!("site:linktr.ee community {}", region_name),
+                SourceRole::Response,
+            ),
+            make_query(
+                &format!("site:linktr.ee {}", region_name),
+                SourceRole::Response,
+            ),
+            make_query(
+                &format!("{} community organizations", region_name),
                 SourceRole::Response,
             ),
         ];

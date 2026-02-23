@@ -48,7 +48,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 .transition_task_phase_status(
                     &tid,
                     &[
-                        "idle", "bootstrap_complete", "actor_discovery_complete",
+                        "idle", "bootstrap_complete",
                         "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete",
                     ],
                     "running_bootstrap",

@@ -177,18 +177,6 @@ impl<'a> ScrapePipeline<'a> {
             .await
             .unwrap_or_default();
 
-        if actors_in_region.is_empty() {
-            info!("No actors in region — running actor discovery");
-            let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
-                &self.writer,
-                self.archive.clone(),
-                &self.anthropic_api_key,
-                self.region.clone(),
-            );
-            let discovered = bootstrapper.discover_actor_pages().await;
-            info!(count = discovered.len(), "Actor discovery complete");
-        }
-
         // Actor sources — inject known actor accounts with elevated priority
         let actor_pairs = match self.writer
             .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)

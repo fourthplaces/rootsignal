@@ -54,6 +54,7 @@ fn test_meta(title: &str) -> NodeMeta {
         implied_queries: vec![],
         channel_diversity: 1,
         mentioned_actors: vec![],
+        author_actor: None,
     }
 }
 

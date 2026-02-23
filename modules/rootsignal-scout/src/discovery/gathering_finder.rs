@@ -653,6 +653,7 @@ impl<'a> GatheringFinder<'a> {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
@@ -984,6 +985,7 @@ mod tests {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
 
         let node = Node::Gathering(GatheringNode {

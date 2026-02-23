@@ -256,6 +256,9 @@ pub struct NodeMeta {
     /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
+    /// The actor that authored/published this signal's source content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_actor: Option<String>,
 }
 
 // --- Signal Node Types ---

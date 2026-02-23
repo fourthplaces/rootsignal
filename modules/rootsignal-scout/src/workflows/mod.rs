@@ -6,9 +6,6 @@
 //! Follows the same single-binary pattern as mntogether: each workflow impl holds
 //! `Arc<ScoutDeps>` and constructs per-invocation resources from the shared deps.
 
-pub mod actor_discovery;
-pub mod actor_discovery_batch;
-pub mod actor_service;
 pub mod bootstrap;
 pub mod full_run;
 pub mod news_scanner;
@@ -95,7 +92,7 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
 }
 
 // ---------------------------------------------------------------------------
-// Workflow helpers — shared across all 7 workflows
+// Workflow helpers — shared across all workflows
 // ---------------------------------------------------------------------------
 
 /// Write phase status to the ScoutTask node.

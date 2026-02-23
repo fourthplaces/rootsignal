@@ -122,51 +122,6 @@ export const SUBMIT_SOURCE = gql`
   }
 `;
 
-export const CREATE_ACTOR = gql`
-  mutation CreateActor(
-    $name: String!
-    $actorType: String
-    $location: String!
-    $bio: String
-    $socialAccounts: [String!]
-  ) {
-    createActor(
-      name: $name
-      actorType: $actorType
-      location: $location
-      bio: $bio
-      socialAccounts: $socialAccounts
-    ) {
-      success
-      actorId
-      locationName
-    }
-  }
-`;
-
-export const SUBMIT_ACTOR = gql`
-  mutation SubmitActor($url: String!, $region: String) {
-    submitActor(url: $url, region: $region) {
-      success
-      actorId
-      locationName
-    }
-  }
-`;
-
-export const DISCOVER_ACTORS = gql`
-  mutation DiscoverActors($query: String!, $region: String!, $maxResults: Int) {
-    discoverActors(query: $query, region: $region, maxResults: $maxResults) {
-      discovered
-      actors {
-        success
-        actorId
-        locationName
-      }
-    }
-  }
-`;
-
 export const DISMISS_FINDING = gql`
   mutation DismissFinding($id: String!) {
     dismissFinding(id: $id)

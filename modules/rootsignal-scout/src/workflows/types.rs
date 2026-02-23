@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 pub enum WorkflowPhase {
     Pending,
     Bootstrap,
-    ActorDiscovery,
     Scraping,
     Synthesis,
     SituationWeaving,
@@ -33,7 +32,6 @@ impl fmt::Display for WorkflowPhase {
         match self {
             Self::Pending => write!(f, "pending"),
             Self::Bootstrap => write!(f, "Running bootstrap..."),
-            Self::ActorDiscovery => write!(f, "Discovering actors..."),
             Self::Scraping => write!(f, "Scraping sources..."),
             Self::Synthesis => write!(f, "Running synthesis..."),
             Self::SituationWeaving => write!(f, "Weaving situations..."),
@@ -77,11 +75,6 @@ pub struct BootstrapResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActorDiscoveryResult {
-    pub actors_discovered: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResult {
     pub urls_scraped: u32,
     pub signals_stored: u32,
@@ -113,68 +106,9 @@ pub struct NewsScanResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullRunResult {
     pub sources_created: u32,
-    pub actors_discovered: u32,
     pub urls_scraped: u32,
     pub signals_stored: u32,
     pub issues_found: u32,
-}
-
-// ---------------------------------------------------------------------------
-// Actor service requests/responses
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateFromPageRequest {
-    pub url: String,
-    pub fallback_region: String,
-    pub require_social_links: bool,
-    pub region_center_lat: f64,
-    pub region_center_lng: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateManualActorRequest {
-    pub name: String,
-    pub actor_type: Option<String>,
-    pub location: String,
-    pub bio: Option<String>,
-    pub social_accounts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddAccountRequest {
-    pub actor_id: String,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverActorsBatchRequest {
-    pub query: String,
-    pub region: String,
-    pub max_results: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateFromPageResult {
-    pub actor_id: Option<String>,
-    pub location_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateManualActorResult {
-    pub actor_id: String,
-    pub location_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddAccountResult {
-    pub success: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverActorsBatchResult {
-    pub discovered: u32,
-    pub actors: Vec<CreateFromPageResult>,
 }
 
 // ---------------------------------------------------------------------------
@@ -185,28 +119,9 @@ crate::impl_restate_serde!(TaskRequest);
 crate::impl_restate_serde!(BudgetedTaskRequest);
 crate::impl_restate_serde!(EmptyRequest);
 crate::impl_restate_serde!(BootstrapResult);
-crate::impl_restate_serde!(ActorDiscoveryResult);
 crate::impl_restate_serde!(ScrapeResult);
 crate::impl_restate_serde!(SynthesisResult);
 crate::impl_restate_serde!(SituationWeaverResult);
 crate::impl_restate_serde!(SupervisorResult);
 crate::impl_restate_serde!(NewsScanResult);
 crate::impl_restate_serde!(FullRunResult);
-crate::impl_restate_serde!(CreateFromPageRequest);
-crate::impl_restate_serde!(CreateManualActorRequest);
-crate::impl_restate_serde!(AddAccountRequest);
-crate::impl_restate_serde!(DiscoverActorsBatchRequest);
-crate::impl_restate_serde!(CreateFromPageResult);
-crate::impl_restate_serde!(CreateManualActorResult);
-crate::impl_restate_serde!(AddAccountResult);
-crate::impl_restate_serde!(DiscoverActorsBatchResult);
-
-// Newtype wrappers for ctx.run() journaling (orphan rule prevents impl on Vec<String> etc.)
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct UrlList(pub Vec<String>);
-crate::impl_restate_serde!(UrlList);
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct MaybeActor(pub Option<CreateFromPageResult>);
-crate::impl_restate_serde!(MaybeActor);

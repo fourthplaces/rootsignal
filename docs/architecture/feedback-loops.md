@@ -30,7 +30,7 @@ flowchart TB
     end
 
     subgraph DISCOVER ["Phase 7: Discover"]
-        Actors["Actor Discovery<br/><i>mentions → sources</i>"]
+        Actors["Actor Emergence<br/><i>author + mentions → sources</i>"]
         Curiosity["Curiosity Engine<br/><i>LLM briefing → queries</i>"]
         Mechanical["Mechanical Fallback<br/><i>template queries</i>"]
     end
@@ -268,7 +268,7 @@ flowchart LR
         direction TB
         R1["Scrape + Extract"]
         R2["Clustering"]
-        R3["Actor Discovery<br/><i>graph reads only</i>"]
+        R3["Actor Emergence<br/><i>graph reads only</i>"]
         R1 --> R2 --> R3
     end
 
@@ -477,7 +477,7 @@ These appear in the LLM prompt as "Worked well" and "Didn't work" sections, with
 **Effect:** Four-level degradation:
 1. Full LLM discovery (normal)
 2. Mechanical template fallback (budget/API/cold-start)
-3. Actor discovery only (always free — graph reads)
+3. Actor emergence only (always free — graph reads from extraction)
 4. No discovery (no tensions/actors — correct behavior)
 
 The system never crashes from budget exhaustion. It gracefully drops expensive features.
@@ -643,7 +643,7 @@ How the scout decides which discovery strategy to use.
 
 ```mermaid
 flowchart TB
-    Start["Phase 7: Discovery"] --> Actors["Always: discover_from_actors()<br/><i>free — graph reads only</i>"]
+    Start["Phase 7: Discovery"] --> Actors["Always: actor emergence<br/><i>author_actor + mentioned_actors<br/>from extraction</i>"]
     Actors --> HasClaude{"Claude API<br/>key set?"}
     HasClaude -- no --> Mechanical["Mechanical fallback<br/><i>template queries</i>"]
     HasClaude -- yes --> HasBudget{"Budget<br/>remaining?"}

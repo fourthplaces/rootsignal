@@ -150,6 +150,7 @@ fn convert_response(response: &ExtractionResponse, _source_url: &str) -> Extract
             implied_queries: signal.implied_queries.clone(),
             channel_diversity: 1,
             mentioned_actors,
+            author_actor: None,
         };
 
         let node = match signal.signal_type.as_str() {
@@ -312,6 +313,7 @@ fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionRespons
                     mentioned_actors: None, source_url: None, what_would_help: None,
                     implied_queries: vec![], resources: vec![], tags: vec![],
                     is_firsthand: None,
+                    author_actor: None,
                 },
             };
 
@@ -360,6 +362,7 @@ fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionRespons
                 resources: vec![],
                 tags: vec![],
                 is_firsthand: None,
+                author_actor: None,
             }
         })
         .collect();

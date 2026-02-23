@@ -13,11 +13,6 @@ use rootsignal_common::{
 };
 use rootsignal_graph::GraphWriter;
 
-use rootsignal_scout::discovery::actor_discovery::geocode_location;
-use rootsignal_scout::workflows::types::{
-    AddAccountRequest, CreateFromPageRequest, CreateManualActorRequest,
-    DiscoverActorsBatchRequest,
-};
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -67,22 +62,9 @@ struct ScoutResult {
 }
 
 #[derive(SimpleObject)]
-struct ActorResult {
-    success: bool,
-    actor_id: Option<String>,
-    location_name: Option<String>,
-}
-
-#[derive(SimpleObject)]
 struct SubmitSourceResult {
     success: bool,
     source_id: Option<String>,
-}
-
-#[derive(SimpleObject)]
-struct DiscoverActorsResult {
-    discovered: u32,
-    actors: Vec<ActorResult>,
 }
 
 /// Test phone number — only available in debug builds.
@@ -686,166 +668,6 @@ impl MutationRoot {
         })
     }
 
-    // ========== Actor mutations (AdminGuard) ==========
-
-    /// Create an actor with a location string (geocoded on backend).
-    /// Links social accounts if provided. The actor will be scraped on subsequent
-    /// scout runs if it has a location and linked accounts.
-    #[graphql(guard = "AdminGuard")]
-    async fn create_actor(
-        &self,
-        ctx: &Context<'_>,
-        name: String,
-        #[graphql(desc = "organization | individual | government_body | coalition")]
-        actor_type: Option<String>,
-        #[graphql(desc = "Location string, e.g. 'Minneapolis, MN' — geocoded on backend")]
-        location: String,
-        bio: Option<String>,
-        #[graphql(desc = "Social account URLs to link (e.g. https://instagram.com/handle)")]
-        social_accounts: Option<Vec<String>>,
-    ) -> Result<ActorResult> {
-        let name = name.trim().to_string();
-        let location = location.trim().to_string();
-
-        if name.is_empty() {
-            return Err("Name is required".into());
-        }
-        if location.is_empty() {
-            return Err("Location is required".into());
-        }
-
-        let restate = require_restate(ctx)?;
-        let req = CreateManualActorRequest {
-            name,
-            actor_type,
-            location,
-            bio,
-            social_accounts: social_accounts.unwrap_or_default(),
-        };
-
-        let result = restate
-            .create_manual_actor(&req)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        Ok(ActorResult {
-            success: true,
-            actor_id: Some(result.actor_id),
-            location_name: Some(result.location_name),
-        })
-    }
-
-    /// Submit a URL and create an actor from it if the page represents one.
-    /// Fetches the page, detects social links from HTML, uses LLM to extract actor identity.
-    #[graphql(guard = "AdminGuard")]
-    async fn submit_actor(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "Any URL — org website, Linktree, about page")]
-        url: String,
-        #[graphql(desc = "Fallback location for geocoding if page doesn't mention one")]
-        region: Option<String>,
-    ) -> Result<ActorResult> {
-        let config = ctx.data_unchecked::<Arc<Config>>();
-        let restate = require_restate(ctx)?;
-
-        let fallback_region = region.unwrap_or_else(|| config.region.clone());
-        let req = CreateFromPageRequest {
-            url,
-            fallback_region,
-            require_social_links: false,
-            region_center_lat: 0.0,
-            region_center_lng: 0.0,
-        };
-
-        let result = restate
-            .create_actor_from_page(&req)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        match result.actor_id {
-            Some(actor_id) => Ok(ActorResult {
-                success: true,
-                actor_id: Some(actor_id),
-                location_name: result.location_name,
-            }),
-            None => Err("Page does not represent a specific actor".into()),
-        }
-    }
-
-    /// Search the web and create actors from result pages that represent organizations/individuals.
-    /// Skips pages without social links to avoid expensive LLM calls on non-actor pages.
-    #[graphql(guard = "AdminGuard")]
-    async fn discover_actors(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "Web search query, e.g. 'mutual aid Minneapolis'")]
-        query: String,
-        #[graphql(desc = "Fallback location for all discovered actors")]
-        region: String,
-        #[graphql(desc = "Maximum search results to process (default 10)")]
-        max_results: Option<i32>,
-    ) -> Result<DiscoverActorsResult> {
-        let restate = require_restate(ctx)?;
-        let max = max_results.unwrap_or(10).min(50) as usize;
-        let key = format!("discover-{}", chrono::Utc::now().timestamp());
-
-        let req = DiscoverActorsBatchRequest {
-            query,
-            region,
-            max_results: max,
-        };
-
-        let result = restate
-            .discover_actors_batch(&key, &req)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        let actors = result
-            .actors
-            .into_iter()
-            .map(|a| ActorResult {
-                success: true,
-                actor_id: a.actor_id,
-                location_name: a.location_name,
-            })
-            .collect();
-
-        Ok(DiscoverActorsResult {
-            discovered: result.discovered,
-            actors,
-        })
-    }
-
-    /// Add a social account to an existing actor.
-    #[graphql(guard = "AdminGuard")]
-    async fn add_actor_account(
-        &self,
-        ctx: &Context<'_>,
-        actor_id: String,
-        url: String,
-    ) -> Result<ActorResult> {
-        // Validate UUID format before dispatching
-        Uuid::parse_str(&actor_id)
-            .map_err(|_| async_graphql::Error::new("Invalid actor ID"))?;
-
-        let restate = require_restate(ctx)?;
-        let req = AddAccountRequest {
-            actor_id: actor_id.clone(),
-            url: url.trim().to_string(),
-        };
-
-        restate
-            .add_actor_account(&req)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        Ok(ActorResult {
-            success: true,
-            actor_id: Some(actor_id),
-            location_name: None,
-        })
-    }
 }
 
 fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {
@@ -884,5 +706,36 @@ fn require_restate<'a>(ctx: &'a Context<'_>) -> Result<&'a RestateClient> {
         .ok_or_else(|| {
             async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
         })
+}
+
+#[derive(serde::Deserialize)]
+struct NominatimResult {
+    lat: String,
+    lon: String,
+    display_name: String,
+}
+
+/// Geocode a location string to (lat, lng, display_name) using Nominatim.
+async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> {
+    if location.len() > 200 {
+        anyhow::bail!("Location input too long (max 200 chars)");
+    }
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://nominatim.openstreetmap.org/search")
+        .query(&[("q", location), ("format", "json"), ("limit", "1")])
+        .header("User-Agent", "rootsignal/1.0")
+        .send()
+        .await?;
+
+    let results: Vec<NominatimResult> = resp.json().await?;
+    let first = results
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No geocoding results for '{}'", location))?;
+
+    let lat: f64 = first.lat.parse()?;
+    let lon: f64 = first.lon.parse()?;
+    Ok((lat, lon, first.display_name))
 }
 

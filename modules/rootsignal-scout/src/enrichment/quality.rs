@@ -131,6 +131,7 @@ mod tests {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         }
     }
 

@@ -50,7 +50,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
                 .transition_task_phase_status(
                     &tid,
                     &[
-                        "actor_discovery_complete", "scrape_complete", "synthesis_complete",
+                        "bootstrap_complete", "scrape_complete", "synthesis_complete",
                         "situation_weaver_complete", "complete",
                     ],
                     "running_scrape",

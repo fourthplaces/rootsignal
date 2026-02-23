@@ -5,11 +5,6 @@
 
 use reqwest::Client;
 use rootsignal_common::ScoutScope;
-use rootsignal_scout::workflows::types::{
-    AddAccountRequest, AddAccountResult, CreateFromPageRequest, CreateFromPageResult,
-    CreateManualActorRequest, CreateManualActorResult, DiscoverActorsBatchRequest,
-    DiscoverActorsBatchResult,
-};
 use thiserror::Error;
 use tracing::info;
 
@@ -26,7 +21,6 @@ pub enum RestateError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScoutPhase {
     Bootstrap,
-    ActorDiscovery,
     Scrape,
     Synthesis,
     SituationWeaver,
@@ -38,7 +32,6 @@ impl ScoutPhase {
     pub fn workflow_name(&self) -> &'static str {
         match self {
             Self::Bootstrap => "BootstrapWorkflow",
-            Self::ActorDiscovery => "ActorDiscoveryWorkflow",
             Self::Scrape => "ScrapeWorkflow",
             Self::Synthesis => "SynthesisWorkflow",
             Self::SituationWeaver => "SituationWeaverWorkflow",
@@ -91,7 +84,8 @@ impl RestateClient {
         scope: &ScoutScope,
     ) -> Result<(), RestateError> {
         let workflow_name = phase.workflow_name();
-        let url = format!("{}/{workflow_name}/{task_id}/run", self.ingress_url);
+        let key = format!("{task_id}-{}", chrono::Utc::now().timestamp());
+        let url = format!("{}/{workflow_name}/{key}/run", self.ingress_url);
         info!(url = url.as_str(), phase = ?phase, task_id, "Dispatching individual phase via Restate");
 
         let body = match phase {
@@ -123,86 +117,6 @@ impl RestateClient {
 
         if resp.status().is_success() {
             Ok(())
-        } else {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            Err(RestateError::Ingress { status, body })
-        }
-    }
-
-    /// Create an actor from a web page via the ActorService.
-    pub async fn create_actor_from_page(
-        &self,
-        req: &CreateFromPageRequest,
-    ) -> Result<CreateFromPageResult, RestateError> {
-        let url = format!("{}/ActorService/create_from_page", self.ingress_url);
-        info!(url = url.as_str(), "Dispatching create_from_page via Restate");
-
-        let resp = self.http.post(&url).json(req).send().await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            Err(RestateError::Ingress { status, body })
-        }
-    }
-
-    /// Create a manual actor via the ActorService.
-    pub async fn create_manual_actor(
-        &self,
-        req: &CreateManualActorRequest,
-    ) -> Result<CreateManualActorResult, RestateError> {
-        let url = format!("{}/ActorService/create_manual", self.ingress_url);
-        info!(url = url.as_str(), "Dispatching create_manual via Restate");
-
-        let resp = self.http.post(&url).json(req).send().await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            Err(RestateError::Ingress { status, body })
-        }
-    }
-
-    /// Add an account to an actor via the ActorService.
-    pub async fn add_actor_account(
-        &self,
-        req: &AddAccountRequest,
-    ) -> Result<AddAccountResult, RestateError> {
-        let url = format!("{}/ActorService/add_account", self.ingress_url);
-        info!(url = url.as_str(), "Dispatching add_account via Restate");
-
-        let resp = self.http.post(&url).json(req).send().await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            Err(RestateError::Ingress { status, body })
-        }
-    }
-
-    /// Discover actors in batch via web search.
-    pub async fn discover_actors_batch(
-        &self,
-        key: &str,
-        req: &DiscoverActorsBatchRequest,
-    ) -> Result<DiscoverActorsBatchResult, RestateError> {
-        let url = format!(
-            "{}/ActorDiscoveryBatchWorkflow/{key}/run",
-            self.ingress_url
-        );
-        info!(url = url.as_str(), "Dispatching actor discovery batch via Restate");
-
-        let resp = self.http.post(&url).json(req).send().await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
         } else {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();

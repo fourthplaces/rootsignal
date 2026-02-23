@@ -64,7 +64,6 @@ type ScoutTask = {
 type ScoutPhaseValue =
   | "FULL_RUN"
   | "BOOTSTRAP"
-  | "ACTOR_DISCOVERY"
   | "SCRAPE"
   | "SYNTHESIS"
   | "SITUATION_WEAVER"
@@ -73,7 +72,6 @@ type ScoutPhaseValue =
 const PHASES: { value: ScoutPhaseValue; label: string }[] = [
   { value: "FULL_RUN", label: "Full Run" },
   { value: "BOOTSTRAP", label: "Bootstrap" },
-  { value: "ACTOR_DISCOVERY", label: "Actor Discovery" },
   { value: "SCRAPE", label: "Scrape" },
   { value: "SYNTHESIS", label: "Synthesis" },
   { value: "SITUATION_WEAVER", label: "Situation Weaver" },
@@ -87,14 +85,9 @@ function phaseEnabled(phase: ScoutPhaseValue, status: string): boolean {
   switch (phase) {
     case "BOOTSTRAP":
       return true;
-    case "ACTOR_DISCOVERY":
-      return [
-        "bootstrap_complete", "actor_discovery_complete", "scrape_complete",
-        "synthesis_complete", "situation_weaver_complete", "complete",
-      ].includes(status);
     case "SCRAPE":
       return [
-        "actor_discovery_complete", "scrape_complete", "synthesis_complete",
+        "bootstrap_complete", "scrape_complete", "synthesis_complete",
         "situation_weaver_complete", "complete",
       ].includes(status);
     case "SYNTHESIS":

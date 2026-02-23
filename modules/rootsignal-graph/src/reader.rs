@@ -1978,6 +1978,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         channel_diversity: channel_diversity as u32,
         mentioned_actors: Vec::new(),
         implied_queries: Vec::new(),
+        author_actor: None,
     };
 
     match node_type {

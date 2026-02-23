@@ -709,6 +709,7 @@ impl<'a> ResponseFinder<'a> {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
@@ -886,6 +887,7 @@ impl<'a> ResponseFinder<'a> {
                 channel_diversity: 1,
                 mentioned_actors: vec![],
                 implied_queries: vec![],
+                author_actor: None,
             },
             severity,
             category: Some(tension.category.clone()),
@@ -1110,6 +1112,7 @@ mod tests {
             channel_diversity: 1,
             mentioned_actors: vec![],
             implied_queries: vec![],
+            author_actor: None,
         };
 
         let node = Node::Aid(AidNode {

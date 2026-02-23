@@ -1,7 +1,7 @@
 //! Restate durable workflow for a full scout run.
 //!
 //! Orchestrator that calls all phase workflows in sequence:
-//! Bootstrap → ActorDiscovery → Scrape → Synthesis → SituationWeaver → Supervisor
+//! Bootstrap → Scrape → Synthesis → SituationWeaver → Supervisor
 //!
 //! Budget flows as `spent_cents` between workflows.
 
@@ -60,22 +60,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
             "Bootstrap phase complete"
         );
 
-        // 2. Actor Discovery
-        ctx.set("status", WorkflowPhase::ActorDiscovery.to_string());
-        let discovery_result: ActorDiscoveryResult = ctx
-            .workflow_client::<super::actor_discovery::ActorDiscoveryWorkflowClient>(&sub_key)
-            .run(TaskRequest {
-                task_id: task_id.clone(),
-                scope: scope.clone(),
-            })
-            .call()
-            .await?;
-        info!(
-            actors_discovered = discovery_result.actors_discovered,
-            "Actor discovery phase complete"
-        );
-
-        // 3. Scrape
+        // 2. Scrape
         ctx.set("status", WorkflowPhase::Scraping.to_string());
         let scrape_result: ScrapeResult = ctx
             .workflow_client::<super::scrape::ScrapeWorkflowClient>(&sub_key)
@@ -93,7 +78,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         let mut spent_cents = scrape_result.spent_cents;
 
-        // 4. Synthesis
+        // 3. Synthesis
         ctx.set("status", WorkflowPhase::Synthesis.to_string());
         let synthesis_result: SynthesisResult = ctx
             .workflow_client::<super::synthesis::SynthesisWorkflowClient>(&sub_key)
@@ -107,7 +92,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         spent_cents = synthesis_result.spent_cents;
         info!("Synthesis phase complete");
 
-        // 5. Situation Weaving
+        // 4. Situation Weaving
         ctx.set("status", WorkflowPhase::SituationWeaving.to_string());
         let _weaver_result: SituationWeaverResult = ctx
             .workflow_client::<super::situation_weaver::SituationWeaverWorkflowClient>(&sub_key)
@@ -120,7 +105,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
             .await?;
         info!("Situation weaving phase complete");
 
-        // 6. Supervisor
+        // 5. Supervisor
         ctx.set("status", WorkflowPhase::Supervisor.to_string());
         let supervisor_result: SupervisorResult = ctx
             .workflow_client::<super::supervisor::SupervisorWorkflowClient>(&sub_key)
@@ -139,7 +124,6 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         Ok(FullRunResult {
             sources_created: bootstrap_result.sources_created,
-            actors_discovered: discovery_result.actors_discovered,
             urls_scraped: scrape_result.urls_scraped,
             signals_stored: scrape_result.signals_stored,
             issues_found: supervisor_result.issues_found,

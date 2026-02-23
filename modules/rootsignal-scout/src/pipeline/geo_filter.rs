@@ -151,6 +151,7 @@ mod tests {
             implied_queries: Vec::new(),
             channel_diversity: 1,
             mentioned_actors: Vec::new(),
+            author_actor: None,
         }
     }
 

@@ -935,10 +935,10 @@ impl ScrapePhase {
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
     /// across Instagram, X/Twitter, TikTok, and GoFundMe.
     pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext, run_log: &mut RunLog) {
-        const MAX_SOCIAL_SEARCHES: usize = 6;
+        const MAX_SOCIAL_SEARCHES: usize = 10;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
-        const MAX_SITE_SEARCH_TOPICS: usize = 2;
+        const MAX_SITE_SEARCH_TOPICS: usize = 4;
         const SITE_SEARCH_RESULTS: usize = 5;
 
         if topics.is_empty() {
@@ -1768,6 +1768,57 @@ impl ScrapePhase {
                         .await
                     {
                         warn!(error = %e, actor = actor_name, "Failed to link actor to signal (non-fatal)");
+                    }
+                }
+            }
+
+            // Resolve author_actor → Actor node + AUTHORED edge
+            if let Some(meta) = node.meta() {
+                if let Some(author_name) = &meta.author_actor {
+                    let author_name = author_name.trim();
+                    if !author_name.is_empty() {
+                        let actor_id = match self.writer.find_actor_by_name(author_name).await {
+                            Ok(Some(id)) => Some(id),
+                            Ok(None) => {
+                                let actor = ActorNode {
+                                    id: Uuid::new_v4(),
+                                    name: author_name.to_string(),
+                                    actor_type: ActorType::Organization,
+                                    entity_id: author_name.to_lowercase().replace(' ', "-"),
+                                    domains: vec![],
+                                    social_urls: vec![],
+                                    description: String::new(),
+                                    signal_count: 0,
+                                    first_seen: Utc::now(),
+                                    last_active: Utc::now(),
+                                    typical_roles: vec![],
+                                    bio: None,
+                                    location_lat: None,
+                                    location_lng: None,
+                                    location_name: None,
+                                };
+                                match self.writer.upsert_actor(&actor).await {
+                                    Ok(_) => Some(actor.id),
+                                    Err(e) => {
+                                        warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
+                                        None
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, actor = author_name, "Author actor lookup failed (non-fatal)");
+                                None
+                            }
+                        };
+                        if let Some(actor_id) = actor_id {
+                            if let Err(e) = self
+                                .writer
+                                .link_actor_to_signal(actor_id, node_id, "authored")
+                                .await
+                            {
+                                warn!(error = %e, actor = author_name, "Failed to link author actor to signal (non-fatal)");
+                            }
+                        }
                     }
                 }
             }
