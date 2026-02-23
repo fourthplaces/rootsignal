@@ -1734,6 +1734,11 @@ impl ScrapePhase {
                     let actor_id = match self.writer.find_actor_by_name(actor_name).await {
                         Ok(Some(id)) => id,
                         Ok(None) => {
+                            let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
+                                (Some(geo.lat), Some(geo.lng), meta.location_name.clone())
+                            } else {
+                                (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
+                            };
                             let actor = ActorNode {
                                 id: Uuid::new_v4(),
                                 name: actor_name.clone(),
@@ -1747,9 +1752,9 @@ impl ScrapePhase {
                                 last_active: Utc::now(),
                                 typical_roles: vec![],
                                 bio: None,
-                                location_lat: None,
-                                location_lng: None,
-                                location_name: None,
+                                location_lat: loc_lat,
+                                location_lng: loc_lng,
+                                location_name: loc_name,
                             };
                             if let Err(e) = self.writer.upsert_actor(&actor).await {
                                 warn!(error = %e, actor = actor_name, "Failed to create actor (non-fatal)");
@@ -1780,6 +1785,11 @@ impl ScrapePhase {
                         let actor_id = match self.writer.find_actor_by_name(author_name).await {
                             Ok(Some(id)) => Some(id),
                             Ok(None) => {
+                                let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
+                                    (Some(geo.lat), Some(geo.lng), meta.location_name.clone())
+                                } else {
+                                    (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
+                                };
                                 let actor = ActorNode {
                                     id: Uuid::new_v4(),
                                     name: author_name.to_string(),
@@ -1793,9 +1803,9 @@ impl ScrapePhase {
                                     last_active: Utc::now(),
                                     typical_roles: vec![],
                                     bio: None,
-                                    location_lat: None,
-                                    location_lng: None,
-                                    location_name: None,
+                                    location_lat: loc_lat,
+                                    location_lng: loc_lng,
+                                    location_name: loc_name,
                                 };
                                 match self.writer.upsert_actor(&actor).await {
                                     Ok(_) => Some(actor.id),
