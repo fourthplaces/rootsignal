@@ -377,7 +377,16 @@ async fn main() -> Result<()> {
     info!("Root Signal API starting on {addr}");
     info!("GraphQL endpoint at http://{addr}/graphql");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let listener = loop {
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => break l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tracing::warn!("API port {addr} in use, retrying in 3s");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
