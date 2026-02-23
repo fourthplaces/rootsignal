@@ -74,13 +74,20 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let result = loop {
             tokio::select! {
                 result = &mut handle => {
-                    break result
+                    match result
                         .map_err(|e| -> HandlerError {
                             TerminalError::new(format!("Scrape task panicked: {e}")).into()
-                        })?
-                        .map_err(|e| -> HandlerError {
+                        })
+                        .and_then(|r| r.map_err(|e| -> HandlerError {
                             TerminalError::new(e.to_string()).into()
-                        })?;
+                        }))
+                    {
+                        Ok(v) => break v,
+                        Err(e) => {
+                            super::write_phase_status(&self.deps, &slug, "idle").await;
+                            return Err(e);
+                        }
+                    }
                 }
                 Ok(()) = status_rx.changed() => {
                     ctx.set("status", status_rx.borrow_and_update().clone());

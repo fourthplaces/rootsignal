@@ -60,7 +60,7 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
-        let actors_discovered = ctx
+        let actors_discovered = match ctx
             .run(|| async {
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
@@ -71,7 +71,14 @@ impl ActorDiscoveryWorkflow for ActorDiscoveryWorkflowImpl {
                 let discovered = bootstrapper.discover_actor_pages().await;
                 Ok::<_, HandlerError>(discovered.len() as u32)
             })
-            .await?;
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e.into());
+            }
+        };
 
         let region_key = rootsignal_common::slugify(&req.scope.name);
         super::write_phase_status(&self.deps, &region_key, "actor_discovery_complete").await;

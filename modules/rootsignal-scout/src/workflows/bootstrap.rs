@@ -60,7 +60,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
-        let sources_created = ctx
+        let sources_created = match ctx
             .run(|| async {
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
@@ -75,7 +75,14 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                         TerminalError::new(e.to_string()).into()
                     })
             })
-            .await?;
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e.into());
+            }
+        };
 
         let region_key = rootsignal_common::slugify(&req.scope.name);
         super::write_phase_status(&self.deps, &region_key, "bootstrap_complete").await;

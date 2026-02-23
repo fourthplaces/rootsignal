@@ -66,10 +66,17 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         let scope = req.scope.clone();
         let spent_cents = req.spent_cents;
 
-        let result = super::spawn_workflow("Synthesis", async move {
+        let result = match super::spawn_workflow("Synthesis", async move {
             run_synthesis_from_deps(&deps, &scope, spent_cents).await
         })
-        .await?;
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::write_phase_status(&self.deps, &slug, "idle").await;
+                return Err(e);
+            }
+        };
 
         let region_key = rootsignal_common::slugify(&req.scope.name);
         super::write_phase_status(&self.deps, &region_key, "synthesis_complete").await;

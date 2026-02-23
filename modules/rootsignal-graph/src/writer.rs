@@ -1011,20 +1011,22 @@ impl GraphWriter {
 
     /// Atomically transition a region's scout run status. Returns false if the current
     /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
-    /// Cleans up stale running statuses (>30 min) before attempting transition.
+    /// Cleans up stale running statuses (>5 min) before attempting transition.
     pub async fn transition_region_status(
         &self,
         region: &str,
         allowed_from: &[&str],
         new_status: &str,
     ) -> Result<bool, neo4rs::Error> {
-        // Clean up stale running statuses for this region (>30 min)
+        // Clean up stale running statuses for this region (>5 min).
+        // If a workflow is genuinely still running, Restate will retry on failure;
+        // the guard only needs to block truly concurrent attempts.
         self.client
             .graph
             .run(query(
                 "MATCH (r:RegionScoutRun {region: $region}) \
                  WHERE r.status STARTS WITH 'running_' \
-                   AND r.updated_at < datetime() - duration('PT30M') \
+                   AND r.updated_at < datetime() - duration('PT5M') \
                  SET r.status = 'idle', r.updated_at = datetime()"
             ).param("region", region))
             .await?;
