@@ -12,6 +12,7 @@ import { ScoutPage } from "@/pages/ScoutPage";
 import { ScoutRunDetailPage } from "@/pages/ScoutRunDetailPage";
 import { ScoutTaskDetailPage } from "@/pages/ScoutTaskDetailPage";
 import { SituationsPage } from "@/pages/SituationsPage";
+import { ArchivePage } from "@/pages/ArchivePage";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
       <Route element={<AdminLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="scout" element={<ScoutPage />} />
+        <Route path="archive" element={<ArchivePage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />
         <Route path="stories" element={<StoriesPage />} />

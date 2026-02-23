@@ -149,6 +149,7 @@ export const ADMIN_SCOUT_TASKS = gql`
       priority
       source
       status
+      phaseStatus
       createdAt
       completedAt
     }
@@ -439,6 +440,143 @@ export const SUPERVISOR_SUMMARY = gql`
         label
         count
       }
+    }
+  }
+`;
+
+// --- Archive queries ---
+
+export const ADMIN_ARCHIVE_COUNTS = gql`
+  query AdminArchiveCounts {
+    adminArchiveCounts {
+      posts
+      shortVideos
+      stories
+      longVideos
+      pages
+      feeds
+      searchResults
+      files
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_VOLUME = gql`
+  query AdminArchiveVolume($days: Int) {
+    adminArchiveVolume(days: $days) {
+      day
+      posts
+      shortVideos
+      stories
+      longVideos
+      pages
+      feeds
+      searchResults
+      files
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_POSTS = gql`
+  query AdminArchivePosts($limit: Int) {
+    adminArchivePosts(limit: $limit) {
+      id
+      sourceUrl
+      permalink
+      author
+      textPreview
+      platform
+      hashtags
+      engagementSummary
+      publishedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_SHORT_VIDEOS = gql`
+  query AdminArchiveShortVideos($limit: Int) {
+    adminArchiveShortVideos(limit: $limit) {
+      id
+      sourceUrl
+      permalink
+      textPreview
+      engagementSummary
+      publishedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_STORIES = gql`
+  query AdminArchiveStories($limit: Int) {
+    adminArchiveStories(limit: $limit) {
+      id
+      sourceUrl
+      permalink
+      textPreview
+      location
+      expiresAt
+      fetchedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_LONG_VIDEOS = gql`
+  query AdminArchiveLongVideos($limit: Int) {
+    adminArchiveLongVideos(limit: $limit) {
+      id
+      sourceUrl
+      permalink
+      textPreview
+      engagementSummary
+      publishedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_PAGES = gql`
+  query AdminArchivePages($limit: Int) {
+    adminArchivePages(limit: $limit) {
+      id
+      sourceUrl
+      title
+      fetchedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_FEEDS = gql`
+  query AdminArchiveFeeds($limit: Int) {
+    adminArchiveFeeds(limit: $limit) {
+      id
+      sourceUrl
+      title
+      itemCount
+      fetchedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_SEARCH_RESULTS = gql`
+  query AdminArchiveSearchResults($limit: Int) {
+    adminArchiveSearchResults(limit: $limit) {
+      id
+      query
+      resultCount
+      fetchedAt
+    }
+  }
+`;
+
+export const ADMIN_ARCHIVE_FILES = gql`
+  query AdminArchiveFiles($limit: Int) {
+    adminArchiveFiles(limit: $limit) {
+      id
+      url
+      title
+      mimeType
+      duration
+      pageCount
+      fetchedAt
     }
   }
 `;
