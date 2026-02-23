@@ -14,5 +14,5 @@ pub use links::extract_links_by_pattern;
 pub use router::Platform;
 pub use source_handle::{
     SourceHandle, PostsRequest, StoriesRequest, ShortVideoRequest, VideoRequest,
-    PageRequest, FeedRequest, SearchRequest, TopicSearchRequest,
+    PageRequest, FeedRequest, SearchRequest, TopicSearchRequest, CrawlRequest,
 };
