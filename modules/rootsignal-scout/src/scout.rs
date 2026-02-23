@@ -15,7 +15,7 @@ use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
 use typed_builder::TypedBuilder;
 
-use rootsignal_archive::{Archive, ArchiveConfig, FetchBackend, PageBackend};
+use rootsignal_archive::{Archive, ArchiveConfig, PageBackend};
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
 use crate::infra::embedder::TextEmbedder;
@@ -132,12 +132,13 @@ pub struct ScrapePipeline<'a> {
     writer: GraphWriter,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     anthropic_api_key: String,
     region: ScoutScope,
     budget: &'a BudgetTracker,
     cancelled: Arc<AtomicBool>,
     run_id: String,
+    pg_pool: PgPool,
 }
 
 /// Phase 2 outputs that flow into subsequent phases.
@@ -155,12 +156,13 @@ impl<'a> ScrapePipeline<'a> {
         writer: GraphWriter,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
-        archive: Arc<dyn FetchBackend>,
+        archive: Arc<Archive>,
         anthropic_api_key: String,
         region: ScoutScope,
         budget: &'a BudgetTracker,
         cancelled: Arc<AtomicBool>,
         run_id: String,
+        pg_pool: PgPool,
     ) -> Self {
         Self {
             writer,
@@ -172,6 +174,7 @@ impl<'a> ScrapePipeline<'a> {
             budget,
             cancelled,
             run_id,
+            pg_pool,
         }
     }
 
@@ -551,12 +554,12 @@ impl<'a> ScrapePipeline<'a> {
     }
 
     /// Save run log and return final stats.
-    pub(crate) fn finalize(&self, ctx: RunContext, mut run_log: RunLog) -> ScoutStats {
+    pub(crate) async fn finalize(&self, ctx: RunContext, mut run_log: RunLog) -> ScoutStats {
         run_log.log(EventKind::BudgetCheckpoint {
             spent_cents: self.budget.total_spent(),
             remaining_cents: self.budget.remaining(),
         });
-        if let Err(e) = run_log.save(&ctx.stats) {
+        if let Err(e) = run_log.save_to_db(&self.pg_pool, &ctx.stats).await {
             warn!(error = %e, "Failed to save scout run log");
         }
 
@@ -585,7 +588,7 @@ impl<'a> ScrapePipeline<'a> {
 
         self.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
 
-        Ok(self.finalize(ctx, run_log))
+        Ok(self.finalize(ctx, run_log).await)
     }
 }
 
@@ -594,7 +597,7 @@ pub async fn run_synthesis(
     graph_client: &GraphClient,
     writer: &GraphWriter,
     embedder: &dyn TextEmbedder,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
     anthropic_api_key: &str,
     region: &ScoutScope,
     budget: &BudgetTracker,
@@ -826,7 +829,8 @@ pub struct Scout {
     writer: GraphWriter,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
-    archive: Arc<dyn FetchBackend>,
+    archive: Arc<Archive>,
+    pg_pool: PgPool,
     anthropic_api_key: String,
     region: ScoutScope,
     budget: BudgetTracker,
@@ -873,7 +877,6 @@ impl Scout {
     pub fn from_params(p: ScoutParams) -> Result<Self> {
         info!(region = p.region.name.as_str(), "Initializing scout");
 
-        let region_slug = rootsignal_common::slugify(&p.region.name);
         let archive_config = ArchiveConfig {
             page_backend: match p.browserless_url {
                 Some(ref url) => PageBackend::Browserless {
@@ -889,19 +892,10 @@ impl Scout {
             } else {
                 Some(p.apify_api_key.clone())
             },
-            anthropic_api_key: if p.anthropic_api_key.is_empty() {
-                None
-            } else {
-                Some(p.anthropic_api_key.clone())
-            },
         };
 
-        let archive = Arc::new(Archive::new(
-            p.pool,
-            archive_config,
-            Uuid::new_v4(),
-            region_slug,
-        ));
+        let pg_pool = p.pool.clone();
+        let archive = Arc::new(Archive::new(p.pool, archive_config));
 
         Ok(Self {
             graph_client: p.graph_client.clone(),
@@ -914,33 +908,12 @@ impl Scout {
             )),
             embedder: Arc::new(crate::infra::embedder::Embedder::new(&p.voyage_api_key)),
             archive,
+            pg_pool,
             anthropic_api_key: p.anthropic_api_key,
             region: p.region,
             budget: BudgetTracker::new(p.daily_budget_cents),
             cancelled: p.cancelled,
         })
-    }
-
-    /// Build a Scout with pre-built dependencies (for testing).
-    pub fn new_for_test(
-        graph_client: GraphClient,
-        extractor: Arc<dyn SignalExtractor>,
-        embedder: Arc<dyn TextEmbedder>,
-        archive: Arc<dyn FetchBackend>,
-        anthropic_api_key: &str,
-        region: ScoutScope,
-    ) -> Self {
-        Self {
-            graph_client: graph_client.clone(),
-            writer: GraphWriter::new(graph_client),
-            extractor,
-            embedder,
-            archive,
-            anthropic_api_key: anthropic_api_key.to_string(),
-            region,
-            budget: BudgetTracker::new(0), // Unlimited for tests
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
     }
 
     /// Check if the scout has been cancelled. Returns Err if so.
@@ -950,31 +923,31 @@ impl Scout {
 
     /// Run a full scout cycle.
     pub async fn run(&self) -> Result<ScoutStats> {
-        // Acquire per-region lock (slugified to match reset/check operations)
+        // Transition region status to running (acts as lock)
         let region_slug = rootsignal_common::slugify(&self.region.name);
+        let allowed = &["idle", "bootstrap_complete", "actor_discovery_complete",
+            "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete"];
         if !self
             .writer
-            .acquire_scout_lock(&region_slug)
+            .transition_region_status(&region_slug, allowed, "running_bootstrap")
             .await
-            .context("Failed to check scout lock")?
+            .context("Failed to check region run status")?
         {
             anyhow::bail!("Another scout run is in progress for {}", self.region.name);
         }
 
         let result = self.run_inner().await;
 
-        // Always release lock
-        if let Err(e) = self.writer.release_scout_lock(&region_slug).await {
-            error!("Failed to release scout lock: {e}");
+        // Set status to complete or reset to idle on failure
+        let final_status = if result.is_ok() { "complete" } else { "idle" };
+        if let Err(e) = self.writer.set_region_run_status(&region_slug, final_status).await {
+            error!("Failed to set region run status: {e}");
         }
 
         result
     }
 
     async fn run_inner(&self) -> Result<ScoutStats> {
-        // Ensure archive tables exist (idempotent)
-        self.archive.migrate().await?;
-
         let run_id = Uuid::new_v4().to_string();
         info!(run_id = run_id.as_str(), "Scout run started");
 
@@ -988,6 +961,7 @@ impl Scout {
             &self.budget,
             self.cancelled.clone(),
             run_id.clone(),
+            self.pg_pool.clone(),
         );
         let stats = pipeline.run_all().await?;
 

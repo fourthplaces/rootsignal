@@ -1009,50 +1009,117 @@ impl GraphWriter {
         Ok(deleted)
     }
 
-    /// Acquire a per-region scout lock. Returns false if a scout is already running for this region.
-    /// Cleans up stale locks (>30 min) from killed containers.
-    /// Uses a single atomic query to avoid TOCTOU race between check and create.
-    pub async fn acquire_scout_lock(&self, region: &str) -> Result<bool, neo4rs::Error> {
-        // Delete stale locks older than 30 minutes for this region
+    /// Atomically transition a region's scout run status. Returns false if the current
+    /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
+    /// Cleans up stale running statuses (>30 min) before attempting transition.
+    pub async fn transition_region_status(
+        &self,
+        region: &str,
+        allowed_from: &[&str],
+        new_status: &str,
+    ) -> Result<bool, neo4rs::Error> {
+        // Clean up stale running statuses for this region (>30 min)
         self.client
             .graph
             .run(query(
-                "MATCH (lock:ScoutLock {region: $region}) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
+                "MATCH (r:RegionScoutRun {region: $region}) \
+                 WHERE r.status STARTS WITH 'running_' \
+                   AND r.updated_at < datetime() - duration('PT30M') \
+                 SET r.status = 'idle', r.updated_at = datetime()"
             ).param("region", region))
             .await?;
 
-        // Atomic check-and-create: only creates if no lock exists for this region
+        // Atomic MERGE + conditional SET: only transitions if current status is allowed
         let q = query(
-            "OPTIONAL MATCH (existing:ScoutLock {region: $region})
-             WITH existing WHERE existing IS NULL
-             CREATE (lock:ScoutLock {region: $region, started_at: datetime()})
-             RETURN lock IS NOT NULL AS acquired",
+            "MERGE (r:RegionScoutRun {region: $region})
+             ON CREATE SET r.status = 'idle', r.started_at = datetime(), r.updated_at = datetime()
+             WITH r
+             WHERE r.status IN $allowed_from
+             SET r.status = $new_status, r.updated_at = datetime()
+             RETURN true AS transitioned",
         )
-        .param("region", region);
+        .param("region", region)
+        .param("allowed_from", allowed_from.to_vec())
+        .param("new_status", new_status);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
-            let acquired: bool = row.get("acquired").unwrap_or(false);
-            return Ok(acquired);
+            let transitioned: bool = row.get("transitioned").unwrap_or(false);
+            return Ok(transitioned);
         }
 
-        // No row returned means the WHERE filtered it out (lock exists)
+        // No row returned means the WHERE filtered it out (status not in allowed set)
         Ok(false)
     }
 
-    /// Release the per-region scout lock.
-    pub async fn release_scout_lock(&self, region: &str) -> Result<(), neo4rs::Error> {
+    /// Read the current region run status. Returns "idle" if no node exists.
+    pub async fn get_region_run_status(&self, region: &str) -> Result<String, neo4rs::Error> {
+        let q = query(
+            "OPTIONAL MATCH (r:RegionScoutRun {region: $region})
+             RETURN r.status AS status"
+        ).param("region", region);
+
+        let mut result = self.client.graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let status: String = row.get("status").unwrap_or_else(|_| "idle".to_string());
+            return Ok(status);
+        }
+        Ok("idle".to_string())
+    }
+
+    /// Directly set a region's run status (used by workflows to write completion status).
+    pub async fn set_region_run_status(
+        &self,
+        region: &str,
+        status: &str,
+    ) -> Result<(), neo4rs::Error> {
         self.client
             .graph
-            .run(query("MATCH (lock:ScoutLock {region: $region}) DELETE lock").param("region", region))
+            .run(query(
+                "MERGE (r:RegionScoutRun {region: $region})
+                 ON CREATE SET r.started_at = datetime()
+                 SET r.status = $status, r.updated_at = datetime()"
+            ).param("region", region).param("status", status))
             .await?;
         Ok(())
     }
 
-    /// Check if a scout is currently running for a region (read-only, no acquire/release dance).
+    /// Reset a stuck region status to "idle". Replaces release_scout_lock.
+    pub async fn reset_region_run_status(&self, region: &str) -> Result<(), neo4rs::Error> {
+        self.client
+            .graph
+            .run(query(
+                "MATCH (r:RegionScoutRun {region: $region}) SET r.status = 'idle', r.updated_at = datetime()"
+            ).param("region", region))
+            .await?;
+        Ok(())
+    }
+
+    /// Clean up all stale running statuses (>30 min) across all regions.
+    pub async fn cleanup_stale_region_statuses(&self) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:RegionScoutRun)
+             WHERE r.status STARTS WITH 'running_'
+               AND r.updated_at < datetime() - duration('PT30M')
+             SET r.status = 'idle', r.updated_at = datetime()
+             RETURN count(r) AS cleaned"
+        );
+
+        let mut result = self.client.graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let cleaned: i64 = row.get("cleaned").unwrap_or(0);
+            return Ok(cleaned as u32);
+        }
+        Ok(0)
+    }
+
+    /// Check if a scout is currently running for a region.
     pub async fn is_scout_running(&self, region: &str) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "OPTIONAL MATCH (lock:ScoutLock {region: $region}) WHERE lock.started_at >= datetime() - duration('PT30M') RETURN lock IS NOT NULL AS running"
+            "OPTIONAL MATCH (r:RegionScoutRun {region: $region})
+             WHERE r.status STARTS WITH 'running_'
+               AND r.updated_at >= datetime() - duration('PT30M')
+             RETURN r IS NOT NULL AS running"
         ).param("region", region);
 
         let mut result = self.client.graph.execute(q).await?;
@@ -1092,9 +1159,10 @@ impl GraphWriter {
 
         let q = query(
             "UNWIND $slugs AS slug
-             OPTIONAL MATCH (lock:ScoutLock {region: slug})
-             WHERE lock.started_at >= datetime() - duration('PT30M')
-             RETURN slug, lock IS NOT NULL AS running",
+             OPTIONAL MATCH (r:RegionScoutRun {region: slug})
+             WHERE r.status STARTS WITH 'running_'
+               AND r.updated_at >= datetime() - duration('PT30M')
+             RETURN slug, r IS NOT NULL AS running",
         )
         .param("slugs", slugs.to_vec());
 

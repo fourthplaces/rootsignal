@@ -50,6 +50,9 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         })
         .await?;
 
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "situation_weaver_complete").await;
+
         ctx.set("status", "Situation weaving complete".to_string());
         info!("SituationWeaverWorkflow complete");
 

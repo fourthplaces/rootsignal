@@ -16,7 +16,6 @@ pub mod synthesis;
 pub mod types;
 
 use std::future::Future;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
@@ -46,8 +45,6 @@ pub struct ScoutDeps {
     pub browserless_token: Option<String>,
     #[builder(default = 50)]
     pub max_web_queries_per_run: usize,
-    #[builder(default = PathBuf::from("data"))]
-    pub data_dir: PathBuf,
 }
 
 impl ScoutDeps {
@@ -68,15 +65,14 @@ impl ScoutDeps {
             .browserless_url(config.browserless_url.clone())
             .browserless_token(config.browserless_token.clone())
             .max_web_queries_per_run(config.max_web_queries_per_run)
-            .data_dir(config.data_dir.clone())
             .build()
     }
 }
 
-/// Create an `Archive` (FetchBackend) from the shared deps.
+/// Create an `Archive` from the shared deps.
 ///
 /// Each workflow invocation should call this to get a fresh archive instance.
-pub fn create_archive(deps: &ScoutDeps, run_label: &str) -> Arc<dyn rootsignal_archive::FetchBackend> {
+pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
     let archive_config = ArchiveConfig {
         page_backend: match deps.browserless_url {
             Some(ref url) => PageBackend::Browserless {
@@ -91,24 +87,23 @@ pub fn create_archive(deps: &ScoutDeps, run_label: &str) -> Arc<dyn rootsignal_a
         } else {
             Some(deps.apify_api_key.clone())
         },
-        anthropic_api_key: if deps.anthropic_api_key.is_empty() {
-            None
-        } else {
-            Some(deps.anthropic_api_key.clone())
-        },
     };
 
-    Arc::new(Archive::new(
-        deps.pg_pool.clone(),
-        archive_config,
-        uuid::Uuid::new_v4(),
-        run_label.to_string(),
-    ))
+    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config))
 }
 
 // ---------------------------------------------------------------------------
 // Workflow helpers — shared across all 7 workflows
 // ---------------------------------------------------------------------------
+
+/// Write phase status to the Neo4j RegionScoutRun node.
+/// Called by individual workflows to persist completion status for the admin UI.
+pub async fn write_phase_status(deps: &ScoutDeps, region: &str, status: &str) {
+    let writer = rootsignal_graph::GraphWriter::new(deps.graph_client.clone());
+    if let Err(e) = writer.set_region_run_status(region, status).await {
+        tracing::warn!(%e, region, status, "Failed to write phase status to graph");
+    }
+}
 
 /// Read the `"status"` key from Restate workflow state. Returns `"pending"` if unset.
 ///

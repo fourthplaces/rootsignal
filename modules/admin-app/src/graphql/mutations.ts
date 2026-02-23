@@ -51,9 +51,18 @@ export const STOP_SCOUT = gql`
   }
 `;
 
-export const RESET_SCOUT_LOCK = gql`
-  mutation ResetScoutLock($query: String!) {
-    resetScoutLock(query: $query) {
+export const RESET_SCOUT_STATUS = gql`
+  mutation ResetScoutStatus($query: String!) {
+    resetScoutStatus(query: $query) {
+      success
+      message
+    }
+  }
+`;
+
+export const RUN_SCOUT_PHASE = gql`
+  mutation RunScoutPhase($phase: ScoutPhase!, $query: String!) {
+    runScoutPhase(phase: $phase, query: $query) {
       success
       message
     }

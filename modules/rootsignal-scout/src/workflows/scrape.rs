@@ -68,6 +68,9 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
             }
         };
 
+        let region_key = rootsignal_common::slugify(&req.scope.name);
+        super::write_phase_status(&self.deps, &region_key, "scrape_complete").await;
+
         ctx.set(
             "status",
             format!(
@@ -109,12 +112,9 @@ async fn run_scrape_from_deps(
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let region_slug = rootsignal_common::slugify(&scope.name);
-    let archive = create_archive(deps, &region_slug);
+    let archive = create_archive(deps);
     let budget = crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
-
-    // Ensure archive tables exist
-    archive.migrate().await?;
 
     let pipeline = crate::scout::ScrapePipeline::new(
         writer,
@@ -126,6 +126,7 @@ async fn run_scrape_from_deps(
         &budget,
         Arc::new(AtomicBool::new(false)),
         run_id.clone(),
+        deps.pg_pool.clone(),
     );
 
     let mut run_log = crate::run_log::RunLog::new(run_id, scope.name.clone());
@@ -149,7 +150,7 @@ async fn run_scrape_from_deps(
     pipeline.update_source_metrics(&run, &ctx).await;
     pipeline.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
 
-    let stats = pipeline.finalize(ctx, run_log);
+    let stats = pipeline.finalize(ctx, run_log).await;
 
     Ok(ScrapeResult {
         urls_scraped: stats.urls_scraped,

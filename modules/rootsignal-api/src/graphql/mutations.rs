@@ -301,6 +301,82 @@ impl MutationRoot {
         })
     }
 
+    /// Run an individual scout workflow phase for a location query.
+    #[graphql(guard = "AdminGuard")]
+    async fn run_scout_phase(
+        &self,
+        ctx: &Context<'_>,
+        phase: super::types::ScoutPhase,
+        query: String,
+    ) -> Result<ScoutResult> {
+        let config = ctx.data_unchecked::<Arc<Config>>();
+
+        if config.anthropic_api_key.is_empty()
+            || config.voyage_api_key.is_empty()
+            || config.serper_api_key.is_empty()
+        {
+            return Ok(ScoutResult {
+                success: false,
+                message: Some("Scout API keys not configured".to_string()),
+            });
+        }
+
+        let restate = ctx.data_unchecked::<Option<RestateClient>>();
+        let restate = restate.as_ref().ok_or_else(|| {
+            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
+        })?;
+
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let restate_phase: crate::restate_client::ScoutPhase = phase.into();
+
+        // Geocode the query
+        let (lat, lng, display_name) = geocode_location(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+
+        let slug = rootsignal_common::slugify(&query);
+
+        // Check prerequisites and atomically transition to running status
+        let allowed = restate_phase.allowed_from_statuses();
+        let running_status = restate_phase.running_status();
+
+        if !writer
+            .transition_region_status(&slug, allowed, running_status)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to check region status: {e}")))?
+        {
+            let current = writer
+                .get_region_run_status(&slug)
+                .await
+                .unwrap_or_else(|_| "unknown".to_string());
+            return Ok(ScoutResult {
+                success: false,
+                message: Some(format!(
+                    "Cannot run {:?}: region status is '{current}'. Prerequisites not met or another phase is running.",
+                    phase
+                )),
+            });
+        }
+
+        let scope = ScoutScope {
+            center_lat: lat,
+            center_lng: lng,
+            radius_km: 30.0,
+            name: display_name.clone(),
+            geo_terms: query.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        };
+
+        restate
+            .run_phase(restate_phase, &slug, &scope)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("{:?} started via Restate for {display_name}", phase)),
+        })
+    }
+
     /// Stop a running scout workflow via Restate cancellation.
     #[graphql(guard = "AdminGuard")]
     async fn stop_scout(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
@@ -327,19 +403,19 @@ impl MutationRoot {
         }
     }
 
-    /// Reset a stuck scout lock.
+    /// Reset a stuck scout run status to idle.
     #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_lock(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
+    async fn reset_scout_status(&self, ctx: &Context<'_>, query: String) -> Result<ScoutResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let slug = rootsignal_common::slugify(&query);
-        info!(slug = slug.as_str(), "Scout lock reset requested");
+        info!(slug = slug.as_str(), "Scout status reset requested");
         writer
-            .release_scout_lock(&slug)
+            .reset_region_run_status(&slug)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to release lock: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to reset status: {e}")))?;
         Ok(ScoutResult {
             success: true,
-            message: Some("Lock released".to_string()),
+            message: Some("Status reset to idle".to_string()),
         })
     }
 

@@ -22,6 +22,29 @@ use super::loaders::{
 
 // --- GraphQL Enums ---
 
+#[derive(async_graphql::Enum, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ScoutPhase {
+    Bootstrap,
+    ActorDiscovery,
+    Scrape,
+    Synthesis,
+    SituationWeaver,
+    Supervisor,
+}
+
+impl From<ScoutPhase> for crate::restate_client::ScoutPhase {
+    fn from(gql: ScoutPhase) -> Self {
+        match gql {
+            ScoutPhase::Bootstrap => Self::Bootstrap,
+            ScoutPhase::ActorDiscovery => Self::ActorDiscovery,
+            ScoutPhase::Scrape => Self::Scrape,
+            ScoutPhase::Synthesis => Self::Synthesis,
+            ScoutPhase::SituationWeaver => Self::SituationWeaver,
+            ScoutPhase::Supervisor => Self::Supervisor,
+        }
+    }
+}
+
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SignalType {
     Gathering,
