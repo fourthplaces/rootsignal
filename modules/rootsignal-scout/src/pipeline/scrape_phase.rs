@@ -171,7 +171,7 @@ enum ScrapeOutcome {
 }
 
 /// Normalize a title for dedup comparison: lowercase and trim.
-fn normalize_title(title: &str) -> String {
+pub(crate) fn normalize_title(title: &str) -> String {
     title.trim().to_lowercase()
 }
 
@@ -1929,5 +1929,35 @@ impl ScrapePhase {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_title_trims_whitespace() {
+        assert_eq!(normalize_title("  Free Legal Clinic  "), "free legal clinic");
+    }
+
+    #[test]
+    fn normalize_title_lowercases() {
+        assert_eq!(normalize_title("FREE LEGAL CLINIC"), "free legal clinic");
+    }
+
+    #[test]
+    fn normalize_title_mixed_case_and_whitespace() {
+        assert_eq!(normalize_title("  Community Garden CLEANUP  "), "community garden cleanup");
+    }
+
+    #[test]
+    fn normalize_title_empty() {
+        assert_eq!(normalize_title(""), "");
+    }
+
+    #[test]
+    fn normalize_title_already_normalized() {
+        assert_eq!(normalize_title("food distribution"), "food distribution");
     }
 }

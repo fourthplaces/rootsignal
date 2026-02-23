@@ -415,4 +415,96 @@ mod tests {
         let results = extract_links(&links);
         assert!(results.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // URL normalization inconsistency documentation
+    //
+    // Three systems normalize URLs differently:
+    //   - canonical_value (rootsignal-common) — identity key for sources
+    //   - sanitize_url (scout::infra::util) — URL cleanup before storage
+    //   - strip_tracking_params (this file) — tracking param removal
+    //
+    // These tests document where they diverge for future unification.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn url_normalization_tracking_params() {
+        use crate::infra::util::sanitize_url;
+
+        let url = "https://example.com/page?utm_source=ig&utm_medium=social&important=yes";
+
+        let cv = canonical_value(url);
+        let sanitized = sanitize_url(url);
+        let stripped = strip_tracking_params(url);
+
+        // canonical_value: no param stripping at all
+        assert!(cv.contains("utm_source"), "canonical_value preserves tracking params");
+
+        // sanitize_url: strips utm_* and common trackers
+        assert!(!sanitized.contains("utm_source"), "sanitize_url strips utm params");
+        assert!(sanitized.contains("important=yes"), "sanitize_url keeps non-tracking params");
+
+        // strip_tracking_params: same as sanitize_url for these params
+        assert!(!stripped.contains("utm_source"), "strip_tracking_params strips utm params");
+        assert!(stripped.contains("important=yes"), "strip_tracking_params keeps non-tracking params");
+    }
+
+    #[test]
+    fn url_normalization_facebook_tracking() {
+        use crate::infra::util::sanitize_url;
+
+        let url = "https://facebook.com/org?fbclid=abc123&ref=share";
+
+        let cv = canonical_value(url);
+        let sanitized = sanitize_url(url);
+        let stripped = strip_tracking_params(url);
+
+        // canonical_value: Facebook URLs pass through completely unchanged
+        assert_eq!(cv, url, "canonical_value: Facebook passes through as-is");
+
+        // sanitize_url and strip_tracking_params both remove fbclid and ref
+        assert!(!sanitized.contains("fbclid"), "sanitize_url strips fbclid");
+        assert!(!stripped.contains("fbclid"), "strip_tracking_params strips fbclid");
+    }
+
+    #[test]
+    fn url_normalization_www_handling() {
+        use crate::infra::util::sanitize_url;
+
+        let with_www = "https://www.example.com/page";
+        let without_www = "https://example.com/page";
+
+        // None of the three systems strip www
+        let cv_www = canonical_value(with_www);
+        let cv_bare = canonical_value(without_www);
+        assert_ne!(cv_www, cv_bare, "canonical_value: www produces different keys (gap)");
+
+        let san_www = sanitize_url(with_www);
+        let san_bare = sanitize_url(without_www);
+        assert_ne!(san_www, san_bare, "sanitize_url: www produces different values (gap)");
+
+        let strip_www = strip_tracking_params(with_www);
+        let strip_bare = strip_tracking_params(without_www);
+        assert_ne!(strip_www, strip_bare, "strip_tracking_params: www produces different values (gap)");
+    }
+
+    #[test]
+    fn url_normalization_param_list_differences() {
+        use crate::infra::util::sanitize_url;
+
+        // sanitize_url strips "modal" and "gclid", strip_tracking_params strips "si" and "source"
+        // Document the param list differences
+
+        let with_modal = "https://example.com/page?modal=true&content=yes";
+        let sanitized = sanitize_url(with_modal);
+        let stripped = strip_tracking_params(with_modal);
+        assert!(!sanitized.contains("modal"), "sanitize_url strips 'modal'");
+        assert!(stripped.contains("modal"), "strip_tracking_params does NOT strip 'modal' (divergence)");
+
+        let with_si = "https://example.com/page?si=abc123&content=yes";
+        let sanitized_si = sanitize_url(with_si);
+        let stripped_si = strip_tracking_params(with_si);
+        assert!(sanitized_si.contains("si="), "sanitize_url does NOT strip 'si' (divergence)");
+        assert!(!stripped_si.contains("si="), "strip_tracking_params strips 'si'");
+    }
 }

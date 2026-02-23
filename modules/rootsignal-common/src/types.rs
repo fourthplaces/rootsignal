@@ -1566,12 +1566,14 @@ mod tests {
             location_name: None,
             source_url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
+            content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
             mentioned_actors: vec![],
+            author_actor: None,
             implied_queries: vec![],
         }
     }
@@ -1711,5 +1713,262 @@ mod tests {
         assert_eq!(json, "\"direct_action\"");
         let deserialized: ChannelType = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, ct);
+    }
+
+    // -----------------------------------------------------------------------
+    // canonical_value() test battery
+    // -----------------------------------------------------------------------
+
+    // --- Instagram ---
+
+    #[test]
+    fn canonical_value_instagram_basic() {
+        assert_eq!(
+            canonical_value("https://instagram.com/mplsmutualaid"),
+            "instagram.com/mplsmutualaid"
+        );
+    }
+
+    #[test]
+    fn canonical_value_instagram_www() {
+        assert_eq!(
+            canonical_value("https://www.instagram.com/mplsmutualaid"),
+            "instagram.com/mplsmutualaid"
+        );
+    }
+
+    #[test]
+    fn canonical_value_instagram_trailing_slash() {
+        assert_eq!(
+            canonical_value("https://www.instagram.com/mplsmutualaid/"),
+            "instagram.com/mplsmutualaid"
+        );
+    }
+
+    #[test]
+    fn canonical_value_instagram_dedup_www_and_trailing() {
+        // www + trailing slash and bare URL must produce the same key
+        let a = canonical_value("https://www.instagram.com/mplsmutualaid/");
+        let b = canonical_value("https://instagram.com/mplsmutualaid");
+        assert_eq!(a, b);
+    }
+
+    // --- Twitter / X ---
+
+    #[test]
+    fn canonical_value_twitter_normalizes_to_x() {
+        assert_eq!(
+            canonical_value("https://twitter.com/johndoe"),
+            "x.com/johndoe"
+        );
+    }
+
+    #[test]
+    fn canonical_value_x_com() {
+        assert_eq!(
+            canonical_value("https://x.com/johndoe"),
+            "x.com/johndoe"
+        );
+    }
+
+    #[test]
+    fn canonical_value_twitter_and_x_dedup() {
+        let a = canonical_value("https://twitter.com/handle");
+        let b = canonical_value("https://x.com/handle");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn canonical_value_twitter_www_trailing() {
+        assert_eq!(
+            canonical_value("https://www.twitter.com/handle/"),
+            "x.com/handle"
+        );
+    }
+
+    #[test]
+    fn canonical_value_twitter_strips_at() {
+        // @ prefix should be stripped
+        assert_eq!(
+            canonical_value("https://x.com/@handle"),
+            "x.com/handle"
+        );
+    }
+
+    // --- TikTok ---
+
+    #[test]
+    fn canonical_value_tiktok_with_at() {
+        assert_eq!(
+            canonical_value("https://tiktok.com/@dancer123"),
+            "tiktok.com/dancer123"
+        );
+    }
+
+    #[test]
+    fn canonical_value_tiktok_www_trailing() {
+        assert_eq!(
+            canonical_value("https://www.tiktok.com/@handle/"),
+            "tiktok.com/handle"
+        );
+    }
+
+    #[test]
+    fn canonical_value_tiktok_without_at() {
+        assert_eq!(
+            canonical_value("https://tiktok.com/dancer123"),
+            "tiktok.com/dancer123"
+        );
+    }
+
+    // --- Reddit ---
+
+    #[test]
+    fn canonical_value_reddit_subreddit() {
+        assert_eq!(
+            canonical_value("https://www.reddit.com/r/Minneapolis/"),
+            "reddit.com/r/Minneapolis"
+        );
+    }
+
+    #[test]
+    fn canonical_value_reddit_preserves_case() {
+        assert_eq!(
+            canonical_value("https://reddit.com/r/MutualAid"),
+            "reddit.com/r/MutualAid"
+        );
+    }
+
+    #[test]
+    fn canonical_value_reddit_strips_trailing_path() {
+        // /r/Sub/comments/xyz should still extract just the subreddit
+        assert_eq!(
+            canonical_value("https://www.reddit.com/r/Minneapolis/comments/abc123"),
+            "reddit.com/r/Minneapolis"
+        );
+    }
+
+    #[test]
+    fn canonical_value_reddit_no_subreddit_passthrough() {
+        // Reddit URL without /r/ (e.g. user profile) — no special handling, passes through
+        let url = "https://reddit.com/user/someone";
+        assert_eq!(canonical_value(url), url);
+    }
+
+    // --- Facebook (no special handling — documenting current behavior) ---
+
+    #[test]
+    fn canonical_value_facebook_passthrough() {
+        // Facebook URLs are NOT normalized — they pass through as-is
+        let url = "https://facebook.com/local_org";
+        assert_eq!(canonical_value(url), url);
+    }
+
+    #[test]
+    fn canonical_value_facebook_www_not_stripped() {
+        // www is NOT stripped for Facebook — different URLs produce different keys
+        let a = canonical_value("https://www.facebook.com/local_org");
+        let b = canonical_value("https://facebook.com/local_org");
+        // Documenting the gap: these SHOULD be equal but currently aren't
+        assert_ne!(a, b, "Facebook www stripping is a known gap");
+    }
+
+    // --- Bluesky (no special handling — documenting current behavior) ---
+
+    #[test]
+    fn canonical_value_bluesky_passthrough() {
+        // Bluesky URLs pass through as-is — no normalization
+        let url = "https://bsky.app/profile/user.bsky.social";
+        assert_eq!(canonical_value(url), url);
+    }
+
+    // --- Web queries ---
+
+    #[test]
+    fn canonical_value_web_query_passthrough() {
+        assert_eq!(
+            canonical_value("site:linktr.ee mutual aid Minneapolis"),
+            "site:linktr.ee mutual aid Minneapolis"
+        );
+    }
+
+    #[test]
+    fn canonical_value_web_query_plain_text() {
+        assert_eq!(
+            canonical_value("mutual aid Minneapolis food shelf"),
+            "mutual aid Minneapolis food shelf"
+        );
+    }
+
+    // --- Web URL edge cases (documenting current behavior) ---
+
+    #[test]
+    fn canonical_value_web_url_www_not_stripped() {
+        // www is NOT stripped for generic web URLs
+        let a = canonical_value("https://www.example.com/page");
+        let b = canonical_value("https://example.com/page");
+        assert_ne!(a, b, "www stripping for web URLs is a known gap");
+    }
+
+    #[test]
+    fn canonical_value_web_url_fragment_not_stripped() {
+        // Fragments are NOT stripped
+        let a = canonical_value("https://example.com/page#section");
+        let b = canonical_value("https://example.com/page");
+        assert_ne!(a, b, "Fragment stripping is a known gap");
+    }
+
+    #[test]
+    fn canonical_value_web_url_trailing_slash_not_stripped() {
+        // Trailing slashes NOT stripped for generic web URLs
+        let a = canonical_value("https://example.com/page/");
+        let b = canonical_value("https://example.com/page");
+        assert_ne!(a, b, "Trailing slash stripping for web URLs is a known gap");
+    }
+
+    #[test]
+    fn canonical_value_web_url_case_preserved() {
+        // Case is preserved for generic web URLs
+        let a = canonical_value("https://Example.COM/Page");
+        let b = canonical_value("https://example.com/page");
+        assert_ne!(a, b, "Case normalization for web URLs is a known gap");
+    }
+
+    #[test]
+    fn canonical_value_web_url_query_params_preserved() {
+        // Query params are preserved (no tracking param stripping)
+        let url = "https://example.com/page?utm_source=ig&important=yes";
+        assert_eq!(canonical_value(url), url);
+    }
+
+    // --- Edge cases ---
+
+    #[test]
+    fn canonical_value_empty_string() {
+        // Empty string is a web query (no http prefix) — passes through
+        assert_eq!(canonical_value(""), "");
+    }
+
+    #[test]
+    fn canonical_value_instagram_bare_domain() {
+        // Just the domain, no handle path
+        let result = canonical_value("https://instagram.com");
+        assert_eq!(result, "instagram.com/instagram.com");
+    }
+
+    #[test]
+    fn canonical_value_http_not_https() {
+        // http:// should still be recognized as a URL (not a web query)
+        let url = "http://example.com/page";
+        assert_eq!(canonical_value(url), url);
+    }
+
+    #[test]
+    fn canonical_value_is_web_query_check() {
+        // Verify is_web_query aligns with canonical_value behavior
+        assert!(is_web_query("site:linktr.ee mutual aid"));
+        assert!(is_web_query("mutual aid Minneapolis"));
+        assert!(!is_web_query("https://example.com"));
+        assert!(!is_web_query("http://example.com"));
     }
 }
