@@ -96,3 +96,21 @@ impl Loader<Uuid> for TagsByStoryLoader {
             .map_err(Arc::new)
     }
 }
+
+// --- TagsBySituationLoader ---
+
+pub struct TagsBySituationLoader {
+    pub reader: Arc<CachedReader>,
+}
+
+impl Loader<Uuid> for TagsBySituationLoader {
+    type Value = Vec<TagNode>;
+    type Error = Arc<anyhow::Error>;
+
+    async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
+        self.reader
+            .batch_tags_by_situation_ids(keys)
+            .await
+            .map_err(Arc::new)
+    }
+}
