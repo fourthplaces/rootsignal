@@ -103,7 +103,7 @@ export function SituationDetail({ situationId, onBack }: SituationDetailProps) {
                       <span className="text-xs text-muted-foreground">
                         {new Date(dispatch.createdAt as string).toLocaleDateString()}
                       </span>
-                      {dispatch.flaggedForReview && (
+                      {!!dispatch.flaggedForReview && (
                         <span className="text-xs text-red-400">Flagged</span>
                       )}
                     </div>
