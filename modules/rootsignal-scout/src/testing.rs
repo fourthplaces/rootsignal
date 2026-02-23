@@ -292,6 +292,20 @@ impl MockSignalStore {
         inner.evidence.iter().filter(|(id, _)| *id == signal_id).count()
     }
 
+    pub fn evidence_count_for_title(&self, title: &str) -> usize {
+        let inner = self.inner.lock().unwrap();
+        let normalized = title.trim().to_lowercase();
+        let signal_id = inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+            .map(|s| s.id);
+        match signal_id {
+            Some(id) => inner.evidence.iter().filter(|(eid, _)| *eid == id).count(),
+            None => 0,
+        }
+    }
+
     pub fn sources_promoted(&self) -> usize {
         self.inner.lock().unwrap().sources.len()
     }
@@ -881,6 +895,27 @@ pub fn social_source(url: &str) -> SourceNode {
     source.center_lat = Some(44.9778);
     source.center_lng = Some(-93.2650);
     source
+}
+
+/// Create a minimal Post for testing social scrape.
+pub fn test_post(text: &str) -> Post {
+    Post {
+        id: Uuid::new_v4(),
+        source_id: Uuid::new_v4(),
+        fetched_at: Utc::now(),
+        content_hash: String::new(),
+        text: Some(text.to_string()),
+        author: None,
+        location: None,
+        engagement: None,
+        published_at: None,
+        permalink: None,
+        mentions: Vec::new(),
+        hashtags: Vec::new(),
+        media_type: None,
+        platform_id: None,
+        attachments: Vec::new(),
+    }
 }
 
 /// Create a default NodeMeta for testing.

@@ -404,12 +404,12 @@ Extend the existing snapshot infrastructure in `tests/extraction_test.rs`:
 
 6 chain tests (from `docs/brainstorms/2026-02-23-chain-test-examples.rs`):
 
-1. **Linktree discovery** — search → fetch Linktrees → collected_links has content URLs, junk filtered, deduped
-2. **Page → signal → actors → evidence** — page source → run_web → signal created, actors wired, evidence linked
-3. **Multi-source corroboration** — 3 pages same event → run_web → 1 signal, 2 corroborations, 3 evidence trails
-4. **Social with actor context** — Instagram posts + actor_ctx → run_social → signal with fallback location, @mentions collected
-5. **Content unchanged** — hash match → skip extraction → links still collected
-6. **Two-phase pipeline** — Phase A discovers source → Phase B scrapes it
+1. [x] **Linktree discovery** — search → fetch Linktrees → collected_links has content URLs, junk filtered, deduped
+2. [x] **Page → signal → actors → evidence** — page source → run_web → signal created, actors wired, evidence linked (+out_of_region variant)
+3. [x] **Multi-source corroboration** — 3 pages same event → run_web → 1 signal, 2 corroborations
+4. [x] **Social with actor context** — Instagram posts + actor_ctx → run_social → signal with fallback location, @mentions collected (+out_of_region variant)
+5. [x] **Content unchanged** — hash match → skip extraction → links still collected
+6. [x] **Two-phase pipeline** — Phase A discovers source → Phase B scrapes it
 
 **Files touched:**
 - `modules/rootsignal-scout/tests/chain_tests.rs` — NEW

@@ -8,3 +8,5 @@ pub mod stats;
 pub mod traits;
 #[cfg(test)]
 mod boundary_tests;
+#[cfg(test)]
+mod chain_tests;
