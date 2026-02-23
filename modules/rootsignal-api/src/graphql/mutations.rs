@@ -239,6 +239,8 @@ impl MutationRoot {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
+            center_lat: None,
+            center_lng: None,
         };
 
         writer
@@ -476,6 +478,8 @@ impl MutationRoot {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
+            center_lat: None,
+            center_lng: None,
         };
 
         writer
@@ -535,6 +539,22 @@ impl MutationRoot {
             .suppress_story_tag(story_id, &tag_slug)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to untag story: {e}")))?;
+        Ok(true)
+    }
+
+    /// Remove a tag from a situation (deletes TAGGED + creates SUPPRESSED_TAG).
+    #[graphql(guard = "AdminGuard")]
+    async fn untag_situation(
+        &self,
+        ctx: &Context<'_>,
+        situation_id: Uuid,
+        tag_slug: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        writer
+            .suppress_situation_tag(situation_id, &tag_slug)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to untag situation: {e}")))?;
         Ok(true)
     }
 
@@ -667,7 +687,6 @@ impl MutationRoot {
     #[graphql(guard = "AdminGuard")]
     async fn run_news_scan(&self, ctx: &Context<'_>) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
-        let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
 
         if config.anthropic_api_key.is_empty() || config.serper_api_key.is_empty() {
             return Ok(ScoutResult {
@@ -676,34 +695,51 @@ impl MutationRoot {
             });
         }
 
-        let client = (**graph_client).clone();
-        let config_clone = (**config).clone();
-
-        tokio::spawn(async move {
-            let writer = rootsignal_graph::GraphWriter::new(client.clone());
-            let archive = match create_archive_for_news_scan(&config_clone).await {
-                Some(archive) => archive,
-                None => {
-                    warn!("Cannot create archive for news scan (DATABASE_URL not set)");
-                    return;
-                }
-            };
-            let scanner = rootsignal_scout::pipeline::news_scanner::NewsScanner::new(
-                archive,
-                &config_clone.anthropic_api_key,
-                writer,
-                config_clone.daily_budget_cents,
-            );
-            match scanner.scan().await {
-                Ok(locations) => info!(count = locations.len(), "News scan complete"),
-                Err(e) => warn!(error = %e, "News scan failed"),
+        let restate = ctx.data_unchecked::<Option<RestateClient>>();
+        match restate {
+            Some(client) => {
+                client
+                    .run_news_scan()
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Failed to dispatch news scan: {e}")))?;
+                Ok(ScoutResult {
+                    success: true,
+                    message: Some("News scan dispatched via Restate".into()),
+                })
             }
-        });
+            None => {
+                // Fallback: no Restate configured, run directly
+                let graph_client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+                let client = (**graph_client).clone();
+                let config_clone = (**config).clone();
 
-        Ok(ScoutResult {
-            success: true,
-            message: Some("News scan started in background".to_string()),
-        })
+                tokio::spawn(async move {
+                    let writer = rootsignal_graph::GraphWriter::new(client.clone());
+                    let archive = match create_archive_for_news_scan(&config_clone).await {
+                        Some(archive) => archive,
+                        None => {
+                            warn!("Cannot create archive for news scan (DATABASE_URL not set)");
+                            return;
+                        }
+                    };
+                    let scanner = rootsignal_scout::pipeline::news_scanner::NewsScanner::new(
+                        archive,
+                        &config_clone.anthropic_api_key,
+                        writer,
+                        config_clone.daily_budget_cents,
+                    );
+                    match scanner.scan().await {
+                        Ok((articles, beacons)) => info!(articles, beacons, "News scan complete"),
+                        Err(e) => warn!(error = %e, "News scan failed"),
+                    }
+                });
+
+                Ok(ScoutResult {
+                    success: true,
+                    message: Some("News scan started in background".to_string()),
+                })
+            }
+        }
     }
 
     // ========== Actor mutations (AdminGuard) ==========
@@ -798,6 +834,8 @@ impl MutationRoot {
                 quality_penalty: 1.0,
                 source_role: SourceRole::Mixed,
                 scrape_count: 0,
+                center_lat: None,
+                center_lng: None,
             };
             if let Err(e) = writer.upsert_source(&source).await {
                 warn!(error = %e, "Failed to create actor source");
@@ -848,6 +886,8 @@ impl MutationRoot {
             &url,
             &fallback_region,
             false, // submit mode: don't require social links
+            0.0,   // admin API — no region center
+            0.0,
         )
         .await
         {
@@ -909,6 +949,8 @@ impl MutationRoot {
                 url,
                 &region,
                 true, // discover mode: require social links
+                0.0,  // admin API — no region center
+                0.0,
             )
             .await
             {
@@ -963,6 +1005,8 @@ impl MutationRoot {
             quality_penalty: 1.0,
             source_role: SourceRole::Mixed,
             scrape_count: 0,
+            center_lat: None,
+            center_lng: None,
         };
 
         writer

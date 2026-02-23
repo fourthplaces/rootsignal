@@ -103,6 +103,12 @@ pub struct SupervisorResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsScanResult {
+    pub articles_scanned: u32,
+    pub beacons_created: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullRunResult {
     pub sources_created: u32,
     pub actors_discovered: u32,
@@ -124,4 +130,5 @@ crate::impl_restate_serde!(ScrapeResult);
 crate::impl_restate_serde!(SynthesisResult);
 crate::impl_restate_serde!(SituationWeaverResult);
 crate::impl_restate_serde!(SupervisorResult);
+crate::impl_restate_serde!(NewsScanResult);
 crate::impl_restate_serde!(FullRunResult);

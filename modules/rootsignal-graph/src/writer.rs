@@ -1826,7 +1826,9 @@ impl GraphWriter {
                 s.avg_signals_per_scrape = $avg_signals_per_scrape,
                 s.quality_penalty = $quality_penalty,
                 s.source_role = $source_role,
-                s.scrape_count = $scrape_count
+                s.scrape_count = $scrape_count,
+                s.center_lat = $center_lat,
+                s.center_lng = $center_lng
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                 s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1846,7 +1848,9 @@ impl GraphWriter {
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("quality_penalty", source.quality_penalty)
         .param("source_role", source.source_role.to_string())
-        .param("scrape_count", source.scrape_count as i64);
+        .param("scrape_count", source.scrape_count as i64)
+        .param("center_lat", source.center_lat.unwrap_or(0.0))
+        .param("center_lng", source.center_lng.unwrap_or(0.0));
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1881,7 +1885,7 @@ impl GraphWriter {
         Ok(())
     }
 
-    /// Get all active sources.
+    /// Get all active sources (global — used for dedup checks).
     pub async fn get_active_sources(&self) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {active: true})
@@ -1898,71 +1902,68 @@ impl GraphWriter {
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
-                    s.scrape_count AS scrape_count",
+                    s.scrape_count AS scrape_count,
+                    s.center_lat AS center_lat, s.center_lng AS center_lng",
         );
 
         let mut sources = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            if let Some(source) = row_to_source_node(&row) {
+                sources.push(source);
+            }
+        }
 
-            let discovery_str: String = row.get("discovery_method").unwrap_or_default();
-            let discovery_method = match discovery_str.as_str() {
-                "gap_analysis" => DiscoveryMethod::GapAnalysis,
-                "signal_reference" => DiscoveryMethod::SignalReference,
-                "hashtag_discovery" => DiscoveryMethod::HashtagDiscovery,
-                "cold_start" => DiscoveryMethod::ColdStart,
-                "tension_seed" => DiscoveryMethod::TensionSeed,
-                "human_submission" => DiscoveryMethod::HumanSubmission,
-                "signal_expansion" => DiscoveryMethod::SignalExpansion,
-                _ => DiscoveryMethod::Curated,
-            };
+        Ok(sources)
+    }
 
-            let created_at = row_datetime_opt(&row, "created_at").unwrap_or_else(Utc::now);
+    /// Get active sources scoped to a geographic region (bounding box with 1.5x padding).
+    pub async fn get_sources_for_region(
+        &self,
+        lat: f64,
+        lng: f64,
+        radius_km: f64,
+    ) -> Result<Vec<SourceNode>, neo4rs::Error> {
+        // 1.5x padding so sources near the edge aren't missed
+        let padded_radius = radius_km * 1.5;
+        let lat_delta = padded_radius / 111.0;
+        let lng_delta = padded_radius / (111.0 * lat.to_radians().cos());
+        let min_lat = lat - lat_delta;
+        let max_lat = lat + lat_delta;
+        let min_lng = lng - lng_delta;
+        let max_lng = lng + lng_delta;
 
-            let last_scraped = row_datetime_opt(&row, "last_scraped");
-            let last_produced_signal = row_datetime_opt(&row, "last_produced_signal");
+        let q = query(
+            "MATCH (s:Source {active: true})
+             WHERE s.center_lat >= $min_lat AND s.center_lat <= $max_lat
+               AND s.center_lng >= $min_lng AND s.center_lng <= $max_lng
+             RETURN s.id AS id, s.canonical_key AS canonical_key,
+                    s.canonical_value AS canonical_value, s.url AS url,
+                    s.discovery_method AS discovery_method,
+                    s.created_at AS created_at, s.last_scraped AS last_scraped,
+                    s.last_produced_signal AS last_produced_signal,
+                    s.signals_produced AS signals_produced,
+                    s.signals_corroborated AS signals_corroborated,
+                    s.consecutive_empty_runs AS consecutive_empty_runs,
+                    s.active AS active, s.gap_context AS gap_context,
+                    s.weight AS weight, s.cadence_hours AS cadence_hours,
+                    s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                    s.quality_penalty AS quality_penalty,
+                    s.source_role AS source_role,
+                    s.scrape_count AS scrape_count,
+                    s.center_lat AS center_lat, s.center_lng AS center_lng",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
 
-            let gap_context: String = row.get("gap_context").unwrap_or_default();
-            let url: String = row.get("url").unwrap_or_default();
-            let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
-
-            sources.push(SourceNode {
-                id,
-                canonical_key: row.get("canonical_key").unwrap_or_default(),
-                canonical_value: row.get("canonical_value").unwrap_or_default(),
-                url: if url.is_empty() { None } else { Some(url) },
-                discovery_method,
-                created_at,
-                last_scraped,
-                last_produced_signal,
-                signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
-                signals_corroborated: row.get::<i64>("signals_corroborated").unwrap_or(0) as u32,
-                consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0)
-                    as u32,
-                active: row.get("active").unwrap_or(true),
-                gap_context: if gap_context.is_empty() {
-                    None
-                } else {
-                    Some(gap_context)
-                },
-                weight: row.get("weight").unwrap_or(0.5),
-                cadence_hours: if cadence > 0 {
-                    Some(cadence as u32)
-                } else {
-                    None
-                },
-                avg_signals_per_scrape: row.get("avg_signals_per_scrape").unwrap_or(0.0),
-                quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
-                source_role: SourceRole::from_str_loose(
-                    &row.get::<String>("source_role").unwrap_or_default(),
-                ),
-                scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
-            });
+        let mut sources = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(source) = row_to_source_node(&row) {
+                sources.push(source);
+            }
         }
 
         Ok(sources)
@@ -2557,6 +2558,8 @@ impl GraphWriter {
                     quality_penalty: 1.0,
                     source_role: SourceRole::Mixed,
                     scrape_count: 0,
+                    center_lat: None,
+                    center_lng: None,
                 });
             }
 
@@ -4703,6 +4706,29 @@ impl GraphWriter {
         self.client.graph.run(q).await
     }
 
+    /// Aggregate tags from a situation's constituent signals.
+    /// Tags appearing on 2+ signals bubble up to the situation.
+    /// Respects SUPPRESSED_TAG edges (admin-removed tags won't reappear).
+    pub async fn aggregate_situation_tags(
+        &self,
+        situation_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+
+        let q = query(
+            "MATCH (s:Situation {id: $sid})<-[:EVIDENCES]-(sig)-[:TAGGED]->(t:Tag)
+             WITH s, t, count(sig) AS freq
+             WHERE freq >= 2
+               AND NOT (s)-[:SUPPRESSED_TAG]->(t)
+             MERGE (s)-[r:TAGGED]->(t)
+               ON CREATE SET r.assigned_at = datetime($now)",
+        )
+        .param("sid", situation_id.to_string())
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
+
     /// Find-or-create Tag nodes by slug and wire TAGGED edges from a signal.
     /// Uses a single UNWIND query for the batch to minimise round-trips.
     pub async fn batch_tag_signals(
@@ -4772,6 +4798,28 @@ impl GraphWriter {
                ON CREATE SET sup.suppressed_at = datetime($now)",
         )
         .param("sid", story_id.to_string())
+        .param("slug", tag_slug)
+        .param("now", now);
+
+        self.client.graph.run(q).await
+    }
+
+    /// Remove a tag from a situation: delete TAGGED edge + create SUPPRESSED_TAG.
+    /// This prevents auto-aggregation from re-adding the tag.
+    pub async fn suppress_situation_tag(
+        &self,
+        situation_id: Uuid,
+        tag_slug: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let now = format_datetime(&Utc::now());
+
+        let q = query(
+            "MATCH (s:Situation {id: $sid})-[r:TAGGED]->(t:Tag {slug: $slug})
+             DELETE r
+             MERGE (s)-[sup:SUPPRESSED_TAG]->(t)
+               ON CREATE SET sup.suppressed_at = datetime($now)",
+        )
+        .param("sid", situation_id.to_string())
         .param("slug", tag_slug)
         .param("now", now);
 
@@ -5150,6 +5198,70 @@ fn format_datetime(dt: &DateTime<Utc>) -> String {
 /// Public version of format_datetime for use by other modules (e.g. story_weaver.rs).
 pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
     format_datetime(dt)
+}
+
+/// Parse a neo4rs Row (with aliased columns) into a SourceNode.
+/// Returns None if the row is missing required fields (e.g. invalid UUID).
+fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
+    let id_str: String = row.get("id").unwrap_or_default();
+    let id = Uuid::parse_str(&id_str).ok()?;
+
+    let discovery_str: String = row.get("discovery_method").unwrap_or_default();
+    let discovery_method = match discovery_str.as_str() {
+        "gap_analysis" => DiscoveryMethod::GapAnalysis,
+        "signal_reference" => DiscoveryMethod::SignalReference,
+        "hashtag_discovery" => DiscoveryMethod::HashtagDiscovery,
+        "cold_start" => DiscoveryMethod::ColdStart,
+        "tension_seed" => DiscoveryMethod::TensionSeed,
+        "human_submission" => DiscoveryMethod::HumanSubmission,
+        "signal_expansion" => DiscoveryMethod::SignalExpansion,
+        "actor_account" => DiscoveryMethod::ActorAccount,
+        "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
+        _ => DiscoveryMethod::Curated,
+    };
+
+    let created_at = row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now);
+    let last_scraped = row_datetime_opt(row, "last_scraped");
+    let last_produced_signal = row_datetime_opt(row, "last_produced_signal");
+    let gap_context: String = row.get("gap_context").unwrap_or_default();
+    let url: String = row.get("url").unwrap_or_default();
+    let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
+    let center_lat: f64 = row.get("center_lat").unwrap_or(0.0);
+    let center_lng: f64 = row.get("center_lng").unwrap_or(0.0);
+
+    Some(SourceNode {
+        id,
+        canonical_key: row.get("canonical_key").unwrap_or_default(),
+        canonical_value: row.get("canonical_value").unwrap_or_default(),
+        url: if url.is_empty() { None } else { Some(url) },
+        discovery_method,
+        created_at,
+        last_scraped,
+        last_produced_signal,
+        signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
+        signals_corroborated: row.get::<i64>("signals_corroborated").unwrap_or(0) as u32,
+        consecutive_empty_runs: row.get::<i64>("consecutive_empty_runs").unwrap_or(0) as u32,
+        active: row.get("active").unwrap_or(true),
+        gap_context: if gap_context.is_empty() {
+            None
+        } else {
+            Some(gap_context)
+        },
+        weight: row.get("weight").unwrap_or(0.5),
+        cadence_hours: if cadence > 0 {
+            Some(cadence as u32)
+        } else {
+            None
+        },
+        avg_signals_per_scrape: row.get("avg_signals_per_scrape").unwrap_or(0.0),
+        quality_penalty: row.get("quality_penalty").unwrap_or(1.0),
+        source_role: SourceRole::from_str_loose(
+            &row.get::<String>("source_role").unwrap_or_default(),
+        ),
+        scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
+        center_lat: if center_lat.abs() > 0.001 { Some(center_lat) } else { None },
+        center_lng: if center_lng.abs() > 0.001 { Some(center_lng) } else { None },
+    })
 }
 
 /// Parse a neo4rs Row (with aliased columns) into a ScoutTask.

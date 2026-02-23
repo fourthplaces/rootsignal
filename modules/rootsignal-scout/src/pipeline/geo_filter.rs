@@ -4,7 +4,7 @@
 //! scope based on coordinates, location names, and geo-terms. Extracted from
 //! the inline logic in `scrape_phase::store_signals()`.
 
-use rootsignal_common::{haversine_km, GeoPoint, GeoPrecision, Node, NodeMeta};
+use rootsignal_common::{haversine_km, Node, NodeMeta};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,19 +39,14 @@ pub struct GeoFilterConfig<'a> {
 // Pure decision functions
 // ---------------------------------------------------------------------------
 
-/// Geographic relevance check — current production logic.
+/// Geographic relevance check.
 ///
 /// 1. Has coordinates within radius → Accept
 /// 2. Has coordinates outside radius → Reject
 /// 3. No coordinates, `location_name` matches a geo-term → Accept
-/// 4. No coordinates, `location_name` present but no match, known source → AcceptWithPenalty
-/// 5. No coordinates, `location_name` present but no match, not known source → Reject
-/// 6. No coordinates, no usable `location_name` → Accept (benefit of the doubt)
-///
-/// NOTE: Case 6 is the known bug — signals with no geographic signal at all
-/// are accepted and later get center backfill. This causes cross-region
-/// contamination (Giessen bug c2c27655).
-pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_known_source: bool) -> GeoVerdict {
+/// 4. No coordinates, `location_name` present but no match → Reject
+/// 5. No coordinates, no usable `location_name` → Reject
+pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig) -> GeoVerdict {
     // --- Cases 1 & 2: signal has coordinates ---
     if let Some(loc) = &meta.location {
         let dist = haversine_km(config.center_lat, config.center_lng, loc.lat, loc.lng);
@@ -76,83 +71,41 @@ pub fn geo_check(meta: &NodeMeta, config: &GeoFilterConfig, is_known_source: boo
             return GeoVerdict::Accept;
         }
 
-        // Case 4: known source, name present but no match → accept with penalty
-        if is_known_source {
-            return GeoVerdict::AcceptWithPenalty(0.8);
-        }
-
-        // Case 5: non-local, name doesn't match → reject
+        // Case 4: name present but no match → reject
         return GeoVerdict::Reject;
     }
 
-    // Case 6 (FIXED): no coordinates, no usable location_name → reject.
-    // Previously accepted with "benefit of the doubt", causing cross-region
-    // contamination (Giessen bug c2c27655).
+    // Case 5: no coordinates, no usable location_name → reject.
     GeoVerdict::Reject
-}
-
-/// Backfill region-center coordinates on a signal that passed the geo-filter
-/// but has no coordinates. Only backfills when a usable `location_name` is
-/// present — signals with no name should have been rejected by `geo_check`,
-/// but this is a safety belt.
-///
-/// Returns `true` if coordinates were written.
-pub fn backfill_center_coords(meta: &mut NodeMeta, config: &GeoFilterConfig) -> bool {
-    if meta.location.is_some() {
-        return false;
-    }
-
-    // Only backfill when there's a usable location_name
-    let has_name = meta
-        .location_name
-        .as_deref()
-        .map(|n| !n.is_empty() && n != "<UNKNOWN>")
-        .unwrap_or(false);
-
-    if !has_name {
-        return false;
-    }
-
-    meta.location = Some(GeoPoint {
-        lat: config.center_lat,
-        lng: config.center_lng,
-        precision: GeoPrecision::Approximate,
-    });
-    true
 }
 
 // ---------------------------------------------------------------------------
 // Batch orchestrator
 // ---------------------------------------------------------------------------
 
-/// Filter a batch of nodes through the geo-check, apply confidence penalties
-/// and coordinate backfill, and return the surviving nodes with stats.
+/// Filter a batch of nodes through the geo-check and return the surviving nodes with stats.
 pub fn filter_nodes(
     nodes: Vec<Node>,
     config: &GeoFilterConfig,
-    is_known_source: bool,
 ) -> (Vec<Node>, GeoFilterStats) {
     let mut stats = GeoFilterStats::default();
     let mut accepted = Vec::with_capacity(nodes.len());
 
-    for mut node in nodes {
+    for node in nodes {
         let verdict = match node.meta() {
-            Some(meta) => geo_check(meta, config, is_known_source),
+            Some(meta) => geo_check(meta, config),
             None => GeoVerdict::Accept, // Evidence nodes have no meta — pass through
         };
 
         match verdict {
             GeoVerdict::Accept => {
-                // Backfill coords if needed
-                if let Some(meta) = node.meta_mut() {
-                    backfill_center_coords(meta, config);
-                }
                 accepted.push(node);
             }
             GeoVerdict::AcceptWithPenalty(factor) => {
+                // Currently no code path produces AcceptWithPenalty, but handle it
+                let mut node = node;
                 if let Some(meta) = node.meta_mut() {
                     meta.confidence *= factor;
-                    backfill_center_coords(meta, config);
                 }
                 accepted.push(node);
             }
@@ -173,7 +126,7 @@ pub fn filter_nodes(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rootsignal_common::{GatheringNode, SensitivityLevel};
+    use rootsignal_common::{GatheringNode, GeoPoint, GeoPrecision, SensitivityLevel};
     use uuid::Uuid;
 
     /// Build a minimal NodeMeta for testing.
@@ -239,7 +192,7 @@ mod tests {
     }
 
     // ===================================================================
-    // Tests for EXISTING behavior (should pass with buggy code)
+    // geo_check tests
     // ===================================================================
 
     #[test]
@@ -250,31 +203,29 @@ mod tests {
             Some(GeoPoint { lat: 44.98, lng: -93.27, precision: GeoPrecision::Exact }),
             None,
         );
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Accept);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Accept);
     }
 
     #[test]
     fn reject_coords_outside_radius() {
-        // Austin TX — far from Minneapolis
         let meta = test_meta(
             Some(GeoPoint { lat: 30.2672, lng: -97.7431, precision: GeoPrecision::Exact }),
             None,
         );
         let terms = mpls_terms();
         let config = mpls_config(&terms);
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
     #[test]
     fn reject_coords_different_continent() {
         let terms = vec!["Giessen".to_string()];
         let config = giessen_config(&terms);
-        // Minneapolis coords against Giessen profile
         let meta = test_meta(
             Some(GeoPoint { lat: 44.9778, lng: -93.2650, precision: GeoPrecision::Exact }),
             None,
         );
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
     #[test]
@@ -282,7 +233,7 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("Minneapolis"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Accept);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Accept);
     }
 
     #[test]
@@ -290,7 +241,7 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("MINNEAPOLIS"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Accept);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Accept);
     }
 
     #[test]
@@ -298,7 +249,7 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("South Minneapolis, MN"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Accept);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Accept);
     }
 
     #[test]
@@ -306,7 +257,7 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("Minnesota"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Accept);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Accept);
     }
 
     #[test]
@@ -314,18 +265,16 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("Austin, Texas"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
     #[test]
-    fn accept_known_source_with_penalty() {
+    fn reject_known_source_non_matching_name() {
+        // Previously accepted with penalty — now rejected (Case 4 removed)
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("Uptown"));
-        assert_eq!(
-            geo_check(&meta, &config, true),
-            GeoVerdict::AcceptWithPenalty(0.8)
-        );
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
     #[test]
@@ -333,52 +282,15 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some("<UNKNOWN>"));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
-
-    #[test]
-    fn backfill_when_no_coords() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let mut meta = test_meta(None, Some("Minneapolis"));
-        assert!(backfill_center_coords(&mut meta, &config));
-        let loc = meta.location.unwrap();
-        assert!((loc.lat - 44.9778).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::Approximate);
-    }
-
-    #[test]
-    fn no_backfill_when_coords_exist() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let mut meta = test_meta(
-            Some(GeoPoint { lat: 44.98, lng: -93.27, precision: GeoPrecision::Exact }),
-            Some("Minneapolis"),
-        );
-        assert!(!backfill_center_coords(&mut meta, &config));
-        assert!((meta.location.unwrap().lat - 44.98).abs() < 0.001);
-    }
-
-    // Fixed: no longer backfills when no name
-    #[test]
-    fn no_backfill_when_no_name_current_behavior() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let mut meta = test_meta(None, None);
-        assert!(!backfill_center_coords(&mut meta, &config));
-        assert!(meta.location.is_none());
-    }
-
-    // ===================================================================
-    // Tests for CORRECT behavior (THE FIX) — these should FAIL now
-    // ===================================================================
 
     #[test]
     fn reject_no_coords_no_name_none() {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, None);
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
     #[test]
@@ -386,34 +298,12 @@ mod tests {
         let terms = mpls_terms();
         let config = mpls_config(&terms);
         let meta = test_meta(None, Some(""));
-        assert_eq!(geo_check(&meta, &config, false), GeoVerdict::Reject);
+        assert_eq!(geo_check(&meta, &config), GeoVerdict::Reject);
     }
 
-    #[test]
-    fn reject_no_coords_no_name_even_if_known_source() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let meta = test_meta(None, None);
-        assert_eq!(geo_check(&meta, &config, true), GeoVerdict::Reject);
-    }
-
-    #[test]
-    fn no_backfill_when_no_name() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let mut meta = test_meta(None, None);
-        backfill_center_coords(&mut meta, &config);
-        assert!(meta.location.is_none(), "should NOT backfill when no location_name");
-    }
-
-    #[test]
-    fn no_backfill_when_name_is_unknown() {
-        let terms = mpls_terms();
-        let config = mpls_config(&terms);
-        let mut meta = test_meta(None, Some("<UNKNOWN>"));
-        backfill_center_coords(&mut meta, &config);
-        assert!(meta.location.is_none(), "should NOT backfill <UNKNOWN>");
-    }
+    // ===================================================================
+    // filter_nodes batch tests
+    // ===================================================================
 
     #[test]
     fn giessen_bug_reproduction_nameless_nodes_rejected() {
@@ -424,14 +314,10 @@ mod tests {
             .map(|_| make_node(test_meta(None, None)))
             .collect();
 
-        let (accepted, stats) = filter_nodes(nodes, &config, false);
+        let (accepted, stats) = filter_nodes(nodes, &config);
         assert!(accepted.is_empty(), "all nameless nodes should be rejected, got {}", accepted.len());
         assert_eq!(stats.filtered, 5);
     }
-
-    // ===================================================================
-    // Tests for behavior that should be unchanged by the fix
-    // ===================================================================
 
     #[test]
     fn mixed_batch_filters_correctly() {
@@ -446,46 +332,47 @@ mod tests {
             )),
             // Accept: location_name matches
             make_node(test_meta(None, Some("Minneapolis"))),
-            // Reject: no coords, no name (AFTER fix)
+            // Reject: no coords, no name
             make_node(test_meta(None, None)),
             // Reject: coords outside radius
             make_node(test_meta(
                 Some(GeoPoint { lat: 30.2672, lng: -97.7431, precision: GeoPrecision::Exact }),
                 None,
             )),
-            // Reject: non-local name, not known source
+            // Reject: non-local name
             make_node(test_meta(None, Some("Austin, Texas"))),
         ];
 
-        let (accepted, stats) = filter_nodes(nodes, &config, false);
+        let (accepted, stats) = filter_nodes(nodes, &config);
         assert_eq!(accepted.len(), 2, "only 2 nodes should pass, got {}", accepted.len());
         assert_eq!(stats.filtered, 3);
     }
 
     #[test]
-    fn batch_backfill_applied_to_accepted_with_name() {
+    fn accepted_with_name_has_no_backfilled_coords() {
+        // After removing backfill, accepted signals with name but no coords
+        // should remain without coordinates
         let terms = mpls_terms();
         let config = mpls_config(&terms);
 
         let nodes = vec![make_node(test_meta(None, Some("Minneapolis")))];
 
-        let (accepted, _) = filter_nodes(nodes, &config, false);
+        let (accepted, _) = filter_nodes(nodes, &config);
         assert_eq!(accepted.len(), 1);
-        let loc = accepted[0].meta().unwrap().location.as_ref().unwrap();
-        assert!((loc.lat - 44.9778).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::Approximate);
+        assert!(accepted[0].meta().unwrap().location.is_none(),
+            "should NOT backfill coordinates — actor fallback handles this later");
     }
 
     #[test]
-    fn known_source_penalty_applied_in_batch() {
+    fn non_matching_name_rejected_even_from_known_source() {
+        // Previously accepted with penalty — now rejected
         let terms = mpls_terms();
         let config = mpls_config(&terms);
 
         let nodes = vec![make_node(test_meta(None, Some("Uptown")))];
 
-        let (accepted, _) = filter_nodes(nodes, &config, true);
-        assert_eq!(accepted.len(), 1);
-        let confidence = accepted[0].meta().unwrap().confidence;
-        assert!((confidence - 0.72).abs() < 0.01, "0.9 * 0.8 = 0.72, got {confidence}");
+        let (accepted, stats) = filter_nodes(nodes, &config);
+        assert!(accepted.is_empty(), "non-matching location name should be rejected");
+        assert_eq!(stats.filtered, 1);
     }
 }

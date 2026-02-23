@@ -449,6 +449,8 @@ pub struct SourceFinder<'a> {
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
     embedder: Option<&'a dyn crate::infra::embedder::TextEmbedder>,
+    center_lat: f64,
+    center_lng: f64,
 }
 
 /// Cosine similarity threshold for embedding-based query dedup.
@@ -463,6 +465,8 @@ impl<'a> SourceFinder<'a> {
         region_name: &str,
         anthropic_api_key: Option<&str>,
         budget: &'a BudgetTracker,
+        center_lat: f64,
+        center_lng: f64,
     ) -> Self {
         let claude = anthropic_api_key
             .filter(|k| !k.is_empty())
@@ -474,6 +478,8 @@ impl<'a> SourceFinder<'a> {
             claude,
             budget,
             embedder: None,
+            center_lat,
+            center_lng,
         }
     }
 
@@ -559,7 +565,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source = SourceNode::new(
+                let mut source = SourceNode::new(
                     ck,
                     cv,
                     Some(url.clone()),
@@ -568,6 +574,8 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
+                source.center_lat = Some(self.center_lat);
+                source.center_lng = Some(self.center_lng);
 
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
@@ -595,7 +603,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let source = SourceNode::new(
+                let mut source = SourceNode::new(
                     ck,
                     cv,
                     Some(social_url.clone()),
@@ -604,6 +612,8 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
+                source.center_lat = Some(self.center_lat);
+                source.center_lng = Some(self.center_lng);
 
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
@@ -770,7 +780,7 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
 
-            let source = SourceNode::new(
+            let mut source = SourceNode::new(
                 ck.clone(),
                 cv,
                 None,
@@ -779,6 +789,8 @@ impl<'a> SourceFinder<'a> {
                 source_role,
                 Some(gap_context),
             );
+            source.center_lat = Some(self.center_lat);
+            source.center_lng = Some(self.center_lng);
 
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
@@ -956,7 +968,7 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
 
-            let source = SourceNode::new(
+            let mut source = SourceNode::new(
                 ck,
                 cv,
                 None,
@@ -966,6 +978,8 @@ impl<'a> SourceFinder<'a> {
                 SourceRole::Response,
                 Some(format!("Tension: {}", t.title)),
             );
+            source.center_lat = Some(self.center_lat);
+            source.center_lng = Some(self.center_lng);
 
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {

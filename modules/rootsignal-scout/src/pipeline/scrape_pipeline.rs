@@ -121,7 +121,11 @@ impl<'a> ScrapePipeline<'a> {
         &self,
         run_log: &mut RunLog,
     ) -> Result<(ScheduledRun, RunContext)> {
-        let mut all_sources = match self.writer.get_active_sources().await {
+        let mut all_sources = match self.writer.get_sources_for_region(
+            self.region.center_lat,
+            self.region.center_lng,
+            self.region.radius_km,
+        ).await {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -130,7 +134,7 @@ impl<'a> ScrapePipeline<'a> {
                 let discovered = sources.len() - curated;
                 info!(
                     total = sources.len(),
-                    curated, discovered, "Loaded sources from graph"
+                    curated, discovered, "Loaded region-scoped sources from graph"
                 );
                 sources
             }
@@ -157,7 +161,11 @@ impl<'a> ScrapePipeline<'a> {
                 Err(e) => warn!(error = %e, "Bootstrap failed"),
             }
             all_sources = self.writer
-                .get_active_sources()
+                .get_sources_for_region(
+                    self.region.center_lat,
+                    self.region.center_lng,
+                    self.region.radius_km,
+                )
                 .await
                 .unwrap_or_default();
         }
@@ -316,6 +324,8 @@ impl<'a> ScrapePipeline<'a> {
             &ctx.collected_mentions,
             &self.writer,
             &config,
+            self.region.center_lat,
+            self.region.center_lng,
         )
         .await
         {
@@ -367,6 +377,8 @@ impl<'a> ScrapePipeline<'a> {
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
+            self.region.center_lat,
+            self.region.center_lng,
         )
         .with_embedder(&*self.embedder);
         let (stats, social_topics) = discoverer.run().await;
@@ -388,7 +400,11 @@ impl<'a> ScrapePipeline<'a> {
         info!("=== Phase B: Find Responses ===");
 
         // Reload sources to pick up fresh discovery sources from mid-run
-        let fresh_sources = match self.writer.get_active_sources().await {
+        let fresh_sources = match self.writer.get_sources_for_region(
+            self.region.center_lat,
+            self.region.center_lng,
+            self.region.radius_km,
+        ).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to reload sources for Phase B");
@@ -466,7 +482,13 @@ impl<'a> ScrapePipeline<'a> {
         run_log: &mut RunLog,
     ) -> Result<()> {
         // Signal Expansion — create sources from implied queries
-        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);
+        let expansion = Expansion::new(
+            &self.writer,
+            &*self.embedder,
+            &self.region.name,
+            self.region.center_lat,
+            self.region.center_lng,
+        );
         expansion.run(ctx, run_log).await;
 
         check_cancelled_flag(&self.cancelled)?;
@@ -478,6 +500,8 @@ impl<'a> ScrapePipeline<'a> {
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
+            self.region.center_lat,
+            self.region.center_lng,
         )
         .with_embedder(&*self.embedder);
         let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;

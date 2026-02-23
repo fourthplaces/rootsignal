@@ -2,8 +2,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
+use rootsignal_common::Node;
 use tracing::{info, warn};
 
+use rootsignal_graph::beacon::BeaconCandidate;
 use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Archive;
@@ -72,9 +74,9 @@ impl NewsScanner {
         }
     }
 
-    /// Scan all news feeds, extract signals, store them.
-    /// Returns list of (lat, lng) for newly created signals.
-    pub async fn scan(&self) -> Result<Vec<(f64, f64)>> {
+    /// Scan all news feeds, extract signals, and create beacon tasks for hot areas.
+    /// Returns (articles_scanned, beacons_created).
+    pub async fn scan(&self) -> Result<(u32, u32)> {
         info!(feeds = NEWS_FEEDS.len(), "Starting news scan");
 
         // 1. Fetch all feeds
@@ -123,8 +125,9 @@ impl NewsScanner {
 
         info!(new_articles = new_urls.len(), "New articles after dedup");
 
-        // 3. Process each new article
-        let mut locations = Vec::new();
+        // 3. Process each new article — collect beacon candidates instead of storing signals
+        let mut beacon_candidates: Vec<BeaconCandidate> = Vec::new();
+        let mut articles_scanned = 0u32;
 
         for (url, _title) in &new_urls {
             if self.budget.is_active() && !self.budget.has_budget(5) {
@@ -159,29 +162,40 @@ impl NewsScanner {
                 }
             };
 
-            // Store signals
-            for node in &extraction.nodes {
-                if let Some(meta) = node.meta() {
-                    if let Some(loc) = &meta.location {
-                        locations.push((loc.lat, loc.lng));
-                    }
-                }
+            articles_scanned += 1;
 
-                match self
-                    .writer
-                    .upsert_node(node, "news_scanner")
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => warn!(error = %e, "Failed to store signal from news"),
+            // Collect beacon candidates from Tension/Need nodes with locations.
+            // Only these signal types indicate problems worth investigating.
+            // Aid/Gathering are responses, not discovery triggers.
+            for node in &extraction.nodes {
+                if matches!(node, Node::Tension(_) | Node::Need(_)) {
+                    if let Some(meta) = node.meta() {
+                        if let Some(loc) = &meta.location {
+                            beacon_candidates.push(BeaconCandidate {
+                                lat: loc.lat,
+                                lng: loc.lng,
+                                title: meta.title.clone(),
+                                location_name: meta.location_name.clone(),
+                                source_url: url.clone(),
+                            });
+                        }
+                    }
                 }
             }
         }
 
+        // 4. Create beacon tasks from clustered candidates
+        let beacons_created = rootsignal_graph::beacon::create_beacons_from_news(
+            &self.writer,
+            beacon_candidates,
+        )
+        .await?;
+
         info!(
-            signals_with_location = locations.len(),
+            articles_scanned,
+            beacons_created,
             "News scan complete"
         );
-        Ok(locations)
+        Ok((articles_scanned, beacons_created))
     }
 }

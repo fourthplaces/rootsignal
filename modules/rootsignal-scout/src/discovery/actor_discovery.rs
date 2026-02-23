@@ -74,6 +74,8 @@ pub async fn create_actor_from_page(
     url: &str,
     fallback_region: &str,
     require_social_links: bool,
+    region_center_lat: f64,
+    region_center_lng: f64,
 ) -> anyhow::Result<Option<ActorDiscoveryResult>> {
     // 1. Fetch the page
     let page = archive.page(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -160,6 +162,8 @@ pub async fn create_actor_from_page(
         let cv = rootsignal_common::canonical_value(social_url);
         let source = SourceNode {
             cadence_hours: Some(12),
+            center_lat: Some(region_center_lat),
+            center_lng: Some(region_center_lng),
             ..SourceNode::new(
                 cv.clone(),
                 cv.clone(),

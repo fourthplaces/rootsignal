@@ -1071,6 +1071,8 @@ impl ScrapePhase {
                     last_scraped: Some(Utc::now()),
                     last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
                     signals_produced: produced,
+                    center_lat: Some(self.region.center_lat),
+                    center_lng: Some(self.region.center_lng),
                     ..SourceNode::new(
                         ck.clone(),
                         cv,
@@ -1238,9 +1240,8 @@ impl ScrapePhase {
             radius_km: self.region.radius_km,
             geo_terms: &self.region.geo_terms,
         };
-        let is_known_source = known_urls.contains(&url);
         let before_geo = nodes.len();
-        let (nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config, is_known_source);
+        let (mut nodes, geo_stats) = geo_filter::filter_nodes(nodes, &geo_config);
         ctx.stats.geo_filtered += geo_stats.filtered;
         let geo_filtered = before_geo - nodes.len();
         if geo_filtered > 0 {
@@ -1249,6 +1250,31 @@ impl ScrapePhase {
                 filtered = geo_filtered,
                 "Off-geography signals dropped"
             );
+        }
+
+        // Actor-location fallback: for signals that passed the geo-filter but
+        // have no coordinates, use the actor's known location if the signal
+        // came from an actor source. Never fabricate coordinates from the
+        // region center — that causes cross-region contamination.
+        let ck_for_fallback = ctx
+            .url_to_canonical_key
+            .get(&url)
+            .cloned()
+            .unwrap_or_else(|| url.clone());
+        if let Some(actor_ctx) = ctx.actor_contexts.get(&ck_for_fallback) {
+            if let (Some(actor_lat), Some(actor_lng)) = (actor_ctx.location_lat, actor_ctx.location_lng) {
+                for node in &mut nodes {
+                    if let Some(meta) = node.meta_mut() {
+                        if meta.location.is_none() {
+                            meta.location = Some(rootsignal_common::GeoPoint {
+                                lat: actor_lat,
+                                lng: actor_lng,
+                                precision: rootsignal_common::GeoPrecision::Approximate,
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // Filter to signal nodes only (skip Evidence)
