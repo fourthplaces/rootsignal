@@ -852,6 +852,45 @@ impl CachedReader {
         Ok(result)
     }
 
+    /// Tags for a single situation, served from cache.
+    pub async fn tags_for_situation(&self, situation_id: Uuid) -> Result<Vec<TagNode>, neo4rs::Error> {
+        let snap = self.cache.load_full();
+        let tags = snap
+            .tags_by_situation
+            .get(&situation_id)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&idx| snap.tags[idx].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(tags)
+    }
+
+    /// Batch tags for multiple situations (dataloader).
+    pub async fn batch_tags_by_situation_ids(
+        &self,
+        keys: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<TagNode>>, anyhow::Error> {
+        let snap = self.cache.load_full();
+        let mut result = HashMap::new();
+        for &situation_id in keys {
+            let tags = snap
+                .tags_by_situation
+                .get(&situation_id)
+                .map(|indices| {
+                    indices
+                        .iter()
+                        .map(|&idx| snap.tags[idx].clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            result.insert(situation_id, tags);
+        }
+        Ok(result)
+    }
+
     /// Top tags sorted by number of stories they appear on.
     pub async fn top_tags(&self, limit: usize) -> Result<Vec<TagNode>, neo4rs::Error> {
         let snap = self.cache.load_full();

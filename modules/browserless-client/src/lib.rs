@@ -26,6 +26,12 @@ impl BrowserlessClient {
 
     /// Fetch fully-rendered HTML content for a URL via Browserless /content endpoint.
     pub async fn content(&self, url: &str) -> Result<String> {
+        let url = if !url.starts_with("http://") && !url.starts_with("https://") {
+            format!("https://{url}")
+        } else {
+            url.to_string()
+        };
+
         let mut endpoint = format!("{}/content", self.base_url);
         if let Some(ref token) = self.token {
             endpoint.push_str(&format!("?token={token}"));

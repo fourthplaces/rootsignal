@@ -52,13 +52,16 @@ pub fn sanitize_url(url: &str) -> String {
         "mc_eid",
     ];
 
-    let Ok(mut parsed) = url::Url::parse(url) else {
+    let Ok(mut parsed) = url::Url::parse(url).or_else(|_| {
+        // URL may be missing a scheme (e.g. "example.com/path" from LLM output)
+        url::Url::parse(&format!("https://{url}"))
+    }) else {
         return url.to_string();
     };
 
     let had_query = parsed.query().is_some();
     if !had_query {
-        return url.to_string();
+        return parsed.to_string();
     }
 
     let clean_pairs: Vec<(String, String)> = parsed
@@ -141,5 +144,21 @@ mod tests {
         let url = "https://example.com/page?utm_source=x&utm_medium=y";
         let clean = sanitize_url(url);
         assert!(!clean.contains('?'));
+    }
+
+    #[test]
+    fn sanitize_url_adds_scheme_when_missing() {
+        let url = "example.com/page";
+        let clean = sanitize_url(url);
+        assert_eq!(clean, "https://example.com/page");
+    }
+
+    #[test]
+    fn sanitize_url_adds_scheme_and_strips_tracking() {
+        let url = "example.com/page?id=1&utm_source=x";
+        let clean = sanitize_url(url);
+        assert!(clean.starts_with("https://"));
+        assert!(clean.contains("id=1"));
+        assert!(!clean.contains("utm_source"));
     }
 }

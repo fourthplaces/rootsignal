@@ -17,7 +17,7 @@ use rootsignal_graph::CachedReader;
 
 use super::loaders::{
     ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
-    TagsByStoryLoader,
+    TagsBySituationLoader, TagsByStoryLoader,
 };
 
 // --- GraphQL Enums ---
@@ -975,6 +975,12 @@ impl GqlSituation {
         self.0.category.as_deref()
     }
 
+    async fn tags(&self, ctx: &Context<'_>) -> Result<Vec<GqlTag>> {
+        let loader = ctx.data_unchecked::<DataLoader<TagsBySituationLoader>>();
+        let tags = loader.load_one(self.0.id).await?.unwrap_or_default();
+        Ok(tags.into_iter().map(GqlTag).collect())
+    }
+
     /// Dispatches for this situation, ordered chronologically.
     async fn dispatches(
         &self,
@@ -1042,10 +1048,12 @@ pub struct GqlScoutTask {
     pub status: String,
     pub created_at: String,
     pub completed_at: Option<String>,
+    /// Current workflow phase status for this task's region (e.g. "complete", "idle", "running_scrape").
+    pub phase_status: String,
 }
 
-impl From<rootsignal_common::ScoutTask> for GqlScoutTask {
-    fn from(t: rootsignal_common::ScoutTask) -> Self {
+impl GqlScoutTask {
+    pub fn from_task(t: rootsignal_common::ScoutTask, phase_status: String) -> Self {
         GqlScoutTask {
             id: t.id.to_string(),
             center_lat: t.center_lat,
@@ -1058,6 +1066,7 @@ impl From<rootsignal_common::ScoutTask> for GqlScoutTask {
             status: t.status.to_string(),
             created_at: t.created_at.to_rfc3339(),
             completed_at: t.completed_at.map(|dt| dt.to_rfc3339()),
+            phase_status,
         }
     }
 }

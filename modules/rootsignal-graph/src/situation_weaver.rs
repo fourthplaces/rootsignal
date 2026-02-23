@@ -601,6 +601,9 @@ impl SituationWeaver {
             )
             .param("id", situation_id.to_string());
             let _ = g.run(count_q).await;
+
+            // Aggregate signal tags → situation tags
+            let _ = self.writer.aggregate_situation_tags(situation_id).await;
         }
 
         // Process dispatches

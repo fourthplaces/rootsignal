@@ -89,7 +89,7 @@ services:
       DATABASE_URL: postgres://rootsignal:rootsignal@postgres:5432/rootsignal
       ADMIN_PASSWORD: admin
       ADMIN_NUMBERS: "+1234567890"
-      RUST_LOG: info
+      RUST_LOG: info,restate_sdk=warn,rootsignal_archive::services::page=warn,rootsignal_archive::services::search=warn
       API_HOST: "0.0.0.0"
       API_PORT: "3000"
       RESTATE_PORT: "9080"
