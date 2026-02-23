@@ -29,6 +29,8 @@ pub(crate) enum MessageContent {
 pub(crate) enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: ImageSource },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -42,11 +44,29 @@ pub(crate) enum ContentBlock {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ImageSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
 impl WireMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: Role::User,
             content: MessageContent::Text(content.into()),
+        }
+    }
+
+    pub fn user_with_image(image: ImageSource, text: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Image { source: image },
+                ContentBlock::Text { text: text.into() },
+            ]),
         }
     }
 

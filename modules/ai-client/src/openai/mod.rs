@@ -145,6 +145,12 @@ impl OpenAi {
             .await
     }
 
+    /// Transcribe audio/video via OpenAI Whisper API.
+    /// Accepts raw bytes and mime type. Whisper extracts audio from video formats.
+    pub async fn transcribe(&self, bytes: Vec<u8>, mime_type: &str) -> Result<String> {
+        self.client().transcribe(bytes, mime_type).await
+    }
+
     /// Create embedding for text.
     pub async fn create_embedding(&self, text: &str, model: &str) -> Result<Vec<f32>> {
         self.client().embed(model, text).await

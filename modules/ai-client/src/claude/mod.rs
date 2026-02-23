@@ -123,6 +123,34 @@ impl Claude {
         self.chat_completion("You are a helpful assistant.", prompt)
             .await
     }
+
+    /// Send an image to Claude vision and return extracted text.
+    pub async fn describe_image(
+        &self,
+        bytes: &[u8],
+        mime_type: &str,
+        prompt: &str,
+    ) -> Result<String> {
+        use base64::Engine;
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let source = ImageSource {
+            source_type: "base64".to_string(),
+            media_type: mime_type.to_string(),
+            data: encoded,
+        };
+
+        let request = ChatRequest::new(&self.model)
+            .message(WireMessage::user_with_image(source, prompt))
+            .max_tokens(4096)
+            .temperature(0.0);
+
+        let response = self.client().chat(&request).await?;
+
+        response
+            .text()
+            .ok_or_else(|| anyhow!("No text response from Claude vision"))
+    }
 }
 
 // =============================================================================

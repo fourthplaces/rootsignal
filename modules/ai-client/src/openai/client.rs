@@ -91,6 +91,48 @@ impl OpenAiClient {
             .ok_or_else(|| anyhow!("No response from OpenAI"))
     }
 
+    pub async fn transcribe(&self, bytes: Vec<u8>, mime_type: &str) -> Result<String> {
+        let url = format!("{}/audio/transcriptions", self.base_url);
+
+        // Derive file extension from mime type for the form filename
+        let ext = match mime_type {
+            "audio/mpeg" | "audio/mp3" => "mp3",
+            "audio/mp4" | "video/mp4" => "mp4",
+            "audio/wav" => "wav",
+            "audio/webm" | "video/webm" => "webm",
+            "audio/ogg" => "ogg",
+            "video/quicktime" => "mov",
+            _ => "mp4",
+        };
+
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(format!("audio.{ext}"))
+            .mime_str(mime_type)?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("model", "whisper-1")
+            .text("response_format", "text")
+            .part("file", part);
+
+        debug!("OpenAI Whisper transcription request");
+
+        let response = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .multipart(form)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow!("Whisper API error ({}): {}", status, error_text));
+        }
+
+        Ok(response.text().await?)
+    }
+
     pub async fn embed(&self, model: &str, text: &str) -> Result<Vec<f32>> {
         let url = format!("{}/embeddings", self.base_url);
 

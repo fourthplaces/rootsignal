@@ -107,9 +107,9 @@ pub trait EnrichmentWorkflow {
 - `modules/ai-client/src/claude/mod.rs` — add `describe_image(bytes, mime_type, prompt)` method
 
 **Acceptance criteria:**
-- [ ] `ContentBlock::Image { source: ImageSource }` variant added
-- [ ] `ImageSource` struct with `type`, `media_type`, `data` (base64) fields
-- [ ] `Claude::describe_image()` sends vision request, returns extracted text
+- [x] `ContentBlock::Image { source: ImageSource }` variant added
+- [x] `ImageSource` struct with `type`, `media_type`, `data` (base64) fields
+- [x] `Claude::describe_image()` sends vision request, returns extracted text
 - [ ] OCR-focused prompt: "Extract all visible text from this image. Return only the text, nothing else. If no text is visible, return an empty string."
 
 ### Phase 3: OpenAI Whisper Client
@@ -120,10 +120,10 @@ pub trait EnrichmentWorkflow {
 - `modules/ai-client/src/lib.rs` — export openai module
 
 **Acceptance criteria:**
-- [ ] `Whisper::new(api_key)` constructor
-- [ ] `Whisper::transcribe(bytes, mime_type)` sends multipart form to `api.openai.com/v1/audio/transcriptions`
-- [ ] Returns transcribed text as `String`
-- [ ] Handles video by passing bytes directly (Whisper extracts audio from mp4/webm)
+- [x] `OpenAi::transcribe(bytes, mime_type)` added (uses existing OpenAi client, no separate Whisper struct needed)
+- [x] Sends multipart form to `api.openai.com/v1/audio/transcriptions` with whisper-1 model
+- [x] Returns transcribed text as `String`
+- [x] Handles video by passing bytes directly (Whisper extracts audio from mp4/webm)
 
 ### Phase 4: Restate EnrichmentWorkflow
 
