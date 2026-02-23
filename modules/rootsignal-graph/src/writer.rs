@@ -94,6 +94,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
+                content_date: CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
 
                 location_name: $location_name,
                 starts_at: CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
@@ -125,6 +126,10 @@ impl GraphWriter {
         .param(
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
+        )
+        .param(
+            "content_date",
+            n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -171,6 +176,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
+                content_date: CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
 
                 location_name: $location_name,
                 action_url: $action_url,
@@ -200,6 +206,10 @@ impl GraphWriter {
         .param(
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
+        )
+        .param(
+            "content_date",
+            n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
 
         .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
@@ -234,6 +244,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
+                content_date: CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
 
                 location_name: $location_name,
                 urgency: $urgency,
@@ -263,6 +274,10 @@ impl GraphWriter {
         .param(
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
+        )
+        .param(
+            "content_date",
+            n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
         .param(
             "location_name",
@@ -305,6 +320,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
+                content_date: CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
 
                 location_name: $location_name,
                 severity: $severity,
@@ -334,6 +350,10 @@ impl GraphWriter {
         .param(
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
+        )
+        .param(
+            "content_date",
+            n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
         .param(
             "location_name",
@@ -384,6 +404,7 @@ impl GraphWriter {
                 source_url: $source_url,
                 extracted_at: datetime($extracted_at),
                 last_confirmed_active: datetime($last_confirmed_active),
+                content_date: CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
 
                 location_name: $location_name,
                 severity: $severity,
@@ -412,6 +433,10 @@ impl GraphWriter {
         .param(
             "last_confirmed_active",
             format_datetime(&n.meta.last_confirmed_active),
+        )
+        .param(
+            "content_date",
+            n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
         .param(
             "location_name",

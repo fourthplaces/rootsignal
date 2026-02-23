@@ -1943,6 +1943,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
 
     // Parse timestamps
     let extracted_at = parse_datetime_prop(&n, "extracted_at");
+    let content_date = parse_optional_datetime_prop(&n, "content_date");
     let last_confirmed_active = parse_datetime_prop(&n, "last_confirmed_active");
 
     let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
@@ -1969,6 +1970,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         },
         source_url,
         extracted_at,
+        content_date,
         last_confirmed_active,
         source_diversity: source_diversity as u32,
         external_ratio: external_ratio as f32,

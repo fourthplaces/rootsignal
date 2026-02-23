@@ -20,6 +20,7 @@ type Signal = {
   summary: string;
   confidence: number;
   extractedAt: string;
+  contentDate: string | null;
   locationName: string | null;
   sourceUrl: string | null;
   causeHeat: number | null;
@@ -387,6 +388,7 @@ export function ScoutTaskDetailPage() {
                   <th className="text-left px-4 py-2 font-medium">Location</th>
                   <th className="text-right px-4 py-2 font-medium">Confidence</th>
                   <th className="text-right px-4 py-2 font-medium">Heat</th>
+                  <th className="text-left px-4 py-2 font-medium">Published</th>
                   <th className="text-left px-4 py-2 font-medium">Extracted</th>
                 </tr>
               </thead>
@@ -416,6 +418,9 @@ export function ScoutTaskDetailPage() {
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums">
                         {s.causeHeat != null ? s.causeHeat.toFixed(1) : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                        {s.contentDate ? formatDate(s.contentDate) : "—"}
                       </td>
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                         {formatDate(s.extractedAt)}

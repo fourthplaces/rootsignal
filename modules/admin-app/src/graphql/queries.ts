@@ -4,27 +4,27 @@ import { gql } from "@apollo/client";
 const SIGNAL_FIELDS = `
   ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     startsAt endsAt actionUrl organizer isRecurring
   }
   ... on GqlAidSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     actionUrl availability isOngoing
   }
   ... on GqlNeedSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     urgency whatNeeded actionUrl goal
   }
   ... on GqlNoticeSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     severity category effectiveDate sourceAuthority
   }
   ... on GqlTensionSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     severity category whatWouldHelp
   }
 `;
@@ -166,31 +166,31 @@ export const SIGNALS_NEAR = gql`
     signalsNear(lat: $lat, lng: $lng, radiusKm: $radiusKm, types: $types) {
       ... on GqlGatheringSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         startsAt endsAt actionUrl organizer isRecurring
         actors { id name actorType }
       }
       ... on GqlAidSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         actionUrl availability isOngoing
         actors { id name actorType }
       }
       ... on GqlNeedSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         urgency whatNeeded actionUrl goal
         actors { id name actorType }
       }
       ... on GqlNoticeSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity category effectiveDate sourceAuthority
         actors { id name actorType }
       }
       ... on GqlTensionSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt sourceDiversity causeHeat channelDiversity
+        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity category whatWouldHelp
         actors { id name actorType }
       }
