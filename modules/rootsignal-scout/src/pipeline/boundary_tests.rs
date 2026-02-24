@@ -1854,3 +1854,578 @@ async fn social_published_at_becomes_content_date_fallback() {
     let content_date = stored.content_date.expect("content_date should be backfilled from post published_at");
     assert_eq!(content_date, post_date);
 }
+
+// ---------------------------------------------------------------------------
+// Edge case: Ecological signals at ocean/non-land coordinates
+//
+// Principle #11: "Life, Not Just People" — ecological signal is first-class.
+// Oil spill in the Pacific, reef damage, etc. should store fine.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ocean_coordinates_store_ecological_signal() {
+    // Mid-Pacific oil spill at (-15.0, -170.0) — valid ecological signal, no land
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://news.org/oil-spill",
+            archived_page("https://news.org/oil-spill", "# Pacific Oil Spill Emergency"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://news.org/oil-spill",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![
+                    tension_at("Pacific Oil Spill Threatening Coral Reef", -15.0, -170.0),
+                    need_at("Volunteer Boats Needed for Cleanup", -15.1, -170.1),
+                ],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://news.org/oil-spill");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 2, "ocean-coordinate ecological signals should be stored");
+    let stored = store.signal_by_title("Pacific Oil Spill Threatening Coral Reef").expect("tension should exist");
+    let about = stored.about_location.expect("about_location should be set");
+    assert!((about.lat - (-15.0)).abs() < 0.001, "latitude should be negative (southern hemisphere)");
+    assert!((about.lng - (-170.0)).abs() < 0.001, "longitude should be in Pacific");
+}
+
+#[tokio::test]
+async fn antarctic_coordinates_store_signal() {
+    // Research station environmental monitoring at Antarctica
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://science.org/antarctic",
+            archived_page("https://science.org/antarctic", "# Antarctic ice shelf collapse"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://science.org/antarctic",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Ice Shelf Collapse Accelerating", -77.85, 166.67)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://science.org/antarctic");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "Antarctic signal should be stored");
+    let stored = store.signal_by_title("Ice Shelf Collapse Accelerating").unwrap();
+    assert!(stored.about_location.unwrap().lat < -70.0, "should preserve extreme-south latitude");
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Out-of-bounds coordinates (LLM hallucination)
+//
+// Kill Test #5: Geo-localization failures. lat=999 is physically impossible.
+// Pipeline should still store the signal — bad coords don't crash anything.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/hallucinated-geo",
+            archived_page("https://example.com/hallucinated-geo", "# Hallucinated location"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/hallucinated-geo",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Signal With Impossible Coords", 999.0, -999.0)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/hallucinated-geo");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    // Pipeline must not panic on absurd coordinates
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    // Signal is stored — we don't validate coordinate ranges at pipeline level.
+    // Downstream display/query layers are responsible for geo-bounds checks.
+    assert_eq!(store.signals_created(), 1, "out-of-bounds coords should not crash pipeline");
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Environmental disaster — full signal-type spectrum
+//
+// Crisis scenario produces Tension + Need + Aid + Gathering from same URL.
+// All types should flow through and be stored.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn environmental_disaster_produces_all_signal_types() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://news.org/hurricane-response",
+            archived_page("https://news.org/hurricane-response", "# Hurricane Response Underway"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://news.org/hurricane-response",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![
+                    tension_at("Category 4 Hurricane Hits Gulf Coast", 29.95, -90.07),
+                    need_at("Emergency Blood Donations Needed", 29.96, -90.08),
+                    aid_at("Red Cross Shelter Open at Convention Center", 29.94, -90.06),
+                    gathering_at("Volunteer Deployment Briefing 8AM Tomorrow", 29.97, -90.05),
+                    notice_at("Mandatory Evacuation Order Zone A", 29.93, -90.09),
+                ],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://news.org/hurricane-response");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 5, "all 5 signal types should be stored in crisis");
+    assert!(store.has_signal_titled("Category 4 Hurricane Hits Gulf Coast"));
+    assert!(store.has_signal_titled("Emergency Blood Donations Needed"));
+    assert!(store.has_signal_titled("Red Cross Shelter Open at Convention Center"));
+    assert!(store.has_signal_titled("Volunteer Deployment Briefing 8AM Tomorrow"));
+    assert!(store.has_signal_titled("Mandatory Evacuation Order Zone A"));
+
+    // All signals should cluster geographically around the Gulf Coast
+    for title in &[
+        "Category 4 Hurricane Hits Gulf Coast",
+        "Emergency Blood Donations Needed",
+        "Red Cross Shelter Open at Convention Center",
+    ] {
+        let s = store.signal_by_title(title).unwrap();
+        let loc = s.about_location.expect("crisis signal should have location");
+        assert!((loc.lat - 29.95).abs() < 0.1, "all signals should cluster near Gulf Coast");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Hallucinated dates
+//
+// Kill Test #3: Extraction hallucinations. Future and epoch dates.
+// Pipeline should not crash or reject — dates are metadata, not filters.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn hallucinated_future_date_does_not_crash() {
+    use chrono::TimeZone;
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/future-date",
+            archived_page("https://example.com/future-date", "# Far future event"),
+        );
+
+    let mut node = tension_at("Signal From Year 2099", 44.975, -93.270);
+    if let Some(meta) = node.meta_mut() {
+        meta.content_date = Some(chrono::Utc.with_ymd_and_hms(2099, 12, 31, 23, 59, 59).unwrap());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/future-date",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/future-date");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "future date should not prevent storage");
+    let stored = store.signal_by_title("Signal From Year 2099").unwrap();
+    assert_eq!(chrono::Datelike::year(&stored.content_date.unwrap()), 2099);
+}
+
+#[tokio::test]
+async fn epoch_zero_date_does_not_crash() {
+    use chrono::TimeZone;
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/epoch-date",
+            archived_page("https://example.com/epoch-date", "# Epoch date"),
+        );
+
+    let mut node = tension_at("Signal With Epoch Date", 44.975, -93.270);
+    if let Some(meta) = node.meta_mut() {
+        meta.content_date = Some(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/epoch-date",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/epoch-date");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "epoch date should not prevent storage");
+    let stored = store.signal_by_title("Signal With Epoch Date").unwrap();
+    assert_eq!(chrono::Datelike::year(&stored.content_date.unwrap()), 1970);
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Extremely long title (LLM hallucination)
+//
+// Kill Test #3: LLM sometimes outputs paragraph-length titles.
+// Pipeline should handle without panic or truncation crash.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn extremely_long_title_survives_pipeline() {
+    let long_title = "A".repeat(2000);
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/long-title",
+            archived_page("https://example.com/long-title", "# Long title page"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/long-title",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at(&long_title, 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/long-title");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "long title should not crash pipeline");
+    assert!(store.has_signal_titled(&long_title));
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Cross-source corroboration
+//
+// Kill Test #4: Same signal from two different sources.
+// First source creates, second source corroborates.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn same_signal_from_two_sources_corroborates() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://source-a.org/article",
+            archived_page("https://source-a.org/article", "# Housing Crisis Report"),
+        )
+        .on_page(
+            "https://source-b.org/story",
+            archived_page("https://source-b.org/story", "# Housing Crisis Coverage"),
+        );
+
+    // Both sources extract a signal with the SAME title and type
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://source-a.org/article",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Housing Crisis in Uptown", 44.948, -93.298)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        )
+        .on_url(
+            "https://source-b.org/story",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Housing Crisis in Uptown", 44.949, -93.297)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    // Process source A first
+    let source_a = page_source("https://source-a.org/article");
+    let sources_a: Vec<&SourceNode> = vec![&source_a];
+    let mut ctx = RunContext::new(&[source_a.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources_a, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "first source creates signal");
+    assert_eq!(store.corroborations_for("Housing Crisis in Uptown"), 0, "no corroboration yet");
+
+    // Process source B — should corroborate, not duplicate
+    let source_b = page_source("https://source-b.org/story");
+    let sources_b: Vec<&SourceNode> = vec![&source_b];
+    let mut ctx2 = RunContext::new(&[source_b.clone()]);
+    let mut log2 = run_log();
+
+    phase.run_web(&sources_b, &mut ctx2, &mut log2).await;
+
+    assert_eq!(store.signals_created(), 1, "second source should corroborate, not create duplicate");
+    assert_eq!(store.corroborations_for("Housing Crisis in Uptown"), 1, "corroboration count should increment");
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Mixed social posts (some text, some image-only, some empty)
+//
+// IG account with diverse post types. Pipeline should extract from
+// text posts and gracefully skip image-only/empty posts.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mixed_text_and_image_posts_produce_correct_signals() {
+    let ig_url = "https://www.instagram.com/community_org";
+
+    let mut text_post_1 = test_post("Community cleanup at Lake Harriet this Saturday!");
+    text_post_1.published_at = Some(chrono::Utc::now());
+
+    let mut text_post_2 = test_post("Volunteers needed for food shelf restocking");
+    text_post_2.published_at = Some(chrono::Utc::now());
+
+    let mut image_only_1 = test_post("");
+    image_only_1.text = None; // pure image post
+
+    let mut image_only_2 = test_post("");
+    image_only_2.text = None; // another image post
+
+    let empty_text = test_post(""); // empty string text
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![text_post_1, text_post_2, image_only_1, image_only_2, empty_text]);
+
+    // Extractor sees combined text of the text posts (image-only posts have None text)
+    let extractor = MockExtractor::new()
+        .on_url(
+            ig_url,
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![
+                    gathering_at("Lake Harriet Cleanup", 44.921, -93.306),
+                    need_at("Food Shelf Volunteers Needed", 44.948, -93.280),
+                ],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 2, "only text posts should produce signals");
+    assert!(store.has_signal_titled("Lake Harriet Cleanup"));
+    assert!(store.has_signal_titled("Food Shelf Volunteers Needed"));
+}
+
+// ---------------------------------------------------------------------------
+// Edge case: Minimum viable signal (no location, no action URL, no date)
+//
+// Signal with just a title and summary — bare minimum from LLM.
+// System should still store it, not reject it.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn minimum_viable_signal_with_no_optional_fields() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/bare-signal",
+            archived_page("https://example.com/bare-signal", "# Bare signal"),
+        );
+
+    // tension() creates a node with no location (vs tension_at which has coords)
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/bare-signal",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension("Community Tension Without Details")],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/bare-signal");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "bare signal should still be stored");
+    let stored = store.signal_by_title("Community Tension Without Details").unwrap();
+    assert!(stored.about_location.is_none(), "no location extracted, no actor → none");
+    assert!(stored.from_location.is_none(), "web source has no actor context");
+    assert!(stored.content_date.is_none(), "no date metadata available");
+    assert!(stored.confidence > 0.0, "even bare signal has non-zero confidence from quality scoring");
+}
