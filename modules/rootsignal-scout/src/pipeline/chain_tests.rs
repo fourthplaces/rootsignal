@@ -521,6 +521,134 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
 }
 
 // ---------------------------------------------------------------------------
+// Chain Test 4c: Instagram profile with bio location, mixed-geography posts
+//
+// Real-world scenario: @mpls_community_garden has "Minneapolis, MN" in their
+// IG bio. They post about three things:
+//
+//   1. "Powderhorn Park spring planting day!" → LLM extracts Powderhorn coords
+//   2. "Reflections on community resilience" → geographically neutral, no location
+//   3. "Inspired by Chicago's urban farm network" → LLM extracts Chicago coords
+//
+// Expected behavior:
+//   Signal 1: about_location = Powderhorn, from_location = Minneapolis (actor)
+//   Signal 2: about_location = Minneapolis (fallback), from_location = Minneapolis
+//   Signal 3: about_location = Chicago, from_location = Minneapolis (actor)
+//
+// This is the Paris Trip Problem from the brainstorm, but applied to multiple
+// posts from the same account. The key insight: from_location is ALWAYS the
+// actor, about_location is ONLY overwritten when the LLM found nothing.
+// ---------------------------------------------------------------------------
+
+/// Minneapolis actor's IG: one local post, one geo-neutral, one out-of-town.
+/// Each signal gets the right about_location and from_location.
+#[tokio::test]
+async fn ig_bio_location_flows_through_mixed_geography_posts() {
+    let ig_url = "https://www.instagram.com/mpls_community_garden";
+
+    // Three posts — extractor sees them as combined text keyed by source_url
+    let post1 = test_post("Powderhorn Park spring planting day this Saturday! Bring gloves.");
+    let post2 = test_post("Reflections on community resilience and what it means to show up.");
+    let post3 = test_post("Inspired by Chicago's urban farm network — amazing what they've built.");
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![post1, post2, post3]);
+
+    // LLM extracts three signals with different location states:
+    // 1. Powderhorn Park — explicit local coords
+    // 2. Community resilience — no location at all (geo-neutral content)
+    // 3. Chicago farm — explicit Chicago coords
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, ExtractionResult {
+            nodes: vec![
+                tension_at("Powderhorn Spring Planting", 44.9489, -93.2583),
+                tension("Community Resilience Reflections"),
+                tension_at("Chicago Urban Farm Network", 41.8781, -87.6298),
+            ],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+
+    // Actor context: IG bio says "Minneapolis, MN"
+    ctx.actor_contexts.insert(
+        canonical_value(ig_url),
+        ActorContext {
+            actor_name: "MPLS Community Garden".to_string(),
+            bio: Some("Growing food and community in Minneapolis, MN 🌱".to_string()),
+            location_name: Some("Minneapolis, MN".to_string()),
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        },
+    );
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    // All three signals stored — no geo-filter rejection
+    assert_eq!(store.signals_created(), 3, "all three posts should produce signals");
+
+    // --- Signal 1: Powderhorn (explicit local location) ---
+    let powderhorn = store.signal_by_title("Powderhorn Spring Planting")
+        .expect("powderhorn signal should exist");
+    let about = powderhorn.about_location.expect("about_location should be Powderhorn coords");
+    assert!(
+        (about.lat - 44.9489).abs() < 0.001,
+        "about_location should be Powderhorn, not actor fallback"
+    );
+    let from = powderhorn.from_location.expect("from_location should be actor (Minneapolis)");
+    assert!(
+        (from.lat - 44.9778).abs() < 0.001,
+        "from_location should be actor's Minneapolis coords"
+    );
+
+    // --- Signal 2: Geo-neutral (no content location → falls back to actor) ---
+    let reflections = store.signal_by_title("Community Resilience Reflections")
+        .expect("reflections signal should exist");
+    let about = reflections.about_location
+        .expect("about_location should fall back to actor coords for geo-neutral content");
+    assert!(
+        (about.lat - 44.9778).abs() < 0.001,
+        "geo-neutral post: about_location should fall back to Minneapolis actor coords"
+    );
+    let from = reflections.from_location.expect("from_location should be actor");
+    assert!(
+        (from.lat - 44.9778).abs() < 0.001,
+        "from_location should be Minneapolis actor coords"
+    );
+
+    // --- Signal 3: Chicago (explicit out-of-town location) ---
+    let chicago = store.signal_by_title("Chicago Urban Farm Network")
+        .expect("chicago signal should exist");
+    let about = chicago.about_location.expect("about_location should be Chicago coords");
+    assert!(
+        (about.lat - 41.8781).abs() < 0.001,
+        "about_location should be Chicago, NOT overwritten by Minneapolis actor"
+    );
+    let from = chicago.from_location.expect("from_location should be actor (Minneapolis)");
+    assert!(
+        (from.lat - 44.9778).abs() < 0.001,
+        "from_location should be Minneapolis actor — they POSTED from Minneapolis"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Chain Test 5: Content Unchanged → Skip Extraction
 //
 // Hash match → skip extraction → links still collected.
