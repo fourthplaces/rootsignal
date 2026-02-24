@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     ActorNode, NeedNode, ClusterSnapshot, DemandSignal, DiscoveryMethod, GatheringNode, EvidenceNode,
-    AidNode, Node, NodeMeta, NodeType, NoticeNode, SensitivityLevel, SourceNode, SourceRole,
+    AidNode, Node, NodeMeta, NodeType, NoticeNode, PinNode, SensitivityLevel, SourceNode, SourceRole,
     StoryNode, TensionNode, ScoutTask, ScoutTaskSource, ScoutTaskStatus,
     NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
@@ -1830,7 +1830,6 @@ impl GraphWriter {
                 id: $id,
                 url: $url,
                 reason: $reason,
-                region: $region,
                 submitted_at: datetime($submitted_at)
             })
             WITH sub
@@ -1840,7 +1839,6 @@ impl GraphWriter {
         .param("id", submission.id.to_string())
         .param("url", submission.url.as_str())
         .param("reason", submission.reason.clone().unwrap_or_default())
-        .param("region", submission.region.as_str())
         .param("submitted_at", format_datetime(&submission.submitted_at))
         .param("canonical_key", source_canonical_key);
 
@@ -2315,7 +2313,8 @@ impl GraphWriter {
                 a.bio = $bio,
                 a.location_lat = $location_lat,
                 a.location_lng = $location_lng,
-                a.location_name = $location_name
+                a.location_name = $location_name,
+                a.discovery_depth = $discovery_depth
              ON MATCH SET
                 a.name = $name,
                 a.last_active = datetime($last_active),
@@ -2338,7 +2337,8 @@ impl GraphWriter {
         .param("bio", actor.bio.clone().unwrap_or_default())
         .param::<Option<f64>>("location_lat", actor.location_lat)
         .param::<Option<f64>>("location_lng", actor.location_lng)
-        .param::<Option<String>>("location_name", actor.location_name.clone());
+        .param::<Option<String>>("location_name", actor.location_name.clone())
+        .param("discovery_depth", actor.discovery_depth as i64);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -2354,7 +2354,7 @@ impl GraphWriter {
         max_lng: f64,
     ) -> Result<Vec<(ActorNode, Vec<SourceNode>)>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor)-[:HAS_ACCOUNT]->(s:Source)
+            "MATCH (a:Actor)-[:HAS_SOURCE]->(s:Source)
              WHERE a.location_lat >= $min_lat AND a.location_lat <= $max_lat
                AND a.location_lng >= $min_lng AND a.location_lng <= $max_lng
              RETURN a, collect(s) AS sources",
@@ -2410,6 +2410,7 @@ impl GraphWriter {
                 location_lat,
                 location_lng,
                 location_name,
+                discovery_depth: actor_node.get::<i64>("discovery_depth").unwrap_or(0) as u32,
             };
 
             // Parse source nodes from the collected list
@@ -2486,6 +2487,63 @@ impl GraphWriter {
 
         self.client.graph.run(q).await?;
         Ok(())
+    }
+
+    /// Link an actor to a source with an HAS_SOURCE edge.
+    pub async fn link_actor_to_source(
+        &self,
+        actor_id: Uuid,
+        source_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $actor_id})
+             MATCH (s:Source {id: $source_id})
+             MERGE (a)-[:HAS_SOURCE]->(s)",
+        )
+        .param("actor_id", actor_id.to_string())
+        .param("source_id", source_id.to_string());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Link a signal to its producing source with a PRODUCED_BY edge.
+    pub async fn link_signal_to_source(
+        &self,
+        signal_id: Uuid,
+        source_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+             MATCH (s:Source {id: $source_id})
+             MERGE (n)-[:PRODUCED_BY]->(s)",
+        )
+        .param("signal_id", signal_id.to_string())
+        .param("source_id", source_id.to_string());
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Lookup an actor by entity_id. Returns the actor's UUID if found.
+    pub async fn find_actor_by_entity_id(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {entity_id: $entity_id})
+             RETURN a.id AS id LIMIT 1",
+        )
+        .param("entity_id", entity_id);
+
+        let mut stream = self.client.graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// Find an actor by name (case-insensitive).
@@ -2574,12 +2632,20 @@ impl GraphWriter {
     }
 
     /// Get actors with their domains, social URLs, and dominant signal role for source discovery.
+    /// When `max_depth` is Some, only actors with discovery_depth < max_depth are returned.
     pub async fn get_actors_with_domains(
         &self,
+        max_depth: Option<u32>,
     ) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>, neo4rs::Error> {
-        let q = query(
+        let depth_clause = if max_depth.is_some() {
+            "AND coalesce(a.discovery_depth, 0) < $max_depth"
+        } else {
+            ""
+        };
+        let cypher = format!(
             "MATCH (a:Actor)
-             WHERE size(a.domains) > 0 OR size(a.social_urls) > 0
+             WHERE (size(a.domains) > 0 OR size(a.social_urls) > 0)
+             {depth_clause}
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
                   count(CASE WHEN n:Aid OR n:Gathering THEN 1 END) AS response_signals,
@@ -2589,8 +2655,12 @@ impl GraphWriter {
                       WHEN response_signals > tension_signals THEN 'response'
                       WHEN tension_signals > response_signals THEN 'tension'
                       ELSE 'mixed'
-                    END AS dominant_role",
+                    END AS dominant_role"
         );
+        let mut q = query(&cypher);
+        if let Some(depth) = max_depth {
+            q = q.param("max_depth", depth as i64);
+        }
 
         let mut results = Vec::new();
         let mut stream = self.client.graph.execute(q).await?;
@@ -2602,6 +2672,140 @@ impl GraphWriter {
             if !name.is_empty() && (!domains.is_empty() || !social_urls.is_empty()) {
                 results.push((name, domains, social_urls, dominant_role));
             }
+        }
+        Ok(results)
+    }
+
+    // --- Pin operations ---
+
+    /// Create a Pin node. MERGE on (source_id, location_lat, location_lng) for idempotency.
+    pub async fn create_pin(&self, pin: &PinNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (p:Pin {source_id: $source_id, location_lat: $location_lat, location_lng: $location_lng})
+             ON CREATE SET
+                p.id = $id,
+                p.created_by = $created_by,
+                p.created_at = datetime($created_at)",
+        )
+        .param("id", pin.id.to_string())
+        .param("source_id", pin.source_id.to_string())
+        .param("location_lat", pin.location_lat)
+        .param("location_lng", pin.location_lng)
+        .param("created_by", pin.created_by.as_str())
+        .param("created_at", format_datetime(&pin.created_at));
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Delete pins by ID. Uses UNWIND for batch deletion.
+    pub async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<(), neo4rs::Error> {
+        if pin_ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = pin_ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "UNWIND $ids AS pid
+             MATCH (p:Pin {id: pid})
+             DETACH DELETE p",
+        )
+        .param("ids", ids);
+
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Find pins within a bounding box, joined with their source nodes.
+    pub async fn find_pins_in_region(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<(PinNode, SourceNode)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (p:Pin)
+             WHERE p.location_lat >= $min_lat AND p.location_lat <= $max_lat
+               AND p.location_lng >= $min_lng AND p.location_lng <= $max_lng
+             MATCH (s:Source {id: p.source_id})
+             RETURN p, s",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let p: neo4rs::Node = match row.get("p") {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            let s: neo4rs::Node = match row.get("s") {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+
+            let pin_id_str: String = p.get("id").unwrap_or_default();
+            let pin_id = match Uuid::parse_str(&pin_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let source_id_str: String = p.get("source_id").unwrap_or_default();
+            let source_id = match Uuid::parse_str(&source_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let pin = PinNode {
+                id: pin_id,
+                location_lat: p.get("location_lat").unwrap_or(0.0),
+                location_lng: p.get("location_lng").unwrap_or(0.0),
+                source_id,
+                created_by: p.get("created_by").unwrap_or_default(),
+                created_at: {
+                    let s: String = p.get("created_at").unwrap_or_default();
+                    DateTime::parse_from_rfc3339(&s)
+                        .map(|d| d.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now())
+                },
+            };
+
+            let s_id_str: String = s.get("id").unwrap_or_default();
+            let s_id = match Uuid::parse_str(&s_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let source = SourceNode {
+                id: s_id,
+                canonical_key: s.get("canonical_key").unwrap_or_default(),
+                canonical_value: s.get("canonical_value").unwrap_or_default(),
+                url: s.get::<String>("url").ok().filter(|u| !u.is_empty()),
+                discovery_method: match s.get::<String>("discovery_method").unwrap_or_default().as_str() {
+                    "curated" => DiscoveryMethod::Curated,
+                    "actor_account" => DiscoveryMethod::ActorAccount,
+                    "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
+                    "linked_from" => DiscoveryMethod::LinkedFrom,
+                    "human_submission" => DiscoveryMethod::HumanSubmission,
+                    _ => DiscoveryMethod::ColdStart,
+                },
+                created_at: chrono::Utc::now(),
+                last_scraped: None,
+                last_produced_signal: None,
+                signals_produced: 0,
+                signals_corroborated: 0,
+                consecutive_empty_runs: 0,
+                active: s.get("active").unwrap_or(true),
+                gap_context: None,
+                weight: s.get("weight").unwrap_or(0.7),
+                cadence_hours: Some(12),
+                avg_signals_per_scrape: 0.0,
+                quality_penalty: 1.0,
+                source_role: SourceRole::Mixed,
+                scrape_count: 0,
+            };
+            results.push((pin, source));
         }
         Ok(results)
     }

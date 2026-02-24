@@ -298,6 +298,16 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Actor constraints and indexes created");
 
+    // --- Pin constraints and indexes ---
+    let pin_schema = [
+        "CREATE CONSTRAINT pin_id_unique IF NOT EXISTS FOR (p:Pin) REQUIRE p.id IS UNIQUE",
+        "CREATE INDEX pin_location IF NOT EXISTS FOR (p:Pin) ON (p.location_lat, p.location_lng)",
+    ];
+    for s in &pin_schema {
+        g.run(query(s)).await?;
+    }
+    info!("Pin constraints and indexes created");
+
     // --- Edge index for SIMILAR_TO weight ---
     g.run(query(
         "CREATE INDEX similar_to_weight IF NOT EXISTS FOR ()-[r:SIMILAR_TO]-() ON (r.weight)",

@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
-    SubmissionNode,
 };
 use rootsignal_graph::GraphWriter;
 
@@ -384,11 +383,8 @@ impl MutationRoot {
         &self,
         ctx: &Context<'_>,
         url: String,
-        description: Option<String>,
-        region: Option<String>,
     ) -> Result<SubmitSourceResult> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let config = ctx.data_unchecked::<Arc<Config>>();
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -410,7 +406,6 @@ impl MutationRoot {
             }
         }
 
-        let region = region.unwrap_or_else(|| config.region.clone());
         let cv = rootsignal_common::canonical_value(&url);
         let canonical_key = cv.clone();
         let source_id = Uuid::new_v4();
@@ -429,7 +424,7 @@ impl MutationRoot {
             signals_corroborated: 0,
             consecutive_empty_runs: 0,
             active: true,
-            gap_context: description.as_ref().map(|r| format!("Submission: {r}")),
+            gap_context: None,
             weight: 0.5,
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
@@ -443,21 +438,7 @@ impl MutationRoot {
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
-        // Create Submission node if reason provided
-        if let Some(reason) = description.filter(|r| !r.trim().is_empty()) {
-            let submission = SubmissionNode {
-                id: Uuid::new_v4(),
-                url: url.clone(),
-                reason: Some(reason),
-                region: region.clone(),
-                submitted_at: now,
-            };
-            if let Err(e) = writer.upsert_submission(&submission, &canonical_key).await {
-                warn!(error = %e, "Failed to create submission node");
-            }
-        }
-
-        info!(url, region, "Human submission received via GraphQL");
+        info!(url, "Human submission received via GraphQL");
 
         Ok(SubmitSourceResult {
             success: true,

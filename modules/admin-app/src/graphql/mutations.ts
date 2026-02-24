@@ -114,8 +114,8 @@ export const MERGE_TAGS = gql`
 `;
 
 export const SUBMIT_SOURCE = gql`
-  mutation SubmitSource($url: String!, $description: String, $region: String) {
-    submitSource(url: $url, description: $description, region: $region) {
+  mutation SubmitSource($url: String!) {
+    submitSource(url: $url) {
       success
       sourceId
     }

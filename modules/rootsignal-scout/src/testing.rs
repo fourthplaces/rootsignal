@@ -203,6 +203,12 @@ struct MockSignalStoreInner {
     blocked: HashSet<String>,
     processed_hashes: HashSet<(String, String)>,
     fail_on_create: bool,
+    /// (actor_id, source_id) — HAS_SOURCE edges
+    actor_sources: Vec<(Uuid, Uuid)>,
+    /// (signal_id, source_id) — PRODUCED_BY edges
+    signal_sources: Vec<(Uuid, Uuid)>,
+    /// entity_id → actor_id for find_actor_by_entity_id lookups
+    actor_by_entity_id: HashMap<String, Uuid>,
 }
 
 /// Stateful in-memory graph mock. Thread-safe via interior Mutex.
@@ -229,6 +235,9 @@ impl MockSignalStore {
                 blocked: HashSet::new(),
                 processed_hashes: HashSet::new(),
                 fail_on_create: false,
+                actor_sources: Vec::new(),
+                signal_sources: Vec::new(),
+                actor_by_entity_id: HashMap::new(),
             }),
         }
     }
@@ -385,6 +394,58 @@ impl MockSignalStore {
             .get(&signal_id)
             .map(|tags| tags.iter().any(|t| t == tag))
             .unwrap_or(false)
+    }
+
+    pub fn actor_count(&self) -> usize {
+        self.inner.lock().unwrap().actors.len()
+    }
+
+    pub fn has_actor_with_entity_id(&self, entity_id: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.actor_by_entity_id.contains_key(entity_id)
+    }
+
+    pub fn actor_entity_id(&self, actor_name: &str) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
+        let actor = inner.actors.get(actor_id)?;
+        Some(actor.entity_id.clone())
+    }
+
+    pub fn actor_discovery_depth(&self, actor_name: &str) -> Option<u32> {
+        let inner = self.inner.lock().unwrap();
+        let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
+        let actor = inner.actors.get(actor_id)?;
+        Some(actor.discovery_depth)
+    }
+
+    pub fn actor_has_source(&self, actor_name: &str, source_id: Uuid) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let actor_id = match inner.actor_by_name.get(&actor_name.to_lowercase()) {
+            Some(id) => *id,
+            None => return false,
+        };
+        inner
+            .actor_sources
+            .iter()
+            .any(|(aid, sid)| *aid == actor_id && *sid == source_id)
+    }
+
+    pub fn signal_has_source(&self, signal_title: &str, source_id: Uuid) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let normalized = signal_title.trim().to_lowercase();
+        let signal_id = match inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+        {
+            Some(s) => s.id,
+            None => return false,
+        };
+        inner
+            .signal_sources
+            .iter()
+            .any(|(sid, src)| *sid == signal_id && *src == source_id)
     }
 
 }
@@ -544,6 +605,11 @@ impl SignalStore for MockSignalStore {
         inner
             .actor_by_name
             .insert(actor.name.to_lowercase(), actor.id);
+        if !actor.entity_id.is_empty() {
+            inner
+                .actor_by_entity_id
+                .insert(actor.entity_id.clone(), actor.id);
+        }
         inner.actors.insert(actor.id, actor.clone());
         Ok(())
     }
@@ -561,6 +627,23 @@ impl SignalStore for MockSignalStore {
             role: role.to_string(),
         });
         Ok(())
+    }
+
+    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.actor_sources.push((actor_id, source_id));
+        Ok(())
+    }
+
+    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.signal_sources.push((signal_id, source_id));
+        Ok(())
+    }
+
+    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner.actor_by_entity_id.get(entity_id).copied())
     }
 
     async fn find_or_create_resource(
@@ -1382,6 +1465,7 @@ mod tests {
             location_lat: None,
             location_lng: None,
             location_name: None,
+            discovery_depth: 0,
         };
         store.upsert_actor(&actor).await.unwrap();
         assert!(store.has_actor("Legal Aid Org"));

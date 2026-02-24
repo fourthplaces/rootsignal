@@ -192,6 +192,9 @@ pub struct ActorNode {
     pub location_lng: Option<f64>,
     /// Pinned location display name (e.g. "Minneapolis, MN").
     pub location_name: Option<String>,
+    /// How many hops from the bootstrap seed this actor was discovered at.
+    /// 0 = bootstrap, 1 = discovered from a bootstrap source, etc.
+    pub discovery_depth: u32,
 }
 
 /// Context passed from a known actor to the signal extractor.
@@ -203,6 +206,7 @@ pub struct ActorContext {
     pub location_name: Option<String>,
     pub location_lat: Option<f64>,
     pub location_lng: Option<f64>,
+    pub discovery_depth: u32,
 }
 
 /// A social account mentioned in a post from a known actor.
@@ -1161,6 +1165,19 @@ impl SourceRole {
     }
 }
 
+/// An ephemeral pin — a one-shot instruction to scrape a source at a location.
+/// Created during bootstrap or mid-run discovery, consumed after the scout run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinNode {
+    pub id: Uuid,
+    pub location_lat: f64,
+    pub location_lng: f64,
+    pub source_id: Uuid,
+    /// Who created this pin: scout run ID or "human".
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// A tracked source in the graph — either curated (from seed list) or discovered.
 /// Identity is `canonical_key` = `canonical_value` (globally unique).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1242,7 +1259,6 @@ pub struct SubmissionNode {
     pub id: Uuid,
     pub url: String,
     pub reason: Option<String>,
-    pub region: String,
     pub submitted_at: DateTime<Utc>,
 }
 

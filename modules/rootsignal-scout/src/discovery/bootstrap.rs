@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use chrono::Utc;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use rootsignal_common::{canonical_value, ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{canonical_value, PinNode, ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Archive;
@@ -59,7 +61,10 @@ impl<'a> Bootstrapper<'a> {
                 None,
             );
             match self.writer.upsert_source(&source).await {
-                Ok(_) => sources_created += 1,
+                Ok(_) => {
+                    sources_created += 1;
+                    self.create_pin_for_source(source.id).await;
+                }
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
             }
         }
@@ -67,8 +72,12 @@ impl<'a> Bootstrapper<'a> {
         // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
         let platform_sources = self.generate_platform_sources().await;
         for source in platform_sources {
+            let source_id = source.id;
             match self.writer.upsert_source(&source).await {
-                Ok(_) => sources_created += 1,
+                Ok(_) => {
+                    sources_created += 1;
+                    self.create_pin_for_source(source_id).await;
+                }
                 Err(e) => {
                     let label = source.url.as_deref().unwrap_or(&source.canonical_value);
                     warn!(source = label, error = %e, "Failed to create platform source");
@@ -78,6 +87,21 @@ impl<'a> Bootstrapper<'a> {
 
         info!(sources_created, "Cold start bootstrap complete");
         Ok(sources_created)
+    }
+
+    /// Create a pin at the region center for a source.
+    async fn create_pin_for_source(&self, source_id: Uuid) {
+        let pin = PinNode {
+            id: Uuid::new_v4(),
+            location_lat: self.region.center_lat,
+            location_lng: self.region.center_lng,
+            source_id,
+            created_by: "bootstrap".to_string(),
+            created_at: Utc::now(),
+        };
+        if let Err(e) = self.writer.create_pin(&pin).await {
+            warn!(error = %e, "Failed to create bootstrap pin (non-fatal)");
+        }
     }
 
     /// Use Claude Haiku to generate seed web search queries for the region.

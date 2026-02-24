@@ -182,6 +182,15 @@ pub trait SignalStore: Send + Sync {
         role: &str,
     ) -> Result<()>;
 
+    /// Link an actor to its source (HAS_SOURCE edge).
+    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()>;
+
+    /// Link a signal to its source (PRODUCED_BY edge).
+    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()>;
+
+    /// Find an actor by entity_id (URL-based identity).
+    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>>;
+
     // --- Resource graph ---
 
     /// Find or create a Resource node by slug. Returns the resource UUID.
@@ -320,6 +329,18 @@ impl SignalStore for rootsignal_graph::GraphWriter {
         role: &str,
     ) -> Result<()> {
         Ok(self.link_actor_to_signal(actor_id, signal_id, role).await?)
+    }
+
+    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
+        Ok(self.link_actor_to_source(actor_id, source_id).await?)
+    }
+
+    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
+        Ok(self.link_signal_to_source(signal_id, source_id).await?)
+    }
+
+    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>> {
+        Ok(self.find_actor_by_entity_id(entity_id).await?)
     }
 
     async fn find_or_create_resource(

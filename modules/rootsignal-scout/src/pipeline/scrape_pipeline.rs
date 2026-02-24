@@ -63,6 +63,7 @@ pub(crate) struct ScheduledRun {
     response_phase_keys: HashSet<String>,
     scheduled_keys: HashSet<String>,
     phase: ScrapePhase,
+    consumed_pin_ids: Vec<uuid::Uuid>,
 }
 
 impl<'a> ScrapePipeline<'a> {
@@ -219,6 +220,32 @@ impl<'a> ScrapePipeline<'a> {
             }
         }
 
+        // Pin consumption — add pin sources to the pool
+        let existing_keys: HashSet<String> =
+            all_sources.iter().map(|s| s.canonical_key.clone()).collect();
+        let consumed_pin_ids = match self.writer
+            .find_pins_in_region(min_lat, max_lat, min_lng, max_lng)
+            .await
+        {
+            Ok(pins) => {
+                let mut ids = Vec::new();
+                for (pin, source) in pins {
+                    if !existing_keys.contains(&source.canonical_key) {
+                        all_sources.push(source);
+                    }
+                    ids.push(pin.id);
+                }
+                if !ids.is_empty() {
+                    info!(pins = ids.len(), "Consumed pins from region");
+                }
+                ids
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load pins, continuing without");
+                Vec::new()
+            }
+        };
+
         let now_schedule = Utc::now();
         let scheduler = crate::scheduling::scheduler::SourceScheduler::new();
         let schedule = scheduler.schedule(&all_sources, now_schedule);
@@ -273,6 +300,7 @@ impl<'a> ScrapePipeline<'a> {
                 location_name: actor.location_name.clone(),
                 location_lat: actor.location_lat,
                 location_lng: actor.location_lng,
+                discovery_depth: actor.discovery_depth,
             };
             for source in sources {
                 ctx.actor_contexts
@@ -296,6 +324,7 @@ impl<'a> ScrapePipeline<'a> {
             response_phase_keys,
             scheduled_keys,
             phase,
+            consumed_pin_ids,
         };
 
         Ok((run, ctx))
@@ -525,6 +554,14 @@ impl<'a> ScrapePipeline<'a> {
         check_cancelled_flag(&self.cancelled)?;
 
         self.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
+
+        // Delete consumed pins now that their sources have been scraped
+        if !run.consumed_pin_ids.is_empty() {
+            match self.writer.delete_pins(&run.consumed_pin_ids).await {
+                Ok(_) => info!(count = run.consumed_pin_ids.len(), "Deleted consumed pins"),
+                Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
+            }
+        }
 
         self.update_source_metrics(&run, &ctx).await;
         check_cancelled_flag(&self.cancelled)?;

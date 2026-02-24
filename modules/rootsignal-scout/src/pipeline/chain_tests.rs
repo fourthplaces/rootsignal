@@ -169,17 +169,10 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     assert_eq!(store.signals_created(), 1);
     assert!(store.has_signal_titled("Free Legal Clinic at Sabathani"));
 
-    // Actors wired
-    assert!(store.has_actor("Sabathani Community Center"), "author actor created");
-    assert!(store.has_actor("Volunteer Lawyers Network"), "mentioned actor created");
-    assert!(
-        store.actor_linked_to_signal("Sabathani Community Center", "Free Legal Clinic at Sabathani"),
-        "author actor linked to signal"
-    );
-    assert!(
-        store.actor_linked_to_signal("Volunteer Lawyers Network", "Free Legal Clinic at Sabathani"),
-        "mentioned actor linked to signal"
-    );
+    // Web page is NOT an owned source — no actor nodes created.
+    // Mentioned actors stay as metadata strings; author_actor ignored for non-owned sources.
+    assert!(!store.has_actor("Sabathani Community Center"), "web page source should not create author actor");
+    assert!(!store.has_actor("Volunteer Lawyers Network"), "mentioned actors should not create nodes");
 
     // Evidence trail
     assert_eq!(
@@ -362,6 +355,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
             location_name: Some("North Minneapolis, MN".to_string()),
             location_lat: Some(45.0118),
             location_lng: Some(-93.2885),
+            discovery_depth: 0,
         },
     );
 
@@ -438,6 +432,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
             location_name: Some("New York, NY".to_string()),
             location_lat: Some(NYC.0),
             location_lng: Some(NYC.1),
+            discovery_depth: 0,
         },
     );
 
@@ -447,12 +442,10 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     // No geo-filter — signal stored with actor location as fallback
     assert_eq!(store.signals_created(), 1, "signal should be stored regardless of location");
 
-    // Verify location metadata
+    // Location metadata: no backfill at write time (derived at query time via actor graph)
     let stored = store.signal_by_title("Organizing Reflections").unwrap();
-    let about = stored.about_location.expect("about_location should fall back to NYC actor coords");
-    assert!((about.lat - NYC.0).abs() < 0.001, "about_location lat should be NYC");
-    let from = stored.from_location.expect("from_location should be NYC actor coords");
-    assert!((from.lat - NYC.0).abs() < 0.001, "from_location lat should be NYC");
+    assert!(stored.about_location.is_none(), "about_location not backfilled from actor at write time");
+    assert!(stored.from_location.is_none(), "from_location not set at write time");
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +495,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
             location_name: Some("Minneapolis, MN".to_string()),
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         },
     );
 
@@ -515,9 +509,8 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     let about = stored.about_location.expect("about_location should be Dallas");
     assert!((about.lat - DALLAS.0).abs() < 0.001, "about_location should be Dallas, not Minneapolis");
 
-    // from_location = Minneapolis (actor provenance)
-    let from = stored.from_location.expect("from_location should be Minneapolis actor");
-    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be Minneapolis");
+    // from_location not set at write time (derived at query time via actor graph)
+    assert!(stored.from_location.is_none(), "from_location not set at write time");
 }
 
 // ---------------------------------------------------------------------------
@@ -530,18 +523,14 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
 //   2. "Reflections on community resilience" → geographically neutral, no location
 //   3. "Inspired by Chicago's urban farm network" → LLM extracts Chicago coords
 //
-// Expected behavior:
-//   Signal 1: about_location = Powderhorn, from_location = Minneapolis (actor)
-//   Signal 2: about_location = Minneapolis (fallback), from_location = Minneapolis
-//   Signal 3: about_location = Chicago, from_location = Minneapolis (actor)
-//
-// This is the Paris Trip Problem from the brainstorm, but applied to multiple
-// posts from the same account. The key insight: from_location is ALWAYS the
-// actor, about_location is ONLY overwritten when the LLM found nothing.
+// Expected behavior (from_location derived at query time, not write time):
+//   Signal 1: about_location = Powderhorn, from_location = None
+//   Signal 2: about_location = None (no backfill), from_location = None
+//   Signal 3: about_location = Chicago, from_location = None
 // ---------------------------------------------------------------------------
 
 /// Minneapolis actor's IG: one local post, one geo-neutral, one out-of-town.
-/// Each signal gets the right about_location and from_location.
+/// about_location reflects content; from_location is not set at write time.
 #[tokio::test]
 async fn ig_bio_location_flows_through_mixed_geography_posts() {
     let ig_url = "https://www.instagram.com/mpls_community_garden";
@@ -595,6 +584,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
             location_name: Some("Minneapolis, MN".to_string()),
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         },
     );
 
@@ -612,26 +602,16 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         (about.lat - 44.9489).abs() < 0.001,
         "about_location should be Powderhorn, not actor fallback"
     );
-    let from = powderhorn.from_location.expect("from_location should be actor (Minneapolis)");
-    assert!(
-        (from.lat - 44.9778).abs() < 0.001,
-        "from_location should be actor's Minneapolis coords"
-    );
+    assert!(powderhorn.from_location.is_none(), "from_location not set at write time");
 
-    // --- Signal 2: Geo-neutral (no content location → falls back to actor) ---
+    // --- Signal 2: Geo-neutral (no content location, no backfill) ---
     let reflections = store.signal_by_title("Community Resilience Reflections")
         .expect("reflections signal should exist");
-    let about = reflections.about_location
-        .expect("about_location should fall back to actor coords for geo-neutral content");
     assert!(
-        (about.lat - 44.9778).abs() < 0.001,
-        "geo-neutral post: about_location should fall back to Minneapolis actor coords"
+        reflections.about_location.is_none(),
+        "geo-neutral post: about_location not backfilled from actor at write time"
     );
-    let from = reflections.from_location.expect("from_location should be actor");
-    assert!(
-        (from.lat - 44.9778).abs() < 0.001,
-        "from_location should be Minneapolis actor coords"
-    );
+    assert!(reflections.from_location.is_none(), "from_location not set at write time");
 
     // --- Signal 3: Chicago (explicit out-of-town location) ---
     let chicago = store.signal_by_title("Chicago Urban Farm Network")
@@ -641,11 +621,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         (about.lat - 41.8781).abs() < 0.001,
         "about_location should be Chicago, NOT overwritten by Minneapolis actor"
     );
-    let from = chicago.from_location.expect("from_location should be actor (Minneapolis)");
-    assert!(
-        (from.lat - 44.9778).abs() < 0.001,
-        "from_location should be Minneapolis actor — they POSTED from Minneapolis"
-    );
+    assert!(chicago.from_location.is_none(), "from_location not set at write time");
 }
 
 // ---------------------------------------------------------------------------
@@ -824,11 +800,187 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     // Signal from Phase B
     assert_eq!(store.signals_created(), 1, "one signal from org site");
     assert!(store.has_signal_titled("Free Groceries at MLK Park"));
-    assert!(store.has_actor("Minneapolis Mutual Aid"));
+    // Web page is not an owned source — no actor node created
+    assert!(!store.has_actor("Minneapolis Mutual Aid"));
 
     // Phase B also collected facebook link for future promotion
     assert!(
         ctx_b.collected_links.iter().any(|l| l.url.contains("facebook.com/localorg")),
         "facebook link should be collected in Phase B"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Chain Test 7: Social scrape wires actor, HAS_SOURCE, and PRODUCED_BY
+//
+// Full flywheel wiring: social source → fetch posts → extract → store.
+// The signal gets a PRODUCED_BY edge to the source. The author actor gets
+// an entity_id derived from the source URL, a HAS_SOURCE edge, and an
+// ACTED_IN ("authored") link to the signal.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn social_scrape_creates_actor_with_has_source_and_produced_by() {
+    let ig_url = "https://www.instagram.com/friendsfalls";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Spring cleanup at Minnehaha Falls!")]);
+
+    let mut node = tension_at("Minnehaha Falls Spring Cleanup", 44.9154, -93.2114);
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("Friends of the Falls".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    // Signal created
+    assert_eq!(store.signals_created(), 1);
+    assert!(store.has_signal_titled("Minnehaha Falls Spring Cleanup"));
+
+    // PRODUCED_BY: signal → source
+    assert!(
+        store.signal_has_source("Minnehaha Falls Spring Cleanup", source.id),
+        "signal should have PRODUCED_BY edge to its source"
+    );
+
+    // Actor created with URL-based entity_id
+    assert!(store.has_actor("Friends of the Falls"), "owned source should create author actor");
+    let entity_id = store.actor_entity_id("Friends of the Falls")
+        .expect("actor should have entity_id");
+    assert_eq!(entity_id, canonical_value(ig_url), "entity_id should be canonical source URL");
+
+    // HAS_SOURCE: actor → source
+    assert!(
+        store.actor_has_source("Friends of the Falls", source.id),
+        "actor should have HAS_SOURCE edge to its source"
+    );
+
+    // ACTED_IN: actor → signal (role: "authored")
+    assert!(
+        store.actor_linked_to_signal("Friends of the Falls", "Minnehaha Falls Spring Cleanup"),
+        "actor should be linked to signal with authored role"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Chain Test 8: Flywheel second pass — actor location triangulation
+//
+// First pass: social scrape creates actor with no location.
+// Signals carry about_location data. Triangulation uses the signal mode
+// to determine the actor's location.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn flywheel_second_pass_enriches_actor_location_from_signal_mode() {
+    use crate::enrichment::actor_location::*;
+
+    // Simulate what the flywheel produces after scraping:
+    // An actor with no location yet, and several signals with about_location.
+    // The triangulation function determines the actor's location from the mode.
+
+    let signals = vec![
+        SignalLocation {
+            lat: 44.9489,
+            lng: -93.2601,
+            name: "Phillips".to_string(),
+            observed_at: chrono::Utc::now() - chrono::Duration::days(2),
+        },
+        SignalLocation {
+            lat: 44.9489,
+            lng: -93.2601,
+            name: "Phillips".to_string(),
+            observed_at: chrono::Utc::now() - chrono::Duration::days(5),
+        },
+        SignalLocation {
+            lat: 44.9367,
+            lng: -93.2393,
+            name: "Powderhorn".to_string(),
+            observed_at: chrono::Utc::now() - chrono::Duration::days(3),
+        },
+    ];
+
+    // No current location, no bio — pure signal triangulation
+    let result = triangulate_actor_location(None, None, &signals, 90);
+
+    let loc = result.expect("should determine location from signal mode");
+    assert_eq!(loc.name, "Phillips", "Phillips appears twice vs Powderhorn once");
+    assert!((loc.lat - 44.9489).abs() < 0.001);
+}
+
+// ---------------------------------------------------------------------------
+// Chain Test 9: Blank author name does not create actor on owned source
+//
+// Even on a social (owned) source, a blank or whitespace-only author name
+// should not produce an actor node.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn blank_author_on_owned_source_does_not_create_actor() {
+    let ig_url = "https://www.instagram.com/someorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Event happening!")]);
+
+    let mut node = tension("Community Event");
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("  ".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    // Signal still created
+    assert_eq!(store.signals_created(), 1);
+
+    // But no actor — blank name
+    assert_eq!(store.actor_count(), 0, "blank author name should not create actor");
 }

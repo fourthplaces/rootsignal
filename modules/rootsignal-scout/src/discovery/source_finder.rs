@@ -14,6 +14,7 @@ use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_CURIOSITY_QUERIES: usize = 12;
+const MAX_DISCOVERY_DEPTH: u32 = 2;
 
 /// Stats from a discovery run.
 #[derive(Debug, Default)]
@@ -516,7 +517,7 @@ impl<'a> SourceFinder<'a> {
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
     async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
-        let actors = match self.writer.get_actors_with_domains().await {
+        let actors = match self.writer.get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH)).await {
             Ok(a) => a,
             Err(e) => {
                 warn!(error = %e, "Failed to get actors for discovery");

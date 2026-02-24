@@ -203,6 +203,7 @@ async fn run_actor_extraction_inner(
                         location_lat: Some((min_lat + max_lat) / 2.0),
                         location_lng: Some((min_lng + max_lng) / 2.0),
                         location_name: None,
+                        discovery_depth: 0,
                     };
                     if let Err(e) = writer.upsert_actor(&actor).await {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");

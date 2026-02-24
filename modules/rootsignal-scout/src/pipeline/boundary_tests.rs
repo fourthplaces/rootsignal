@@ -238,126 +238,10 @@ async fn same_title_extracted_twice_produces_one_signal() {
     assert!(store.has_signal_titled("Different Signal"));
 }
 
-// ---------------------------------------------------------------------------
-// Extractor → Actor Resolver boundary
-//
-// mentioned_actors in NodeMeta → actor upsert + link to signal.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn mentioned_actors_are_linked_to_their_signal() {
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://example.com/actors",
-            archived_page("https://example.com/actors", "# Actor story"),
-        );
-
-    let mut node = tension_at("Free Legal Clinic", 44.975, -93.270);
-    if let Some(meta) = node.meta_mut() {
-        meta.mentioned_actors = vec!["Legal Aid Society".to_string(), "City Council".to_string()];
-    }
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://example.com/actors",
-            crate::pipeline::extractor::ExtractionResult {
-                nodes: vec![node],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
-            },
-        );
-
-    let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
-    let phase = ScrapePhase::new(
-        store.clone(),
-        Arc::new(extractor),
-        embedder,
-        Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
-    );
-
-    let source = page_source("https://example.com/actors");
-    let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
-    let mut log = run_log();
-
-    phase.run_web(&sources, &mut ctx, &mut log).await;
-
-    assert_eq!(store.signals_created(), 1);
-    assert!(store.has_actor("Legal Aid Society"), "mentioned actor should be created");
-    assert!(store.has_actor("City Council"), "mentioned actor should be created");
-    assert!(
-        store.actor_linked_to_signal("Legal Aid Society", "Free Legal Clinic"),
-        "actor should be linked to signal"
-    );
-    assert!(
-        store.actor_linked_to_signal("City Council", "Free Legal Clinic"),
-        "actor should be linked to signal"
-    );
-}
-
-#[tokio::test]
-async fn same_actor_in_two_signals_appears_once_linked_to_both() {
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://example.com/repeat-actor",
-            archived_page("https://example.com/repeat-actor", "# Actor repeat"),
-        );
-
-    let mut node1 = tension_at("Event A", 44.975, -93.270);
-    if let Some(meta) = node1.meta_mut() {
-        meta.mentioned_actors = vec!["Local Org".to_string()];
-    }
-    let mut node2 = tension_at("Event B", 44.960, -93.265);
-    if let Some(meta) = node2.meta_mut() {
-        meta.mentioned_actors = vec!["Local Org".to_string()];
-    }
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://example.com/repeat-actor",
-            crate::pipeline::extractor::ExtractionResult {
-                nodes: vec![node1, node2],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
-            },
-        );
-
-    let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
-    let phase = ScrapePhase::new(
-        store.clone(),
-        Arc::new(extractor),
-        embedder,
-        Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
-    );
-
-    let source = page_source("https://example.com/repeat-actor");
-    let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
-    let mut log = run_log();
-
-    phase.run_web(&sources, &mut ctx, &mut log).await;
-
-    assert_eq!(store.signals_created(), 2);
-    assert!(store.has_actor("Local Org"));
-    assert!(
-        store.actor_linked_to_signal("Local Org", "Event A"),
-        "actor linked to first signal"
-    );
-    assert!(
-        store.actor_linked_to_signal("Local Org", "Event B"),
-        "actor linked to second signal"
-    );
-}
+// NOTE: Tests `mentioned_actors_are_linked_to_their_signal` and
+// `same_actor_in_two_signals_appears_once_linked_to_both` were removed.
+// Mentioned actors no longer create Actor nodes — see
+// `mentioned_actors_do_not_create_actor_nodes` below.
 
 // ---------------------------------------------------------------------------
 // Location handoff boundary
@@ -1283,60 +1167,8 @@ async fn image_only_posts_produce_no_signals() {
     assert_eq!(store.signals_created(), 0, "text-less posts → no signals");
 }
 
-#[tokio::test]
-async fn empty_mentioned_actor_name_is_not_created() {
-    // Empty and whitespace-only strings in mentioned_actors should be filtered out.
-    // Only real actor names should create actor nodes.
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://example.com/empty-actor",
-            archived_page("https://example.com/empty-actor", "# Content"),
-        );
-
-    let mut node = tension_at("Signal With Empty Mention", 44.975, -93.270);
-    if let Some(meta) = node.meta_mut() {
-        meta.mentioned_actors = vec![
-            "".to_string(),
-            "   ".to_string(),  // whitespace-only
-            "Real Org".to_string(),
-        ];
-    }
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://example.com/empty-actor",
-            crate::pipeline::extractor::ExtractionResult {
-                nodes: vec![node],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
-            },
-        );
-
-    let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
-    let phase = ScrapePhase::new(
-        store.clone(),
-        Arc::new(extractor),
-        embedder,
-        Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
-    );
-
-    let source = page_source("https://example.com/empty-actor");
-    let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
-    let mut log = run_log();
-
-    phase.run_web(&sources, &mut ctx, &mut log).await;
-
-    assert_eq!(store.signals_created(), 1, "signal should still be created");
-    assert!(store.has_actor("Real Org"), "real actor should be created");
-    assert!(!store.has_actor(""), "empty string actor should NOT be created");
-    assert!(!store.has_actor("   "), "whitespace-only actor should NOT be created");
-}
+// NOTE: Test `empty_mentioned_actor_name_is_not_created` was removed.
+// Mentioned actors no longer create Actor nodes at all.
 
 #[tokio::test]
 async fn empty_markdown_page_still_collects_outbound_links() {
@@ -1570,7 +1402,7 @@ async fn web_source_without_actor_stores_content_location_only() {
 }
 
 #[tokio::test]
-async fn signal_without_content_location_falls_back_to_actor() {
+async fn signal_without_content_location_does_not_backfill_from_actor() {
     use rootsignal_common::canonical_value;
 
     let ig_url = "https://www.instagram.com/localorg";
@@ -1611,6 +1443,7 @@ async fn signal_without_content_location_falls_back_to_actor() {
             location_name: Some("Minneapolis".to_string()),
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         },
     );
 
@@ -1618,10 +1451,8 @@ async fn signal_without_content_location_falls_back_to_actor() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     let stored = store.signal_by_title("Community Organizing Thoughts").expect("signal should exist");
-    let about = stored.about_location.expect("about_location should fall back to actor");
-    assert!((about.lat - 44.9778).abs() < 0.001, "about_location should be actor coords");
-    let from = stored.from_location.expect("from_location should be set from actor");
-    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be actor coords");
+    assert!(stored.about_location.is_none(), "about_location not backfilled from actor at write time");
+    assert!(stored.from_location.is_none(), "from_location not set at write time");
 }
 
 #[tokio::test]
@@ -1667,6 +1498,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
             location_name: None,
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         },
     );
 
@@ -1676,8 +1508,118 @@ async fn explicit_content_location_not_overwritten_by_actor() {
     let stored = store.signal_by_title("St Paul Event").expect("signal should exist");
     let about = stored.about_location.expect("about_location should be preserved");
     assert!((about.lat - ST_PAUL.0).abs() < 0.001, "about_location should stay St Paul, not Minneapolis");
-    let from = stored.from_location.expect("from_location should be set from actor");
-    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be Minneapolis actor coords");
+    assert!(stored.from_location.is_none(), "from_location not set at write time");
+}
+
+// ---------------------------------------------------------------------------
+// Discovery depth inheritance
+//
+// Actors discovered from a source inherit parent_depth + 1.
+// Bootstrap actors (no actor context) get depth 0.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn new_actor_inherits_parent_depth_plus_one() {
+    use rootsignal_common::canonical_value;
+
+    let ig_url = "https://www.instagram.com/depthorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Depth test post")]);
+
+    let mut node = tension_at("Depth Signal", 44.9778, -93.2650);
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("Depth Child Org".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+
+    // Parent actor at depth 1
+    ctx.actor_contexts.insert(
+        canonical_value(ig_url),
+        rootsignal_common::ActorContext {
+            actor_name: "Depth Org".to_string(),
+            bio: None,
+            location_name: Some("Minneapolis".to_string()),
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+            discovery_depth: 1,
+        },
+    );
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert!(store.has_actor("Depth Child Org"), "actor should have been created");
+    let depth = store.actor_discovery_depth("Depth Child Org");
+    assert_eq!(depth, Some(2), "discovered actor should get parent depth + 1");
+}
+
+#[tokio::test]
+async fn bootstrap_actor_gets_depth_zero() {
+    let ig_url = "https://www.instagram.com/bootstraporg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Bootstrap post")]);
+
+    let mut node = tension_at("Bootstrap Signal", 44.9778, -93.2650);
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("Bootstrap Org".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    // No actor context — this is a bootstrap source
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert!(store.has_actor("Bootstrap Org"), "actor should have been created");
+    let depth = store.actor_discovery_depth("Bootstrap Org");
+    assert_eq!(depth, Some(0), "bootstrap actor should get depth 0");
 }
 
 // ---------------------------------------------------------------------------
@@ -2428,4 +2370,251 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     assert!(stored.from_location.is_none(), "web source has no actor context");
     assert!(stored.content_date.is_none(), "no date metadata available");
     assert!(stored.confidence > 0.0, "even bare signal has non-zero confidence from quality scoring");
+}
+
+// ---------------------------------------------------------------------------
+// Group B: Actor creation on owned sources
+//
+// Social accounts and web pages are "owned" — the account holder IS the actor.
+// Aggregator sources (RSS, web query) do not create actor nodes.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn owned_source_author_creates_actor_with_url_entity_id() {
+    let ig_url = "https://www.instagram.com/friendsfalls";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Waterfall cleanup this Saturday!")]);
+
+    let mut node = tension_at("Falls Cleanup Day", 44.92, -93.21);
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("Friends of the Falls".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert!(store.has_actor("Friends of the Falls"), "actor should be created for owned source author");
+    assert_eq!(
+        store.actor_entity_id("Friends of the Falls").unwrap(),
+        "instagram.com/friendsfalls",
+        "entity_id should be URL-based, not slug-based"
+    );
+    assert!(
+        store.actor_has_source("Friends of the Falls", source.id),
+        "actor should have HAS_SOURCE edge to its source"
+    );
+}
+
+#[tokio::test]
+async fn aggregator_source_author_does_not_create_actor_node() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://aggregator.com/news",
+            archived_page("https://aggregator.com/news", "# Local News Roundup"),
+        );
+
+    let mut node = tension_at("Community Event Coverage", 44.975, -93.270);
+    if let Some(meta) = node.meta_mut() {
+        meta.author_actor = Some("Jane Reporter".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://aggregator.com/news",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://aggregator.com/news");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert!(!store.has_actor("Jane Reporter"), "aggregator source should NOT create actor nodes");
+    assert_eq!(store.signals_created(), 1, "signal should still be stored");
+}
+
+// ---------------------------------------------------------------------------
+// Group C: Mentioned actors no longer create nodes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mentioned_actors_do_not_create_actor_nodes() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/mentions",
+            archived_page("https://example.com/mentions", "# Article with mentions"),
+        );
+
+    let mut node = tension_at("Free Legal Clinic", 44.975, -93.270);
+    if let Some(meta) = node.meta_mut() {
+        meta.mentioned_actors = vec!["Legal Aid Society".to_string(), "City Council".to_string()];
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/mentions",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/mentions");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert!(!store.has_actor("Legal Aid Society"), "mentioned actors should NOT create nodes");
+    assert!(!store.has_actor("City Council"), "mentioned actors should NOT create nodes");
+    assert_eq!(store.signals_created(), 1, "signal should still be stored with mentions in metadata");
+}
+
+// ---------------------------------------------------------------------------
+// Group D: PRODUCED_BY edge (Signal → Source)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn signal_has_produced_by_edge_to_its_source() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://localorg.org/events",
+            archived_page("https://localorg.org/events", "# Community Events"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://localorg.org/events",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Community Dinner", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://localorg.org/events");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1);
+    assert!(
+        store.signal_has_source("Community Dinner", source.id),
+        "signal should have PRODUCED_BY edge to its source"
+    );
+}
+
+#[tokio::test]
+async fn social_signal_has_produced_by_edge() {
+    let ig_url = "https://www.instagram.com/communityorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Park cleanup this weekend!")]);
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![tension_at("Park Cleanup", 44.95, -93.26)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1);
+    assert!(
+        store.signal_has_source("Park Cleanup", source.id),
+        "social signal should have PRODUCED_BY edge to its source"
+    );
 }

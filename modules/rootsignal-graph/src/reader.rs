@@ -57,6 +57,7 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
+                     OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
                      WHERE n.review_status = 'live'
                        AND n.lat <> 0.0
                        AND n.lat >= $min_lat AND n.lat <= $max_lat
@@ -67,7 +68,9 @@ impl PublicGraphReader {
                             coalesce(s.type_diversity, 0) AS _sort_tri,
                             n.cause_heat AS _sort_heat,
                             n.confidence AS _sort_conf,
-                            n.last_confirmed_active AS _sort_time
+                            n.last_confirmed_active AS _sort_time,
+                            author.location_lat AS author_lat,
+                            author.location_lng AS author_lng
                      ORDER BY _sort_tri DESC, _sort_heat DESC, _sort_conf DESC, _sort_time DESC
                      LIMIT 200",
                     expiry = expiry_clause(*nt),
@@ -116,16 +119,26 @@ impl PublicGraphReader {
             let cypher = format!(
                 "MATCH (n:{label} {{id: $id}})
                  OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-                 RETURN n, collect(ev) AS evidence"
+                 OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
+                 RETURN n, collect(ev) AS evidence,
+                        author.location_lat AS author_lat,
+                        author.location_lng AS author_lng"
             );
 
             let q = query(&cypher).param("id", id_str.as_str());
             let mut stream = self.client.graph.execute(q).await?;
 
             if let Some(row) = stream.next().await? {
-                if let Some(node) = row_to_node(&row, *nt) {
+                if let Some(mut node) = row_to_node(&row, *nt) {
                     if !passes_display_filter(&node) {
                         return Ok(None);
+                    }
+
+                    // Derive from_location at query time from authored actor's location
+                    if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
+                        if let Some(meta) = node.meta_mut() {
+                            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+                        }
                     }
 
                     let evidence = extract_evidence(&row);
@@ -1788,7 +1801,14 @@ fn label_to_node_type(label: &str) -> Option<NodeType> {
 pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
     let label: String = row.get("node_label").ok()?;
     let nt = label_to_node_type(&label)?;
-    row_to_node(row, nt)
+    let mut node = row_to_node(row, nt)?;
+    // Derive from_location at query time from authored actor's location
+    if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
+        if let Some(meta) = node.meta_mut() {
+            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+        }
+    }
+    Some(node)
 }
 
 /// Per-type Cypher WHERE clause fragment for expiration.
@@ -2380,6 +2400,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         location_lat,
         location_lng,
         location_name: location_name_entity,
+        discovery_depth: n.get::<i64>("discovery_depth").unwrap_or(0) as u32,
     })
 }
 

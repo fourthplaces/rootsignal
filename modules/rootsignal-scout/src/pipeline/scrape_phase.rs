@@ -190,6 +190,14 @@ pub(crate) fn batch_title_dedup(nodes: Vec<Node>) -> Vec<Node> {
         .collect()
 }
 
+/// Returns true if this scraping strategy represents an "owned" source — one
+/// where the author of the content is the account holder, not an aggregator.
+/// Social accounts and dedicated web pages are owned; RSS feeds and web
+/// queries aggregate content from many authors.
+pub(crate) fn is_owned_source(strategy: &ScrapingStrategy) -> bool {
+    matches!(strategy, ScrapingStrategy::Social(_))
+}
+
 /// Scores quality, populates from/about locations, and removes Evidence nodes.
 ///
 /// Pure pipeline step: given raw extracted nodes, returns signal nodes with
@@ -208,27 +216,7 @@ pub(crate) fn score_and_filter(
         }
     }
 
-    // 2. Populate from_location from actor context.
-    //    Write-time fallback: if no about_location, SET about_location = from_location.
-    if let Some(actor) = actor_ctx {
-        if let (Some(lat), Some(lng)) = (actor.location_lat, actor.location_lng) {
-            let from = rootsignal_common::GeoPoint {
-                lat,
-                lng,
-                precision: rootsignal_common::GeoPrecision::Approximate,
-            };
-            for node in &mut nodes {
-                if let Some(meta) = node.meta_mut() {
-                    meta.from_location = Some(from);
-                    if meta.about_location.is_none() {
-                        meta.about_location = Some(from);
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Filter to signal nodes only (skip Evidence)
+    // 2. Filter to signal nodes only (skip Evidence)
     nodes
         .into_iter()
         .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
@@ -631,6 +619,10 @@ impl ScrapePhase {
         // Process results
         let now = Utc::now();
         let known_urls = ctx.known_urls();
+        let ck_to_source_id: HashMap<String, Uuid> = sources
+            .iter()
+            .map(|s| (s.canonical_key.clone(), s.id))
+            .collect();
         for (url, outcome, page_links) in pipeline_results {
             // Extract outbound links for promotion as new sources
             let discovered = link_promoter::extract_links(&page_links);
@@ -691,6 +683,7 @@ impl ScrapePhase {
                         }
                     }
 
+                    let source_id = ck_to_source_id.get(&ck).copied();
                     let signal_count_before = ctx.stats.signals_stored;
                     match self
                         .store_signals(
@@ -702,6 +695,7 @@ impl ScrapePhase {
                             ctx,
                             &known_urls,
                             run_log,
+                            source_id,
                         )
                         .await
                     {
@@ -1031,6 +1025,10 @@ impl ScrapePhase {
 
         let known_urls = ctx.known_urls();
         let promotion_config = link_promoter::PromotionConfig::default();
+        let ck_to_source_id: HashMap<String, Uuid> = social_sources
+            .iter()
+            .map(|s| (s.canonical_key.clone(), s.id))
+            .collect();
         for result in results.into_iter().flatten() {
             let (
                 canonical_key,
@@ -1088,6 +1086,7 @@ impl ScrapePhase {
                 }
             }
             ctx.stats.social_media_posts += post_count as u32;
+            let source_id = ck_to_source_id.get(&canonical_key).copied();
             let signal_count_before = ctx.stats.signals_stored;
             if let Err(e) = self
                 .store_signals(
@@ -1099,6 +1098,7 @@ impl ScrapePhase {
                     ctx,
                     &known_urls,
                     run_log,
+                    source_id,
                 )
                 .await
             {
@@ -1261,6 +1261,7 @@ impl ScrapePhase {
                         ctx,
                         &known_urls,
                         run_log,
+                        None,
                     )
                     .await
                 {
@@ -1379,6 +1380,7 @@ impl ScrapePhase {
                             ctx,
                             &known_urls,
                             run_log,
+                            None,
                         )
                         .await
                     {
@@ -1409,6 +1411,7 @@ impl ScrapePhase {
         ctx: &mut RunContext,
         known_urls: &HashSet<String>,
         run_log: &mut RunLog,
+        source_id: Option<Uuid>,
     ) -> Result<()> {
         let url = sanitize_url(url);
         ctx.stats.signals_extracted += nodes.len() as u32;
@@ -1776,109 +1779,72 @@ impl ScrapePhase {
             };
             self.store.create_evidence(&evidence, node_id).await?;
 
-            // Resolve mentioned actors → Actor nodes + ACTED_IN edges
-            if let Some(meta) = node.meta() {
-                for raw_name in &meta.mentioned_actors {
-                    let actor_name = raw_name.trim();
-                    if actor_name.is_empty() {
-                        continue;
-                    }
-                    let actor_id = match self.store.find_actor_by_name(actor_name).await {
-                        Ok(Some(id)) => id,
-                        Ok(None) => {
-                            let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.about_location {
-                                (Some(geo.lat), Some(geo.lng), meta.about_location_name.clone())
-                            } else {
-                                (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
-                            };
-                            let actor = ActorNode {
-                                id: Uuid::new_v4(),
-                                name: actor_name.to_string(),
-                                actor_type: ActorType::Organization,
-                                entity_id: actor_name.to_lowercase().replace(' ', "-"),
-                                domains: vec![],
-                                social_urls: vec![],
-                                description: String::new(),
-                                signal_count: 0,
-                                first_seen: Utc::now(),
-                                last_active: Utc::now(),
-                                typical_roles: vec![],
-                                bio: None,
-                                location_lat: loc_lat,
-                                location_lng: loc_lng,
-                                location_name: loc_name,
-                            };
-                            if let Err(e) = self.store.upsert_actor(&actor).await {
-                                warn!(error = %e, actor = %actor_name, "Failed to create actor (non-fatal)");
-                                continue;
-                            }
-                            actor.id
-                        }
-                        Err(e) => {
-                            warn!(error = %e, actor = %actor_name, "Actor lookup failed (non-fatal)");
-                            continue;
-                        }
-                    };
-                    if let Err(e) = self
-                        .store
-                        .link_actor_to_signal(actor_id, node_id, "mentioned")
-                        .await
-                    {
-                        warn!(error = %e, actor = %actor_name, "Failed to link actor to signal (non-fatal)");
-                    }
+            // Wire PRODUCED_BY edge (signal → source)
+            if let Some(sid) = source_id {
+                if let Err(e) = self.store.link_signal_to_source(node_id, sid).await {
+                    warn!(error = %e, "Failed to link signal to source (non-fatal)");
                 }
             }
 
-            // Resolve author_actor → Actor node + AUTHORED edge
-            if let Some(meta) = node.meta() {
-                if let Some(author_name) = &meta.author_actor {
-                    let author_name = author_name.trim();
-                    if !author_name.is_empty() {
-                        let actor_id = match self.store.find_actor_by_name(author_name).await {
-                            Ok(Some(id)) => Some(id),
-                            Ok(None) => {
-                                let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.about_location {
-                                    (Some(geo.lat), Some(geo.lng), meta.about_location_name.clone())
-                                } else {
-                                    (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
-                                };
-                                let actor = ActorNode {
-                                    id: Uuid::new_v4(),
-                                    name: author_name.to_string(),
-                                    actor_type: ActorType::Organization,
-                                    entity_id: author_name.to_lowercase().replace(' ', "-"),
-                                    domains: vec![],
-                                    social_urls: vec![],
-                                    description: String::new(),
-                                    signal_count: 0,
-                                    first_seen: Utc::now(),
-                                    last_active: Utc::now(),
-                                    typical_roles: vec![],
-                                    bio: None,
-                                    location_lat: loc_lat,
-                                    location_lng: loc_lng,
-                                    location_name: loc_name,
-                                };
-                                match self.store.upsert_actor(&actor).await {
-                                    Ok(_) => Some(actor.id),
-                                    Err(e) => {
-                                        warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
-                                        None
+            // Resolve author_actor → Actor node on owned sources only.
+            // Mentioned actors are kept as metadata strings but do NOT create nodes.
+            let strategy = scraping_strategy(&url);
+            if is_owned_source(&strategy) {
+                if let Some(meta) = node.meta() {
+                    if let Some(author_name) = &meta.author_actor {
+                        let author_name = author_name.trim();
+                        if !author_name.is_empty() {
+                            let entity_id = canonical_value(&url);
+                            let actor_id = match self.store.find_actor_by_entity_id(&entity_id).await {
+                                Ok(Some(id)) => Some(id),
+                                Ok(None) => {
+                                    let actor = ActorNode {
+                                        id: Uuid::new_v4(),
+                                        name: author_name.to_string(),
+                                        actor_type: ActorType::Organization,
+                                        entity_id: entity_id.clone(),
+                                        domains: vec![],
+                                        social_urls: vec![],
+                                        description: String::new(),
+                                        signal_count: 0,
+                                        first_seen: Utc::now(),
+                                        last_active: Utc::now(),
+                                        typical_roles: vec![],
+                                        bio: None,
+                                        location_lat: None,
+                                        location_lng: None,
+                                        location_name: None,
+                                        discovery_depth: actor_ctx.map(|ac| ac.discovery_depth + 1).unwrap_or(0),
+                                    };
+                                    match self.store.upsert_actor(&actor).await {
+                                        Ok(_) => {
+                                            // Wire HAS_SOURCE edge (actor → source)
+                                            if let Some(sid) = source_id {
+                                                if let Err(e) = self.store.link_actor_to_source(actor.id, sid).await {
+                                                    warn!(error = %e, actor = author_name, "Failed to link actor to source (non-fatal)");
+                                                }
+                                            }
+                                            Some(actor.id)
+                                        }
+                                        Err(e) => {
+                                            warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
+                                            None
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                warn!(error = %e, actor = author_name, "Author actor lookup failed (non-fatal)");
-                                None
-                            }
-                        };
-                        if let Some(actor_id) = actor_id {
-                            if let Err(e) = self
-                                .store
-                                .link_actor_to_signal(actor_id, node_id, "authored")
-                                .await
-                            {
-                                warn!(error = %e, actor = author_name, "Failed to link author actor to signal (non-fatal)");
+                                Err(e) => {
+                                    warn!(error = %e, actor = author_name, "Actor entity_id lookup failed (non-fatal)");
+                                    None
+                                }
+                            };
+                            if let Some(actor_id) = actor_id {
+                                if let Err(e) = self
+                                    .store
+                                    .link_actor_to_signal(actor_id, node_id, "authored")
+                                    .await
+                                {
+                                    warn!(error = %e, actor = author_name, "Failed to link author actor to signal (non-fatal)");
+                                }
                             }
                         }
                     }
@@ -2509,9 +2475,9 @@ mod tests {
     }
 
     #[test]
-    fn score_filter_actor_fallback_backfills_about_location() {
-        // Signal has no content location. Actor has coords.
-        // from_location should be set, and about_location should fall back to actor coords.
+    fn score_filter_does_not_fabricate_about_location_from_actor() {
+        // Signal has no about_location. Actor has coords.
+        // score_and_filter should NOT backfill about_location — that's derived at query time.
         let nodes = vec![tension_with_name("Local Event", "Minneapolis")];
         let actor = ActorContext {
             actor_name: "Local Org".to_string(),
@@ -2519,14 +2485,13 @@ mod tests {
             location_name: Some("Minneapolis".to_string()),
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         };
         let result = score_and_filter(nodes, URL_A, Some(&actor));
         assert_eq!(result.len(), 1);
         let meta = result[0].meta().unwrap();
-        assert!(meta.about_location.is_some(), "about_location should fall back to actor coords");
-        assert!(meta.from_location.is_some(), "from_location should be set from actor");
-        let loc = meta.about_location.as_ref().unwrap();
-        assert!((loc.lat - 44.9778).abs() < 0.001);
+        assert!(meta.about_location.is_none(), "about_location should NOT be backfilled from actor");
+        assert!(meta.from_location.is_none(), "from_location should NOT be set at write time");
     }
 
     #[test]
@@ -2542,8 +2507,8 @@ mod tests {
 
     #[test]
     fn score_filter_actor_preserves_existing_about_location() {
-        // Signal has explicit about_location — actor fallback should NOT overwrite it.
-        // But from_location should still be set from actor.
+        // Signal has explicit about_location — it should be preserved as-is.
+        // No from_location should be set (derived at query time via actor graph).
         let nodes = vec![tension_at("Located Signal", 44.95, -93.28)];
         let actor = ActorContext {
             actor_name: "Far Away Org".to_string(),
@@ -2551,13 +2516,13 @@ mod tests {
             location_name: None,
             location_lat: Some(40.7128),  // NYC
             location_lng: Some(-74.0060),
+            discovery_depth: 0,
         };
         let result = score_and_filter(nodes, URL_A, Some(&actor));
         let meta = result[0].meta().unwrap();
         let about = meta.about_location.as_ref().unwrap();
         assert!((about.lat - 44.95).abs() < 0.001, "existing about_location should be preserved");
-        let from = meta.from_location.as_ref().unwrap();
-        assert!((from.lat - 40.7128).abs() < 0.001, "from_location should be set to actor coords");
+        assert!(meta.from_location.is_none(), "from_location should NOT be set at write time");
     }
 
     #[test]
@@ -2573,8 +2538,9 @@ mod tests {
     }
 
     #[test]
-    fn from_location_set_even_when_about_location_present() {
-        // Actor coords populate from_location regardless of whether about_location exists.
+    fn score_filter_does_not_set_from_location() {
+        // Actor coords should NOT populate from_location at write time.
+        // from_location is derived at query time via actor graph traversal.
         let nodes = vec![
             tension_at("Uptown Event", 44.95, -93.30),
             tension("Floating Signal"),
@@ -2585,14 +2551,12 @@ mod tests {
             location_name: None,
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
+            discovery_depth: 0,
         };
         let result = score_and_filter(nodes, URL_A, Some(&actor));
-        // Both signals get from_location
         for node in &result {
             let meta = node.meta().unwrap();
-            assert!(meta.from_location.is_some(), "{} should have from_location", meta.title);
-            let from = meta.from_location.as_ref().unwrap();
-            assert!((from.lat - 44.9778).abs() < 0.001);
+            assert!(meta.from_location.is_none(), "{} should NOT have from_location at write time", meta.title);
         }
     }
 
@@ -2606,6 +2570,7 @@ mod tests {
             location_name: Some("Minneapolis".to_string()),
             location_lat: None,
             location_lng: None,
+            discovery_depth: 0,
         };
         let result = score_and_filter(nodes, URL_A, Some(&actor));
         let meta = result[0].meta().unwrap();
@@ -2640,5 +2605,29 @@ mod tests {
             let meta = node.meta().unwrap();
             assert_eq!(meta.source_url, "https://test-source.org");
         }
+    }
+
+    // --- is_owned_source tests ---
+
+    #[test]
+    fn is_owned_source_social_returns_true() {
+        assert!(is_owned_source(&ScrapingStrategy::Social(SocialPlatform::Instagram)));
+        assert!(is_owned_source(&ScrapingStrategy::Social(SocialPlatform::Facebook)));
+        assert!(is_owned_source(&ScrapingStrategy::Social(SocialPlatform::Twitter)));
+    }
+
+    #[test]
+    fn is_owned_source_web_page_returns_false() {
+        assert!(!is_owned_source(&ScrapingStrategy::WebPage));
+    }
+
+    #[test]
+    fn is_owned_source_rss_returns_false() {
+        assert!(!is_owned_source(&ScrapingStrategy::Rss));
+    }
+
+    #[test]
+    fn is_owned_source_web_query_returns_false() {
+        assert!(!is_owned_source(&ScrapingStrategy::WebQuery));
     }
 }
