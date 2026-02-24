@@ -516,10 +516,12 @@ Do NOT classify news reportage as a Need based on the urgency of the topic alone
 
 ## Location
 - Extract the most specific location possible from the content
-- Only provide latitude/longitude if you can identify a SPECIFIC place (building, park, intersection, venue)
-- If the signal is region-wide or you can't determine a specific location, omit latitude/longitude entirely (null)
-- Also provide location_name: the place name as text (e.g. "YWCA Midtown", "Lake Nokomis", "City Hall")
-- geo_precision: "exact" for specific addresses/buildings, "neighborhood" for areas
+- If you can identify a SPECIFIC place (building, park, intersection, venue), provide exact lat/lng
+- If the content mentions a NEIGHBORHOOD or well-known area within {city_name} (e.g. "Phillips", "Uptown", "Cedar-Riverside"), provide approximate lat/lng for that area's center with geo_precision "neighborhood"
+- If the content is GEOGRAPHICALLY NEUTRAL — no place is mentioned or implied (e.g. general thoughts, abstract policy discussion, personal reflections) — omit lat/lng AND location_name entirely. Do NOT guess a location.
+- If the signal is region-wide (affects the whole area, not a specific place), omit lat/lng but provide location_name if mentioned (e.g. "Minneapolis" or "Twin Cities")
+- location_name: the place name as text (e.g. "YWCA Midtown", "Uptown", "City Hall")
+- geo_precision: "exact" for addresses/buildings, "neighborhood" for area-level
 
 ## Timing
 - ISO 8601 datetime strings for start/end times (e.g. "2026-03-15T14:00:00Z")
