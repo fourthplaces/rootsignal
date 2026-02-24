@@ -379,6 +379,54 @@ impl MockSignalStore {
             .any(|(sid, rid, _)| *sid == signal_id && *rid == resource_id)
     }
 
+    /// Check that a specific resource edge exists with an expected role (requires/prefers/offers).
+    pub fn has_resource_edge_with_role(
+        &self,
+        signal_title: &str,
+        resource_slug: &str,
+        expected_role: &str,
+    ) -> bool {
+        let inner = self.inner.lock().unwrap();
+        let normalized = signal_title.trim().to_lowercase();
+        let signal_id = match inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+        {
+            Some(s) => s.id,
+            None => return false,
+        };
+        let resource_id = match inner.resources.get(resource_slug) {
+            Some(id) => *id,
+            None => return false,
+        };
+        inner
+            .resource_edges
+            .iter()
+            .any(|(sid, rid, role)| {
+                *sid == signal_id && *rid == resource_id && role == expected_role
+            })
+    }
+
+    /// Count resource edges for a signal.
+    pub fn resource_edge_count_for(&self, signal_title: &str) -> usize {
+        let inner = self.inner.lock().unwrap();
+        let normalized = signal_title.trim().to_lowercase();
+        let signal_id = match inner
+            .signals
+            .values()
+            .find(|s| s.title.trim().to_lowercase() == normalized)
+        {
+            Some(s) => s.id,
+            None => return 0,
+        };
+        inner
+            .resource_edges
+            .iter()
+            .filter(|(sid, _, _)| *sid == signal_id)
+            .count()
+    }
+
     pub fn has_tag(&self, signal_title: &str, tag: &str) -> bool {
         let inner = self.inner.lock().unwrap();
         let normalized = signal_title.trim().to_lowercase();
