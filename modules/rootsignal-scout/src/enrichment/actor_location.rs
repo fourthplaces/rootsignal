@@ -143,9 +143,26 @@ pub async fn enrich_actor_locations(
             _ => None,
         };
 
+        // Extract bio location: if the actor's bio text contains a known signal
+        // location name (case-insensitive substring), use that signal's coordinates.
+        let bio_location = actor.bio.as_ref().and_then(|bio| {
+            let bio_lower = bio.to_lowercase();
+            signal_locs.iter().find_map(|sl| {
+                if !sl.name.is_empty() && bio_lower.contains(&sl.name.to_lowercase()) {
+                    Some(ActorLocation {
+                        lat: sl.lat,
+                        lng: sl.lng,
+                        name: sl.name.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        });
+
         let result = triangulate_actor_location(
             current.as_ref(),
-            None,
+            bio_location.as_ref(),
             &signal_locs,
             ENRICHMENT_MAX_AGE_DAYS,
         );

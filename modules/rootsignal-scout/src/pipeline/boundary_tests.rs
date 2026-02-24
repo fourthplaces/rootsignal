@@ -3076,3 +3076,433 @@ async fn enrichment_exactly_two_signals_is_sufficient() {
         Some("Powderhorn".to_string())
     );
 }
+
+// ---------------------------------------------------------------------------
+// Resource edge wiring — boundary tests
+//
+// MOCK → run_web (the organ) → OUTPUT
+// Validates confidence filtering, role wiring, and multiple resources.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn low_confidence_resource_tag_does_not_create_edge() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/low-conf",
+            archived_page("https://example.com/low-conf", "# Low confidence resources"),
+        );
+
+    let node = need_at("Need Blankets", 44.975, -93.270);
+    let node_id = node.meta().unwrap().id;
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/low-conf",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: vec![(
+                    node_id,
+                    vec![crate::pipeline::extractor::ResourceTag {
+                        slug: "clothing".to_string(),
+                        role: "requires".to_string(),
+                        confidence: 0.2, // below 0.3 threshold
+                        context: None,
+                    }],
+                )],
+                signal_tags: vec![],
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/low-conf");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1, "signal should still be created");
+    assert_eq!(
+        store.resource_edge_count_for("Need Blankets"),
+        0,
+        "low-confidence resource tag should not create an edge"
+    );
+}
+
+#[tokio::test]
+async fn resource_roles_wire_to_correct_edge_types() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/multi-role",
+            archived_page("https://example.com/multi-role", "# Multi-role resources"),
+        );
+
+    let node = aid_at("Community Kitchen", 44.975, -93.270);
+    let node_id = node.meta().unwrap().id;
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/multi-role",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: vec![(
+                    node_id,
+                    vec![
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "vehicle".to_string(),
+                            role: "requires".to_string(),
+                            confidence: 0.9,
+                            context: Some("pickup truck".to_string()),
+                        },
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "bilingual-spanish".to_string(),
+                            role: "prefers".to_string(),
+                            confidence: 0.8,
+                            context: None,
+                        },
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "food".to_string(),
+                            role: "offers".to_string(),
+                            confidence: 0.7,
+                            context: Some("hot meals".to_string()),
+                        },
+                    ],
+                )],
+                signal_tags: vec![],
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/multi-role");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1);
+    assert_eq!(store.resource_edge_count_for("Community Kitchen"), 3, "all three resource edges should be created");
+    assert!(
+        store.has_resource_edge_with_role("Community Kitchen", "vehicle", "requires"),
+        "vehicle should be wired as requires"
+    );
+    assert!(
+        store.has_resource_edge_with_role("Community Kitchen", "bilingual-spanish", "prefers"),
+        "bilingual-spanish should be wired as prefers"
+    );
+    assert!(
+        store.has_resource_edge_with_role("Community Kitchen", "food", "offers"),
+        "food should be wired as offers"
+    );
+}
+
+#[tokio::test]
+async fn multiple_resources_on_one_signal_all_create_edges() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://example.com/multi-res",
+            archived_page("https://example.com/multi-res", "# Multi-resource signal"),
+        );
+
+    let node = need_at("Winter Coat Drive", 44.975, -93.270);
+    let node_id = node.meta().unwrap().id;
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://example.com/multi-res",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![node],
+                implied_queries: vec![],
+                resource_tags: vec![(
+                    node_id,
+                    vec![
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "clothing".to_string(),
+                            role: "requires".to_string(),
+                            confidence: 0.9,
+                            context: Some("winter coats".to_string()),
+                        },
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "storage-space".to_string(),
+                            role: "requires".to_string(),
+                            confidence: 0.8,
+                            context: None,
+                        },
+                        crate::pipeline::extractor::ResourceTag {
+                            slug: "vehicle".to_string(),
+                            role: "requires".to_string(),
+                            confidence: 0.7,
+                            context: Some("for delivery".to_string()),
+                        },
+                    ],
+                )],
+                signal_tags: vec![],
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://example.com/multi-res");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1);
+    assert_eq!(
+        store.resource_edge_count_for("Winter Coat Drive"),
+        3,
+        "all three resources should have edges"
+    );
+    assert!(store.has_resource_edge("Winter Coat Drive", "clothing"));
+    assert!(store.has_resource_edge("Winter Coat Drive", "storage-space"));
+    assert!(store.has_resource_edge("Winter Coat Drive", "vehicle"));
+}
+
+// ---------------------------------------------------------------------------
+// Semantic dedup via embedding cache — boundary tests
+//
+// MOCK → run_web (the organ) → OUTPUT
+// Tests that the in-memory EmbeddingCache catches cross-source duplicates
+// using vector similarity when titles differ.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cross_source_high_similarity_signals_corroborate_via_cache() {
+    // Two sources report the same event with different titles.
+    // Embeddings have cosine similarity ~0.95 (above 0.92 cross-source threshold).
+    // The cache should catch this and corroborate instead of creating two signals.
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://source-a.org/page",
+            archived_page("https://source-a.org/page", "Alpha content"),
+        )
+        .on_page(
+            "https://source-b.org/page",
+            archived_page("https://source-b.org/page", "Beta content"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://source-a.org/page",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Food Shelf Opening", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: vec![],
+                signal_tags: vec![],
+            },
+        )
+        .on_url(
+            "https://source-b.org/page",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("New Food Shelf Launch", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: vec![],
+                signal_tags: vec![],
+            },
+        );
+
+    // Build unit vectors with known cosine similarity ~0.95.
+    // vec_a = [1, 0, 0, ..., 0]
+    // vec_b = [0.95, 0.3122, 0, ..., 0]  → cos(a,b) = 0.95 / (1.0 * sqrt(0.9025 + 0.0975)) = 0.95
+    let mut vec_a = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vec_a[0] = 1.0;
+
+    let mut vec_b = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vec_b[0] = 0.95;
+    vec_b[1] = 0.3122; // sqrt(1 - 0.95^2) ≈ 0.3122, so vec_b is unit-length
+    // Normalize vec_b precisely
+    let norm_b: f32 = vec_b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    for v in vec_b.iter_mut() {
+        *v /= norm_b;
+    }
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text("Food Shelf Opening Alpha content", vec_a.clone())
+            .on_text("New Food Shelf Launch Beta content", vec_b),
+    );
+
+    let store = Arc::new(MockSignalStore::new());
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source_a = page_source("https://source-a.org/page");
+    let source_b = page_source("https://source-b.org/page");
+    let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
+    let mut ctx = RunContext::new(&[source_a.clone(), source_b.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(
+        store.signals_created(), 1,
+        "second signal should corroborate the first, not create a new one"
+    );
+    assert!(store.has_signal_titled("Food Shelf Opening"));
+    assert_eq!(
+        store.corroborations_for("Food Shelf Opening"), 1,
+        "cross-source high-similarity match should produce one corroboration"
+    );
+}
+
+#[tokio::test]
+async fn cross_source_below_threshold_similarity_creates_separate_signals() {
+    // Two sources report different events with moderate embedding similarity.
+    // Similarity ~0.88 is above 0.85 entry threshold but below 0.92 cross-source threshold.
+    // Both signals should be created independently.
+
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://alpha.org/page",
+            archived_page("https://alpha.org/page", "Alpha info"),
+        )
+        .on_page(
+            "https://beta.org/page",
+            archived_page("https://beta.org/page", "Beta info"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://alpha.org/page",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Food Pantry Hours", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: vec![],
+                signal_tags: vec![],
+            },
+        )
+        .on_url(
+            "https://beta.org/page",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Pantry Schedule Info", 44.975, -93.270)],
+                implied_queries: vec![],
+                resource_tags: vec![],
+                signal_tags: vec![],
+            },
+        );
+
+    // Build unit vectors with cosine similarity ~0.88.
+    // vec_a = [1, 0, ..., 0]
+    // vec_b = [0.88, 0.4750, ..., 0]  → cos sim = 0.88
+    let mut vec_a = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vec_a[0] = 1.0;
+
+    let mut vec_b = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vec_b[0] = 0.88;
+    vec_b[1] = 0.4750; // sqrt(1 - 0.88^2) ≈ 0.4750
+    let norm_b: f32 = vec_b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    for v in vec_b.iter_mut() {
+        *v /= norm_b;
+    }
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text("Food Pantry Hours Alpha info", vec_a)
+            .on_text("Pantry Schedule Info Beta info", vec_b),
+    );
+
+    let store = Arc::new(MockSignalStore::new());
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source_a = page_source("https://alpha.org/page");
+    let source_b = page_source("https://beta.org/page");
+    let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
+    let mut ctx = RunContext::new(&[source_a.clone(), source_b.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(
+        store.signals_created(), 2,
+        "both signals should be created (similarity below cross-source threshold)"
+    );
+    assert!(store.has_signal_titled("Food Pantry Hours"));
+    assert!(store.has_signal_titled("Pantry Schedule Info"));
+    assert_eq!(
+        store.corroborations_for("Food Pantry Hours"), 0,
+        "no corroboration when similarity is below 0.92"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bio location enrichment — TDD RED test
+//
+// MOCK → enrich_actor_locations (the organ) → OUTPUT
+// Actor has bio text matching a signal's location name.
+// Bio corroborated by 1 signal should win — but currently enrich_actor_locations
+// passes None for bio_location, so this requires a code fix.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn actor_bio_location_corroborated_by_signal_wins() {
+    let store = Arc::new(MockSignalStore::new());
+    let mut actor = test_actor("Phillips Pantry");
+    actor.bio = Some("Based in Phillips, Minneapolis".to_string());
+    store.upsert_actor(&actor).await.unwrap();
+
+    // Only ONE signal in Phillips — not enough on its own (need 2),
+    // but bio corroboration should make it sufficient.
+    seed_signal(&store, actor.id, "Food Drive", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1, "bio corroborated by one signal should update location");
+    assert_eq!(
+        store.actor_location_name("Phillips Pantry"),
+        Some("Phillips".to_string()),
+        "bio location corroborated by signal should win"
+    );
+}
