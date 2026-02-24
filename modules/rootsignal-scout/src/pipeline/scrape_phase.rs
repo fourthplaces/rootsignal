@@ -21,7 +21,6 @@ use rootsignal_common::{
     SocialPlatform, SourceNode, SourceRole,
 };
 use crate::enrichment::link_promoter;
-use super::geo_filter;
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
@@ -194,17 +193,16 @@ pub(crate) fn batch_title_dedup(nodes: Vec<Node>) -> Vec<Node> {
         .collect()
 }
 
-/// Scores quality, applies geo-filtering, backfills actor location, and removes Evidence nodes.
+/// Scores quality, populates from/about locations, and removes Evidence nodes.
 ///
-/// Pure pipeline step: given raw extracted nodes, returns only the signal nodes
-/// that survive quality scoring and geographic filtering.
+/// Pure pipeline step: given raw extracted nodes, returns signal nodes with
+/// quality scores, source URLs, and location provenance.
 pub(crate) fn score_and_filter(
     mut nodes: Vec<Node>,
     url: &str,
-    geo_config: &geo_filter::GeoFilterConfig,
     actor_ctx: Option<&ActorContext>,
-) -> (Vec<Node>, geo_filter::GeoFilterStats) {
-    // Score quality and stamp source URL
+) -> Vec<Node> {
+    // 1. Score quality and stamp source URL
     for node in &mut nodes {
         let q = quality::score(node);
         if let Some(meta) = node.meta_mut() {
@@ -213,33 +211,31 @@ pub(crate) fn score_and_filter(
         }
     }
 
-    // Geographic filtering
-    let (mut nodes, geo_stats) = geo_filter::filter_nodes(nodes, geo_config);
-
-    // Actor-location fallback: backfill coordinates from actor context
+    // 2. Populate from_location from actor context.
+    //    Write-time fallback: if no about_location, SET about_location = from_location.
     if let Some(actor) = actor_ctx {
         if let (Some(lat), Some(lng)) = (actor.location_lat, actor.location_lng) {
+            let from = rootsignal_common::GeoPoint {
+                lat,
+                lng,
+                precision: rootsignal_common::GeoPrecision::Approximate,
+            };
             for node in &mut nodes {
                 if let Some(meta) = node.meta_mut() {
-                    if meta.location.is_none() {
-                        meta.location = Some(rootsignal_common::GeoPoint {
-                            lat,
-                            lng,
-                            precision: rootsignal_common::GeoPrecision::Approximate,
-                        });
+                    meta.from_location = Some(from);
+                    if meta.about_location.is_none() {
+                        meta.about_location = Some(from);
                     }
                 }
             }
         }
     }
 
-    // Filter to signal nodes only (skip Evidence)
-    let nodes = nodes
+    // 3. Filter to signal nodes only (skip Evidence)
+    nodes
         .into_iter()
         .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
-        .collect();
-
-    (nodes, geo_stats)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1463,28 +1459,14 @@ impl ScrapePhase {
         // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
         let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
 
-        // Score, geo-filter, actor-location fallback, evidence removal
-        let geo_config = geo_filter::GeoFilterConfig {
-            center_lat: self.region.center_lat,
-            center_lng: self.region.center_lng,
-            radius_km: self.region.radius_km,
-            geo_terms: &self.region.geo_terms,
-        };
+        // Score quality, populate from/about locations, remove Evidence nodes
         let ck_for_fallback = ctx
             .url_to_canonical_key
             .get(&url)
             .cloned()
             .unwrap_or_else(|| url.clone());
         let actor_ctx = ctx.actor_contexts.get(&ck_for_fallback);
-        let (nodes, geo_stats) = score_and_filter(nodes, &url, &geo_config, actor_ctx);
-        ctx.stats.geo_filtered += geo_stats.filtered;
-        if geo_stats.filtered > 0 {
-            info!(
-                url = url.as_str(),
-                filtered = geo_stats.filtered,
-                "Off-geography signals dropped"
-            );
-        }
+        let nodes = score_and_filter(nodes, &url, actor_ctx);
 
         if nodes.is_empty() {
             return Ok(());
@@ -1841,8 +1823,8 @@ impl ScrapePhase {
                     let actor_id = match self.store.find_actor_by_name(actor_name).await {
                         Ok(Some(id)) => id,
                         Ok(None) => {
-                            let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
-                                (Some(geo.lat), Some(geo.lng), meta.location_name.clone())
+                            let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.about_location {
+                                (Some(geo.lat), Some(geo.lng), meta.about_location_name.clone())
                             } else {
                                 (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
                             };
@@ -1892,8 +1874,8 @@ impl ScrapePhase {
                         let actor_id = match self.store.find_actor_by_name(author_name).await {
                             Ok(Some(id)) => Some(id),
                             Ok(None) => {
-                                let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.location {
-                                    (Some(geo.lat), Some(geo.lng), meta.location_name.clone())
+                                let (loc_lat, loc_lng, loc_name) = if let Some(geo) = &meta.about_location {
+                                    (Some(geo.lat), Some(geo.lng), meta.about_location_name.clone())
                                 } else {
                                     (Some(self.region.center_lat), Some(self.region.center_lng), Some(self.region.name.clone()))
                                 };
@@ -2082,8 +2064,9 @@ mod tests {
                 confidence: 0.8,
                 freshness_score: 0.9,
                 corroboration_count: 0,
-                location: None,
-                location_name: None,
+                about_location: None,
+                about_location_name: None,
+                from_location: None,
                 source_url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 content_date: None,
@@ -2112,8 +2095,9 @@ mod tests {
                 confidence: 0.8,
                 freshness_score: 0.9,
                 corroboration_count: 0,
-                location: None,
-                location_name: None,
+                about_location: None,
+                about_location_name: None,
+                from_location: None,
                 source_url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 content_date: None,
@@ -2447,17 +2431,6 @@ mod tests {
     use rootsignal_common::types::GeoPoint;
     use rootsignal_common::GeoPrecision;
 
-    /// Minneapolis center for test geo config
-    fn mpls_geo_config() -> geo_filter::GeoFilterConfig<'static> {
-        static GEO_TERMS: &[String] = &[];
-        geo_filter::GeoFilterConfig {
-            center_lat: 44.9778,
-            center_lng: -93.2650,
-            radius_km: 30.0,
-            geo_terms: GEO_TERMS,
-        }
-    }
-
     fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
         Node::Tension(TensionNode {
             meta: NodeMeta {
@@ -2468,8 +2441,9 @@ mod tests {
                 confidence: 0.0, // will be overwritten by score_and_filter
                 freshness_score: 0.9,
                 corroboration_count: 0,
-                location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
-                location_name: None,
+                about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+                about_location_name: None,
+                from_location: None,
                 source_url: String::new(),
                 extracted_at: Utc::now(),
                 content_date: None,
@@ -2489,32 +2463,31 @@ mod tests {
     }
 
     #[test]
-    fn score_filter_signal_in_region_survives() {
+    fn score_filter_signal_stored_regardless_of_location() {
         let nodes = vec![tension_at("Pothole on Lake St", 44.9485, -93.2983)]; // Minneapolis
-        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        let result = score_and_filter(nodes, URL_A, None);
         assert_eq!(result.len(), 1);
-        assert_eq!(stats.filtered, 0);
     }
 
     #[test]
-    fn score_filter_signal_outside_region_filtered() {
+    fn score_filter_out_of_region_signal_still_stored() {
+        // With geo-filter removed, all signals are stored regardless of location
         let nodes = vec![tension_at("NYC subway delay", 40.7128, -74.0060)]; // New York
-        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
-        assert_eq!(result.len(), 0);
-        assert_eq!(stats.filtered, 1);
+        let result = score_and_filter(nodes, URL_A, None);
+        assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn score_filter_stamps_source_url() {
         let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
-        let (result, _) = score_and_filter(nodes, "https://mpls-news.com/article", &mpls_geo_config(), None);
+        let result = score_and_filter(nodes, "https://mpls-news.com/article", None);
         assert_eq!(result[0].meta().unwrap().source_url, "https://mpls-news.com/article");
     }
 
     #[test]
     fn score_filter_sets_confidence() {
         let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
-        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        let result = score_and_filter(nodes, URL_A, None);
         // quality::score should produce a non-zero confidence for a valid node
         assert!(result[0].meta().unwrap().confidence > 0.0, "confidence should be set by quality::score");
     }
@@ -2536,7 +2509,7 @@ mod tests {
             tension_at("Real signal", 44.95, -93.27),
             evidence,
         ];
-        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
+        let result = score_and_filter(nodes, URL_A, None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "Real signal");
     }
@@ -2551,8 +2524,9 @@ mod tests {
                 confidence: 0.0,
                 freshness_score: 0.9,
                 corroboration_count: 0,
-                location: None,
-                location_name: Some(location_name.to_string()),
+                about_location: None,
+                about_location_name: Some(location_name.to_string()),
+                from_location: None,
                 source_url: String::new(),
                 extracted_at: Utc::now(),
                 content_date: None,
@@ -2571,21 +2545,10 @@ mod tests {
         })
     }
 
-    fn mpls_geo_config_with_terms() -> geo_filter::GeoFilterConfig<'static> {
-        // Leak a vec to get 'static — fine for tests
-        let terms: &'static [String] = Box::leak(Box::new(vec!["minneapolis".to_string()]));
-        geo_filter::GeoFilterConfig {
-            center_lat: 44.9778,
-            center_lng: -93.2650,
-            radius_km: 30.0,
-            geo_terms: terms,
-        }
-    }
-
     #[test]
-    fn score_filter_actor_fallback_backfills_location() {
-        // Node survives geo-filter via geo_term match but has no coordinates.
-        // Actor fallback should backfill location.
+    fn score_filter_actor_fallback_backfills_about_location() {
+        // Signal has no content location. Actor has coords.
+        // from_location should be set, and about_location should fall back to actor coords.
         let nodes = vec![tension_with_name("Local Event", "Minneapolis")];
         let actor = ActorContext {
             actor_name: "Local Org".to_string(),
@@ -2594,25 +2557,30 @@ mod tests {
             location_lat: Some(44.9778),
             location_lng: Some(-93.2650),
         };
-        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config_with_terms(), Some(&actor));
+        let result = score_and_filter(nodes, URL_A, Some(&actor));
         assert_eq!(result.len(), 1);
-        assert!(result[0].meta().unwrap().location.is_some(), "actor fallback should set location");
-        let loc = result[0].meta().unwrap().location.as_ref().unwrap();
+        let meta = result[0].meta().unwrap();
+        assert!(meta.about_location.is_some(), "about_location should fall back to actor coords");
+        assert!(meta.from_location.is_some(), "from_location should be set from actor");
+        let loc = meta.about_location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
     }
 
     #[test]
-    fn score_filter_no_location_no_actor_filtered() {
-        // Node with no location, no actor context → geo-filter will reject it
+    fn score_filter_no_location_no_actor_still_stored() {
+        // Signal with no location and no actor context is still stored (no geo-filter rejection)
         let nodes = vec![tension("Floating Signal")];
-        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
-        assert_eq!(result.len(), 0);
-        assert_eq!(stats.filtered, 1);
+        let result = score_and_filter(nodes, URL_A, None);
+        assert_eq!(result.len(), 1);
+        let meta = result[0].meta().unwrap();
+        assert!(meta.about_location.is_none());
+        assert!(meta.from_location.is_none());
     }
 
     #[test]
-    fn score_filter_actor_preserves_existing_location() {
-        // Node already has a location — actor fallback should NOT overwrite it
+    fn score_filter_actor_preserves_existing_about_location() {
+        // Signal has explicit about_location — actor fallback should NOT overwrite it.
+        // But from_location should still be set from actor.
         let nodes = vec![tension_at("Located Signal", 44.95, -93.28)];
         let actor = ActorContext {
             actor_name: "Far Away Org".to_string(),
@@ -2621,22 +2589,23 @@ mod tests {
             location_lat: Some(40.7128),  // NYC
             location_lng: Some(-74.0060),
         };
-        let (result, _) = score_and_filter(nodes, URL_A, &mpls_geo_config(), Some(&actor));
-        let loc = result[0].meta().unwrap().location.as_ref().unwrap();
-        assert!((loc.lat - 44.95).abs() < 0.001, "existing location should be preserved");
+        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let meta = result[0].meta().unwrap();
+        let about = meta.about_location.as_ref().unwrap();
+        assert!((about.lat - 44.95).abs() < 0.001, "existing about_location should be preserved");
+        let from = meta.from_location.as_ref().unwrap();
+        assert!((from.lat - 40.7128).abs() < 0.001, "from_location should be set to actor coords");
     }
 
     #[test]
-    fn score_filter_mixed_in_and_out_of_region() {
+    fn score_filter_all_signals_stored_regardless_of_region() {
+        // With geo-filter removed, ALL signals are stored regardless of location
         let nodes = vec![
-            tension_at("In region", 44.95, -93.27),
-            tension_at("Way outside", 34.05, -118.24), // LA
-            tension_at("Also in region", 44.98, -93.25),
+            tension_at("Minneapolis", 44.95, -93.27),
+            tension_at("Los Angeles", 34.05, -118.24),
+            tension_at("Also Minneapolis", 44.98, -93.25),
         ];
-        let (result, stats) = score_and_filter(nodes, URL_A, &mpls_geo_config(), None);
-        assert_eq!(result.len(), 2);
-        assert_eq!(stats.filtered, 1);
-        assert_eq!(result[0].title(), "In region");
-        assert_eq!(result[1].title(), "Also in region");
+        let result = score_and_filter(nodes, URL_A, None);
+        assert_eq!(result.len(), 3);
     }
 }

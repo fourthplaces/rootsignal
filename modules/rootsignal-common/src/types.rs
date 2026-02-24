@@ -231,8 +231,14 @@ pub struct NodeMeta {
     pub confidence: f32,
     pub freshness_score: f32,
     pub corroboration_count: u32,
-    pub location: Option<GeoPoint>,
-    pub location_name: Option<String>,
+    /// The canonical query/map field — where the content is ABOUT.
+    /// At write time: content location if extracted, else falls back to from_location.
+    pub about_location: Option<GeoPoint>,
+    /// Human-readable content location name.
+    pub about_location_name: Option<String>,
+    /// Actor's location — provenance for where the signal was posted FROM.
+    #[serde(default)]
+    pub from_location: Option<GeoPoint>,
     pub source_url: String,
     pub extracted_at: DateTime<Utc>,
     /// When the content was actually published/updated (from LLM extraction, RSS pub_date, or social published_at).
@@ -453,7 +459,6 @@ pub struct ScoutScope {
     pub center_lng: f64,
     pub radius_km: f64,
     pub name: String,
-    pub geo_terms: Vec<String>,
 }
 
 impl ScoutScope {
@@ -575,7 +580,6 @@ impl From<&ScoutTask> for ScoutScope {
             center_lng: task.center_lng,
             radius_km: task.radius_km,
             name: task.context.clone(),
-            geo_terms: task.geo_terms.clone(),
         }
     }
 }
@@ -1633,8 +1637,9 @@ mod tests {
             confidence: 0.8,
             freshness_score: 1.0,
             corroboration_count: 0,
-            location: None,
-            location_name: None,
+            about_location: None,
+            about_location_name: None,
+            from_location: None,
             source_url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
             content_date: None,

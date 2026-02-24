@@ -98,7 +98,6 @@ async fn main() -> Result<()> {
         center_lng,
         radius_km,
         name: region_name.to_string(),
-        geo_terms: vec![region_name.to_string()],
     };
 
     info!(
@@ -249,7 +248,6 @@ async fn dump_region(client: &GraphClient, region_slug: &str) -> Result<()> {
         center_lng,
         radius_km,
         name: region_slug.to_string(),
-        geo_terms: vec![region_slug.to_string()],
     };
     let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 

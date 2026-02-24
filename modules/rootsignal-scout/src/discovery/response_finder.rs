@@ -693,12 +693,13 @@ impl<'a> ResponseFinder<'a> {
             confidence: 0.7,
             freshness_score: 1.0,
             corroboration_count: 0,
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: self.region.center_lat,
                 lng: self.region.center_lng,
                 precision: GeoPrecision::Approximate,
             }),
-            location_name: Some(self.region.name.clone()),
+            from_location: None,
+            about_location_name: Some(self.region.name.clone()),
             source_url: response.url.clone(),
             extracted_at: now,
             content_date: None,
@@ -871,12 +872,13 @@ impl<'a> ResponseFinder<'a> {
                 confidence: 0.4, // Capped at 0.4 — below 0.5 target selection threshold
                 freshness_score: 1.0,
                 corroboration_count: 0,
-                location: Some(GeoPoint {
+                about_location: Some(GeoPoint {
                     lat: self.region.center_lat,
                     lng: self.region.center_lng,
                     precision: GeoPrecision::Approximate,
                 }),
-                location_name: Some(self.region.name.clone()),
+                from_location: None,
+            about_location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 content_date: None,
@@ -1084,7 +1086,6 @@ mod tests {
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
-            geo_terms: vec!["Minneapolis".to_string()],
         };
 
         let now = Utc::now();
@@ -1096,12 +1097,13 @@ mod tests {
             confidence: 0.7,
             freshness_score: 1.0,
             corroboration_count: 0,
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: region.center_lat,
                 lng: region.center_lng,
                 precision: GeoPrecision::Approximate,
             }),
-            location_name: Some(region.name.clone()),
+            from_location: None,
+            about_location_name: Some(region.name.clone()),
             source_url: "https://example.com/kyr".to_string(),
             extracted_at: now,
             content_date: None,
@@ -1122,7 +1124,7 @@ mod tests {
             is_ongoing: true,
         });
 
-        let loc = node.meta().unwrap().location.as_ref().unwrap();
+        let loc = node.meta().unwrap().about_location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
         assert!((loc.lng - (-93.2650)).abs() < 0.001);
         assert_eq!(loc.precision, GeoPrecision::Approximate);

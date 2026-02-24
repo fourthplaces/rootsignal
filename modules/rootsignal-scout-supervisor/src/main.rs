@@ -39,9 +39,6 @@ async fn main() -> Result<()> {
         center_lng: config.region_lng.unwrap_or(-93.2650),
         radius_km: config.region_radius_km.unwrap_or(30.0),
         name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
-        geo_terms: config.region_name.as_deref()
-            .map(|n| n.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-            .unwrap_or_else(|| vec![config.region.clone()]),
     };
 
     info!(

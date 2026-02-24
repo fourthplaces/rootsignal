@@ -466,12 +466,13 @@ impl<'a> TensionLinker<'a> {
                 confidence: 0.7,
                 freshness_score: 1.0,
                 corroboration_count: 0,
-                location: Some(GeoPoint {
+                about_location: Some(GeoPoint {
                     lat: self.region.center_lat,
                     lng: self.region.center_lng,
                     precision: GeoPrecision::Approximate,
                 }),
-                location_name: Some(self.region.name.clone()),
+                from_location: None,
+                about_location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 content_date: None,
@@ -566,7 +567,6 @@ mod tests {
             center_lat: 44.9778,
             center_lng: -93.2650,
             radius_km: 30.0,
-            geo_terms: vec!["Minneapolis".to_string()],
         };
 
         let tension = DiscoveredTension {
@@ -599,12 +599,13 @@ mod tests {
                 confidence: 0.7,
                 freshness_score: 1.0,
                 corroboration_count: 0,
-                location: Some(GeoPoint {
+                about_location: Some(GeoPoint {
                     lat: region.center_lat,
                     lng: region.center_lng,
                     precision: GeoPrecision::Approximate,
                 }),
-                location_name: Some(region.name.clone()),
+                from_location: None,
+                about_location_name: Some(region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 content_date: None,
@@ -625,7 +626,7 @@ mod tests {
         // Key assertions: location is set to region center
         let loc = tension_node
             .meta
-            .location
+            .about_location
             .expect("Tension should have location");
         assert!(
             (loc.lat - 44.9778).abs() < 0.001,
@@ -637,7 +638,7 @@ mod tests {
         );
         assert_eq!(loc.precision, GeoPrecision::Approximate);
         assert_eq!(
-            tension_node.meta.location_name.as_deref(),
+            tension_node.meta.about_location_name.as_deref(),
             Some("Minneapolis")
         );
         assert_eq!(tension_node.severity, Severity::High);

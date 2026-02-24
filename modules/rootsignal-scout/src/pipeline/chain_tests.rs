@@ -194,9 +194,9 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     assert!(collected_urls.iter().any(|u| u.contains("sabathani.org/events")));
 }
 
-/// Signal in Dallas extracted from a page. Minneapolis scout filters it.
+/// Signal in Dallas extracted from a page. No geo-filter — stored regardless.
 #[tokio::test]
-async fn dallas_signal_is_dropped_by_minneapolis_scout() {
+async fn dallas_signal_is_stored_by_minneapolis_scout() {
     let url = "https://texasorg.org/events";
 
     let fetcher = MockFetcher::new()
@@ -229,8 +229,8 @@ async fn dallas_signal_is_dropped_by_minneapolis_scout() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    // Geo filter killed it
-    assert_eq!(store.signals_created(), 0);
+    // No geo-filter — all signals stored
+    assert_eq!(store.signals_created(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +323,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     // then backfills exact coordinates from the actor context.
     let mut node = tension("Food Distribution at MLK Park");
     if let Some(meta) = node.meta_mut() {
-        meta.location_name = Some("Minneapolis, MN".to_string());
+        meta.about_location_name = Some("Minneapolis, MN".to_string());
         meta.mentioned_actors = vec!["Minneapolis Food Shelf".to_string()];
         meta.author_actor = Some("Northside Mutual Aid".to_string());
         meta.confidence = 0.7;
@@ -391,9 +391,10 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     );
 }
 
-/// Actor in NYC, signal has no location. Fallback puts it in NYC → filtered.
+/// Actor in NYC, signal has no content location. Fallback populates from_location
+/// and about_location from actor coords. Signal is stored (no geo-filter).
 #[tokio::test]
-async fn nyc_actor_fallback_is_dropped_by_minneapolis_scout() {
+async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     let ig_url = "https://www.instagram.com/nycorg";
 
     let fetcher = MockFetcher::new()
@@ -443,8 +444,8 @@ async fn nyc_actor_fallback_is_dropped_by_minneapolis_scout() {
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
-    // Fallback put it in NYC → filtered by Minneapolis scout
-    assert_eq!(store.signals_created(), 0, "NYC signal should be geo-filtered");
+    // No geo-filter — signal stored with actor location as fallback
+    assert_eq!(store.signals_created(), 1, "signal should be stored regardless of location");
 }
 
 // ---------------------------------------------------------------------------

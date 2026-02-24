@@ -1,8 +1,8 @@
-//! Layer 2: Scenario-driven quality + geo filter tests.
+//! Layer 2: Scenario-driven quality scoring tests.
 //!
-//! Pure functions, no LLM, no infrastructure. Validates `quality::score()` and
-//! `geo_filter::geo_check()` against realistic extraction patterns matching the
-//! fixture content in `tests/fixtures/`.
+//! Pure functions, no LLM, no infrastructure. Validates `quality::score()`
+//! against realistic extraction patterns matching the fixture content in
+//! `tests/fixtures/`.
 //!
 //! Run with: cargo test -p rootsignal-scout --test quality_scenarios_test
 
@@ -14,7 +14,6 @@ use rootsignal_common::{
     NoticeNode, SensitivityLevel, Severity, TensionNode, Urgency,
 };
 use rootsignal_scout::enrichment::quality;
-use rootsignal_scout::pipeline::geo_filter::{self, GeoFilterConfig, GeoVerdict};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,8 +28,9 @@ fn test_meta() -> NodeMeta {
         confidence: 0.0,
         freshness_score: 1.0,
         corroboration_count: 0,
-        location: None,
-        location_name: None,
+        about_location: None,
+        about_location_name: None,
+        from_location: None,
         source_url: "https://example.com".into(),
         extracted_at: Utc::now(),
         content_date: None,
@@ -42,27 +42,6 @@ fn test_meta() -> NodeMeta {
         channel_diversity: 1,
         mentioned_actors: vec![],
         author_actor: None,
-    }
-}
-
-fn mpls_geo_terms() -> Vec<String> {
-    vec![
-        "minneapolis".into(),
-        "minnesota".into(),
-        "twin cities".into(),
-        "powderhorn".into(),
-        "phillips".into(),
-        "cedar-riverside".into(),
-        "midtown".into(),
-    ]
-}
-
-fn mpls_config(terms: &[String]) -> GeoFilterConfig<'_> {
-    GeoFilterConfig {
-        center_lat: 44.9778,
-        center_lng: -93.2650,
-        radius_km: 30.0,
-        geo_terms: terms,
     }
 }
 
@@ -78,12 +57,13 @@ fn community_garden_gathering_scores_high_confidence() {
         meta: NodeMeta {
             title: "Spring Volunteer Day at Powderhorn Community Garden".into(),
             summary: "Annual spring kickoff — preparing raised beds, compost, planting".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9486,
                 lng: -93.2636,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
+            about_location_name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
+            from_location: None,
             source_url: "https://powderhornpark.org/events".into(),
             mentioned_actors: vec![
                 "Powderhorn Park Neighborhood Association".into(),
@@ -124,24 +104,6 @@ fn community_garden_gathering_scores_high_confidence() {
     assert_eq!(q.geo_accuracy, rootsignal_common::GeoAccuracy::High);
 }
 
-/// The same Gathering should pass geo-check — coords are within 30km of
-/// Minneapolis center.
-#[test]
-fn community_garden_passes_geo_check() {
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: 44.9486,
-            lng: -93.2636,
-            precision: GeoPrecision::Exact,
-        }),
-        location_name: Some("Powderhorn Community Garden".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(geo_filter::geo_check(&meta, &config, false), GeoVerdict::Accept);
-}
-
 // ===========================================================================
 // Scenario: food_shelf_give.txt → Aid
 // ===========================================================================
@@ -154,12 +116,13 @@ fn food_shelf_aid_scores_high_confidence() {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf — no ID, proof of income, or appointment needed".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9696,
                 lng: -93.2466,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
+            about_location_name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
+            from_location: None,
             source_url: "https://brivahealth.org/food-shelf".into(),
             ..test_meta()
         },
@@ -186,12 +149,13 @@ fn food_shelf_aid_without_url_not_actionable() {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9696,
                 lng: -93.2466,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("420 15th Ave S".into()),
+            about_location_name: Some("420 15th Ave S".into()),
+            from_location: None,
             ..test_meta()
         },
         action_url: String::new(),
@@ -201,23 +165,6 @@ fn food_shelf_aid_without_url_not_actionable() {
 
     let q = quality::score(&node);
     assert!(!q.actionable, "Aid without action_url should not be actionable");
-}
-
-/// Food shelf location (420 15th Ave S) should pass geo check with coords.
-#[test]
-fn food_shelf_passes_geo_check_with_coords() {
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: 44.9696,
-            lng: -93.2466,
-            precision: GeoPrecision::Exact,
-        }),
-        location_name: Some("420 15th Ave S, Minneapolis".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(geo_filter::geo_check(&meta, &config, false), GeoVerdict::Accept);
 }
 
 // ===========================================================================
@@ -233,12 +180,13 @@ fn ice_enforcement_tension_moderate_confidence() {
             title: "ICE Enforcement Activity in Phillips Neighborhood".into(),
             summary: "Multiple reports of ICE vehicles and plainclothes agents near Lake St and Bloomington Ave".into(),
             sensitivity: SensitivityLevel::Sensitive,
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9486,
                 lng: -93.2476,
                 precision: GeoPrecision::Neighborhood,
             }),
-            location_name: Some("Phillips neighborhood, Minneapolis".into()),
+            about_location_name: Some("Phillips neighborhood, Minneapolis".into()),
+            from_location: None,
             mentioned_actors: vec![
                 "Minneapolis Immigrant Rights Coalition".into(),
                 "MIRC".into(),
@@ -261,21 +209,6 @@ fn ice_enforcement_tension_moderate_confidence() {
     assert!(!q.actionable, "Tension signals are never actionable (no action_url concept)");
 }
 
-/// A Tension without coordinates but with a matching location name should
-/// pass geo filter.
-#[test]
-fn tension_without_coords_passes_geo_on_name_match() {
-    let meta = NodeMeta {
-        location: None,
-        location_name: Some("Phillips neighborhood, Minneapolis".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    // "Phillips" and "Minneapolis" are both in geo_terms → Accept
-    assert_eq!(geo_filter::geo_check(&meta, &config, false), GeoVerdict::Accept);
-}
-
 /// Emergency community meeting from the tension fixture should be a
 /// complete Gathering with high confidence.
 #[test]
@@ -284,12 +217,13 @@ fn emergency_meeting_gathering_is_actionable() {
         meta: NodeMeta {
             title: "Emergency Community Meeting".into(),
             summary: "Wednesday 6 PM at Sagrado Corazón Church to coordinate ICE response".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9480,
                 lng: -93.2380,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("Sagrado Corazón Church, 2018 E. Lake St".into()),
+            about_location_name: Some("Sagrado Corazón Church, 2018 E. Lake St".into()),
+            from_location: None,
             ..test_meta()
         },
         starts_at: Some(Utc::now()), // placeholder for the actual date
@@ -319,12 +253,13 @@ fn legal_aid_signal_scores_reasonably() {
             title: "Legal Support for Immigrants".into(),
             summary: "MIRAC legal aid available at Centro de Trabajadores Unidos".into(),
             sensitivity: SensitivityLevel::Elevated,
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9480,
                 lng: -93.2476,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("Centro de Trabajadores Unidos, 2104 Bloomington Ave".into()),
+            about_location_name: Some("Centro de Trabajadores Unidos, 2104 Bloomington Ave".into()),
+            from_location: None,
             ..test_meta()
         },
         action_url: String::new(),
@@ -347,306 +282,6 @@ fn legal_aid_signal_scores_reasonably() {
 }
 
 // ===========================================================================
-// Geo filter edge cases from realistic extraction patterns
-// ===========================================================================
-
-/// A signal extracted from a national page with no local coordinates
-/// and a non-matching location name should be rejected.
-#[test]
-fn national_signal_rejected_by_geo() {
-    let meta = NodeMeta {
-        location: None,
-        location_name: Some("Washington, D.C.".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(geo_filter::geo_check(&meta, &config, false), GeoVerdict::Reject);
-}
-
-/// A signal from a known source with a neighborhood name not in geo_terms
-/// should get accepted with penalty.
-#[test]
-fn known_source_unfamiliar_neighborhood_gets_penalty() {
-    let meta = NodeMeta {
-        location: None,
-        location_name: Some("Longfellow".into()), // not in our geo_terms
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, true),
-        GeoVerdict::AcceptWithPenalty(0.8)
-    );
-}
-
-/// Batch filtering removes out-of-scope signals and keeps local ones.
-#[test]
-fn batch_filter_keeps_local_drops_remote() {
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-
-    let local_gathering = Node::Gathering(GatheringNode {
-        meta: NodeMeta {
-            title: "Powderhorn Garden Day".into(),
-            summary: "Local event".into(),
-            location: Some(GeoPoint {
-                lat: 44.9486,
-                lng: -93.2636,
-                precision: GeoPrecision::Exact,
-            }),
-            location_name: Some("Powderhorn".into()),
-            ..test_meta()
-        },
-        starts_at: Some(Utc::now()),
-        ends_at: None,
-        action_url: "https://example.com/rsvp".into(),
-        organizer: None,
-        is_recurring: false,
-    });
-
-    let remote_tension = Node::Tension(TensionNode {
-        meta: NodeMeta {
-            title: "Remote event".into(),
-            summary: "Not in Minneapolis".into(),
-            location: Some(GeoPoint {
-                lat: 30.2672,
-                lng: -97.7431,
-                precision: GeoPrecision::Exact,
-            }),
-            location_name: Some("Austin, TX".into()),
-            ..test_meta()
-        },
-        severity: Severity::Medium,
-        category: None,
-        what_would_help: None,
-    });
-
-    let nameless = Node::Aid(AidNode {
-        meta: NodeMeta {
-            title: "Mystery aid".into(),
-            summary: "No location at all".into(),
-            ..test_meta()
-        },
-        action_url: "https://example.com".into(),
-        availability: None,
-        is_ongoing: false,
-    });
-
-    let (accepted, stats) = geo_filter::filter_nodes(
-        vec![local_gathering, remote_tension, nameless],
-        &config,
-        false,
-    );
-    assert_eq!(accepted.len(), 1, "only local gathering should survive");
-    assert_eq!(stats.filtered, 2);
-}
-
-// ===========================================================================
-// Adversarial: Geo filter substring false positives
-// ===========================================================================
-
-/// "New Minneapolis" contains "minneapolis" as a substring → currently matches.
-/// This documents the known false-positive behavior of substring geo matching.
-#[test]
-fn geo_substring_false_positive_new_minneapolis() {
-    let meta = NodeMeta {
-        location: None,
-        location_name: Some("New Minneapolis, North Dakota".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    // BUG: substring matching causes this to Accept when it should Reject.
-    // This test documents the current (broken) behavior.
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Accept,
-        "Known false positive: 'New Minneapolis' matches 'minneapolis' substring"
-    );
-}
-
-/// "Minneapolitan Garden Club" contains "minneapolis" as a substring.
-#[test]
-fn geo_substring_false_positive_minneapolitan() {
-    let meta = NodeMeta {
-        location: None,
-        location_name: Some("Minneapolitan Garden Club, St. Paul".into()),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    // BUG: substring matching. "minneapolitan" contains "minneapolis"? No!
-    // "minneapolitan" does NOT contain "minneapolis" — it's "minneapolitan" not "minneapolis".
-    // Let's verify: "minneapolitan".contains("minneapolis") → false (extra 'tan')
-    // Actually... "minneapolitan" contains "minneapoli" but not "minneapolis"
-    // Wait: m-i-n-n-e-a-p-o-l-i-t-a-n vs m-i-n-n-e-a-p-o-l-i-s
-    // At index 10: 't' vs 's'. So "minneapolitan" does NOT contain "minneapolis".
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Reject,
-        "Minneapolitan does NOT contain 'minneapolis' — different suffix"
-    );
-}
-
-/// Short geo terms like "MN" could match inside unrelated words.
-/// "Magnetic North" lowercased → "magnetic north" which contains "mn"? No.
-/// But "Bemidji, MN" contains "mn" → this is actually correct behavior.
-#[test]
-fn geo_short_term_mn_matches_correctly() {
-    let terms = vec!["mn".into()];
-    let config = GeoFilterConfig {
-        center_lat: 44.9778,
-        center_lng: -93.2650,
-        radius_km: 30.0,
-        geo_terms: &terms,
-    };
-    // "Bemidji, MN" → should match (correct)
-    let meta_bemidji = NodeMeta {
-        location: None,
-        location_name: Some("Bemidji, MN".into()),
-        ..test_meta()
-    };
-    assert_eq!(geo_filter::geo_check(&meta_bemidji, &config, false), GeoVerdict::Accept);
-
-    // "Omni Hotel" → "omni hotel" contains "mn"? Let's check: o-m-n-i → "mn" at index 1-2!
-    // This is a false positive.
-    let meta_omni = NodeMeta {
-        location: None,
-        location_name: Some("Omni Hotel, Dallas".into()),
-        ..test_meta()
-    };
-    assert_eq!(
-        geo_filter::geo_check(&meta_omni, &config, false),
-        GeoVerdict::Accept,
-        "Known false positive: 'omni' contains 'mn' substring"
-    );
-}
-
-// ===========================================================================
-// Adversarial: Geo filter with invalid/degenerate coordinates
-// ===========================================================================
-
-/// NaN latitude should produce NaN distance → fails the `<= radius_km` check
-/// (NaN comparisons are always false), so it should reject.
-#[test]
-fn geo_nan_coords_rejected() {
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: f64::NAN,
-            lng: -93.2650,
-            precision: GeoPrecision::Exact,
-        }),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    // haversine_km(44.97, -93.26, NaN, -93.26) → NaN
-    // NaN <= 30.0 → false → Reject
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Reject,
-        "NaN coordinates should be rejected (NaN <= radius is false)"
-    );
-}
-
-/// Infinity latitude → haversine returns NaN or Infinity → Reject.
-#[test]
-fn geo_infinity_coords_rejected() {
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: f64::INFINITY,
-            lng: -93.2650,
-            precision: GeoPrecision::Exact,
-        }),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Reject,
-        "Infinity coordinates should be rejected"
-    );
-}
-
-/// Out-of-range latitude (> 90°) still produces a haversine result — it will
-/// be some distance away and likely rejected, but this documents the behavior.
-#[test]
-fn geo_out_of_range_lat_still_computes() {
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: 200.0, // invalid: latitude > 90
-            lng: -93.2650,
-            precision: GeoPrecision::Exact,
-        }),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    let verdict = geo_filter::geo_check(&meta, &config, false);
-    // haversine_km will produce some value (not NaN) because sin/cos still work
-    // on out-of-range inputs. The distance will be large → Reject.
-    assert_eq!(
-        verdict,
-        GeoVerdict::Reject,
-        "Out-of-range latitude (200°) should produce large distance → Reject"
-    );
-}
-
-/// Coordinates exactly at the radius boundary (30km) should Accept (<=).
-#[test]
-fn geo_coords_exactly_at_boundary() {
-    // 30km due north of Minneapolis center ≈ lat 45.2476
-    // 1° lat ≈ 111.32 km, so 30km ≈ 0.2695°
-    let boundary_lat = 44.9778 + 30.0 / 111.32;
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: boundary_lat,
-            lng: -93.2650,
-            precision: GeoPrecision::Exact,
-        }),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    let dist = rootsignal_common::haversine_km(44.9778, -93.2650, boundary_lat, -93.2650);
-    // Should be very close to 30.0km. Accept if <= 30.0.
-    assert!(
-        (dist - 30.0).abs() < 0.1,
-        "Boundary point should be ~30km away, got {dist}km"
-    );
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Accept,
-        "Point at exactly the radius boundary should Accept (<=)"
-    );
-}
-
-/// Point just barely outside the radius should Reject.
-#[test]
-fn geo_coords_just_outside_boundary() {
-    // 30.5km north
-    let outside_lat = 44.9778 + 30.5 / 111.32;
-    let meta = NodeMeta {
-        location: Some(GeoPoint {
-            lat: outside_lat,
-            lng: -93.2650,
-            precision: GeoPrecision::Exact,
-        }),
-        ..test_meta()
-    };
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-    assert_eq!(
-        geo_filter::geo_check(&meta, &config, false),
-        GeoVerdict::Reject,
-        "Point 30.5km away should Reject"
-    );
-}
-
-// ===========================================================================
 // Adversarial: Quality scoring edge cases
 // ===========================================================================
 
@@ -658,7 +293,6 @@ fn notice_always_actionable_even_empty() {
         meta: NodeMeta {
             title: "Policy Update".into(),
             summary: "Vague policy thing".into(),
-            // no location, nothing
             ..test_meta()
         },
         severity: Severity::Low,
@@ -691,7 +325,7 @@ fn gathering_action_url_same_as_source_url_not_actionable() {
             title: "Event from news article".into(),
             summary: "Some event".into(),
             source_url: source.into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.97,
                 lng: -93.26,
                 precision: GeoPrecision::Exact,
@@ -723,7 +357,7 @@ fn need_with_url_is_actionable_without_timing() {
         meta: NodeMeta {
             title: "Winter Coat Drive".into(),
             summary: "Need 500 coats by Jan 31".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.97,
                 lng: -93.26,
                 precision: GeoPrecision::Exact,
@@ -768,7 +402,7 @@ fn need_without_url_not_actionable() {
 #[test]
 fn one_time_aid_distribution_scores_lower_than_ongoing() {
     let base_meta = NodeMeta {
-        location: Some(GeoPoint {
+        about_location: Some(GeoPoint {
             lat: 44.97,
             lng: -93.26,
             precision: GeoPrecision::Exact,
@@ -813,12 +447,13 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         meta: NodeMeta {
             title: "Issue at 3524 15th Ave S".into(),
             summary: "Specific address issue".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9778,
                 lng: -93.2650,
                 precision: GeoPrecision::Approximate, // backfilled
             }),
-            location_name: Some("3524 15th Ave S, Minneapolis".into()),
+            about_location_name: Some("3524 15th Ave S, Minneapolis".into()),
+            from_location: None,
             ..test_meta()
         },
         severity: Severity::Medium,
@@ -831,12 +466,13 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         meta: NodeMeta {
             title: "Issue in Powderhorn area".into(),
             summary: "Neighborhood-level issue".into(),
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.9486,
                 lng: -93.2636,
                 precision: GeoPrecision::Neighborhood,
             }),
-            location_name: Some("Powderhorn area".into()),
+            about_location_name: Some("Powderhorn area".into()),
+            from_location: None,
             ..test_meta()
         },
         severity: Severity::Medium,
@@ -857,70 +493,4 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         q_a.confidence,
         q_b.confidence
     );
-}
-
-// ===========================================================================
-// Adversarial: Batch filtering with mixed edge cases
-// ===========================================================================
-
-/// Batch filter with all degenerate signals: NaN coords, empty names, etc.
-/// Nothing should survive.
-#[test]
-fn batch_filter_all_degenerate_signals_rejected() {
-    let terms = mpls_geo_terms();
-    let config = mpls_config(&terms);
-
-    let nan_node = Node::Gathering(GatheringNode {
-        meta: NodeMeta {
-            location: Some(GeoPoint {
-                lat: f64::NAN,
-                lng: f64::NAN,
-                precision: GeoPrecision::Exact,
-            }),
-            ..test_meta()
-        },
-        starts_at: None,
-        ends_at: None,
-        action_url: String::new(),
-        organizer: None,
-        is_recurring: false,
-    });
-
-    let empty_name = Node::Aid(AidNode {
-        meta: NodeMeta {
-            location: None,
-            location_name: Some(String::new()),
-            ..test_meta()
-        },
-        action_url: String::new(),
-        availability: None,
-        is_ongoing: false,
-    });
-
-    let unknown_name = Node::Tension(TensionNode {
-        meta: NodeMeta {
-            location: None,
-            location_name: Some("<UNKNOWN>".into()),
-            ..test_meta()
-        },
-        severity: Severity::Low,
-        category: None,
-        what_would_help: None,
-    });
-
-    let no_info = Node::Need(NeedNode {
-        meta: test_meta(), // no location, no name
-        urgency: Urgency::Low,
-        what_needed: None,
-        action_url: None,
-        goal: None,
-    });
-
-    let (accepted, stats) = geo_filter::filter_nodes(
-        vec![nan_node, empty_name, unknown_name, no_info],
-        &config,
-        false,
-    );
-    assert_eq!(accepted.len(), 0, "No degenerate signal should survive");
-    assert_eq!(stats.filtered, 4);
 }

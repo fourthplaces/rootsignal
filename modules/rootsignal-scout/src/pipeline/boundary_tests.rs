@@ -367,11 +367,11 @@ async fn same_actor_in_two_signals_appears_once_linked_to_both() {
 // ---------------------------------------------------------------------------
 // Location handoff boundary
 //
-// Geo-filter + actor fallback interaction.
+// All signals stored regardless of location (no geo-filter).
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn off_region_signal_is_dropped() {
+async fn all_signals_stored_regardless_of_region() {
     let fetcher = MockFetcher::new()
         .on_page(
             "https://news.org/far-away",
@@ -411,9 +411,9 @@ async fn off_region_signal_is_dropped() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 1, "only the local signal should survive");
+    assert_eq!(store.signals_created(), 2, "all signals stored regardless of location");
     assert!(store.has_signal_titled("Local pothole"));
-    assert!(!store.has_signal_titled("NYC subway delay"));
+    assert!(store.has_signal_titled("NYC subway delay"));
 }
 
 #[tokio::test]
@@ -1091,8 +1091,8 @@ async fn unicode_and_emoji_titles_are_preserved() {
 }
 
 #[tokio::test]
-async fn signal_at_zero_zero_is_dropped_as_off_region() {
-    // Coords (0.0, 0.0) are in the Gulf of Guinea — should be rejected by Minneapolis geo-filter.
+async fn signal_at_zero_zero_is_still_stored() {
+    // Coords (0.0, 0.0) — no geo-filter, so even null island signals are stored.
     let fetcher = MockFetcher::new()
         .on_page(
             "https://example.com/null-island",
@@ -1129,7 +1129,7 @@ async fn signal_at_zero_zero_is_dropped_as_off_region() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 0, "null island (0,0) should be geo-filtered");
+    assert_eq!(store.signals_created(), 1, "null island signal is stored (no geo-filter)");
 }
 
 #[tokio::test]
