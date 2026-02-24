@@ -11,7 +11,7 @@ use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
-
+use rootsignal_scout::pipeline::traits::SignalStore;
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -384,7 +384,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         url: String,
     ) -> Result<SubmitSourceResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -433,7 +433,7 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        writer
+        store
             .upsert_source(&source)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
@@ -714,5 +714,95 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
     let lat: f64 = first.lat.parse()?;
     let lon: f64 = first.lon.parse()?;
     Ok((lat, lon, first.display_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_graphql::{EmptySubscription, Schema};
+    use rootsignal_scout::testing::MockSignalStore;
+    use std::collections::HashMap;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use super::super::schema::QueryRoot;
+
+    /// Build a test schema with MockSignalStore, RateLimiter, and ClientIp.
+    /// Returns (schema, store) so tests can assert on mock state.
+    fn test_schema() -> (
+        Schema<QueryRoot, MutationRoot, EmptySubscription>,
+        Arc<MockSignalStore>,
+    ) {
+        let store = Arc::new(MockSignalStore::new());
+        let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+            .data(store.clone() as Arc<dyn SignalStore>)
+            .data(RateLimiter(Mutex::new(HashMap::new())))
+            .data(ClientIp(IpAddr::V4(Ipv4Addr::LOCALHOST)))
+            .finish();
+        (schema, store)
+    }
+
+    #[tokio::test]
+    async fn valid_url_creates_source() {
+        let (schema, store) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { submitSource(url: "https://example.com/food-shelf") { success sourceId } }"#)
+            .await;
+
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["submitSource"]["success"], true);
+        assert!(data["submitSource"]["sourceId"].as_str().is_some());
+        assert!(store.has_source_url("https://example.com/food-shelf"));
+    }
+
+    #[tokio::test]
+    async fn invalid_url_is_rejected() {
+        let (schema, _store) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { submitSource(url: "not-a-url") { success } }"#)
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        let msg = resp.errors[0].message.to_lowercase();
+        assert!(msg.contains("invalid url"), "expected 'Invalid URL', got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn ftp_scheme_is_rejected() {
+        let (schema, _store) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { submitSource(url: "ftp://example.com") { success } }"#)
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        let msg = resp.errors[0].message.to_lowercase();
+        assert!(msg.contains("http or https"), "expected scheme error, got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn localhost_url_is_blocked() {
+        let (schema, _store) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { submitSource(url: "https://localhost/admin") { success } }"#)
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        let msg = resp.errors[0].message.to_lowercase();
+        assert!(msg.contains("internal hosts"), "expected internal hosts error, got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn url_too_long_is_rejected() {
+        let (schema, _store) = test_schema();
+        let long_url = format!("https://example.com/{}", "a".repeat(3000));
+        let query = format!(
+            r#"mutation {{ submitSource(url: "{}") {{ success }} }}"#,
+            long_url
+        );
+        let resp = schema.execute(&query).await;
+
+        assert!(!resp.errors.is_empty());
+        let msg = resp.errors[0].message.to_lowercase();
+        assert!(msg.contains("too long"), "expected 'too long' error, got: {msg}");
+    }
 }
 

@@ -1454,6 +1454,7 @@ pub fn build_schema(
 
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
+        .data(writer.clone() as Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>)
         .data(writer)
         .data(jwt_service)
         .data(config)

@@ -40,3 +40,6 @@ url = "2"
 regex = { workspace = true }
 ai-client = { workspace = true }
 schemars = { workspace = true }
+
+[dev-dependencies]
+rootsignal-scout = { path = "../rootsignal-scout", features = ["test-support"] }
