@@ -90,7 +90,6 @@ impl MockFetcher {
         self
     }
 
-    #[allow(dead_code)] // scaffolding for future topic search tests
     pub fn on_topic_search(mut self, platform_url: &str, posts: Vec<Post>) -> Self {
         self.topic_searches.insert(platform_url.to_string(), posts);
         self

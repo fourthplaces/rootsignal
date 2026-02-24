@@ -3477,6 +3477,84 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
 }
 
 // ---------------------------------------------------------------------------
+// Topic discovery → mention collection (signal-gated)
+//
+// MOCK → discover_from_topics (the organ) → OUTPUT
+// Two authors found via topic search. Author A produces signals and has
+// mentions; Author B produces zero signals and has mentions.
+// Only Author A's mentions should appear in collected_links.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() {
+    // Author A: produces signals, mentions @friend_a
+    let mut post_a = test_post("Free legal clinic in Phillips this Saturday");
+    post_a.author = Some("signal_author".to_string());
+    post_a.mentions = vec!["friend_a".to_string()];
+
+    // Author B: produces no signals, mentions @friend_b
+    let mut post_b = test_post("Just a regular day, nothing community-related");
+    post_b.author = Some("noise_author".to_string());
+    post_b.mentions = vec!["friend_b".to_string()];
+
+    // Register topic search for Instagram only (others return Err → skipped)
+    let fetcher = MockFetcher::new()
+        .on_topic_search("https://www.instagram.com/topics", vec![post_a, post_b]);
+
+    // Author A's URL produces a signal; Author B's produces nothing
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://www.instagram.com/signal_author/",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Free Legal Clinic Phillips", 44.9489, -93.2583)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        )
+        .on_url(
+            "https://www.instagram.com/noise_author/",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let mut ctx = RunContext::new(&[]);
+    let mut log = run_log();
+
+    let topics = vec!["legal clinic".to_string()];
+    phase.discover_from_topics(&topics, &mut ctx, &mut log).await;
+
+    // Signal-producing author's mentions should be collected
+    let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
+    assert!(
+        mention_urls.iter().any(|u| u.contains("friend_a")),
+        "mention from signal-producing author should be collected, got: {mention_urls:?}"
+    );
+
+    // Noise author's mentions should NOT be collected
+    assert!(
+        !mention_urls.iter().any(|u| u.contains("friend_b")),
+        "mention from zero-signal author should not be collected, got: {mention_urls:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Bio location enrichment — TDD RED test
 //
 // MOCK → enrich_actor_locations (the organ) → OUTPUT

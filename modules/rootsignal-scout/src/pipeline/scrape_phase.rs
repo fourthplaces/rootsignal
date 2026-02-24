@@ -1198,6 +1198,14 @@ impl ScrapePhase {
                 "Topic discovery posts grouped by author"
             );
 
+            let platform_enum = match platform_name {
+                "instagram" => Some(SocialPlatform::Instagram),
+                "x" => Some(SocialPlatform::Twitter),
+                "tiktok" => Some(SocialPlatform::TikTok),
+                "reddit" => Some(SocialPlatform::Reddit),
+                _ => None,
+            };
+
             for (username, posts) in &by_author {
                 if new_accounts >= MAX_NEW_ACCOUNTS as u32 {
                     info!("Discovery account budget exhausted");
@@ -1269,6 +1277,21 @@ impl ScrapePhase {
                     continue;
                 }
                 let produced = ctx.stats.signals_stored - signal_count_before;
+
+                // Only follow mentions from authors whose posts produced signals
+                if produced > 0 {
+                    if let Some(ref sp) = platform_enum {
+                        for post in posts {
+                            for handle in post.mentions.iter().take(5) {
+                                let mention_url = link_promoter::platform_url(sp, handle);
+                                ctx.collected_links.push(CollectedLink {
+                                    url: mention_url,
+                                    discovered_on: source_url.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
 
                 // Create a Source node with correct platform type
                 let cv = rootsignal_common::canonical_value(&source_url);

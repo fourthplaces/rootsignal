@@ -475,6 +475,8 @@ impl<'a> ScrapePipeline<'a> {
             .discover_from_topics(&all_social_topics, ctx, run_log)
             .await;
 
+        self.promote_collected_links(ctx).await;
+
         Ok(())
     }
 
@@ -520,6 +522,7 @@ impl<'a> ScrapePipeline<'a> {
         if !end_social_topics.is_empty() {
             info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
             run.phase.discover_from_topics(&end_social_topics, ctx, run_log).await;
+            self.promote_collected_links(ctx).await;
         }
 
         Ok(())
