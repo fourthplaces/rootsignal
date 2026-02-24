@@ -239,6 +239,27 @@ pub trait SignalStore: Send + Sync {
 
     /// Batch-create Tag nodes and TAGGED edges for a signal.
     async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()>;
+
+    // --- Actor location enrichment ---
+
+    /// Get signal location observations for an actor (authored signals with about_location).
+    /// Returns (lat, lng, location_name, extracted_at) tuples.
+    async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>>;
+
+    /// Update an actor's triangulated location.
+    async fn update_actor_location(
+        &self,
+        actor_id: Uuid,
+        lat: f64,
+        lng: f64,
+        name: &str,
+    ) -> Result<()>;
+
+    /// List all actors with their linked sources.
+    async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>>;
 }
 
 #[async_trait]
@@ -401,5 +422,26 @@ impl SignalStore for rootsignal_graph::GraphWriter {
 
     async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()> {
         Ok(self.batch_tag_signals(signal_id, tag_slugs).await?)
+    }
+
+    async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> {
+        Ok(self.get_signals_for_actor(actor_id).await?)
+    }
+
+    async fn update_actor_location(
+        &self,
+        actor_id: Uuid,
+        lat: f64,
+        lng: f64,
+        name: &str,
+    ) -> Result<()> {
+        Ok(self.update_actor_location(actor_id, lat, lng, name).await?)
+    }
+
+    async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
+        Ok(self.list_all_actors().await?)
     }
 }

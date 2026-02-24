@@ -2618,3 +2618,461 @@ async fn social_signal_has_produced_by_edge() {
         "social signal should have PRODUCED_BY edge to its source"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Actor location enrichment — boundary tests
+//
+// MOCK → enrich_actor_locations (the organ) → OUTPUT
+// The organ wires: query signals → triangulate → update actor location.
+// ---------------------------------------------------------------------------
+
+use chrono::Utc;
+use rootsignal_common::ActorType;
+use uuid::Uuid;
+use crate::enrichment::actor_location::enrich_actor_locations;
+use crate::pipeline::traits::SignalStore;
+
+/// Phillips neighborhood coordinates.
+const PHILLIPS: (f64, f64) = (44.9489, -93.2601);
+/// Powderhorn neighborhood coordinates.
+const POWDERHORN: (f64, f64) = (44.9367, -93.2393);
+/// Whittier neighborhood coordinates.
+const WHITTIER: (f64, f64) = (44.9505, -93.2776);
+
+fn test_actor(name: &str) -> rootsignal_common::ActorNode {
+    rootsignal_common::ActorNode {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        actor_type: ActorType::Organization,
+        entity_id: format!("{}-entity", name.to_lowercase().replace(' ', "-")),
+        domains: vec![],
+        social_urls: vec![],
+        description: String::new(),
+        signal_count: 0,
+        first_seen: Utc::now(),
+        last_active: Utc::now(),
+        typical_roles: vec![],
+        bio: None,
+        location_lat: None,
+        location_lng: None,
+        location_name: None,
+        discovery_depth: 0,
+    }
+}
+
+fn test_actor_at(name: &str, lat: f64, lng: f64, loc_name: &str) -> rootsignal_common::ActorNode {
+    let mut actor = test_actor(name);
+    actor.location_lat = Some(lat);
+    actor.location_lng = Some(lng);
+    actor.location_name = Some(loc_name.to_string());
+    actor
+}
+
+/// Create a tension node with about_location and about_location_name set.
+fn tension_at_named(title: &str, lat: f64, lng: f64, loc_name: &str) -> rootsignal_common::Node {
+    let mut node = tension_at(title, lat, lng);
+    if let Some(meta) = node.meta_mut() {
+        meta.about_location_name = Some(loc_name.to_string());
+    }
+    node
+}
+
+/// Seed a signal linked to an actor and return the signal ID.
+async fn seed_signal(
+    store: &MockSignalStore,
+    actor_id: Uuid,
+    title: &str,
+    lat: f64,
+    lng: f64,
+    loc_name: &str,
+) -> Uuid {
+    let node = tension_at_named(title, lat, lng, loc_name);
+    let sig_id = store
+        .create_node(&node, &[0.1], "test", "run-1")
+        .await
+        .unwrap();
+    store
+        .link_actor_to_signal(actor_id, sig_id, "authored")
+        .await
+        .unwrap();
+    sig_id
+}
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_updates_actor_to_signal_mode_location() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Northside Collective");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // 2× Phillips, 1× Powderhorn → Phillips wins
+    seed_signal(&store, actor.id, "Signal A", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "Signal B", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "Signal C", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1, "one actor should have been updated");
+    assert_eq!(
+        store.actor_location_name("Northside Collective"),
+        Some("Phillips".to_string()),
+        "actor should be placed in Phillips (mode of signals)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Minimum evidence threshold
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_single_signal_insufficient_to_set_location() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Lone Signal Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    seed_signal(&store, actor.id, "Only Signal", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "one signal is not enough evidence to set location");
+    assert_eq!(
+        store.actor_location_name("Lone Signal Org"),
+        None,
+        "actor location should remain unset"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// No signals
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_no_signals_leaves_actor_unchanged() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor_at("Rooted Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // No signals linked — actor should keep its current location
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "no signals means no change");
+    assert_eq!(
+        store.actor_location_name("Rooted Org"),
+        Some("Phillips".to_string()),
+        "existing location should be preserved"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Empty actor list
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_empty_actor_list_returns_zero() {
+    let store = Arc::new(MockSignalStore::new());
+
+    let updated = enrich_actor_locations(&*store, &[]).await;
+
+    assert_eq!(updated, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Tie preserves inertia
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_tie_preserves_current_location() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor_at("Tied Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // 2× Phillips, 2× Powderhorn → tie → keep Phillips (inertia)
+    seed_signal(&store, actor.id, "T1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "T2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "T3", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor.id, "T4", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "tie should not change location");
+    assert_eq!(
+        store.actor_location_name("Tied Org"),
+        Some("Phillips".to_string()),
+        "inertia keeps Phillips on a tie"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Idempotent — already-correct location
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_does_not_update_when_location_already_matches() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor_at("Stable Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // 3× Phillips — mode is Phillips, actor already at Phillips → no-op
+    seed_signal(&store, actor.id, "S1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "S2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "S3", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "location already correct — no update needed");
+}
+
+// ---------------------------------------------------------------------------
+// Multiple actors — independent triangulation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_processes_each_actor_independently() {
+    let store = Arc::new(MockSignalStore::new());
+
+    let actor_a = test_actor("Actor Alpha");
+    let actor_b = test_actor("Actor Beta");
+    store.upsert_actor(&actor_a).await.unwrap();
+    store.upsert_actor(&actor_b).await.unwrap();
+
+    // Alpha → Phillips (2 signals)
+    seed_signal(&store, actor_a.id, "A1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor_a.id, "A2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    // Beta → Powderhorn (3 signals)
+    seed_signal(&store, actor_b.id, "B1", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor_b.id, "B2", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor_b.id, "B3", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+
+    let actors = vec![(actor_a, vec![]), (actor_b, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 2, "both actors should be updated");
+    assert_eq!(
+        store.actor_location_name("Actor Alpha"),
+        Some("Phillips".to_string())
+    );
+    assert_eq!(
+        store.actor_location_name("Actor Beta"),
+        Some("Powderhorn".to_string())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mixed results — only changed actors counted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_counts_only_actors_whose_location_changed() {
+    let store = Arc::new(MockSignalStore::new());
+
+    // Actor 1: no location → will be updated
+    let actor_1 = test_actor("Updatable Org");
+    store.upsert_actor(&actor_1).await.unwrap();
+    seed_signal(&store, actor_1.id, "U1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor_1.id, "U2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    // Actor 2: already at Phillips, signals say Phillips → not counted
+    let actor_2 = test_actor_at("Already There", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    store.upsert_actor(&actor_2).await.unwrap();
+    seed_signal(&store, actor_2.id, "AT1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor_2.id, "AT2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    // Actor 3: only 1 signal → not enough evidence
+    let actor_3 = test_actor("Insufficient Org");
+    store.upsert_actor(&actor_3).await.unwrap();
+    seed_signal(&store, actor_3.id, "I1", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+
+    let actors = vec![
+        (actor_1, vec![]),
+        (actor_2, vec![]),
+        (actor_3, vec![]),
+    ];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1, "only the one actor that actually changed should be counted");
+}
+
+// ---------------------------------------------------------------------------
+// Overwrites wrong location
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_overwrites_wrong_location_with_signal_mode() {
+    let store = Arc::new(MockSignalStore::new());
+    // Actor thinks they're in Powderhorn, but signals say Phillips
+    let actor = test_actor_at("Mislocated Org", POWDERHORN.0, POWDERHORN.1, "Powderhorn");
+    store.upsert_actor(&actor).await.unwrap();
+
+    seed_signal(&store, actor.id, "M1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "M2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "M3", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1, "wrong location should be corrected");
+    assert_eq!(
+        store.actor_location_name("Mislocated Org"),
+        Some("Phillips".to_string()),
+        "should move from Powderhorn to Phillips"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Three neighborhoods — plurality wins
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_three_neighborhoods_plurality_wins() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Spread Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // 3× Phillips, 2× Powderhorn, 1× Whittier
+    seed_signal(&store, actor.id, "P1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "P2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "P3", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "PW1", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor.id, "PW2", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor.id, "W1", WHITTIER.0, WHITTIER.1, "Whittier").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1);
+    assert_eq!(
+        store.actor_location_name("Spread Org"),
+        Some("Phillips".to_string()),
+        "Phillips has plurality (3 of 6)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Coordinates flow through — not just the name
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_sets_coordinates_not_just_name() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Coord Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    seed_signal(&store, actor.id, "C1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+    seed_signal(&store, actor.id, "C2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    let actors = vec![(actor, vec![])];
+    enrich_actor_locations(&*store, &actors).await;
+
+    let coords = store.actor_location_coords("Coord Org");
+    assert!(coords.is_some(), "coordinates should be set");
+    let (lat, lng) = coords.unwrap();
+    assert!(
+        (lat - PHILLIPS.0).abs() < 0.01,
+        "latitude should match Phillips: got {lat}"
+    );
+    assert!(
+        (lng - PHILLIPS.1).abs() < 0.01,
+        "longitude should match Phillips: got {lng}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Actor with no location and no signals — completely untouched
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_blank_actor_with_no_signals_stays_blank() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Ghost Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0);
+    assert_eq!(store.actor_location_name("Ghost Org"), None);
+    assert_eq!(store.actor_location_coords("Ghost Org"), None);
+}
+
+// ---------------------------------------------------------------------------
+// Signals from "mentioned" role should NOT count — only "authored"
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_ignores_mentioned_signals() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Mentioned Only");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // Link signals as "mentioned" not "authored"
+    let node1 = tension_at_named("M1", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    let sig1 = store.create_node(&node1, &[0.1], "test", "run-1").await.unwrap();
+    store.link_actor_to_signal(actor.id, sig1, "mentioned").await.unwrap();
+
+    let node2 = tension_at_named("M2", PHILLIPS.0, PHILLIPS.1, "Phillips");
+    let sig2 = store.create_node(&node2, &[0.2], "test", "run-1").await.unwrap();
+    store.link_actor_to_signal(actor.id, sig2, "mentioned").await.unwrap();
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "mentioned signals should not count for location");
+    assert_eq!(store.actor_location_name("Mentioned Only"), None);
+}
+
+// ---------------------------------------------------------------------------
+// Mix of authored and mentioned — only authored count
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_only_authored_signals_count_for_location() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Mixed Roles Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    // 1 authored Phillips + 5 mentioned Powderhorn → only 1 authored signal, not enough
+    seed_signal(&store, actor.id, "Auth1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
+
+    for i in 0..5 {
+        let node = tension_at_named(&format!("Ment{i}"), POWDERHORN.0, POWDERHORN.1, "Powderhorn");
+        let sig = store.create_node(&node, &[0.1], "test", "run-1").await.unwrap();
+        store.link_actor_to_signal(actor.id, sig, "mentioned").await.unwrap();
+    }
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 0, "only 1 authored signal — not enough evidence");
+}
+
+// ---------------------------------------------------------------------------
+// Exactly 2 signals — the minimum threshold
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn enrichment_exactly_two_signals_is_sufficient() {
+    let store = Arc::new(MockSignalStore::new());
+    let actor = test_actor("Bare Minimum Org");
+    store.upsert_actor(&actor).await.unwrap();
+
+    seed_signal(&store, actor.id, "BM1", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+    seed_signal(&store, actor.id, "BM2", POWDERHORN.0, POWDERHORN.1, "Powderhorn").await;
+
+    let actors = vec![(actor, vec![])];
+    let updated = enrich_actor_locations(&*store, &actors).await;
+
+    assert_eq!(updated, 1, "2 signals should be enough");
+    assert_eq!(
+        store.actor_location_name("Bare Minimum Org"),
+        Some("Powderhorn".to_string())
+    );
+}

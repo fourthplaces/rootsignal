@@ -887,50 +887,7 @@ async fn social_scrape_creates_actor_with_has_source_and_produced_by() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Chain Test 8: Flywheel second pass — actor location triangulation
-//
-// First pass: social scrape creates actor with no location.
-// Signals carry about_location data. Triangulation uses the signal mode
-// to determine the actor's location.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn flywheel_second_pass_enriches_actor_location_from_signal_mode() {
-    use crate::enrichment::actor_location::*;
-
-    // Simulate what the flywheel produces after scraping:
-    // An actor with no location yet, and several signals with about_location.
-    // The triangulation function determines the actor's location from the mode.
-
-    let signals = vec![
-        SignalLocation {
-            lat: 44.9489,
-            lng: -93.2601,
-            name: "Phillips".to_string(),
-            observed_at: chrono::Utc::now() - chrono::Duration::days(2),
-        },
-        SignalLocation {
-            lat: 44.9489,
-            lng: -93.2601,
-            name: "Phillips".to_string(),
-            observed_at: chrono::Utc::now() - chrono::Duration::days(5),
-        },
-        SignalLocation {
-            lat: 44.9367,
-            lng: -93.2393,
-            name: "Powderhorn".to_string(),
-            observed_at: chrono::Utc::now() - chrono::Duration::days(3),
-        },
-    ];
-
-    // No current location, no bio — pure signal triangulation
-    let result = triangulate_actor_location(None, None, &signals, 90);
-
-    let loc = result.expect("should determine location from signal mode");
-    assert_eq!(loc.name, "Phillips", "Phillips appears twice vs Powderhorn once");
-    assert!((loc.lat - 44.9489).abs() < 0.001);
-}
+// (Chain Test 8 deleted — tested function directly, not through the organ)
 
 // ---------------------------------------------------------------------------
 // Chain Test 9: Blank author name does not create actor on owned source
@@ -983,4 +940,99 @@ async fn blank_author_on_owned_source_does_not_create_actor() {
 
     // But no actor — blank name
     assert_eq!(store.actor_count(), 0, "blank author name should not create actor");
+}
+
+// ---------------------------------------------------------------------------
+// Chain Test: Scrape social source → enrich → actor gets location
+//
+// Full pipeline chain: social scrape produces actor + signals with
+// about_location, then enrichment triangulates actor location from mode.
+// MOCK → ORGAN (run_social, then enrich_actors) → OUTPUT.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn flywheel_scrape_then_enrich_updates_actor_location() {
+    use rootsignal_common::types::GeoPoint;
+    use rootsignal_common::GeoPrecision;
+
+    let ig_url = "https://www.instagram.com/phillipsorg";
+
+    // MOCK: post content doesn't matter — extractor produces the signals
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![
+            test_post("Community event in Phillips"),
+            test_post("Another Phillips event"),
+            test_post("Powderhorn park day"),
+        ]);
+
+    // Extractor produces 3 signals: 2× Phillips, 1× Powderhorn
+    // All have about_location + author_actor for actor creation
+    let mut sig1 = tension("Phillips Community Dinner");
+    if let Some(meta) = sig1.meta_mut() {
+        meta.about_location = Some(GeoPoint { lat: 44.9489, lng: -93.2601, precision: GeoPrecision::Approximate });
+        meta.about_location_name = Some("Phillips".to_string());
+        meta.author_actor = Some("Phillips Community Org".to_string());
+    }
+
+    let mut sig2 = tension("Phillips Art Walk");
+    if let Some(meta) = sig2.meta_mut() {
+        meta.about_location = Some(GeoPoint { lat: 44.9489, lng: -93.2601, precision: GeoPrecision::Approximate });
+        meta.about_location_name = Some("Phillips".to_string());
+        meta.author_actor = Some("Phillips Community Org".to_string());
+    }
+
+    let mut sig3 = tension("Powderhorn Picnic");
+    if let Some(meta) = sig3.meta_mut() {
+        meta.about_location = Some(GeoPoint { lat: 44.9367, lng: -93.2393, precision: GeoPrecision::Approximate });
+        meta.about_location_name = Some("Powderhorn".to_string());
+        meta.author_actor = Some("Phillips Community Org".to_string());
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, ExtractionResult {
+            nodes: vec![sig1, sig2, sig3],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    // ORGAN: scrape creates actor + signals
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 3, "three signals should be created");
+    assert!(store.has_actor("Phillips Community Org"), "actor should be created from author_actor");
+
+    // Actor should have NO location yet (scrape doesn't triangulate)
+    assert_eq!(
+        store.actor_location_name("Phillips Community Org"),
+        None,
+        "actor should not have location before enrichment"
+    );
+
+    // ORGAN: enrich — phase finds actors and triangulates locations
+    phase.enrich_actors().await;
+
+    // OUTPUT: actor's location should now reflect signal mode
+    assert_eq!(
+        store.actor_location_name("Phillips Community Org"),
+        Some("Phillips".to_string()),
+        "actor should be placed in Phillips (2 Phillips vs 1 Powderhorn)"
+    );
 }

@@ -175,6 +175,7 @@ pub struct StoredSignal {
     pub content_date: Option<DateTime<Utc>>,
     pub about_location_name: Option<String>,
     pub confidence: f32,
+    pub extracted_at: DateTime<Utc>,
 }
 
 /// Actor-signal link in the mock graph.
@@ -412,6 +413,23 @@ impl MockSignalStore {
         Some(actor.entity_id.clone())
     }
 
+    pub fn actor_location_name(&self, actor_name: &str) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
+        let actor = inner.actors.get(actor_id)?;
+        actor.location_name.clone()
+    }
+
+    pub fn actor_location_coords(&self, actor_name: &str) -> Option<(f64, f64)> {
+        let inner = self.inner.lock().unwrap();
+        let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
+        let actor = inner.actors.get(actor_id)?;
+        match (actor.location_lat, actor.location_lng) {
+            (Some(lat), Some(lng)) => Some((lat, lng)),
+            _ => None,
+        }
+    }
+
     pub fn actor_discovery_depth(&self, actor_name: &str) -> Option<u32> {
         let inner = self.inner.lock().unwrap();
         let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
@@ -500,6 +518,7 @@ impl SignalStore for MockSignalStore {
             content_date: meta.and_then(|m| m.content_date),
             about_location_name: meta.and_then(|m| m.about_location_name.clone()),
             confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
+            extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
         };
         inner.signals.insert(id, stored);
         inner
@@ -724,6 +743,53 @@ impl SignalStore for MockSignalStore {
             .or_default()
             .extend(tag_slugs.iter().cloned());
         Ok(())
+    }
+
+    async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> {
+        let inner = self.inner.lock().unwrap();
+        let mut results = Vec::new();
+        for link in &inner.actor_links {
+            if link.actor_id == actor_id && link.role == "authored" {
+                if let Some(signal) = inner.signals.get(&link.signal_id) {
+                    if let Some(ref loc) = signal.about_location {
+                        let name = signal
+                            .about_location_name
+                            .clone()
+                            .unwrap_or_default();
+                        results.push((loc.lat, loc.lng, name, signal.extracted_at));
+                    }
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    async fn update_actor_location(
+        &self,
+        actor_id: Uuid,
+        lat: f64,
+        lng: f64,
+        name: &str,
+    ) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(actor) = inner.actors.get_mut(&actor_id) {
+            actor.location_lat = Some(lat);
+            actor.location_lng = Some(lng);
+            actor.location_name = Some(name.to_string());
+        }
+        Ok(())
+    }
+
+    async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner
+            .actors
+            .values()
+            .map(|a| (a.clone(), Vec::new()))
+            .collect())
     }
 }
 

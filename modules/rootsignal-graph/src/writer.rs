@@ -5720,6 +5720,75 @@ impl GraphWriter {
 
         g.run(q).await
     }
+
+    // --- Actor location enrichment ---
+
+    /// Get signal location observations for an actor's authored signals.
+    /// Returns (lat, lng, location_name, extracted_at) for each signal with about_location.
+    pub async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $id})-[:ACTED_IN {role: 'authored'}]->(n)
+             WHERE n.about_lat IS NOT NULL
+             RETURN n.about_lat AS lat, n.about_lng AS lng,
+                    n.about_location_name AS name, n.extracted_at AS ts",
+        )
+        .param("id", actor_id.to_string());
+
+        let g = self.client.graph.clone();
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            let lat: f64 = match row.get("lat") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let lng: f64 = match row.get("lng") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let name: String = row.get("name").unwrap_or_default();
+            let ts: String = row.get("ts").unwrap_or_default();
+            let parsed_ts = ts
+                .parse::<DateTime<Utc>>()
+                .unwrap_or_else(|_| Utc::now());
+            results.push((lat, lng, name, parsed_ts));
+        }
+
+        Ok(results)
+    }
+
+    /// Update an actor's triangulated location.
+    pub async fn update_actor_location(
+        &self,
+        actor_id: Uuid,
+        lat: f64,
+        lng: f64,
+        name: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let g = self.client.graph.clone();
+        let q = query(
+            "MATCH (a:Actor {id: $id})
+             SET a.location_lat = $lat, a.location_lng = $lng, a.location_name = $name",
+        )
+        .param("id", actor_id.to_string())
+        .param("lat", lat)
+        .param("lng", lng)
+        .param("name", name);
+
+        g.run(q).await
+    }
+
+    /// List all actors with their linked sources.
+    pub async fn list_all_actors(
+        &self,
+    ) -> Result<Vec<(ActorNode, Vec<SourceNode>)>, neo4rs::Error> {
+        // Reuse find_actors_in_region with world-spanning bounds
+        self.find_actors_in_region(-90.0, 90.0, -180.0, 180.0).await
+    }
 }
 
 #[cfg(test)]

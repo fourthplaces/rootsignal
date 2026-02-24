@@ -103,125 +103,67 @@ pub fn triangulate_actor_location(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Duration;
+/// Max age in days for signal observations used in triangulation.
+const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 
-    fn loc(name: &str, lat: f64, lng: f64) -> ActorLocation {
-        ActorLocation { lat, lng, name: name.to_string() }
-    }
+/// Enrich actor locations by triangulating from their authored signals.
+///
+/// For each actor, queries signals via `store`, builds the evidence set,
+/// calls `triangulate_actor_location`, and persists the result if it differs
+/// from the actor's current location.
+///
+/// Returns the count of actors whose location was updated.
+pub async fn enrich_actor_locations(
+    store: &dyn crate::pipeline::traits::SignalStore,
+    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+) -> u32 {
+    let mut updated = 0;
+    for (actor, _sources) in actors {
+        let signals = match store.get_signals_for_actor(actor.id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
 
-    fn signal(name: &str, lat: f64, lng: f64, days_ago: i64) -> SignalLocation {
-        SignalLocation {
-            lat,
-            lng,
-            name: name.to_string(),
-            observed_at: Utc::now() - Duration::days(days_ago),
+        let signal_locs: Vec<SignalLocation> = signals
+            .iter()
+            .map(|(lat, lng, name, ts)| SignalLocation {
+                lat: *lat,
+                lng: *lng,
+                name: name.clone(),
+                observed_at: *ts,
+            })
+            .collect();
+
+        let current = match (&actor.location_lat, &actor.location_lng, &actor.location_name) {
+            (Some(lat), Some(lng), Some(name)) => Some(ActorLocation {
+                lat: *lat,
+                lng: *lng,
+                name: name.clone(),
+            }),
+            _ => None,
+        };
+
+        let result = triangulate_actor_location(
+            current.as_ref(),
+            None,
+            &signal_locs,
+            ENRICHMENT_MAX_AGE_DAYS,
+        );
+
+        if let Some(new_loc) = result {
+            let changed = current
+                .as_ref()
+                .map_or(true, |c| c.name != new_loc.name);
+            if changed {
+                if store
+                    .update_actor_location(actor.id, new_loc.lat, new_loc.lng, &new_loc.name)
+                    .await
+                    .is_ok()
+                {
+                    updated += 1;
+                }
+            }
         }
     }
-
-    const MAX_AGE: u64 = 90;
-
-    // Phillips neighborhood
-    const PHILLIPS: (f64, f64) = (44.9489, -93.2601);
-    // Powderhorn neighborhood
-    const POWDERHORN: (f64, f64) = (44.9367, -93.2393);
-
-    #[test]
-    fn corroborated_bio_overrides_signal_mode() {
-        let bio = loc("Phillips", PHILLIPS.0, PHILLIPS.1);
-        let signals = vec![
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 5),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 3),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 7),
-        ];
-        let result = triangulate_actor_location(None, Some(&bio), &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Phillips"));
-    }
-
-    #[test]
-    fn uncorroborated_bio_treated_as_one_signal() {
-        let bio = loc("Phillips", PHILLIPS.0, PHILLIPS.1);
-        let signals = vec![
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 1),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 3),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 5),
-        ];
-        let result = triangulate_actor_location(None, Some(&bio), &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Powderhorn"));
-    }
-
-    #[test]
-    fn signal_mode_used_when_no_bio() {
-        let signals = vec![
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 2),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 4),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 6),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 1),
-        ];
-        let result = triangulate_actor_location(None, None, &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Phillips"));
-    }
-
-    #[test]
-    fn tie_keeps_current_location() {
-        let current = loc("Phillips", PHILLIPS.0, PHILLIPS.1);
-        let signals = vec![
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 2),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 4),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 1),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 3),
-        ];
-        let result = triangulate_actor_location(Some(&current), None, &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Phillips"));
-    }
-
-    #[test]
-    fn minimum_two_signals_required_for_change() {
-        let signals = vec![
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 2),
-        ];
-        let result = triangulate_actor_location(None, None, &signals, MAX_AGE);
-        assert!(result.is_none(), "single signal is not enough evidence");
-    }
-
-    #[test]
-    fn old_signals_excluded_from_mode() {
-        let signals = vec![
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 120),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 100),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 95),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 5),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 10),
-        ];
-        let result = triangulate_actor_location(None, None, &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Powderhorn"));
-    }
-
-    #[test]
-    fn no_signals_returns_current_location() {
-        let current = loc("Phillips", PHILLIPS.0, PHILLIPS.1);
-        let result = triangulate_actor_location(Some(&current), None, &[], MAX_AGE);
-        assert_eq!(result, Some(current));
-    }
-
-    #[test]
-    fn actor_moves_from_phillips_to_powderhorn_over_time() {
-        let current = loc("Phillips", PHILLIPS.0, PHILLIPS.1);
-        let signals = vec![
-            // Old Phillips signals (beyond max age)
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 120),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 110),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 100),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 95),
-            signal("Phillips", PHILLIPS.0, PHILLIPS.1, 92),
-            // Recent Powderhorn signals
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 5),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 10),
-            signal("Powderhorn", POWDERHORN.0, POWDERHORN.1, 20),
-        ];
-        let result = triangulate_actor_location(Some(&current), None, &signals, MAX_AGE);
-        assert_eq!(result.as_ref().map(|l| l.name.as_str()), Some("Powderhorn"));
-    }
+    updated
 }

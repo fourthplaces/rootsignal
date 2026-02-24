@@ -1594,8 +1594,8 @@ mod tests {
     }
 
     #[test]
-    fn max_queries_capped_at_seven() {
-        let queries: Vec<DiscoveryQuery> = (0..10)
+    fn max_queries_capped_at_limit() {
+        let queries: Vec<DiscoveryQuery> = (0..20)
             .map(|i| DiscoveryQuery {
                 query: format!("test query {i}"),
                 reasoning: "test".to_string(),
@@ -1603,7 +1603,7 @@ mod tests {
                 related_tension: None,
             })
             .collect();
-        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), 12);
+        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), MAX_CURIOSITY_QUERIES);
     }
 
     #[test]

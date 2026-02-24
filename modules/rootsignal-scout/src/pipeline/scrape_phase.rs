@@ -1947,6 +1947,22 @@ impl ScrapePhase {
 
         Ok(())
     }
+
+    /// Enrich actor locations by triangulating from their authored signals.
+    ///
+    /// Finds all actors active in this phase's region, then calls
+    /// `enrich_actor_locations` to update each actor's location from signal mode.
+    pub async fn enrich_actors(&self) {
+        let actors = self.store.list_all_actors().await.unwrap_or_default();
+        let updated = crate::enrichment::actor_location::enrich_actor_locations(
+            &*self.store,
+            &actors,
+        )
+        .await;
+        if updated > 0 {
+            info!(updated, "Enriched actor locations");
+        }
+    }
 }
 
 #[cfg(test)]

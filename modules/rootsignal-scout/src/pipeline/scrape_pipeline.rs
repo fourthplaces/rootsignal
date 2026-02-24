@@ -563,6 +563,9 @@ impl<'a> ScrapePipeline<'a> {
             }
         }
 
+        // Enrich actor locations from signal mode before metrics/expansion
+        run.phase.enrich_actors().await;
+
         self.update_source_metrics(&run, &ctx).await;
         check_cancelled_flag(&self.cancelled)?;
 
