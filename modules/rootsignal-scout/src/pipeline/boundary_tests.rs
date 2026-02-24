@@ -14,14 +14,9 @@ use rootsignal_common::types::SourceNode;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a CollectedLink with no coordinates (the common case in existing tests).
+/// Build a CollectedLink for testing.
 fn link(url: &str, discovered_on: &str) -> CollectedLink {
-    CollectedLink { url: url.to_string(), discovered_on: discovered_on.to_string(), lat: None, lng: None }
-}
-
-/// Build a CollectedLink with specific coordinates.
-fn link_at(url: &str, discovered_on: &str, lat: f64, lng: f64) -> CollectedLink {
-    CollectedLink { url: url.to_string(), discovered_on: discovered_on.to_string(), lat: Some(lat), lng: Some(lng) }
+    CollectedLink { url: url.to_string(), discovered_on: discovered_on.to_string() }
 }
 
 // ---------------------------------------------------------------------------
@@ -698,133 +693,6 @@ async fn scrape_then_promote_creates_new_sources() {
     assert!(promoted >= 2, "at least 2 links should be promoted");
     assert!(store.has_source_url("https://partner-a.org/programs"));
     assert!(store.has_source_url("https://partner-b.org/events"));
-}
-
-// ---------------------------------------------------------------------------
-// Source location bug (TDD red phase)
-//
-// BUG: promote_links stamps every promoted source with the region center
-// coordinates, regardless of where the discovering source actually is.
-// These tests assert CORRECT behavior and are expected to FAIL until fixed.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn promoted_source_inherits_discovering_source_coords() {
-    // A link discovered from a source at known coordinates should inherit
-    // those coordinates — not the region center.
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
-
-    let store = Arc::new(MockSignalStore::new());
-    let links = vec![
-        link_at("https://discovered.org/page", "https://stpaul-source.org", ST_PAUL.0, ST_PAUL.1),
-    ];
-    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
-    let region = mpls_region();
-
-    link_promoter::promote_links(
-        &links,
-        store.as_ref(),
-        &config,
-    )
-    .await
-    .unwrap();
-
-    let (lat, lng) = store.get_source_coords("https://discovered.org/page");
-
-    // Should get the discovering source's coords, not region center.
-    assert_eq!(lat, Some(ST_PAUL.0), "should inherit discovering source lat");
-    assert_eq!(lng, Some(ST_PAUL.1), "should inherit discovering source lng");
-    assert_ne!(lat, Some(region.center_lat), "should not be region center lat");
-}
-
-#[tokio::test]
-async fn links_from_different_sources_get_different_coords() {
-    // Two links discovered from sources at different locations should
-    // get their respective discovering source's coordinates.
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
-
-    let store = Arc::new(MockSignalStore::new());
-
-    let links = vec![
-        link_at("https://stpaul-event.org", "https://stpaul-news.org", ST_PAUL.0, ST_PAUL.1),
-        link_at("https://duluth-event.org", "https://duluth-news.org", DULUTH.0, DULUTH.1),
-    ];
-    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
-
-    link_promoter::promote_links(
-        &links,
-        store.as_ref(),
-        &config,
-    )
-    .await
-    .unwrap();
-
-    let (lat_a, _) = store.get_source_coords("https://stpaul-event.org");
-    let (lat_b, _) = store.get_source_coords("https://duluth-event.org");
-
-    assert_eq!(lat_a, Some(ST_PAUL.0), "St. Paul link should get St. Paul coords");
-    assert_eq!(lat_b, Some(DULUTH.0), "Duluth link should get Duluth coords");
-    assert_ne!(lat_a, lat_b, "different sources → different coords");
-}
-
-#[tokio::test]
-async fn collected_links_carry_discovering_source_location() {
-    // After run_web, collected_links should carry the discovering source's
-    // coordinates so that promote_links can assign per-link coords.
-
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://stpaul-hub.org",
-            {
-                let mut page = archived_page("https://stpaul-hub.org", "# St. Paul Resources");
-                page.links = vec!["https://stpaul-foodshelf.org".to_string()];
-                page
-            },
-        );
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://stpaul-hub.org",
-            crate::pipeline::extractor::ExtractionResult {
-                nodes: vec![tension_at("St. Paul Food Drive", ST_PAUL.0, ST_PAUL.1)],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
-            },
-        );
-
-    let store = Arc::new(MockSignalStore::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
-    let phase = ScrapePhase::new(
-        store.clone(),
-        Arc::new(extractor),
-        embedder,
-        Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
-    );
-
-    // Source with St. Paul coords, NOT Minneapolis center
-    let mut source = page_source("https://stpaul-hub.org");
-    source.center_lat = Some(ST_PAUL.0);
-    source.center_lng = Some(ST_PAUL.1);
-
-    let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
-    let mut log = run_log();
-
-    phase.run_web(&sources, &mut ctx, &mut log).await;
-
-    assert!(
-        !ctx.collected_links.is_empty(),
-        "should have collected a link"
-    );
-
-    let first_link = &ctx.collected_links[0];
-    assert!(first_link.url.starts_with("https://stpaul-foodshelf.org"), "unexpected link: {}", first_link.url);
-    assert_eq!(first_link.lat, Some(ST_PAUL.0), "link should carry discovering source lat");
-    assert_eq!(first_link.lng, Some(ST_PAUL.1), "link should carry discovering source lng");
 }
 
 // ---------------------------------------------------------------------------

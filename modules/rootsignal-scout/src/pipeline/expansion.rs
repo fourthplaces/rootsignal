@@ -26,8 +26,6 @@ pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
-    center_lat: f64,
-    center_lng: f64,
 }
 
 impl<'a> Expansion<'a> {
@@ -35,15 +33,11 @@ impl<'a> Expansion<'a> {
         writer: &'a GraphWriter,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
-        center_lat: f64,
-        center_lng: f64,
     ) -> Self {
         Self {
             writer,
             embedder,
             region_slug,
-            center_lat,
-            center_lng,
         }
     }
 
@@ -137,8 +131,6 @@ impl<'a> Expansion<'a> {
                 rootsignal_common::SourceRole::Response,
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );
-            source.center_lat = Some(self.center_lat);
-            source.center_lng = Some(self.center_lng);
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     run_log.log(EventKind::ExpansionSourceCreated {

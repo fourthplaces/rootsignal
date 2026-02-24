@@ -138,8 +138,9 @@ fn convert_response(response: &ExtractionResponse, _source_url: &str) -> Extract
             confidence: 0.0,
             freshness_score: 1.0,
             corroboration_count: 0,
-            location,
-            location_name: signal.location_name.clone(),
+            about_location: location,
+            about_location_name: signal.location_name.clone(),
+            from_location: None,
             source_url: signal.source_url.clone().unwrap_or_default(),
             extracted_at: now,
             content_date: None,
@@ -328,14 +329,14 @@ fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionRespons
                 title: meta.title.clone(),
                 summary: meta.summary.clone(),
                 sensitivity: sensitivity.into(),
-                latitude: meta.location.map(|l| l.lat),
-                longitude: meta.location.map(|l| l.lng),
-                geo_precision: meta.location.map(|l| match l.precision {
+                latitude: meta.about_location.map(|l| l.lat),
+                longitude: meta.about_location.map(|l| l.lng),
+                geo_precision: meta.about_location.map(|l| match l.precision {
                     rootsignal_common::GeoPrecision::Exact => "exact".into(),
                     rootsignal_common::GeoPrecision::Neighborhood => "neighborhood".into(),
                     _ => "approximate".into(),
                 }),
-                location_name: meta.location_name.clone(),
+                location_name: meta.about_location_name.clone(),
                 starts_at,
                 ends_at,
                 action_url,
@@ -423,8 +424,8 @@ async fn community_garden_event_extraction() {
     }
 
     // Location should be near Powderhorn (44.9486, -93.2636)
-    assert!(meta.location.is_some(), "Should have location coordinates");
-    if let Some(loc) = &meta.location {
+    assert!(meta.about_location.is_some(), "Should have location coordinates");
+    if let Some(loc) = &meta.about_location {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9486, -93.2636);
         assert!(
             dist < 2.0,
@@ -435,12 +436,12 @@ async fn community_garden_event_extraction() {
 
     // Location name should mention Powderhorn
     assert!(
-        meta.location_name
+        meta.about_location_name
             .as_deref()
             .map(|n| n.to_lowercase().contains("powderhorn"))
             .unwrap_or(false),
         "location_name should contain 'Powderhorn', got {:?}",
-        meta.location_name
+        meta.about_location_name
     );
 
     // Organizer should mention Powderhorn Park Neighborhood Association
@@ -523,8 +524,8 @@ async fn food_shelf_give_extraction() {
     }
 
     // Location near 420 15th Ave S (44.9696, -93.2466)
-    assert!(meta.location.is_some(), "Should have location coordinates");
-    if let Some(loc) = &meta.location {
+    assert!(meta.about_location.is_some(), "Should have location coordinates");
+    if let Some(loc) = &meta.about_location {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9696, -93.2466);
         assert!(
             dist < 2.0,
@@ -997,7 +998,7 @@ async fn spanish_content_extracts_correctly() {
     // Location should be in Phillips/Minneapolis area
     let has_local_location = result.nodes.iter().any(|n| {
         let meta = n.meta().unwrap();
-        meta.location_name
+        meta.about_location_name
             .as_deref()
             .map(|l| {
                 let lower = l.to_lowercase();

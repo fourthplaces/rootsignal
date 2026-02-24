@@ -18,8 +18,8 @@ pub fn score(node: &Node) -> ExtractionQuality {
         }
     };
 
-    let has_location = meta.location.is_some();
-    let geo_accuracy = match meta.location {
+    let has_location = meta.about_location.is_some();
+    let geo_accuracy = match meta.about_location {
         Some(ref loc) => match loc.precision {
             rootsignal_common::GeoPrecision::Exact => GeoAccuracy::High,
             rootsignal_common::GeoPrecision::Neighborhood => GeoAccuracy::Medium,
@@ -115,12 +115,13 @@ mod tests {
             confidence: 0.0,
             freshness_score: 1.0,
             corroboration_count: 0,
-            location: Some(GeoPoint {
+            about_location: Some(GeoPoint {
                 lat: 44.97,
                 lng: -93.26,
                 precision: GeoPrecision::Exact,
             }),
-            location_name: Some("Powderhorn Park".to_string()),
+            about_location_name: Some("Powderhorn Park".to_string()),
+            from_location: None,
             source_url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
             content_date: None,
@@ -187,7 +188,7 @@ mod tests {
         // Bare Gathering: no optional fields filled (0/3), geo = Low (0.3)
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
         let mut meta = test_meta();
-        meta.location = None;
+        meta.about_location = None;
         let node = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,
@@ -231,7 +232,7 @@ mod tests {
         // and medium geo: confidence = 1.0 * 0.5 + 0.7 * 0.5 = 0.85
         use rootsignal_common::{NoticeNode, Severity};
         let mut meta = test_meta();
-        meta.location = Some(GeoPoint {
+        meta.about_location = Some(GeoPoint {
             lat: 44.97,
             lng: -93.26,
             precision: GeoPrecision::Neighborhood,
@@ -257,7 +258,7 @@ mod tests {
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
         use rootsignal_common::{Severity, TensionNode};
         let mut meta = test_meta();
-        meta.location = None;
+        meta.about_location = None;
         let node = Node::Tension(TensionNode {
             meta,
             severity: Severity::High,

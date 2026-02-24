@@ -451,8 +451,6 @@ pub struct SourceFinder<'a> {
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
     embedder: Option<&'a dyn crate::infra::embedder::TextEmbedder>,
-    center_lat: f64,
-    center_lng: f64,
 }
 
 /// Cosine similarity threshold for embedding-based query dedup.
@@ -467,8 +465,6 @@ impl<'a> SourceFinder<'a> {
         region_name: &str,
         anthropic_api_key: Option<&str>,
         budget: &'a BudgetTracker,
-        center_lat: f64,
-        center_lng: f64,
     ) -> Self {
         let claude = anthropic_api_key
             .filter(|k| !k.is_empty())
@@ -480,8 +476,6 @@ impl<'a> SourceFinder<'a> {
             claude,
             budget,
             embedder: None,
-            center_lat,
-            center_lng,
         }
     }
 
@@ -576,9 +570,6 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                source.center_lat = Some(self.center_lat);
-                source.center_lng = Some(self.center_lng);
-
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
@@ -614,9 +605,6 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                source.center_lat = Some(self.center_lat);
-                source.center_lng = Some(self.center_lng);
-
                 match self.writer.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
@@ -791,9 +779,6 @@ impl<'a> SourceFinder<'a> {
                 source_role,
                 Some(gap_context),
             );
-            source.center_lat = Some(self.center_lat);
-            source.center_lng = Some(self.center_lng);
-
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     stats.gap_sources += 1;
@@ -980,9 +965,6 @@ impl<'a> SourceFinder<'a> {
                 SourceRole::Response,
                 Some(format!("Tension: {}", t.title)),
             );
-            source.center_lat = Some(self.center_lat);
-            source.center_lng = Some(self.center_lng);
-
             match self.writer.upsert_source(&source).await {
                 Ok(_) => {
                     gap_count += 1;

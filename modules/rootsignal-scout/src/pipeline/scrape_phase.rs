@@ -32,13 +32,10 @@ use crate::infra::util::{content_hash, sanitize_url};
 // CollectedLink — a discovered outbound link with its provenance
 // ---------------------------------------------------------------------------
 
-/// A link discovered during scraping, carrying the discovering source's coordinates.
-/// Used by `promote_links` to assign per-source location rather than a blanket region center.
+/// A link discovered during scraping, used by `promote_links` to create new sources.
 pub struct CollectedLink {
     pub url: String,
     pub discovered_on: String,
-    pub lat: Option<f64>,
-    pub lng: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -406,16 +403,6 @@ impl ScrapePhase {
             .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::WebPage))
             .collect();
 
-        // Build URL → source coords lookup for link promotion
-        let source_coords: HashMap<String, (Option<f64>, Option<f64>)> = sources
-            .iter()
-            .filter_map(|s| {
-                s.url.as_ref().map(|u| {
-                    (sanitize_url(u), (s.center_lat, s.center_lng))
-                })
-            })
-            .collect();
-
         let mut phase_urls: Vec<String> = Vec::new();
 
         // Resolve query sources → URLs
@@ -647,16 +634,10 @@ impl ScrapePhase {
         for (url, outcome, page_links) in pipeline_results {
             // Extract outbound links for promotion as new sources
             let discovered = link_promoter::extract_links(&page_links);
-            let (lat, lng) = source_coords
-                .get(&url)
-                .copied()
-                .unwrap_or((None, None));
             for link_url in discovered {
                 ctx.collected_links.push(CollectedLink {
                     url: link_url,
                     discovered_on: url.clone(),
-                    lat,
-                    lng,
                 });
             }
 
@@ -774,16 +755,6 @@ impl ScrapePhase {
             Vec<String>,
             Option<DateTime<Utc>>, // most recent published_at for content_date fallback
         )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, post_count, mentions, newest_published_at)
-
-        // Build URL → source coords lookup for link promotion
-        let source_coords: HashMap<String, (Option<f64>, Option<f64>)> = social_sources
-            .iter()
-            .filter_map(|s| {
-                s.url.as_ref().map(|u| {
-                    (sanitize_url(u), (s.center_lat, s.center_lng))
-                })
-            })
-            .collect();
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
         struct SocialEntry {
@@ -1086,17 +1057,11 @@ impl ScrapePhase {
             }
 
             // Accumulate mentions as URLs for promotion (capped per source)
-            let (lat, lng) = source_coords
-                .get(&sanitize_url(&source_url))
-                .copied()
-                .unwrap_or((None, None));
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
                 let mention_url = link_promoter::platform_url(&result_platform, &handle);
                 ctx.collected_links.push(CollectedLink {
                     url: mention_url,
                     discovered_on: source_url.clone(),
-                    lat,
-                    lng,
                 });
             }
 
@@ -1315,8 +1280,6 @@ impl ScrapePhase {
                     last_scraped: Some(Utc::now()),
                     last_produced_signal: if produced > 0 { Some(Utc::now()) } else { None },
                     signals_produced: produced,
-                    center_lat: Some(self.region.center_lat),
-                    center_lng: Some(self.region.center_lng),
                     ..SourceNode::new(
                         ck.clone(),
                         cv,

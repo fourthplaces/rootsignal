@@ -534,8 +534,6 @@ mod tests {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
-            center_lat: None,
-            center_lng: None,
         }
     }
 
@@ -818,8 +816,6 @@ mod tests {
             quality_penalty: 1.0,
             source_role: SourceRole::Response,
             scrape_count: 0,
-            center_lat: None,
-            center_lng: None,
         }
     }
 

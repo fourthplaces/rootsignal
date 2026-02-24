@@ -52,7 +52,7 @@ impl CachedReader {
                         return false;
                     }
                 }
-                if let Some(loc) = n.meta().and_then(|m| m.location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
                     loc.lat >= min_lat
                         && loc.lat <= max_lat
                         && loc.lng >= min_lng
@@ -92,7 +92,7 @@ impl CachedReader {
                 if !passes_display_filter(n) {
                     return false;
                 }
-                if let Some(loc) = n.meta().and_then(|m| m.location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
                     loc.lat >= min_lat
                         && loc.lat <= max_lat
                         && loc.lng >= min_lng
@@ -306,7 +306,7 @@ impl CachedReader {
             .signals
             .iter()
             .filter(|n| {
-                if let Some(loc) = n.meta().and_then(|m| m.location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
                     loc.lat >= lat - lat_delta
                         && loc.lat <= lat + lat_delta
                         && loc.lng >= lng - lng_delta

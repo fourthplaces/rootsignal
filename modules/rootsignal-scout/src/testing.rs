@@ -382,15 +382,6 @@ impl MockSignalStore {
             .unwrap_or(false)
     }
 
-    pub fn get_source_coords(&self, url: &str) -> (Option<f64>, Option<f64>) {
-        let inner = self.inner.lock().unwrap();
-        let cv = canonical_value(url);
-        inner
-            .sources
-            .get(&cv)
-            .map(|s| (s.center_lat, s.center_lng))
-            .unwrap_or((None, None))
-    }
 }
 
 #[async_trait]
@@ -1152,7 +1143,7 @@ pub fn web_query_source(query: &str) -> SourceNode {
 
 /// Create a web page SourceNode.
 pub fn page_source(url: &str) -> SourceNode {
-    let mut source = SourceNode::new(
+    SourceNode::new(
         canonical_value(url),
         canonical_value(url),
         Some(url.to_string()),
@@ -1160,15 +1151,12 @@ pub fn page_source(url: &str) -> SourceNode {
         1.0,
         rootsignal_common::SourceRole::Mixed,
         None,
-    );
-    source.center_lat = Some(44.9778);
-    source.center_lng = Some(-93.2650);
-    source
+    )
 }
 
 /// Create a social media SourceNode.
 pub fn social_source(url: &str) -> SourceNode {
-    let mut source = SourceNode::new(
+    SourceNode::new(
         canonical_value(url),
         canonical_value(url),
         Some(url.to_string()),
@@ -1176,10 +1164,7 @@ pub fn social_source(url: &str) -> SourceNode {
         1.0,
         rootsignal_common::SourceRole::Mixed,
         None,
-    );
-    source.center_lat = Some(44.9778);
-    source.center_lng = Some(-93.2650);
-    source
+    )
 }
 
 /// Create a minimal Post for testing social scrape.

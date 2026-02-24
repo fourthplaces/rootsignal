@@ -170,12 +170,12 @@ impl NewsScanner {
             for node in &extraction.nodes {
                 if matches!(node, Node::Tension(_) | Node::Need(_)) {
                     if let Some(meta) = node.meta() {
-                        if let Some(loc) = &meta.location {
+                        if let Some(loc) = &meta.about_location {
                             beacon_candidates.push(BeaconCandidate {
                                 lat: loc.lat,
                                 lng: loc.lng,
                                 title: meta.title.clone(),
-                                location_name: meta.location_name.clone(),
+                                location_name: meta.about_location_name.clone(),
                                 source_url: url.clone(),
                             });
                         }

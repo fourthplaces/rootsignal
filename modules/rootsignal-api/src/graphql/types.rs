@@ -261,10 +261,10 @@ macro_rules! signal_meta_resolvers {
             self.meta().confidence
         }
         async fn location(&self) -> Option<GqlGeoPoint> {
-            self.meta().location.map(GqlGeoPoint)
+            self.meta().about_location.map(GqlGeoPoint)
         }
         async fn location_name(&self) -> Option<&str> {
-            self.meta().location_name.as_deref()
+            self.meta().about_location_name.as_deref()
         }
         async fn source_url(&self) -> &str {
             &self.meta().source_url
@@ -341,8 +341,8 @@ impl GqlGatheringSignal {
     async fn summary(&self) -> &str { &self.meta().summary }
     async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
     async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
@@ -397,8 +397,8 @@ impl GqlAidSignal {
     async fn summary(&self) -> &str { &self.meta().summary }
     async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
     async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
@@ -447,8 +447,8 @@ impl GqlNeedSignal {
     async fn summary(&self) -> &str { &self.meta().summary }
     async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
     async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
@@ -500,8 +500,8 @@ impl GqlNoticeSignal {
     async fn summary(&self) -> &str { &self.meta().summary }
     async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
     async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
@@ -553,8 +553,8 @@ impl GqlTensionSignal {
     async fn summary(&self) -> &str { &self.meta().summary }
     async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
     async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().location_name.as_deref() }
+    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
+    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
     async fn source_url(&self) -> &str { &self.meta().source_url }
     async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
     async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }

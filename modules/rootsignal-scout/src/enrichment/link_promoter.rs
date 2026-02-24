@@ -113,9 +113,6 @@ pub async fn promote_links(
             SourceRole::Mixed,
             Some(format!("Linked from {}", link.discovered_on)),
         );
-        source.center_lat = link.lat;
-        source.center_lng = link.lng;
-
         match writer.upsert_source(&source).await {
             Ok(_) => {
                 created += 1;

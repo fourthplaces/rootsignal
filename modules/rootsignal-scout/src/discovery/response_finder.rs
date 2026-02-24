@@ -948,8 +948,6 @@ impl<'a> ResponseFinder<'a> {
             quality_penalty: 1.0,
             source_role: SourceRole::Response,
             scrape_count: 0,
-            center_lat: Some(self.region.center_lat),
-            center_lng: Some(self.region.center_lng),
         };
 
         self.writer.upsert_source(&source).await?;

@@ -58,8 +58,6 @@ impl<'a> Bootstrapper<'a> {
                 role.clone(),
                 None,
             );
-            source.center_lat = Some(self.region.center_lat);
-            source.center_lng = Some(self.region.center_lng);
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => warn!(query = query.as_str(), error = %e, "Failed to create seed source"),
@@ -68,9 +66,7 @@ impl<'a> Bootstrapper<'a> {
 
         // Step 3: Also create standard platform sources (including LLM-discovered subreddits)
         let platform_sources = self.generate_platform_sources().await;
-        for mut source in platform_sources {
-            source.center_lat = Some(self.region.center_lat);
-            source.center_lng = Some(self.region.center_lng);
+        for source in platform_sources {
             match self.writer.upsert_source(&source).await {
                 Ok(_) => sources_created += 1,
                 Err(e) => {

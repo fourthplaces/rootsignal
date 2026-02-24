@@ -1828,7 +1828,7 @@ pub(crate) fn expiry_clause(nt: NodeType) -> String {
 /// Apply sensitivity-based coordinate fuzzing to a node.
 pub(crate) fn fuzz_node(mut node: Node) -> Node {
     if let Some(meta) = node_meta_mut(&mut node) {
-        if let Some(ref mut loc) = meta.location {
+        if let Some(ref mut loc) = meta.about_location {
             *loc = fuzz_location(*loc, meta.sensitivity);
         }
     }
@@ -1934,8 +1934,8 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         confidence: confidence as f32,
         freshness_score: freshness_score as f32,
         corroboration_count: corroboration_count as u32,
-        location,
-        location_name: {
+        about_location: location,
+        about_location_name: {
             let name: String = n.get("location_name").unwrap_or_default();
             if name.is_empty() {
                 None
@@ -1943,6 +1943,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 Some(name)
             }
         },
+        from_location: None,
         source_url,
         extracted_at,
         content_date,

@@ -132,7 +132,7 @@ impl GraphWriter {
             n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
 
-        .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
+        .param("location_name", n.meta.about_location_name.as_deref().unwrap_or(""))
         .param(
             "starts_at",
             n.starts_at
@@ -212,7 +212,7 @@ impl GraphWriter {
             n.meta.content_date.map(|dt| format_datetime(&dt)).unwrap_or_default(),
         )
 
-        .param("location_name", n.meta.location_name.as_deref().unwrap_or(""))
+        .param("location_name", n.meta.about_location_name.as_deref().unwrap_or(""))
         .param("action_url", n.action_url.as_str())
         .param("availability", n.availability.as_deref().unwrap_or(""))
         .param("is_ongoing", n.is_ongoing)
@@ -281,7 +281,7 @@ impl GraphWriter {
         )
         .param(
             "location_name",
-            n.meta.location_name.as_deref().unwrap_or(""),
+            n.meta.about_location_name.as_deref().unwrap_or(""),
         )
         .param("urgency", urgency_str(n.urgency))
         .param("what_needed", n.what_needed.as_deref().unwrap_or(""))
@@ -357,7 +357,7 @@ impl GraphWriter {
         )
         .param(
             "location_name",
-            n.meta.location_name.as_deref().unwrap_or(""),
+            n.meta.about_location_name.as_deref().unwrap_or(""),
         )
         .param("severity", severity_str(n.severity))
         .param("category", n.category.clone().unwrap_or_default())
@@ -440,7 +440,7 @@ impl GraphWriter {
         )
         .param(
             "location_name",
-            n.meta.location_name.as_deref().unwrap_or(""),
+            n.meta.about_location_name.as_deref().unwrap_or(""),
         )
         .param("severity", severity_str(n.severity))
         .param("category", n.category.as_deref().unwrap_or(""))
@@ -1793,9 +1793,7 @@ impl GraphWriter {
                 s.avg_signals_per_scrape = $avg_signals_per_scrape,
                 s.quality_penalty = $quality_penalty,
                 s.source_role = $source_role,
-                s.scrape_count = $scrape_count,
-                s.center_lat = $center_lat,
-                s.center_lng = $center_lng
+                s.scrape_count = $scrape_count
              ON MATCH SET
                 s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                 s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1815,9 +1813,7 @@ impl GraphWriter {
         .param("avg_signals_per_scrape", source.avg_signals_per_scrape)
         .param("quality_penalty", source.quality_penalty)
         .param("source_role", source.source_role.to_string())
-        .param("scrape_count", source.scrape_count as i64)
-        .param("center_lat", source.center_lat.unwrap_or(0.0))
-        .param("center_lng", source.center_lng.unwrap_or(0.0));
+        .param("scrape_count", source.scrape_count as i64);
 
         self.client.graph.run(q).await?;
         Ok(())
@@ -1869,8 +1865,7 @@ impl GraphWriter {
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
-                    s.scrape_count AS scrape_count,
-                    s.center_lat AS center_lat, s.center_lng AS center_lng",
+                    s.scrape_count AS scrape_count",
         );
 
         let mut sources = Vec::new();
@@ -1884,14 +1879,14 @@ impl GraphWriter {
         Ok(sources)
     }
 
-    /// Get active sources scoped to a geographic region (bounding box with 1.5x padding).
+    /// Get active sources that have produced signals in a geographic region.
+    /// Region membership is derived from signal locations, not stamped on sources.
     pub async fn get_sources_for_region(
         &self,
         lat: f64,
         lng: f64,
         radius_km: f64,
     ) -> Result<Vec<SourceNode>, neo4rs::Error> {
-        // 1.5x padding so sources near the edge aren't missed
         let padded_radius = radius_km * 1.5;
         let lat_delta = padded_radius / 111.0;
         let lng_delta = padded_radius / (111.0 * lat.to_radians().cos());
@@ -1900,10 +1895,16 @@ impl GraphWriter {
         let min_lng = lng - lng_delta;
         let max_lng = lng + lng_delta;
 
+        // Find sources whose signals have locations within the bounding box.
+        // Also include never-scraped sources (they haven't had a chance to produce signals yet).
         let q = query(
             "MATCH (s:Source {active: true})
-             WHERE s.center_lat >= $min_lat AND s.center_lat <= $max_lat
-               AND s.center_lng >= $min_lng AND s.center_lng <= $max_lng
+             WHERE s.signals_produced = 0
+                OR EXISTS {
+                    MATCH (n) WHERE n.source_url = s.canonical_value
+                      AND n.lat >= $min_lat AND n.lat <= $max_lat
+                      AND n.lng >= $min_lng AND n.lng <= $max_lng
+                }
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
                     s.discovery_method AS discovery_method,
@@ -1917,8 +1918,7 @@ impl GraphWriter {
                     s.avg_signals_per_scrape AS avg_signals_per_scrape,
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
-                    s.scrape_count AS scrape_count,
-                    s.center_lat AS center_lat, s.center_lng AS center_lng",
+                    s.scrape_count AS scrape_count",
         )
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -2456,8 +2456,6 @@ impl GraphWriter {
                     quality_penalty: 1.0,
                     source_role: SourceRole::Mixed,
                     scrape_count: 0,
-                    center_lat: None,
-                    center_lng: None,
                 });
             }
 
@@ -4997,7 +4995,7 @@ pub struct GatheringFinderTarget {
 /// Add lat/lng params to a query from node metadata.
 /// Uses null for nodes without a location.
 fn add_location_params(q: neo4rs::Query, meta: &NodeMeta) -> neo4rs::Query {
-    match &meta.location {
+    match &meta.about_location {
         Some(loc) => q.param("lat", loc.lat).param("lng", loc.lng),
         None => q
             .param::<Option<f64>>("lat", None)
@@ -5085,9 +5083,6 @@ fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
     let gap_context: String = row.get("gap_context").unwrap_or_default();
     let url: String = row.get("url").unwrap_or_default();
     let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
-    let center_lat: f64 = row.get("center_lat").unwrap_or(0.0);
-    let center_lng: f64 = row.get("center_lng").unwrap_or(0.0);
-
     Some(SourceNode {
         id,
         canonical_key: row.get("canonical_key").unwrap_or_default(),
@@ -5118,8 +5113,6 @@ fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
             &row.get::<String>("source_role").unwrap_or_default(),
         ),
         scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
-        center_lat: if center_lat.abs() > 0.001 { Some(center_lat) } else { None },
-        center_lng: if center_lng.abs() > 0.001 { Some(center_lng) } else { None },
     })
 }
 

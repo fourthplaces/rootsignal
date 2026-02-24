@@ -363,8 +363,6 @@ impl<'a> ScrapePipeline<'a> {
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
-            self.region.center_lat,
-            self.region.center_lng,
         )
         .with_embedder(&*self.embedder);
         let (stats, social_topics) = discoverer.run().await;
@@ -472,8 +470,6 @@ impl<'a> ScrapePipeline<'a> {
             &self.writer,
             &*self.embedder,
             &self.region.name,
-            self.region.center_lat,
-            self.region.center_lng,
         );
         expansion.run(ctx, run_log).await;
 
@@ -486,8 +482,6 @@ impl<'a> ScrapePipeline<'a> {
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
-            self.region.center_lat,
-            self.region.center_lng,
         )
         .with_embedder(&*self.embedder);
         let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
