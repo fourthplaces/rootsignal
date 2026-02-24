@@ -170,6 +170,11 @@ pub struct StoredSignal {
     pub source_url: String,
     pub corroboration_count: u32,
     pub embedding: Vec<f32>,
+    pub about_location: Option<rootsignal_common::GeoPoint>,
+    pub from_location: Option<rootsignal_common::GeoPoint>,
+    pub content_date: Option<DateTime<Utc>>,
+    pub about_location_name: Option<String>,
+    pub confidence: f32,
 }
 
 /// Actor-signal link in the mock graph.
@@ -421,6 +426,7 @@ impl SignalStore for MockSignalStore {
             .unwrap_or_default();
         let normalized = title.trim().to_lowercase();
 
+        let meta = node.meta();
         let stored = StoredSignal {
             id,
             title: title.clone(),
@@ -428,6 +434,11 @@ impl SignalStore for MockSignalStore {
             source_url: source_url.clone(),
             corroboration_count: 0,
             embedding: embedding.to_vec(),
+            about_location: meta.and_then(|m| m.about_location),
+            from_location: meta.and_then(|m| m.from_location),
+            content_date: meta.and_then(|m| m.content_date),
+            about_location_name: meta.and_then(|m| m.about_location_name.clone()),
+            confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
         };
         inner.signals.insert(id, stored);
         inner

@@ -1518,3 +1518,339 @@ async fn batch_title_dedup_is_case_insensitive() {
     assert_eq!(store.signals_created(), 2, "case-insensitive dedup should produce 2 signals");
     assert!(store.has_signal_titled("Different Signal"));
 }
+
+// ---------------------------------------------------------------------------
+// Location metadata through the full pipeline
+//
+// Verify about_location and from_location survive into StoredSignal.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn web_source_without_actor_stores_content_location_only() {
+    let fetcher = MockFetcher::new()
+        .on_page(
+            "https://localorg.org/events",
+            archived_page("https://localorg.org/events", "# Event at Powderhorn"),
+        );
+
+    let extractor = MockExtractor::new()
+        .on_url(
+            "https://localorg.org/events",
+            crate::pipeline::extractor::ExtractionResult {
+                nodes: vec![tension_at("Powderhorn Cleanup", 44.9489, -93.2583)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+            },
+        );
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://localorg.org/events");
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("Powderhorn Cleanup").expect("signal should exist");
+    let about = stored.about_location.expect("about_location should be set from content");
+    assert!((about.lat - 44.9489).abs() < 0.001);
+    assert!(stored.from_location.is_none(), "no actor → no from_location");
+}
+
+#[tokio::test]
+async fn signal_without_content_location_falls_back_to_actor() {
+    use rootsignal_common::canonical_value;
+
+    let ig_url = "https://www.instagram.com/localorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Thoughts on community organizing")]);
+
+    // Signal with NO about_location
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![tension("Community Organizing Thoughts")],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+
+    ctx.actor_contexts.insert(
+        canonical_value(ig_url),
+        rootsignal_common::ActorContext {
+            actor_name: "Local Org".to_string(),
+            bio: None,
+            location_name: Some("Minneapolis".to_string()),
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        },
+    );
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("Community Organizing Thoughts").expect("signal should exist");
+    let about = stored.about_location.expect("about_location should fall back to actor");
+    assert!((about.lat - 44.9778).abs() < 0.001, "about_location should be actor coords");
+    let from = stored.from_location.expect("from_location should be set from actor");
+    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be actor coords");
+}
+
+#[tokio::test]
+async fn explicit_content_location_not_overwritten_by_actor() {
+    use rootsignal_common::canonical_value;
+
+    let ig_url = "https://www.instagram.com/nycorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Great event in St Paul!")]);
+
+    // Signal explicitly located in St Paul
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![tension_at("St Paul Event", ST_PAUL.0, ST_PAUL.1)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+
+    // Actor in Minneapolis — should NOT overwrite St Paul about_location
+    ctx.actor_contexts.insert(
+        canonical_value(ig_url),
+        rootsignal_common::ActorContext {
+            actor_name: "Minneapolis Org".to_string(),
+            bio: None,
+            location_name: None,
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        },
+    );
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("St Paul Event").expect("signal should exist");
+    let about = stored.about_location.expect("about_location should be preserved");
+    assert!((about.lat - ST_PAUL.0).abs() < 0.001, "about_location should stay St Paul, not Minneapolis");
+    let from = stored.from_location.expect("from_location should be set from actor");
+    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be Minneapolis actor coords");
+}
+
+// ---------------------------------------------------------------------------
+// Content date fallback
+//
+// RSS pub_date and social published_at flow into content_date when the
+// LLM didn't extract one.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rss_pub_date_becomes_content_date_when_llm_omits_it() {
+    use chrono::TimeZone;
+
+    let feed_url = "https://localorg.org/feed";
+    let article_url = "https://localorg.org/article-1";
+    let pub_date = chrono::Utc.with_ymd_and_hms(2026, 2, 20, 12, 0, 0).unwrap();
+
+    let feed = rootsignal_common::ArchivedFeed {
+        id: uuid::Uuid::new_v4(),
+        source_id: uuid::Uuid::new_v4(),
+        fetched_at: chrono::Utc::now(),
+        content_hash: String::new(),
+        items: vec![rootsignal_common::FeedItem {
+            url: article_url.to_string(),
+            title: Some("Article Title".to_string()),
+            pub_date: Some(pub_date),
+        }],
+        title: Some("Local Org Blog".to_string()),
+    };
+
+    let fetcher = MockFetcher::new()
+        .on_feed(feed_url, feed)
+        .on_page(article_url, archived_page(article_url, "# Community event recap"));
+
+    // Extractor returns signal with NO content_date
+    let extractor = MockExtractor::new()
+        .on_url(article_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![tension_at("Community Event Recap", 44.975, -93.270)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source(feed_url);
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("Community Event Recap").expect("signal should exist");
+    let content_date = stored.content_date.expect("content_date should be backfilled from RSS pub_date");
+    assert_eq!(content_date, pub_date, "content_date should match RSS pub_date");
+}
+
+#[tokio::test]
+async fn llm_content_date_not_overwritten_by_rss_pub_date() {
+    use chrono::TimeZone;
+
+    let feed_url = "https://localorg.org/feed";
+    let article_url = "https://localorg.org/article-2";
+    let rss_date = chrono::Utc.with_ymd_and_hms(2026, 2, 20, 12, 0, 0).unwrap();
+    let llm_date = chrono::Utc.with_ymd_and_hms(2026, 3, 1, 10, 0, 0).unwrap();
+
+    let feed = rootsignal_common::ArchivedFeed {
+        id: uuid::Uuid::new_v4(),
+        source_id: uuid::Uuid::new_v4(),
+        fetched_at: chrono::Utc::now(),
+        content_hash: String::new(),
+        items: vec![rootsignal_common::FeedItem {
+            url: article_url.to_string(),
+            title: None,
+            pub_date: Some(rss_date),
+        }],
+        title: None,
+    };
+
+    let fetcher = MockFetcher::new()
+        .on_feed(feed_url, feed)
+        .on_page(article_url, archived_page(article_url, "# Upcoming event"));
+
+    // Extractor returns signal WITH an explicit content_date
+    let mut node = tension_at("Upcoming Event", 44.975, -93.270);
+    if let Some(meta) = node.meta_mut() {
+        meta.content_date = Some(llm_date);
+    }
+
+    let extractor = MockExtractor::new()
+        .on_url(article_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source(feed_url);
+    let sources: Vec<&SourceNode> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_web(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("Upcoming Event").expect("signal should exist");
+    let content_date = stored.content_date.expect("content_date should exist");
+    assert_eq!(content_date, llm_date, "LLM content_date should NOT be overwritten by RSS pub_date");
+}
+
+#[tokio::test]
+async fn social_published_at_becomes_content_date_fallback() {
+    use chrono::TimeZone;
+
+    let ig_url = "https://www.instagram.com/localorg";
+    let post_date = chrono::Utc.with_ymd_and_hms(2026, 2, 15, 18, 30, 0).unwrap();
+
+    let mut post = test_post("Big community event coming up!");
+    post.published_at = Some(post_date);
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![post]);
+
+    // Signal with NO content_date
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
+            nodes: vec![tension("Big Community Event")],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut log = run_log();
+
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    let stored = store.signal_by_title("Big Community Event").expect("signal should exist");
+    let content_date = stored.content_date.expect("content_date should be backfilled from post published_at");
+    assert_eq!(content_date, post_date);
+}

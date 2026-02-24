@@ -446,6 +446,78 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
 
     // No geo-filter — signal stored with actor location as fallback
     assert_eq!(store.signals_created(), 1, "signal should be stored regardless of location");
+
+    // Verify location metadata
+    let stored = store.signal_by_title("Organizing Reflections").unwrap();
+    let about = stored.about_location.expect("about_location should fall back to NYC actor coords");
+    assert!((about.lat - NYC.0).abs() < 0.001, "about_location lat should be NYC");
+    let from = stored.from_location.expect("from_location should be NYC actor coords");
+    assert!((from.lat - NYC.0).abs() < 0.001, "from_location lat should be NYC");
+}
+
+// ---------------------------------------------------------------------------
+// Chain Test 4b: Social with explicit content location + actor
+//
+// Actor in Minneapolis, signal explicitly about Dallas. about_location stays
+// Dallas, from_location is Minneapolis.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
+    let ig_url = "https://www.instagram.com/mplsorg";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Amazing event in Dallas!")]);
+
+    let extractor = MockExtractor::new()
+        .on_url(ig_url, ExtractionResult {
+            nodes: vec![tension_at("Dallas Fundraiser", DALLAS.0, DALLAS.1)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+        });
+
+    let store = Arc::new(MockSignalStore::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = social_source(ig_url);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::new(&[source.clone()]);
+
+    // Actor in Minneapolis
+    ctx.actor_contexts.insert(
+        canonical_value(ig_url),
+        ActorContext {
+            actor_name: "MPLS Org".to_string(),
+            bio: None,
+            location_name: Some("Minneapolis, MN".to_string()),
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        },
+    );
+
+    let mut log = run_log();
+    phase.run_social(&sources, &mut ctx, &mut log).await;
+
+    assert_eq!(store.signals_created(), 1);
+    let stored = store.signal_by_title("Dallas Fundraiser").unwrap();
+
+    // about_location = Dallas (from content, NOT overwritten by actor)
+    let about = stored.about_location.expect("about_location should be Dallas");
+    assert!((about.lat - DALLAS.0).abs() < 0.001, "about_location should be Dallas, not Minneapolis");
+
+    // from_location = Minneapolis (actor provenance)
+    let from = stored.from_location.expect("from_location should be Minneapolis actor");
+    assert!((from.lat - 44.9778).abs() < 0.001, "from_location should be Minneapolis");
 }
 
 // ---------------------------------------------------------------------------
