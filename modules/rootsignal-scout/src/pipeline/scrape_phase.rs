@@ -2571,4 +2571,74 @@ mod tests {
         let result = score_and_filter(nodes, URL_A, None);
         assert_eq!(result.len(), 3);
     }
+
+    #[test]
+    fn from_location_set_even_when_about_location_present() {
+        // Actor coords populate from_location regardless of whether about_location exists.
+        let nodes = vec![
+            tension_at("Uptown Event", 44.95, -93.30),
+            tension("Floating Signal"),
+        ];
+        let actor = ActorContext {
+            actor_name: "Local Org".to_string(),
+            bio: None,
+            location_name: None,
+            location_lat: Some(44.9778),
+            location_lng: Some(-93.2650),
+        };
+        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        // Both signals get from_location
+        for node in &result {
+            let meta = node.meta().unwrap();
+            assert!(meta.from_location.is_some(), "{} should have from_location", meta.title);
+            let from = meta.from_location.as_ref().unwrap();
+            assert!((from.lat - 44.9778).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn actor_without_coords_does_not_set_locations() {
+        // Actor has no lat/lng — neither from_location nor about_location should be touched.
+        let nodes = vec![tension("No Location Signal")];
+        let actor = ActorContext {
+            actor_name: "Anonymous Org".to_string(),
+            bio: None,
+            location_name: Some("Minneapolis".to_string()),
+            location_lat: None,
+            location_lng: None,
+        };
+        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let meta = result[0].meta().unwrap();
+        assert!(meta.about_location.is_none());
+        assert!(meta.from_location.is_none());
+    }
+
+    #[test]
+    fn evidence_nodes_are_filtered_out() {
+        // Evidence nodes should be removed by score_and_filter
+        let evidence = Node::Evidence(rootsignal_common::EvidenceNode {
+            id: Uuid::new_v4(),
+            content_hash: "abc".to_string(),
+            source_url: "https://example.com".to_string(),
+            retrieved_at: Utc::now(),
+            snippet: None,
+            relevance: None,
+            evidence_confidence: None,
+            channel_type: None,
+        });
+        let nodes = vec![tension("Real Signal"), evidence];
+        let result = score_and_filter(nodes, URL_A, None);
+        assert_eq!(result.len(), 1, "evidence nodes should be filtered out");
+        assert_eq!(result[0].title(), "Real Signal");
+    }
+
+    #[test]
+    fn source_url_stamped_on_all_signals() {
+        let nodes = vec![tension("Signal A"), tension("Signal B")];
+        let result = score_and_filter(nodes, "https://test-source.org", None);
+        for node in &result {
+            let meta = node.meta().unwrap();
+            assert_eq!(meta.source_url, "https://test-source.org");
+        }
+    }
 }
