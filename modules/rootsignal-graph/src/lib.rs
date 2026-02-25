@@ -14,6 +14,7 @@ pub mod story_weaver;
 pub mod synthesizer;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
+pub mod reducer;
 pub mod writer;
 
 pub use cache::CacheStore;
@@ -25,6 +26,7 @@ pub use story_metrics::{parse_recency, story_energy, story_status};
 pub use situation_weaver::SituationWeaver;
 pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
+pub use reducer::{ApplyResult, GraphReducer};
 pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
     GatheringFinderTarget, GraphWriter, InvestigationTarget, ReapStats, ResponseFinderTarget,

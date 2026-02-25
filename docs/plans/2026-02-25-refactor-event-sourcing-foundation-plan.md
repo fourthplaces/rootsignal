@@ -574,12 +574,12 @@ The writer no longer contains Cypher queries. All Cypher lives in the reducer. A
 - All Cypher queries move from writer.rs into the reducer
 
 **Acceptance criteria:**
-- [ ] Every graph-mutating Event variant has a MERGE-based Cypher handler
-- [ ] Observability events (url_scraped, llm_extraction_completed, etc.) are explicit no-ops
-- [ ] No `Utc::now()`, no `Uuid::new_v4()`, no API calls, no graph reads in reducer
-- [ ] Reducer writes only factual values — no embeddings, no diversity counts, no cause_heat
-- [ ] `GraphReducer::replay_from()` reads events in order and applies each
-- [ ] `GraphReducer::rebuild()` wipes graph and replays from seq 0
+- [x] Every graph-mutating Event variant has a MERGE-based Cypher handler
+- [x] Observability events (url_scraped, llm_extraction_completed, etc.) are explicit no-ops
+- [x] No `Utc::now()`, no `Uuid::new_v4()`, no API calls, no graph reads in reducer
+- [x] Reducer writes only factual values — no embeddings, no diversity counts, no cause_heat
+- [x] `GraphReducer::replay_from()` reads events in order and applies each
+- [x] `GraphReducer::rebuild()` wipes graph and replays from seq 0
 
 ### Phase 2b: Enrichment passes
 

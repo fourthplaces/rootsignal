@@ -3585,6 +3585,7 @@ dependencies = [
  "geohash",
  "neo4rs",
  "rootsignal-common",
+ "rootsignal-events",
  "schemars 0.8.22",
  "serde",
  "serde_json",

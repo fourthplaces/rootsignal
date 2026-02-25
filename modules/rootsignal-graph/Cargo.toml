@@ -9,6 +9,7 @@ test-utils = ["testcontainers"]
 
 [dependencies]
 rootsignal-common = { workspace = true }
+rootsignal-events = { workspace = true }
 ai-client = { workspace = true }
 neo4rs = { workspace = true }
 serde = { workspace = true }
