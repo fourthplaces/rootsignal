@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod events;
 pub mod quality;
 pub mod safety;
 pub mod types;

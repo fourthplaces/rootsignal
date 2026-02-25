@@ -4,6 +4,7 @@ members = [
     "modules/apify-client",
     "modules/twilio-rs",
     "modules/rootsignal-common",
+    "modules/rootsignal-events",
     "modules/rootsignal-graph",
     "modules/browserless-client",
     "modules/rootsignal-scout",
@@ -88,6 +89,7 @@ apify-client = { path = "modules/apify-client" }
 browserless-client = { path = "modules/browserless-client" }
 twilio = { path = "modules/twilio-rs" }
 rootsignal-common = { path = "modules/rootsignal-common" }
+rootsignal-events = { path = "modules/rootsignal-events" }
 rootsignal-graph = { path = "modules/rootsignal-graph" }
 rootsignal-archive = { path = "modules/rootsignal-archive" }
 simweb = { path = "modules/simweb" }
