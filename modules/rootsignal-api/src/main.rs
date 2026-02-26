@@ -195,21 +195,18 @@ async fn main() -> Result<()> {
         info!("Restate ingress configured — runScout will dispatch via Restate");
     }
 
-    let store: Arc<dyn rootsignal_scout::pipeline::traits::SignalStore> = match pg_pool.clone() {
-        Some(pool) => Arc::new(rootsignal_scout::pipeline::build_signal_store(
-            client.clone(),
-            pool,
-            format!("api-{}", uuid::Uuid::new_v4()),
-        )),
-        None => {
-            panic!("Postgres pool is required for SignalStore — set DATABASE_URL");
-        }
-    };
+    let store_factory = pg_pool
+        .clone()
+        .map(|pool| rootsignal_scout::pipeline::SignalStoreFactory::new(client.clone(), pool));
+
+    if store_factory.is_none() {
+        tracing::warn!("SignalStoreFactory not available — mutations that write signals will fail");
+    }
 
     let schema = build_schema(
         reader.clone(),
         writer.clone(),
-        store,
+        store_factory,
         jwt_service.clone(),
         Arc::new(config.clone()),
         twilio.clone(),

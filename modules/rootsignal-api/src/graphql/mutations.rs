@@ -11,7 +11,7 @@ use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
-use rootsignal_scout::pipeline::traits::SignalStore;
+use rootsignal_scout::pipeline::SignalStoreFactory;
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -183,7 +183,7 @@ impl MutationRoot {
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
-        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
+        let store = require_store(ctx)?;
         let url = url.trim().to_string();
 
         // Validate URL
@@ -384,7 +384,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         url: String,
     ) -> Result<SubmitSourceResult> {
-        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
+        let store = require_store(ctx)?;
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -454,7 +454,7 @@ impl MutationRoot {
         story_id: Uuid,
         tag_slug: String,
     ) -> Result<bool> {
-        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
+        let store = require_store(ctx)?;
         let slug = rootsignal_common::slugify(&tag_slug);
         store
             .batch_tag_signals(story_id, &[slug])
@@ -676,6 +676,16 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
     true
 }
 
+/// Create a per-mutation SignalStore via the factory, returning a clear error if Postgres is not configured.
+fn require_store(ctx: &Context<'_>) -> Result<Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>> {
+    ctx.data_unchecked::<Option<SignalStoreFactory>>()
+        .as_ref()
+        .ok_or_else(|| {
+            async_graphql::Error::new("Event store not configured (Postgres required)")
+        })
+        .map(|f| f.create())
+}
+
 /// Extract the Restate client from GraphQL context, returning a clear error if not configured.
 fn require_restate<'a>(ctx: &'a Context<'_>) -> Result<&'a RestateClient> {
     ctx.data_unchecked::<Option<RestateClient>>()
@@ -720,6 +730,8 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
+    use rootsignal_scout::pipeline::SignalStoreFactory;
+    use rootsignal_scout::pipeline::traits::SignalStore;
     use rootsignal_scout::testing::MockSignalStore;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
@@ -733,8 +745,9 @@ mod tests {
         Arc<MockSignalStore>,
     ) {
         let store = Arc::new(MockSignalStore::new());
+        let factory = SignalStoreFactory::fixed(store.clone() as Arc<dyn SignalStore>);
         let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-            .data(store.clone() as Arc<dyn SignalStore>)
+            .data(Some(factory))
             .data(RateLimiter(Mutex::new(HashMap::new())))
             .data(ClientIp(IpAddr::V4(Ipv4Addr::LOCALHOST)))
             .finish();

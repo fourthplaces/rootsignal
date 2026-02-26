@@ -254,6 +254,9 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [x] Route API mutations (`add_source`, `tag_story`) through `Arc<dyn SignalStore>`
 - [x] Add `build_signal_store` factory + `ScoutDeps::build_store` convenience
 - [x] Audit: no direct writes bypass the event path
+- [x] Add `SignalStoreFactory` — per-mutation run_ids for proper event correlation
+- [x] Remove startup panic — graceful error when Postgres is unavailable
+- [ ] Make GraphWriter write methods `pub(crate)` once remaining pass-throughs (`find_or_create_resource`, `batch_tag_signals`) are event-sourced. Currently `pub` — convention-based protection, not type-system enforced.
 - [ ] Consider renaming `GraphWriter` → `GraphReader` or splitting into `GraphReader` + `GraphAdmin`
 
 **Not removed** (kept on GraphWriter or moved to GraphAdmin):

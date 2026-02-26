@@ -1397,7 +1397,7 @@ fn source_label_from_value(value: &str) -> String {
 pub fn build_schema(
     reader: Arc<CachedReader>,
     writer: Arc<GraphWriter>,
-    store: Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>,
+    store_factory: Option<rootsignal_scout::pipeline::SignalStoreFactory>,
     jwt_service: JwtService,
     config: Arc<Config>,
     twilio: Option<Arc<twilio::TwilioService>>,
@@ -1455,7 +1455,7 @@ pub fn build_schema(
 
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
-        .data(store)
+        .data(store_factory)
         .data(writer)
         .data(jwt_service)
         .data(config)
