@@ -6,6 +6,7 @@ pub mod client;
 pub mod embedding_store;
 pub mod enrich;
 pub mod migrate;
+pub mod pipeline;
 pub mod reader;
 pub mod response;
 pub mod similarity;
@@ -30,6 +31,7 @@ pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use embedding_store::EmbeddingStore;
 pub use enrich::{enrich, EnrichStats};
+pub use pipeline::{BBox, Pipeline, PipelineStats};
 pub use reducer::{ApplyResult, GraphReducer};
 pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,

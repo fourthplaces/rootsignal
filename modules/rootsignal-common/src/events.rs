@@ -562,12 +562,6 @@ pub enum Event {
         source_id: Uuid,
     },
 
-    ActorStatsUpdated {
-        actor_id: Uuid,
-        entity_count: u32,
-        last_active: DateTime<Utc>,
-    },
-
     ActorLocationIdentified {
         actor_id: Uuid,
         location_lat: f64,
@@ -770,7 +764,6 @@ impl Event {
             Event::ActorIdentified { .. } => "actor_identified",
             Event::ActorLinkedToEntity { .. } => "actor_linked_to_entity",
             Event::ActorLinkedToSource { .. } => "actor_linked_to_source",
-            Event::ActorStatsUpdated { .. } => "actor_stats_updated",
             Event::ActorLocationIdentified { .. } => "actor_location_identified",
             Event::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
             Event::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",

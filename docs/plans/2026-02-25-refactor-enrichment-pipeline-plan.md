@@ -208,10 +208,10 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - `modules/rootsignal-graph/tests/pipeline_test.rs` — NEW: end-to-end tests
 
 **Tasks:**
-- [ ] Implement `Pipeline::process()` — reducer.apply_batch → enrich
-- [ ] Implement `Pipeline::rebuild()` — wipe + replay + enrich
-- [ ] Implement `Pipeline::replay_from()` — incremental replay + enrich
-- [ ] Migrate call sites to use `Pipeline` (wraps existing `GraphReducer`)
+- [x] Implement `Pipeline::process()` — apply events → enrich
+- [x] Implement `Pipeline::rebuild()` — wipe + replay + enrich
+- [x] Implement `Pipeline::replay_from()` — incremental replay + enrich
+- [x] Migrate call sites to use `Pipeline` (no external callers — GraphReducer is only used internally by Pipeline)
 - [ ] Write end-to-end test: events → pipeline → graph state matches expectations
 - [ ] Write test: replay produces identical graph (same events → same factual + derived properties)
 
@@ -219,9 +219,9 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 
 ### Functional
 - [x] `EmbeddingStore` caches embeddings in Postgres with get-or-compute semantics
-- [ ] `enrich()` reads graph and writes diversity, cause_heat, signal_count directly to Neo4j
-- [ ] `ActorIdentified` no longer increments `signal_count` — computed by enrichment
-- [ ] Pipeline orchestrates: reducer(events) → enrich(graph)
+- [x] `enrich()` reads graph and writes diversity, cause_heat, signal_count directly to Neo4j
+- [x] `ActorIdentified` no longer increments `signal_count` — computed by enrichment
+- [x] Pipeline orchestrates: reducer(events) → enrich(graph)
 - [ ] Enrichment properties are never set by the reducer (enforced by contract tests)
 
 ### Quality Gates

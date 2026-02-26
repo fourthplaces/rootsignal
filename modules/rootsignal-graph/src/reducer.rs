@@ -696,24 +696,6 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::ActorStatsUpdated {
-                actor_id,
-                entity_count,
-                last_active,
-            } => {
-                let q = query(
-                    "MATCH (a:Actor {id: $id})
-                     SET a.signal_count = $count,
-                         a.last_active = datetime($ts)"
-                )
-                .param("id", actor_id.to_string())
-                .param("count", entity_count as i64)
-                .param("ts", format_dt(&last_active));
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
             Event::ActorLocationIdentified {
                 actor_id,
                 location_lat,

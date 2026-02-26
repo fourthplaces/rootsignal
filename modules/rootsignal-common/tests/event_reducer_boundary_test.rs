@@ -560,7 +560,6 @@ fn build_all_events() -> Vec<Event> {
         Event::ActorIdentified { actor_id: id, name: "x".into(), actor_type: ActorType::Organization, entity_id: "y".into(), domains: vec![], social_urls: vec![], description: "z".into() },
         Event::ActorLinkedToEntity { actor_id: id, entity_id: id, role: "organizer".into() },
         Event::ActorLinkedToSource { actor_id: id, source_id: id },
-        Event::ActorStatsUpdated { actor_id: id, entity_count: 5, last_active: now },
         Event::ActorLocationIdentified { actor_id: id, location_lat: 44.9, location_lng: -93.2, location_name: Some("Minneapolis".into()) },
         Event::DuplicateActorsMerged { kept_id: id, merged_ids: vec![Uuid::new_v4()] },
         Event::OrphanedActorsCleaned { actor_ids: vec![id] },
