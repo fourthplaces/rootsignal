@@ -3140,6 +3140,74 @@ impl GraphWriter {
         Ok(results)
     }
 
+    /// Find response candidates by vector similarity within a geographic bounding box.
+    /// Searches across aid, gathering, and need embedding indexes.
+    pub async fn find_response_candidates(
+        &self,
+        tension_embedding: &[f64],
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<(Uuid, f64)>, neo4rs::Error> {
+        let mut candidates = Vec::new();
+
+        for index in &["aid_embedding", "gathering_embedding", "need_embedding"] {
+            let q = query(&format!(
+                "CALL db.index.vector.queryNodes('{}', 20, $embedding)
+                 YIELD node, score AS similarity
+                 WHERE similarity >= 0.4
+                   AND node.lat >= $min_lat AND node.lat <= $max_lat
+                   AND node.lng >= $min_lng AND node.lng <= $max_lng
+                 RETURN node.id AS id, similarity
+                 ORDER BY similarity DESC
+                 LIMIT 5",
+                index
+            ))
+            .param("embedding", tension_embedding.to_vec())
+            .param("min_lat", min_lat)
+            .param("max_lat", max_lat)
+            .param("min_lng", min_lng)
+            .param("max_lng", max_lng);
+
+            let mut stream = self.client.graph.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                let similarity: f64 = row.get("similarity").unwrap_or(0.0);
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    candidates.push((id, similarity));
+                }
+            }
+        }
+
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(candidates)
+    }
+
+    /// Get title and summary for a signal node by UUID.
+    /// Searches across Tension, Need, Aid, and Gathering labels.
+    pub async fn get_signal_info(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<(String, String)>, neo4rs::Error> {
+        for label in &["Tension", "Need", "Aid", "Gathering"] {
+            let q = query(&format!(
+                "MATCH (n:{label} {{id: $id}})
+                 RETURN n.title AS title, n.summary AS summary"
+            ))
+            .param("id", id.to_string());
+
+            let mut stream = self.client.graph.execute(q).await?;
+            if let Some(row) = stream.next().await? {
+                return Ok(Some((
+                    row.get("title").unwrap_or_default(),
+                    row.get("summary").unwrap_or_default(),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
     // --- Investigation operations ---
 
     /// Find signals that warrant investigation. Returns candidates across 3 priority

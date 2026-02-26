@@ -611,28 +611,13 @@ async fn test_find_tension_linker_targets_respects_bbox() {
 
 #[tokio::test]
 #[ignore]
-async fn test_response_mapper_bbox_scoping() {
+async fn test_tension_bbox_scoping() {
     let client = connect().await;
     let regions = get_regions();
 
-    println!("\n=== Testing ResponseMapper bbox scoping ===");
-
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    println!("\n=== Testing tension bbox scoping ===");
 
     for (slug, lat, lng, radius) in &regions {
-        let mapper = rootsignal_graph::response::ResponseMapper::new(
-            client.clone(),
-            &api_key,
-            *lat,
-            *lng,
-            *radius,
-        );
-
-        // We can't run full map_responses (needs LLM calls), but we can verify
-        // the constructor works and the struct is properly initialized
-        println!("[{}] ResponseMapper created with center ({:.2}, {:.2}), radius {:.0}km", slug, lat, lng, radius);
-
-        // Verify the bbox by checking that get_active_tensions returns subset
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
         let writer = GraphWriter::new(client.clone());
         let scoped = writer
@@ -647,7 +632,8 @@ async fn test_response_mapper_bbox_scoping() {
             .unwrap();
 
         println!(
-            "  Scoped tensions: {} / {} total (filtered out {})",
+            "[{}] Scoped tensions: {} / {} total (filtered out {})",
+            slug,
             scoped.len(),
             all.len(),
             all.len() - scoped.len()
@@ -658,5 +644,5 @@ async fn test_response_mapper_bbox_scoping() {
             "Scoped should never return more than unscoped"
         );
     }
-    println!("  ✓ ResponseMapper bbox verified");
+    println!("  ✓ Tension bbox verified");
 }

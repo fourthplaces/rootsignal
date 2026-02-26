@@ -154,8 +154,9 @@ pub async fn run_synthesis_from_deps(
         async {
             if run_response_mapping {
                 info!("Starting response mapping...");
-                let response_mapper = rootsignal_graph::response::ResponseMapper::new(
-                    deps.graph_client.clone(),
+                let response_mapper = crate::discovery::response_mapper::ResponseMapper::new(
+                    &writer,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     &deps.anthropic_api_key,
                     scope.center_lat,
                     scope.center_lng,
