@@ -194,9 +194,9 @@ Build enrichment functions that read the graph and write derived properties dire
 - [x] Implement `compute_diversity()` — reads SOURCED_FROM→Evidence edges, writes diversity properties via SET
 - [x] Implement `compute_actor_stats()` — counts ACTED_IN edges, writes signal_count via SET
 - [x] Implement `enrich()` orchestrator — runs diversity → actor stats → cause_heat (wraps existing `compute_cause_heat`)
-- [ ] Write test: diversity properties set correctly from Citation edges
-- [ ] Write test: actor signal_count matches ACTED_IN edge count
-- [ ] Write test: cause_heat computed for signals with embeddings
+- [x] Write test: diversity properties set correctly from Evidence edges (4 integration tests)
+- [x] Write test: actor signal_count matches ACTED_IN edge count (2 integration tests)
+- [x] Write test: cause_heat computed for signals with embeddings (2 integration tests)
 
 ### Phase 3: Pipeline orchestrator
 
@@ -212,7 +212,7 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - [x] Implement `Pipeline::rebuild()` — wipe + replay + enrich
 - [x] Implement `Pipeline::replay_from()` — incremental replay + enrich
 - [x] Migrate call sites to use `Pipeline` (no external callers — GraphReducer is only used internally by Pipeline)
-- [ ] Write end-to-end test: events → pipeline → graph state matches expectations
+- [x] Write end-to-end test: events → pipeline → graph state matches expectations (3 tests)
 - [ ] Write test: replay produces identical graph (same events → same factual + derived properties)
 
 ## Acceptance Criteria
@@ -222,12 +222,12 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - [x] `enrich()` reads graph and writes diversity, cause_heat, signal_count directly to Neo4j
 - [x] `ActorIdentified` no longer increments `signal_count` — computed by enrichment
 - [x] Pipeline orchestrates: reducer(events) → enrich(graph)
-- [ ] Enrichment properties are never set by the reducer (enforced by contract tests)
+- [x] Enrichment properties are never set by the reducer (enforced by contract tests: `reducer_source_has_no_diversity_writes`, `reducer_source_has_no_cause_heat_writes`)
 
 ### Quality Gates
 - [ ] Replay test: same events produce identical graph (factual + derived properties)
-- [ ] All tests follow MOCK → FUNCTION → OUTPUT pattern
-- [ ] Test names describe behavior, not implementation
+- [x] All tests follow MOCK → FUNCTION → OUTPUT pattern
+- [x] Test names describe behavior, not implementation
 
 ### Non-Goals
 - GraphWriter migration (Phase 3 of foundation plan — separate work)
