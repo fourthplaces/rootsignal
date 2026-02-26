@@ -264,3 +264,88 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
     let count: i64 = read_prop(&client, "Actor", actor_id, "signal_count").await;
     assert_eq!(count, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Replay idempotency
+// ---------------------------------------------------------------------------
+
+/// Snapshot of graph state for comparison.
+#[derive(Debug, PartialEq)]
+struct SignalSnapshot {
+    title: String,
+    source_diversity: i64,
+    channel_diversity: i64,
+    external_ratio: f64,
+}
+
+async fn snapshot_signal(client: &GraphClient, label: &str, id: Uuid) -> SignalSnapshot {
+    SignalSnapshot {
+        title: read_prop(client, label, id, "title").await,
+        source_diversity: read_prop(client, label, id, "source_diversity").await,
+        channel_diversity: read_prop(client, label, id, "channel_diversity").await,
+        external_ratio: read_prop(client, label, id, "external_ratio").await,
+    }
+}
+
+#[tokio::test]
+async fn replay_produces_identical_graph() {
+    let (_c, client) = setup().await;
+    let pipeline = Pipeline::new(client.clone(), 0.3);
+
+    let signal_id = Uuid::new_v4();
+    let ev_id = Uuid::new_v4();
+
+    let events = vec![
+        stored(1, &Event::GatheringDiscovered {
+            id: signal_id,
+            title: "Farmers Market".into(),
+            summary: "Weekly market".into(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.9,
+            source_url: "https://patch.com/market".into(),
+            extracted_at: Utc::now(),
+            content_date: None,
+            location: mpls(),
+            from_location: None,
+            implied_queries: vec![],
+            mentioned_actors: vec![],
+            author_actor: None,
+            schedule: None,
+            action_url: None,
+            organizer: None,
+        }),
+        stored(2, &Event::CitationRecorded {
+            citation_id: ev_id,
+            entity_id: signal_id,
+            url: "https://mpr.org/market".into(),
+            content_hash: "hash1".into(),
+            snippet: Some("MPR covers the market".into()),
+            relevance: Some("SUPPORTING".into()),
+            channel_type: Some(ChannelType::Press),
+            evidence_confidence: Some(0.8),
+        }),
+    ];
+
+    // First pass
+    pipeline
+        .process(&events, &bbox(), &[])
+        .await
+        .expect("first pass failed");
+    let snap1 = snapshot_signal(&client, "Gathering", signal_id).await;
+
+    // Wipe graph
+    client
+        .inner()
+        .run(query("MATCH (n) DETACH DELETE n"))
+        .await
+        .expect("wipe failed");
+
+    // Replay same events
+    pipeline
+        .process(&events, &bbox(), &[])
+        .await
+        .expect("replay failed");
+    let snap2 = snapshot_signal(&client, "Gathering", signal_id).await;
+
+    assert_eq!(snap1, snap2, "Replay must produce identical graph state");
+}

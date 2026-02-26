@@ -213,7 +213,7 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - [x] Implement `Pipeline::replay_from()` — incremental replay + enrich
 - [x] Migrate call sites to use `Pipeline` (no external callers — GraphReducer is only used internally by Pipeline)
 - [x] Write end-to-end test: events → pipeline → graph state matches expectations (3 tests)
-- [ ] Write test: replay produces identical graph (same events → same factual + derived properties)
+- [x] Write test: replay produces identical graph (same events → same factual + derived properties)
 
 ## Acceptance Criteria
 
@@ -225,7 +225,7 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - [x] Enrichment properties are never set by the reducer (enforced by contract tests: `reducer_source_has_no_diversity_writes`, `reducer_source_has_no_cause_heat_writes`)
 
 ### Quality Gates
-- [ ] Replay test: same events produce identical graph (factual + derived properties)
+- [x] Replay test: same events produce identical graph (factual + derived properties)
 - [x] All tests follow MOCK → FUNCTION → OUTPUT pattern
 - [x] Test names describe behavior, not implementation
 
