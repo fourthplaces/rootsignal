@@ -351,7 +351,14 @@ impl GqlGatheringSignal {
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
-    async fn review_status(&self) -> &str { &self.meta().review_status }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
     async fn was_corrected(&self) -> bool { self.meta().was_corrected }
     async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
     async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
@@ -410,7 +417,14 @@ impl GqlAidSignal {
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
-    async fn review_status(&self) -> &str { &self.meta().review_status }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
     async fn was_corrected(&self) -> bool { self.meta().was_corrected }
     async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
     async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
@@ -463,7 +477,14 @@ impl GqlNeedSignal {
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
-    async fn review_status(&self) -> &str { &self.meta().review_status }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
     async fn was_corrected(&self) -> bool { self.meta().was_corrected }
     async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
     async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
@@ -515,7 +536,14 @@ impl GqlNoticeSignal {
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
-    async fn review_status(&self) -> &str { &self.meta().review_status }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
     async fn was_corrected(&self) -> bool { self.meta().was_corrected }
     async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
     async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
@@ -567,7 +595,14 @@ impl GqlTensionSignal {
     async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
     async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
     async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
-    async fn review_status(&self) -> &str { &self.meta().review_status }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
     async fn was_corrected(&self) -> bool { self.meta().was_corrected }
     async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
     async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
