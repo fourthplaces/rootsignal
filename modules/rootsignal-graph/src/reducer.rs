@@ -9,10 +9,14 @@
 //! Replaying the same event twice produces the same graph state.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use neo4rs::query;
 use tracing::{debug, warn};
 
-use rootsignal_common::events::Event;
+use rootsignal_common::events::{
+    AidCorrection, Event, GatheringCorrection, Location, NeedCorrection, NoticeCorrection,
+    Schedule, SituationChange, SourceChange, TensionCorrection,
+};
 use rootsignal_common::types::NodeType;
 use rootsignal_events::StoredEvent;
 
@@ -74,9 +78,9 @@ impl GraphReducer {
             }
 
             // Informational — no graph mutation
-            Event::SignalRejected { .. }
-            | Event::SignalDroppedNoDate { .. }
-            | Event::SignalDeduplicated { .. }
+            Event::ObservationRejected { .. }
+            | Event::ExtractionDroppedNoDate { .. }
+            | Event::DuplicateDetected { .. }
             | Event::ExpansionQueryCollected { .. }
             | Event::ExpansionSourceCreated { .. }
             | Event::SourceLinkDiscovered { .. } => {
@@ -85,141 +89,121 @@ impl GraphReducer {
             }
 
             // =================================================================
-            // Signal facts — create/update/delete signal nodes
+            // Discovery facts — 5 typed variants
             // =================================================================
-            Event::SignalDiscovered {
-                signal_id,
-                node_type,
-                title,
-                summary,
-                sensitivity,
-                confidence,
-                source_url,
-                extracted_at,
-                content_date,
-                about_location,
-                about_location_name,
-                implied_queries,
-                // Type-specific
-                starts_at,
-                ends_at,
-                action_url,
-                organizer,
-                is_recurring,
-                availability,
-                is_ongoing,
-                urgency,
-                what_needed,
-                goal,
-                severity,
-                category,
-                effective_date,
-                source_authority,
-                what_would_help,
-                // Not used in reducer (actor linking is a separate event)
-                mentioned_actors: _,
-                author_actor: _,
-                from_location: _,
+            Event::GatheringDiscovered {
+                id, title, summary, sensitivity, confidence, source_url,
+                extracted_at, content_date, location, implied_queries,
+                schedule, action_url, organizer,
+                from_location: _, mentioned_actors: _, author_actor: _,
             } => {
-                let label = node_type_label(node_type);
-                let (lat, lng) = geo_point_to_lat_lng(&about_location);
-                let actor_str = event.actor.as_deref().unwrap_or("");
-                let run_id = event.run_id.as_deref().unwrap_or("");
-
-                // Build type-specific SET clause
-                let type_specific_set = match node_type {
-                    NodeType::Gathering => {
-                        ", n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
-                           n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                           n.action_url = $action_url,
-                           n.organizer = $organizer,
-                           n.is_recurring = $is_recurring"
-                    }
-                    NodeType::Aid => {
-                        ", n.action_url = $action_url,
-                           n.availability = $availability,
-                           n.is_ongoing = $is_ongoing"
-                    }
-                    NodeType::Need => {
-                        ", n.urgency = $urgency,
-                           n.what_needed = $what_needed,
-                           n.action_url = $action_url,
-                           n.goal = $goal"
-                    }
-                    NodeType::Notice => {
-                        ", n.severity = $severity,
-                           n.category = $category,
-                           n.effective_date = $effective_date,
-                           n.source_authority = $source_authority"
-                    }
-                    NodeType::Tension => {
-                        ", n.severity = $severity,
-                           n.category = $category,
-                           n.what_would_help = $what_would_help"
-                    }
-                    _ => "",
-                };
-
-                let cypher = format!(
-                    "MERGE (n:{label} {{id: $id}})
-                     ON CREATE SET
-                         n.title = $title,
-                         n.summary = $summary,
-                         n.sensitivity = $sensitivity,
-                         n.confidence = $confidence,
-                         n.source_url = $source_url,
-                         n.extracted_at = datetime($extracted_at),
-                         n.last_confirmed_active = datetime($extracted_at),
-                         n.content_date = CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
-                         n.location_name = $location_name,
-                         n.lat = $lat,
-                         n.lng = $lng,
-                         n.implied_queries = CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
-                         n.corroboration_count = 0,
-                         n.review_status = 'staged',
-                         n.created_by = $created_by,
-                         n.scout_run_id = $scout_run_id
-                         {type_specific_set}"
-                );
-
-                let q = query(&cypher)
-                    .param("id", signal_id.to_string())
-                    .param("title", title.as_str())
-                    .param("summary", summary.as_str())
-                    .param("sensitivity", sensitivity.as_str())
-                    .param("confidence", confidence as f64)
-                    .param("source_url", source_url.as_str())
-                    .param("extracted_at", format_dt(&extracted_at))
-                    .param("content_date", content_date.map(|dt| format_dt(&dt)).unwrap_or_default())
-                    .param("location_name", about_location_name.as_deref().unwrap_or(""))
-                    .param("lat", lat)
-                    .param("lng", lng)
-                    .param("implied_queries", implied_queries)
-                    .param("created_by", actor_str)
-                    .param("scout_run_id", run_id)
-                    // Type-specific params (all provided, unused ones are harmless)
-                    .param("starts_at", starts_at.map(|dt| format_dt(&dt)).unwrap_or_default())
-                    .param("ends_at", ends_at.map(|dt| format_dt(&dt)).unwrap_or_default())
-                    .param("action_url", action_url.as_deref().unwrap_or(""))
-                    .param("organizer", organizer.unwrap_or_default())
-                    .param("is_recurring", is_recurring.unwrap_or(false))
-                    .param("availability", availability.as_deref().unwrap_or(""))
-                    .param("is_ongoing", is_ongoing.unwrap_or(false))
-                    .param("urgency", urgency.map(|u| urgency_str(u)).unwrap_or(""))
-                    .param("what_needed", what_needed.as_deref().unwrap_or(""))
-                    .param("goal", goal.unwrap_or_default())
-                    .param("severity", severity.map(|s| severity_str(s)).unwrap_or(""))
-                    .param("category", category.unwrap_or_default())
-                    .param("effective_date", effective_date.map(|dt| format_dt(&dt)).unwrap_or_default())
-                    .param("source_authority", source_authority.unwrap_or_default())
-                    .param("what_would_help", what_would_help.as_deref().unwrap_or(""));
+                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let q = build_discovery_query(
+                    "Gathering",
+                    ", n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
+                       n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.action_url = $action_url, n.organizer = $organizer",
+                    id, &title, &summary, &sensitivity, confidence, &source_url,
+                    &extracted_at, content_date, &location, implied_queries, event,
+                )
+                .param("starts_at", starts_at)
+                .param("ends_at", ends_at)
+                .param("rrule", rrule)
+                .param("all_day", all_day)
+                .param("timezone", timezone)
+                .param("action_url", action_url.as_deref().unwrap_or(""))
+                .param("organizer", organizer.unwrap_or_default());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalCorroborated {
-                signal_id,
+            Event::AidDiscovered {
+                id, title, summary, sensitivity, confidence, source_url,
+                extracted_at, content_date, location, implied_queries,
+                action_url, availability, is_ongoing,
+                from_location: _, mentioned_actors: _, author_actor: _,
+            } => {
+                let q = build_discovery_query(
+                    "Aid",
+                    ", n.action_url = $action_url, n.availability = $availability,
+                       n.is_ongoing = $is_ongoing",
+                    id, &title, &summary, &sensitivity, confidence, &source_url,
+                    &extracted_at, content_date, &location, implied_queries, event,
+                )
+                .param("action_url", action_url.as_deref().unwrap_or(""))
+                .param("availability", availability.as_deref().unwrap_or(""))
+                .param("is_ongoing", is_ongoing.unwrap_or(false));
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::NeedDiscovered {
+                id, title, summary, sensitivity, confidence, source_url,
+                extracted_at, content_date, location, implied_queries,
+                urgency, what_needed, goal,
+                from_location: _, mentioned_actors: _, author_actor: _,
+            } => {
+                let q = build_discovery_query(
+                    "Need",
+                    ", n.urgency = $urgency, n.what_needed = $what_needed, n.goal = $goal",
+                    id, &title, &summary, &sensitivity, confidence, &source_url,
+                    &extracted_at, content_date, &location, implied_queries, event,
+                )
+                .param("urgency", urgency.map(|u| urgency_str(u)).unwrap_or(""))
+                .param("what_needed", what_needed.as_deref().unwrap_or(""))
+                .param("goal", goal.unwrap_or_default());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::NoticeDiscovered {
+                id, title, summary, sensitivity, confidence, source_url,
+                extracted_at, content_date, location, implied_queries,
+                severity, category, effective_date, source_authority,
+                from_location: _, mentioned_actors: _, author_actor: _,
+            } => {
+                let q = build_discovery_query(
+                    "Notice",
+                    ", n.severity = $severity, n.category = $category,
+                       n.effective_date = CASE WHEN $effective_date = '' THEN null ELSE datetime($effective_date) END,
+                       n.source_authority = $source_authority",
+                    id, &title, &summary, &sensitivity, confidence, &source_url,
+                    &extracted_at, content_date, &location, implied_queries, event,
+                )
+                .param("severity", severity.map(|s| severity_str(s)).unwrap_or(""))
+                .param("category", category.unwrap_or_default())
+                .param("effective_date", effective_date.map(|dt| format_dt(&dt)).unwrap_or_default())
+                .param("source_authority", source_authority.unwrap_or_default());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::TensionDiscovered {
+                id, title, summary, sensitivity, confidence, source_url,
+                extracted_at, content_date, location, implied_queries,
+                severity, what_would_help,
+                from_location: _, mentioned_actors: _, author_actor: _,
+            } => {
+                let q = build_discovery_query(
+                    "Tension",
+                    ", n.severity = $severity, n.what_would_help = $what_would_help",
+                    id, &title, &summary, &sensitivity, confidence, &source_url,
+                    &extracted_at, content_date, &location, implied_queries, event,
+                )
+                .param("severity", severity.map(|s| severity_str(s)).unwrap_or(""))
+                .param("what_would_help", what_would_help.as_deref().unwrap_or(""));
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::ObservationCorroborated {
+                entity_id,
                 node_type,
                 new_corroboration_count,
                 ..
@@ -230,7 +214,7 @@ impl GraphReducer {
                      SET n.corroboration_count = $count,
                          n.last_confirmed_active = datetime($ts)"
                 ))
-                .param("id", signal_id.to_string())
+                .param("id", entity_id.to_string())
                 .param("count", new_corroboration_count as i64)
                 .param("ts", format_dt_from_stored(event));
 
@@ -238,31 +222,30 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalRefreshed {
-                signal_ids,
+            Event::FreshnessConfirmed {
+                entity_ids,
                 node_type,
-                new_last_confirmed_active,
+                confirmed_at,
             } => {
                 let label = node_type_label(node_type);
-                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(&format!(
                     "UNWIND $ids AS id
                      MATCH (n:{label} {{id: id}})
                      SET n.last_confirmed_active = datetime($ts)"
                 ))
                 .param("ids", ids)
-                .param("ts", format_dt(&new_last_confirmed_active));
+                .param("ts", format_dt(&confirmed_at));
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalConfidenceScored {
-                signal_id,
+            Event::ConfidenceScored {
+                entity_id,
                 new_confidence,
                 ..
             } => {
-                // Update across all signal labels (we don't know the type here)
                 let q = query(
                     "OPTIONAL MATCH (g:Gathering {id: $id})
                      OPTIONAL MATCH (a:Aid {id: $id})
@@ -273,45 +256,94 @@ impl GraphReducer {
                      WHERE node IS NOT NULL
                      SET node.confidence = $confidence"
                 )
-                .param("id", signal_id.to_string())
+                .param("id", entity_id.to_string())
                 .param("confidence", new_confidence as f64);
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalFieldsCorrected {
-                signal_id,
-                corrections,
-            } => {
-                // Apply each field correction individually
-                for correction in &corrections {
-                    let new_val = match &correction.new_value {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    // Use dynamic property setting
-                    let q = query(&format!(
-                        "OPTIONAL MATCH (g:Gathering {{id: $id}})
-                         OPTIONAL MATCH (a:Aid {{id: $id}})
-                         OPTIONAL MATCH (n:Need {{id: $id}})
-                         OPTIONAL MATCH (nc:Notice {{id: $id}})
-                         OPTIONAL MATCH (t:Tension {{id: $id}})
-                         WITH coalesce(g, a, n, nc, t) AS node
-                         WHERE node IS NOT NULL
-                         SET node.{} = $value",
-                        sanitize_field_name(&correction.field)
-                    ))
-                    .param("id", signal_id.to_string())
-                    .param("value", new_val);
-
-                    self.client.graph.run(q).await?;
+            // =================================================================
+            // Correction facts — 5 typed handlers
+            // =================================================================
+            Event::GatheringCorrected { entity_id, correction, .. } => {
+                match correction {
+                    GatheringCorrection::Title { new, .. } => self.set_str("Gathering", entity_id, "title", &new).await?,
+                    GatheringCorrection::Summary { new, .. } => self.set_str("Gathering", entity_id, "summary", &new).await?,
+                    GatheringCorrection::Confidence { new, .. } => self.set_f64("Gathering", entity_id, "confidence", new as f64).await?,
+                    GatheringCorrection::Sensitivity { new, .. } => self.set_str("Gathering", entity_id, "sensitivity", new.as_str()).await?,
+                    GatheringCorrection::Location { new, .. } => self.set_location("Gathering", entity_id, &new).await?,
+                    GatheringCorrection::Schedule { new, .. } => self.set_schedule("Gathering", entity_id, &new).await?,
+                    GatheringCorrection::Organizer { new, .. } => self.set_str("Gathering", entity_id, "organizer", new.as_deref().unwrap_or("")).await?,
+                    GatheringCorrection::ActionUrl { new, .. } => self.set_str("Gathering", entity_id, "action_url", new.as_deref().unwrap_or("")).await?,
                 }
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalExpired {
-                signal_id,
+            Event::AidCorrected { entity_id, correction, .. } => {
+                match correction {
+                    AidCorrection::Title { new, .. } => self.set_str("Aid", entity_id, "title", &new).await?,
+                    AidCorrection::Summary { new, .. } => self.set_str("Aid", entity_id, "summary", &new).await?,
+                    AidCorrection::Confidence { new, .. } => self.set_f64("Aid", entity_id, "confidence", new as f64).await?,
+                    AidCorrection::Sensitivity { new, .. } => self.set_str("Aid", entity_id, "sensitivity", new.as_str()).await?,
+                    AidCorrection::Location { new, .. } => self.set_location("Aid", entity_id, &new).await?,
+                    AidCorrection::ActionUrl { new, .. } => self.set_str("Aid", entity_id, "action_url", new.as_deref().unwrap_or("")).await?,
+                    AidCorrection::Availability { new, .. } => self.set_str("Aid", entity_id, "availability", new.as_deref().unwrap_or("")).await?,
+                    AidCorrection::IsOngoing { new, .. } => self.set_bool("Aid", entity_id, "is_ongoing", new.unwrap_or(false)).await?,
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::NeedCorrected { entity_id, correction, .. } => {
+                match correction {
+                    NeedCorrection::Title { new, .. } => self.set_str("Need", entity_id, "title", &new).await?,
+                    NeedCorrection::Summary { new, .. } => self.set_str("Need", entity_id, "summary", &new).await?,
+                    NeedCorrection::Confidence { new, .. } => self.set_f64("Need", entity_id, "confidence", new as f64).await?,
+                    NeedCorrection::Sensitivity { new, .. } => self.set_str("Need", entity_id, "sensitivity", new.as_str()).await?,
+                    NeedCorrection::Location { new, .. } => self.set_location("Need", entity_id, &new).await?,
+                    NeedCorrection::Urgency { new, .. } => self.set_str("Need", entity_id, "urgency", new.map(|u| urgency_str(u)).unwrap_or("")).await?,
+                    NeedCorrection::WhatNeeded { new, .. } => self.set_str("Need", entity_id, "what_needed", new.as_deref().unwrap_or("")).await?,
+                    NeedCorrection::Goal { new, .. } => self.set_str("Need", entity_id, "goal", new.as_deref().unwrap_or("")).await?,
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::NoticeCorrected { entity_id, correction, .. } => {
+                match correction {
+                    NoticeCorrection::Title { new, .. } => self.set_str("Notice", entity_id, "title", &new).await?,
+                    NoticeCorrection::Summary { new, .. } => self.set_str("Notice", entity_id, "summary", &new).await?,
+                    NoticeCorrection::Confidence { new, .. } => self.set_f64("Notice", entity_id, "confidence", new as f64).await?,
+                    NoticeCorrection::Sensitivity { new, .. } => self.set_str("Notice", entity_id, "sensitivity", new.as_str()).await?,
+                    NoticeCorrection::Location { new, .. } => self.set_location("Notice", entity_id, &new).await?,
+                    NoticeCorrection::Severity { new, .. } => self.set_str("Notice", entity_id, "severity", new.map(|s| severity_str(s)).unwrap_or("")).await?,
+                    NoticeCorrection::Category { new, .. } => self.set_str("Notice", entity_id, "category", new.as_deref().unwrap_or("")).await?,
+                    NoticeCorrection::EffectiveDate { new, .. } => {
+                        let val = new.map(|dt| format_dt(&dt)).unwrap_or_default();
+                        let q = query("MATCH (n:Notice {id: $id}) SET n.effective_date = CASE WHEN $value = '' THEN null ELSE datetime($value) END")
+                            .param("id", entity_id.to_string())
+                            .param("value", val);
+                        self.client.graph.run(q).await?;
+                    }
+                    NoticeCorrection::SourceAuthority { new, .. } => self.set_str("Notice", entity_id, "source_authority", new.as_deref().unwrap_or("")).await?,
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::TensionCorrected { entity_id, correction, .. } => {
+                match correction {
+                    TensionCorrection::Title { new, .. } => self.set_str("Tension", entity_id, "title", &new).await?,
+                    TensionCorrection::Summary { new, .. } => self.set_str("Tension", entity_id, "summary", &new).await?,
+                    TensionCorrection::Confidence { new, .. } => self.set_f64("Tension", entity_id, "confidence", new as f64).await?,
+                    TensionCorrection::Sensitivity { new, .. } => self.set_str("Tension", entity_id, "sensitivity", new.as_str()).await?,
+                    TensionCorrection::Location { new, .. } => self.set_location("Tension", entity_id, &new).await?,
+                    TensionCorrection::Severity { new, .. } => self.set_str("Tension", entity_id, "severity", new.map(|s| severity_str(s)).unwrap_or("")).await?,
+                    TensionCorrection::WhatWouldHelp { new, .. } => self.set_str("Tension", entity_id, "what_would_help", new.as_deref().unwrap_or("")).await?,
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::EntityExpired {
+                entity_id,
                 node_type,
                 ..
             } => {
@@ -321,14 +353,14 @@ impl GraphReducer {
                      OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
                      DETACH DELETE n, ev"
                 ))
-                .param("id", signal_id.to_string());
+                .param("id", entity_id.to_string());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SignalPurged {
-                signal_id,
+            Event::EntityPurged {
+                entity_id,
                 node_type,
                 ..
             } => {
@@ -338,14 +370,14 @@ impl GraphReducer {
                      OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
                      DETACH DELETE n, ev"
                 ))
-                .param("id", signal_id.to_string());
+                .param("id", entity_id.to_string());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
             Event::ReviewVerdictReached {
-                signal_id,
+                entity_id,
                 new_status,
                 ..
             } => {
@@ -359,15 +391,15 @@ impl GraphReducer {
                      WHERE node IS NOT NULL
                      SET node.review_status = $status"
                 )
-                .param("id", signal_id.to_string())
+                .param("id", entity_id.to_string())
                 .param("status", new_status.as_str());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            Event::ImpliedQueriesConsumed { signal_ids } => {
-                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+            Event::ImpliedQueriesConsumed { entity_ids } => {
+                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      MATCH (n) WHERE n.id = id AND (n:Aid OR n:Gathering)
@@ -384,7 +416,7 @@ impl GraphReducer {
             // =================================================================
             Event::CitationRecorded {
                 citation_id,
-                signal_id,
+                entity_id,
                 url,
                 content_hash,
                 snippet,
@@ -393,14 +425,14 @@ impl GraphReducer {
                 evidence_confidence,
             } => {
                 let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $signal_id})
-                     OPTIONAL MATCH (a:Aid {id: $signal_id})
-                     OPTIONAL MATCH (n:Need {id: $signal_id})
-                     OPTIONAL MATCH (nc:Notice {id: $signal_id})
-                     OPTIONAL MATCH (t:Tension {id: $signal_id})
-                     WITH coalesce(g, a, n, nc, t) AS signal
-                     WHERE signal IS NOT NULL
-                     MERGE (signal)-[:SOURCED_FROM]->(ev:Evidence {source_url: $url})
+                    "OPTIONAL MATCH (g:Gathering {id: $entity_id})
+                     OPTIONAL MATCH (a:Aid {id: $entity_id})
+                     OPTIONAL MATCH (n:Need {id: $entity_id})
+                     OPTIONAL MATCH (nc:Notice {id: $entity_id})
+                     OPTIONAL MATCH (t:Tension {id: $entity_id})
+                     WITH coalesce(g, a, n, nc, t) AS node
+                     WHERE node IS NOT NULL
+                     MERGE (node)-[:SOURCED_FROM]->(ev:Evidence {source_url: $url})
                      ON CREATE SET
                          ev.id = $ev_id,
                          ev.retrieved_at = datetime($ts),
@@ -414,7 +446,7 @@ impl GraphReducer {
                          ev.content_hash = $content_hash"
                 )
                 .param("ev_id", citation_id.to_string())
-                .param("signal_id", signal_id.to_string())
+                .param("entity_id", entity_id.to_string())
                 .param("url", url.as_str())
                 .param("ts", format_dt_from_stored(event))
                 .param("content_hash", content_hash.as_str())
@@ -489,26 +521,41 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SourceUpdated {
+            Event::SourceChanged {
                 canonical_key,
-                changes,
+                change,
                 ..
             } => {
-                // Apply each changed field from the JSON object
-                if let Some(obj) = changes.as_object() {
-                    for (key, value) in obj {
-                        let val_str = match value {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        let q = query(&format!(
-                            "MATCH (s:Source {{canonical_key: $key}})
-                             SET s.{} = $value",
-                            sanitize_field_name(key)
-                        ))
-                        .param("key", canonical_key.as_str())
-                        .param("value", val_str);
-
+                let key = canonical_key.as_str();
+                match change {
+                    SourceChange::Weight { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.weight = $value")
+                            .param("key", key).param("value", new);
+                        self.client.graph.run(q).await?;
+                    }
+                    SourceChange::Url { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.url = $value")
+                            .param("key", key).param("value", new.as_str());
+                        self.client.graph.run(q).await?;
+                    }
+                    SourceChange::Role { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.source_role = $value")
+                            .param("key", key).param("value", new.to_string());
+                        self.client.graph.run(q).await?;
+                    }
+                    SourceChange::QualityPenalty { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.quality_penalty = $value")
+                            .param("key", key).param("value", new);
+                        self.client.graph.run(q).await?;
+                    }
+                    SourceChange::GapContext { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.gap_context = $value")
+                            .param("key", key).param("value", new.as_deref().unwrap_or(""));
+                        self.client.graph.run(q).await?;
+                    }
+                    SourceChange::Active { new, .. } => {
+                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.active = $value")
+                            .param("key", key).param("value", new);
                         self.client.graph.run(q).await?;
                     }
                 }
@@ -541,11 +588,11 @@ impl GraphReducer {
 
             Event::SourceScrapeRecorded {
                 canonical_key,
-                signals_produced,
+                entities_produced,
                 scrape_count,
                 consecutive_empty_runs,
             } => {
-                let q = if signals_produced > 0 {
+                let q = if entities_produced > 0 {
                     query(
                         "MATCH (s:Source {canonical_key: $key})
                          SET s.last_scraped = datetime($ts),
@@ -554,7 +601,7 @@ impl GraphReducer {
                              s.consecutive_empty_runs = 0,
                              s.scrape_count = $scrape_count"
                     )
-                    .param("count", signals_produced as i64)
+                    .param("count", entities_produced as i64)
                 } else {
                     query(
                         "MATCH (s:Source {canonical_key: $key})
@@ -616,18 +663,18 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::ActorLinkedToSignal {
+            Event::ActorLinkedToEntity {
                 actor_id,
-                signal_id,
+                entity_id,
                 role,
             } => {
                 let q = query(
                     "MATCH (a:Actor {id: $actor_id})
-                     MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                     MATCH (n) WHERE n.id = $entity_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                      MERGE (a)-[:ACTED_IN {role: $role}]->(n)"
                 )
                 .param("actor_id", actor_id.to_string())
-                .param("signal_id", signal_id.to_string())
+                .param("entity_id", entity_id.to_string())
                 .param("role", role.as_str());
 
                 self.client.graph.run(q).await?;
@@ -652,7 +699,7 @@ impl GraphReducer {
 
             Event::ActorStatsUpdated {
                 actor_id,
-                signal_count,
+                entity_count,
                 last_active,
             } => {
                 let q = query(
@@ -661,7 +708,7 @@ impl GraphReducer {
                          a.last_active = datetime($ts)"
                 )
                 .param("id", actor_id.to_string())
-                .param("count", signal_count as i64)
+                .param("count", entity_count as i64)
                 .param("ts", format_dt(&last_active));
 
                 self.client.graph.run(q).await?;
@@ -732,50 +779,6 @@ impl GraphReducer {
             }
 
             // =================================================================
-            // Relationship facts
-            // =================================================================
-            Event::RelationshipEstablished {
-                from_id,
-                to_id,
-                relationship_type,
-                properties,
-            } => {
-                // Dynamic relationship type — sanitize the name
-                let rel_type = sanitize_field_name(&relationship_type);
-                let cypher = format!(
-                    "MATCH (a) WHERE a.id = $from_id
-                     MATCH (b) WHERE b.id = $to_id
-                     MERGE (a)-[r:{rel_type}]->(b)"
-                );
-
-                let mut q = query(&cypher)
-                    .param("from_id", from_id.to_string())
-                    .param("to_id", to_id.to_string());
-
-                // Set properties if provided
-                if let Some(props) = properties {
-                    if let Some(obj) = props.as_object() {
-                        for (key, value) in obj {
-                            match value {
-                                serde_json::Value::Number(n) => {
-                                    if let Some(f) = n.as_f64() {
-                                        q = q.param(key.as_str(), f);
-                                    }
-                                }
-                                serde_json::Value::String(s) => {
-                                    q = q.param(key.as_str(), s.as_str());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            // =================================================================
             // Situation / dispatch facts
             // =================================================================
             Event::SituationIdentified {
@@ -825,27 +828,53 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SituationEvolved {
+            Event::SituationChanged {
                 situation_id,
-                changes,
+                change,
             } => {
-                // Apply each changed field
-                if let Some(obj) = changes.as_object() {
-                    for (key, value) in obj {
-                        let val_str = match value {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            other => other.to_string(),
-                        };
-                        let q = query(&format!(
-                            "MATCH (s:Story {{id: $id}})
-                             SET s.{} = $value, s.last_updated = datetime($ts)",
-                            sanitize_field_name(key)
-                        ))
-                        .param("id", situation_id.to_string())
-                        .param("value", val_str)
-                        .param("ts", format_dt_from_stored(event));
-
+                let id_str = situation_id.to_string();
+                let ts = format_dt_from_stored(event);
+                match change {
+                    SituationChange::Headline { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Lede { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.lede = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Arc { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.arc = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.to_string()).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Temperature { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.energy = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Location { new, .. } => {
+                        let (lat, lng) = location_lat_lng(&new);
+                        let name = location_name_str(&new);
+                        let q = query("MATCH (s:Story {id: $id}) SET s.centroid_lat = $lat, s.centroid_lng = $lng, s.location_name = $name, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("lat", lat).param("lng", lng).param("name", name).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Sensitivity { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.sensitivity = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::Category { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.category = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_deref().unwrap_or("")).param("ts", ts);
+                        self.client.graph.run(q).await?;
+                    }
+                    SituationChange::StructuredState { new, .. } => {
+                        let q = query("MATCH (s:Story {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                 }
@@ -938,12 +967,12 @@ impl GraphReducer {
             // =================================================================
             Event::LintCorrectionApplied {
                 node_id,
-                signal_type,
+                node_type,
                 field,
                 new_value,
                 ..
             } => {
-                let label = node_type_label(signal_type);
+                let label = node_type_label(node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
                      SET n.{} = $value",
@@ -958,10 +987,10 @@ impl GraphReducer {
 
             Event::LintRejectionIssued {
                 node_id,
-                signal_type,
+                node_type,
                 ..
             } => {
-                let label = node_type_label(signal_type);
+                let label = node_type_label(node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
                      SET n.review_status = 'rejected'"
@@ -972,8 +1001,8 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::EmptySignalsCleaned { signal_ids } => {
-                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+            Event::EmptyEntitiesCleaned { entity_ids } => {
+                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      OPTIONAL MATCH (g:Gathering {id: id})
@@ -992,8 +1021,8 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::FakeCoordinatesNulled { signal_ids, .. } => {
-                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+            Event::FakeCoordinatesNulled { entity_ids, .. } => {
+                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      OPTIONAL MATCH (g:Gathering {id: id})
@@ -1006,36 +1035,6 @@ impl GraphReducer {
                      SET node.lat = null, node.lng = null"
                 )
                 .param("ids", ids);
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            // =================================================================
-            // Schedule facts
-            // =================================================================
-            Event::ScheduleRecorded {
-                signal_id,
-                rrule,
-                dtstart,
-                label,
-            } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Aid {id: $id})
-                     OPTIONAL MATCH (n:Need {id: $id})
-                     OPTIONAL MATCH (nc:Notice {id: $id})
-                     OPTIONAL MATCH (t:Tension {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.rrule = $rrule,
-                         node.dtstart = datetime($dtstart),
-                         node.schedule_label = $label"
-                )
-                .param("id", signal_id.to_string())
-                .param("rrule", rrule.as_str())
-                .param("dtstart", format_dt(&dtstart))
-                .param("label", label.unwrap_or_default());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -1084,7 +1083,7 @@ impl GraphReducer {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::DemandSignalReceived {
+            Event::DemandReceived {
                 demand_id,
                 query: demand_query,
                 center_lat,
@@ -1157,6 +1156,68 @@ impl GraphReducer {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Private helpers for typed correction handlers
+    // -----------------------------------------------------------------------
+
+    async fn set_str(&self, label: &str, id: uuid::Uuid, prop: &str, value: &str) -> Result<()> {
+        let q = query(&format!("MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"))
+            .param("id", id.to_string())
+            .param("value", value);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    async fn set_f64(&self, label: &str, id: uuid::Uuid, prop: &str, value: f64) -> Result<()> {
+        let q = query(&format!("MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"))
+            .param("id", id.to_string())
+            .param("value", value);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    async fn set_bool(&self, label: &str, id: uuid::Uuid, prop: &str, value: bool) -> Result<()> {
+        let q = query(&format!("MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"))
+            .param("id", id.to_string())
+            .param("value", value);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    async fn set_location(&self, label: &str, id: uuid::Uuid, loc: &Option<Location>) -> Result<()> {
+        let (lat, lng) = location_lat_lng(loc);
+        let name = location_name_str(loc);
+        let address = location_address_str(loc);
+        let q = query(&format!(
+            "MATCH (n:{label} {{id: $id}}) SET n.lat = $lat, n.lng = $lng, n.location_name = $name, n.address = $address"
+        ))
+        .param("id", id.to_string())
+        .param("lat", lat)
+        .param("lng", lng)
+        .param("name", name)
+        .param("address", address);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
+    async fn set_schedule(&self, label: &str, id: uuid::Uuid, schedule: &Option<Schedule>) -> Result<()> {
+        let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(schedule);
+        let q = query(&format!(
+            "MATCH (n:{label} {{id: $id}}) SET
+             n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
+             n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
+             n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone"
+        ))
+        .param("id", id.to_string())
+        .param("starts_at", starts_at)
+        .param("ends_at", ends_at)
+        .param("rrule", rrule)
+        .param("all_day", all_day)
+        .param("timezone", timezone);
+        self.client.graph.run(q).await?;
+        Ok(())
+    }
+
     /// Replay events from seq_start in order. Returns the last seq applied.
     pub async fn replay_from(
         &self,
@@ -1216,7 +1277,7 @@ fn node_type_label(node_type: NodeType) -> &'static str {
     }
 }
 
-fn format_dt(dt: &chrono::DateTime<chrono::Utc>) -> String {
+fn format_dt(dt: &DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
@@ -1226,13 +1287,100 @@ fn format_dt_from_stored(event: &StoredEvent) -> String {
     format_dt(&event.ts)
 }
 
-fn geo_point_to_lat_lng(
-    point: &Option<rootsignal_common::types::GeoPoint>,
-) -> (f64, f64) {
-    match point {
-        Some(p) => (p.lat, p.lng),
-        None => (0.0, 0.0),
+fn location_lat_lng(loc: &Option<Location>) -> (f64, f64) {
+    loc.as_ref()
+        .and_then(|l| l.point.as_ref())
+        .map(|p| (p.lat, p.lng))
+        .unwrap_or((0.0, 0.0))
+}
+
+fn location_name_str(loc: &Option<Location>) -> String {
+    loc.as_ref()
+        .and_then(|l| l.name.clone())
+        .unwrap_or_default()
+}
+
+fn location_address_str(loc: &Option<Location>) -> String {
+    loc.as_ref()
+        .and_then(|l| l.address.clone())
+        .unwrap_or_default()
+}
+
+fn extract_schedule(schedule: &Option<Schedule>) -> (String, String, String, bool, String) {
+    match schedule {
+        Some(s) => (
+            s.starts_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
+            s.ends_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
+            s.rrule.clone().unwrap_or_default(),
+            s.all_day,
+            s.timezone.clone().unwrap_or_default(),
+        ),
+        None => (String::new(), String::new(), String::new(), false, String::new()),
     }
+}
+
+/// Build the common MERGE/ON CREATE SET query for all 5 discovery event types.
+/// Each caller adds type-specific params via .param() chaining.
+fn build_discovery_query(
+    label: &str,
+    type_specific_set: &str,
+    id: uuid::Uuid,
+    title: &str,
+    summary: &str,
+    sensitivity: &rootsignal_common::safety::SensitivityLevel,
+    confidence: f32,
+    source_url: &str,
+    extracted_at: &DateTime<Utc>,
+    content_date: Option<DateTime<Utc>>,
+    location: &Option<Location>,
+    implied_queries: Vec<String>,
+    event: &StoredEvent,
+) -> neo4rs::Query {
+    let (lat, lng) = location_lat_lng(location);
+    let loc_name = location_name_str(location);
+    let loc_address = location_address_str(location);
+    let actor_str = event.actor.as_deref().unwrap_or("").to_string();
+    let run_id = event.run_id.as_deref().unwrap_or("").to_string();
+
+    let cypher = format!(
+        "MERGE (n:{label} {{id: $id}})
+         ON CREATE SET
+             n.title = $title,
+             n.summary = $summary,
+             n.sensitivity = $sensitivity,
+             n.confidence = $confidence,
+             n.source_url = $source_url,
+             n.extracted_at = datetime($extracted_at),
+             n.last_confirmed_active = datetime($extracted_at),
+             n.content_date = CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
+             n.location_name = $location_name,
+             n.address = $address,
+             n.lat = $lat,
+             n.lng = $lng,
+             n.implied_queries = CASE WHEN size($implied_queries) > 0 THEN $implied_queries ELSE null END,
+             n.corroboration_count = 0,
+             n.review_status = 'staged',
+             n.created_by = $created_by,
+             n.scout_run_id = $scout_run_id
+             {type_specific_set}"
+    );
+
+    query(&cypher)
+        .param("id", id.to_string())
+        .param("title", title)
+        .param("summary", summary)
+        .param("sensitivity", sensitivity.as_str())
+        .param("confidence", confidence as f64)
+        .param("source_url", source_url)
+        .param("extracted_at", format_dt(extracted_at))
+        .param("content_date", content_date.map(|dt| format_dt(&dt)).unwrap_or_default())
+        .param("location_name", loc_name)
+        .param("address", loc_address)
+        .param("lat", lat)
+        .param("lng", lng)
+        .param("implied_queries", implied_queries)
+        .param("created_by", actor_str)
+        .param("scout_run_id", run_id)
 }
 
 fn urgency_str(u: rootsignal_common::types::Urgency) -> &'static str {
@@ -1254,7 +1402,7 @@ fn severity_str(s: rootsignal_common::types::Severity) -> &'static str {
 }
 
 /// Sanitize a field name to prevent Cypher injection.
-/// Only allows alphanumeric chars and underscores.
+/// Only used by LintCorrectionApplied which has dynamic field names.
 fn sanitize_field_name(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric() || *c == '_')
