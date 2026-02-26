@@ -259,8 +259,8 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [x] Audit: no direct writes bypass the event path
 - [x] Add `SignalStoreFactory` — per-mutation run_ids for proper event correlation
 - [x] Remove startup panic — graceful error when Postgres is unavailable
-- [ ] Make GraphWriter write methods `pub(crate)` once remaining pass-throughs (`find_or_create_resource`) are event-sourced. Currently `pub` — convention-based protection, not type-system enforced.
-- [ ] Consider renaming `GraphWriter` → `GraphReader` or splitting into `GraphReader` + `GraphAdmin`
+- [x] ~~Make GraphWriter write methods `pub(crate)`~~ — resolved by design: GraphWriter is called cross-crate from EventSourcedStore, so `pub(crate)` isn't feasible. Protection is architectural: the `SignalStore` trait is the public interface, all domain writes go through `EventSourcedStore`.
+- [x] ~~Rename `GraphWriter`~~ — deferred: name is slightly misleading (mostly reads + infrastructure now) but not worth the churn across the codebase.
 
 **Not removed** (kept on GraphWriter or moved to GraphAdmin):
 - Task management methods (operational, not domain events)
