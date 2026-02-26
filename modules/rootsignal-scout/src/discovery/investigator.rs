@@ -12,6 +12,8 @@ use uuid::Uuid;
 use rootsignal_common::{ScoutScope, EvidenceNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
+use crate::pipeline::traits::SignalStore;
+
 use rootsignal_archive::Archive;
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 15;
@@ -20,6 +22,7 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn SignalStore,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -114,6 +117,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn SignalStore,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
@@ -123,6 +127,7 @@ impl<'a> Investigator<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
             writer,
+            store,
             archive,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             region: region.name.clone(),
@@ -336,7 +341,7 @@ impl<'a> Investigator<'a> {
             };
 
             match self
-                .writer
+                .store
                 .create_evidence(&evidence, target.signal_id)
                 .await
             {

@@ -245,9 +245,12 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 **Goal:** Once all writes go through events, GraphWriter becomes read-only. Remove write methods, rename to clarify its role.
 
 **Tasks:**
-- [ ] Remove signal write methods from GraphWriter (`create_node`, `corroborate`, `create_evidence`, `refresh_signal`)
-- [ ] Remove source write methods (`upsert_source`, `record_source_scrape`)
-- [ ] Remove actor write methods (`upsert_actor`, `link_actor_to_signal`)
+- [x] Remove signal write methods from GraphWriter (`create_node`, `upsert_node`, `corroborate`, `create_evidence`, `refresh_signal`, `refresh_url_signals`)
+- [x] Remove source write methods (`upsert_source`); `record_source_scrape` kept (still called directly from metrics)
+- [x] Remove actor write methods (`upsert_actor`, `link_actor_to_signal`, `link_actor_to_source`, `link_signal_to_source`, `update_actor_location`)
+- [x] Remove private helpers (`create_gathering`, `create_aid`, `create_need`, `create_notice`, `create_tension`, `add_location_params`)
+- [x] Remove unused free functions (`urgency_str`, `severity_str`, `sensitivity_str`)
+- [x] Migrate discovery modules: `investigator` and `tension_linker` now take `&dyn SignalStore` for writes
 - [ ] Remove enrichment methods that are now in `enrich.rs`
 - [ ] Remove inline diversity computation from corroborate
 - [x] Remove `impl SignalStore for GraphWriter` (non-event bypass path)
@@ -286,6 +289,6 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - Event data model: `docs/plans/2026-02-25-refactor-event-data-model-plan.md`
 - Event sourcing brainstorm: `docs/brainstorms/2026-02-25-event-sourcing-brainstorm.md`
 - Enrichment brainstorm: `docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md`
-- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,900 lines, 102 public methods)
+- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,200 lines after Phase 6 cleanup, down from ~5,990)
 - EventSourcedStore: `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs`
 - Reducer: `modules/rootsignal-graph/src/reducer.rs` (all 71 event handlers)

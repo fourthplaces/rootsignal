@@ -175,6 +175,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting tension linker...");
                 let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
                     &writer,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -231,6 +232,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting investigation phase...");
                 let investigator = crate::discovery::investigator::Investigator::new(
                     &writer,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     archive.clone(),
                     &deps.anthropic_api_key,
                     scope,

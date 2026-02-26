@@ -19,6 +19,7 @@ use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, Tensio
 use rootsignal_archive::Archive;
 
 use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::traits::SignalStore;
 use super::agent_tools::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
@@ -169,6 +170,7 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 
 pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn SignalStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -183,6 +185,7 @@ pub struct TensionLinker<'a> {
 impl<'a> TensionLinker<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn SignalStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -204,6 +207,7 @@ impl<'a> TensionLinker<'a> {
 
         Self {
             writer,
+            store,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -494,7 +498,7 @@ impl<'a> TensionLinker<'a> {
         let embedding = self.embedder.embed(&embed_text).await?;
 
         let tension_id = self
-            .writer
+            .store
             .create_node(&Node::Tension(tension_node), &embedding, "tension_linker", &self.run_id)
             .await?;
 
