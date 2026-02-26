@@ -507,7 +507,7 @@ impl<'a> ScrapePipeline<'a> {
             self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &self.region.name,
         );
-        metrics.update(&run.all_sources, ctx, Utc::now()).await;
+        metrics.update(&run.all_sources, &ctx.source_signal_counts, &ctx.query_api_errors, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
         self.budget.log_status();

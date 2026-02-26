@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::pipeline::scrape_phase::{CollectedLink, RunContext, ScrapePhase};
+use crate::enrichment::link_promoter::CollectedLink;
+use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;

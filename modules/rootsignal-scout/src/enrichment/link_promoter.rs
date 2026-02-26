@@ -13,8 +13,13 @@ use url::Url;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
 
-use crate::pipeline::scrape_phase::CollectedLink;
 use crate::pipeline::traits::SignalStore;
+
+/// A link discovered during scraping, used by `promote_links` to create new sources.
+pub struct CollectedLink {
+    pub url: String,
+    pub discovered_on: String,
+}
 
 pub struct PromotionConfig {
     pub max_per_source: usize,

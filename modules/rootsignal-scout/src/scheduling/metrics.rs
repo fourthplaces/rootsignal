@@ -4,13 +4,13 @@
 //! recomputes weights based on signal production history, updates cadences,
 //! and deactivates dead sources/queries.
 
+use std::collections::{HashMap, HashSet};
+
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
-
-use crate::pipeline::scrape_phase::RunContext;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
@@ -29,18 +29,19 @@ impl<'a> Metrics<'a> {
 
     /// Update source metrics, weights, cadences, and deactivate dead sources.
     ///
-    /// Takes an immutable reference to `RunContext` — reads signal counts and
-    /// query errors but does not mutate them. Uses `all_sources` (the snapshot
-    /// from the start of the run, NOT `fresh_sources`).
+    /// Takes signal counts and query errors collected during the scrape run.
+    /// Uses `all_sources` (the snapshot from the start of the run, NOT
+    /// `fresh_sources`).
     pub async fn update(
         &self,
         all_sources: &[SourceNode],
-        ctx: &RunContext,
+        source_signal_counts: &HashMap<String, u32>,
+        query_api_errors: &HashSet<String>,
         now: DateTime<Utc>,
     ) {
         // Record per-source scrape metrics. Skip queries where the search API errored.
-        for (canonical_key, signals_produced) in &ctx.source_signal_counts {
-            if ctx.query_api_errors.contains(canonical_key) {
+        for (canonical_key, signals_produced) in source_signal_counts {
+            if query_api_errors.contains(canonical_key) {
                 continue;
             }
             if let Err(e) = self
@@ -59,15 +60,13 @@ impl<'a> Metrics<'a> {
                 .count_source_tensions(&source.canonical_key)
                 .await
                 .unwrap_or(0);
-            let fresh_signals = ctx
-                .source_signal_counts
+            let fresh_signals = source_signal_counts
                 .get(&source.canonical_key)
                 .copied()
                 .unwrap_or(0);
             let total_signals = source.signals_produced + fresh_signals;
             let scrape_count = if fresh_signals > 0
-                || ctx
-                    .source_signal_counts
+                || source_signal_counts
                     .contains_key(&source.canonical_key)
             {
                 (source.scrape_count + 1).max(1)
@@ -87,8 +86,7 @@ impl<'a> Metrics<'a> {
                 now,
             );
             let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
-            let empty_runs = if ctx
-                .source_signal_counts
+            let empty_runs = if source_signal_counts
                 .contains_key(&source.canonical_key)
                 && fresh_signals == 0
             {

@@ -20,23 +20,13 @@ use rootsignal_common::{
     DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
     SocialPlatform, SourceNode, SourceRole,
 };
-use crate::enrichment::link_promoter;
+use crate::enrichment::link_promoter::{self, CollectedLink};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
 use crate::infra::run_log::{EventKind, RunLog};
 use crate::pipeline::stats::ScoutStats;
 use crate::infra::util::{content_hash, sanitize_url};
-
-// ---------------------------------------------------------------------------
-// CollectedLink — a discovered outbound link with its provenance
-// ---------------------------------------------------------------------------
-
-/// A link discovered during scraping, used by `promote_links` to create new sources.
-pub struct CollectedLink {
-    pub url: String,
-    pub discovered_on: String,
-}
 
 // ---------------------------------------------------------------------------
 // RunContext — shared mutable state for the entire scout run
