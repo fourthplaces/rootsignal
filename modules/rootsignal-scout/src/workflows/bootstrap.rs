@@ -67,13 +67,14 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
-        let graph_client = self.deps.graph_client.clone();
+        let deps = self.deps.clone();
         let sources_created = match ctx
             .run(|| async {
-                let writer = GraphWriter::new(graph_client);
+                let writer = GraphWriter::new(deps.graph_client.clone());
+                let store = deps.build_store(uuid::Uuid::new_v4().to_string());
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
-                    &writer as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     archive,
                     &api_key,
                     scope,

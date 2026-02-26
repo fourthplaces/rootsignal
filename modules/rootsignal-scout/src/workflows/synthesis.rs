@@ -115,6 +115,7 @@ pub async fn run_synthesis_from_deps(
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
+    let store = deps.build_store(run_id.clone());
 
     // Parallel synthesis — similarity edges + finders run concurrently.
     // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
@@ -191,6 +192,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting response finder...");
                 let response_finder = crate::discovery::response_finder::ResponseFinder::new(
                     &writer,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -209,6 +211,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting gathering finder...");
                 let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
                     &writer,
+                    &store as &dyn crate::pipeline::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,

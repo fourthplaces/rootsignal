@@ -183,7 +183,7 @@ impl MutationRoot {
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
         let url = url.trim().to_string();
 
         // Validate URL
@@ -222,7 +222,7 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        writer
+        store
             .upsert_source(&source)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
@@ -454,9 +454,9 @@ impl MutationRoot {
         story_id: Uuid,
         tag_slug: String,
     ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let store = ctx.data_unchecked::<Arc<dyn SignalStore>>();
         let slug = rootsignal_common::slugify(&tag_slug);
-        writer
+        store
             .batch_tag_signals(story_id, &[slug])
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to tag story: {e}")))?;

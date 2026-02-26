@@ -250,7 +250,10 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [ ] Remove actor write methods (`upsert_actor`, `link_actor_to_signal`)
 - [ ] Remove enrichment methods that are now in `enrich.rs`
 - [ ] Remove inline diversity computation from corroborate
-- [ ] Audit: no direct writes bypass the event path
+- [x] Remove `impl SignalStore for GraphWriter` (non-event bypass path)
+- [x] Route API mutations (`add_source`, `tag_story`) through `Arc<dyn SignalStore>`
+- [x] Add `build_signal_store` factory + `ScoutDeps::build_store` convenience
+- [x] Audit: no direct writes bypass the event path
 - [ ] Consider renaming `GraphWriter` → `GraphReader` or splitting into `GraphReader` + `GraphAdmin`
 
 **Not removed** (kept on GraphWriter or moved to GraphAdmin):

@@ -49,6 +49,15 @@ pub struct ScoutDeps {
 }
 
 impl ScoutDeps {
+    /// Build the production SignalStore from these deps.
+    pub fn build_store(&self, run_id: String) -> crate::pipeline::event_sourced_store::EventSourcedStore {
+        crate::pipeline::build_signal_store(
+            self.graph_client.clone(),
+            self.pg_pool.clone(),
+            run_id,
+        )
+    }
+
     /// Convenience constructor from Config — keeps API-side construction clean.
     pub fn from_config(
         graph_client: GraphClient,
