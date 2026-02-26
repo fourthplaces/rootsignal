@@ -9,7 +9,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ScoutScope, EvidenceNode};
+use rootsignal_common::{ScoutScope, CitationNode};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::pipeline::traits::SignalStore;
@@ -244,7 +244,7 @@ impl<'a> Investigator<'a> {
 
         let queries: InvestigationQueries = self
             .claude
-            .extract(HAIKU_MODEL, &system_prompt, &user_prompt)
+            .extract(&system_prompt, &user_prompt)
             .await?;
 
         let queries: Vec<_> = queries
@@ -315,7 +315,7 @@ impl<'a> Investigator<'a> {
 
         let evaluation: EvidenceEvaluation = self
             .claude
-            .extract(HAIKU_MODEL, EVIDENCE_EVALUATION_SYSTEM, &eval_user_prompt)
+            .extract(EVIDENCE_EVALUATION_SYSTEM, &eval_user_prompt)
             .await?;
 
         // 4. Create EvidenceNodes for items with confidence >= 0.5
@@ -329,14 +329,14 @@ impl<'a> Investigator<'a> {
 
             let content_hash = format!("{:x}", content_hash(&item.source_url));
             let relevance = item.relevance;
-            let evidence = EvidenceNode {
+            let evidence = CitationNode {
                 id: Uuid::new_v4(),
                 source_url: item.source_url.clone(),
                 retrieved_at: now,
                 content_hash,
                 snippet: Some(item.snippet),
                 relevance: Some(relevance.clone()),
-                evidence_confidence: Some(item.confidence as f32),
+                confidence: Some(item.confidence as f32),
                 channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 

@@ -43,7 +43,7 @@ pub enum Urgency {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Low,
@@ -60,7 +60,7 @@ pub enum NodeType {
     Need,
     Notice,
     Tension,
-    Evidence,
+    Citation,
 }
 
 impl std::fmt::Display for NodeType {
@@ -71,7 +71,7 @@ impl std::fmt::Display for NodeType {
             NodeType::Need => write!(f, "Need"),
             NodeType::Notice => write!(f, "Notice"),
             NodeType::Tension => write!(f, "Tension"),
-            NodeType::Evidence => write!(f, "Evidence"),
+            NodeType::Citation => write!(f, "Citation"),
         }
     }
 }
@@ -227,16 +227,12 @@ impl SourceRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeType {
-    /// Signal -> Evidence (provenance)
+    /// Signal -> Citation (provenance)
     SourcedFrom,
-    /// Story -> Signal (membership)
-    Contains,
     /// Aid/Gathering/Need -> Tension (feedback loop). Properties: match_strength, explanation
     RespondsTo,
     /// Actor -> Signal (participation). Properties: role
     ActedIn,
-    /// Story -> Story (evolution)
-    EvolvedFrom,
     /// Signal <-> Signal (clustering). Properties: weight
     SimilarTo,
     /// Submission -> Source (human submission)
@@ -245,9 +241,9 @@ pub enum EdgeType {
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,
-    /// Signal/Story -> Tag (thematic tag)
+    /// Signal -> Tag (thematic tag)
     Tagged,
-    /// Story -> Tag (admin suppressed an auto-aggregated tag)
+    /// Signal -> Tag (admin suppressed an auto-aggregated tag)
     SuppressedTag,
     /// Need/Gathering -> Resource (must have this capability to help). Properties: confidence, quantity, notes
     Requires,

@@ -535,7 +535,7 @@ impl CachedReader {
                             label: cit.source_url.clone(),
                             lat: None,
                             lng: None,
-                            confidence: cit.evidence_confidence.map(|c| c as f64),
+                            confidence: cit.confidence.map(|c| c as f64),
                             metadata: serde_json::json!({
                                 "snippet": cit.snippet,
                                 "sourceUrl": cit.source_url,

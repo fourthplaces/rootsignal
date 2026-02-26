@@ -155,7 +155,7 @@ async fn run_actor_extraction_inner(
         }
 
         let response: ActorExtractionResponse = match claude
-            .extract("claude-haiku-4-5-20251001", SYSTEM_PROMPT, &user_prompt)
+            .extract(SYSTEM_PROMPT, &user_prompt)
             .await
         {
             Ok(r) => r,

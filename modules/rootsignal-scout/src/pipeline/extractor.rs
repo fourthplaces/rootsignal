@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta, NoticeNode,
-    ScheduleNode, SensitivityLevel, Severity, TensionNode, Urgency,
+    ReviewStatus, ScheduleNode, SensitivityLevel, Severity, TensionNode, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
@@ -362,11 +362,10 @@ impl Extractor {
                 cause_heat: 0.0,
                 channel_diversity: 1,
                 implied_queries: signal.implied_queries.clone(),
-                review_status: "staged".to_string(),
+                review_status: ReviewStatus::Staged,
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
-                author_actor: signal.author_actor.clone(),
             };
 
             let node = match signal.signal_type.as_str() {

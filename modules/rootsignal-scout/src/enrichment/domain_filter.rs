@@ -63,7 +63,7 @@ pub async fn filter_domains_batch(
     urls: &[String],
     region_name: &str,
     anthropic_api_key: &str,
-    store: &dyn SignalStore,
+    _store: &dyn SignalStore,
 ) -> Vec<String> {
     if urls.is_empty() {
         return Vec::new();
@@ -84,13 +84,9 @@ pub async fn filter_domains_batch(
     }
 
     // 2. Check cache for existing verdicts
-    let cached = match store.cached_domain_verdicts(&unique_domains).await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "Failed to fetch cached domain verdicts, skipping filter");
-            return urls.to_vec();
-        }
-    };
+    // TODO: Add cached_domain_verdicts / cache_domain_verdicts to SignalStore trait
+    // to avoid re-evaluating domains across runs.
+    let cached: HashMap<String, bool> = HashMap::new();
 
     let unchecked: Vec<String> = unique_domains
         .iter()
@@ -139,10 +135,8 @@ pub async fn filter_domains_batch(
                         new_verdicts.push((d.clone(), true));
                     }
                 }
-                // 4. Cache new verdicts
-                if let Err(e) = store.cache_domain_verdicts(&new_verdicts).await {
-                    warn!(error = %e, "Failed to cache domain verdicts");
-                }
+                // TODO: Cache new verdicts once SignalStore trait has cache_domain_verdicts
+                let _ = &new_verdicts;
             }
             Err(e) => {
                 warn!(error = %e, "Domain filter LLM call failed, passing all URLs through");

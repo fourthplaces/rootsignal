@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use rootsignal_common::events::{Event, Location, Schedule};
 use rootsignal_common::types::{
-    ActorNode, EvidenceNode, GeoPoint, Node, NodeType, SourceNode,
+    ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode,
 };
 use rootsignal_common::{
     EntityMappingOwned, FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
@@ -95,8 +95,8 @@ fn node_to_event(node: &Node) -> Event {
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             implied_queries: n.meta.implied_queries.clone(),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: n.meta.author_actor.clone(),
+            mentioned_actors: vec![],
+            author_actor: None,
             schedule: schedule_from_gathering(n),
             action_url: if n.action_url.is_empty() {
                 None
@@ -117,8 +117,8 @@ fn node_to_event(node: &Node) -> Event {
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             implied_queries: n.meta.implied_queries.clone(),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: n.meta.author_actor.clone(),
+            mentioned_actors: vec![],
+            author_actor: None,
             action_url: if n.action_url.is_empty() {
                 None
             } else {
@@ -139,8 +139,8 @@ fn node_to_event(node: &Node) -> Event {
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             implied_queries: n.meta.implied_queries.clone(),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: n.meta.author_actor.clone(),
+            mentioned_actors: vec![],
+            author_actor: None,
             urgency: Some(n.urgency),
             what_needed: n.what_needed.clone(),
             goal: n.goal.clone(),
@@ -157,8 +157,8 @@ fn node_to_event(node: &Node) -> Event {
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             implied_queries: n.meta.implied_queries.clone(),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: n.meta.author_actor.clone(),
+            mentioned_actors: vec![],
+            author_actor: None,
             severity: Some(n.severity),
             category: n.category.clone(),
             effective_date: n.effective_date,
@@ -176,12 +176,12 @@ fn node_to_event(node: &Node) -> Event {
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             implied_queries: n.meta.implied_queries.clone(),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: n.meta.author_actor.clone(),
+            mentioned_actors: vec![],
+            author_actor: None,
             severity: Some(n.severity),
             what_would_help: n.what_would_help.clone(),
         },
-        Node::Evidence(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
+        Node::Citation(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
     }
 }
 
@@ -198,7 +198,7 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
     })
 }
 
-fn evidence_to_event(evidence: &EvidenceNode, signal_id: Uuid) -> Event {
+fn evidence_to_event(evidence: &CitationNode, signal_id: Uuid) -> Event {
     Event::CitationRecorded {
         citation_id: evidence.id,
         entity_id: signal_id,
@@ -207,7 +207,7 @@ fn evidence_to_event(evidence: &EvidenceNode, signal_id: Uuid) -> Event {
         snippet: evidence.snippet.clone(),
         relevance: evidence.relevance.clone(),
         channel_type: evidence.channel_type,
-        evidence_confidence: evidence.evidence_confidence,
+        evidence_confidence: evidence.confidence,
     }
 }
 
@@ -228,7 +228,7 @@ impl EventSourcedStore {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
-            NodeType::Evidence => "Evidence",
+            NodeType::Citation => "Evidence",
         };
         let q = rootsignal_graph::query(&format!(
             "MATCH (n:{label} {{id: $id}}) RETURN n.corroboration_count AS count"
@@ -295,7 +295,7 @@ impl SignalStore for EventSourcedStore {
         Ok(node.id())
     }
 
-    async fn create_evidence(&self, evidence: &EvidenceNode, signal_id: Uuid) -> Result<()> {
+    async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()> {
         let event = evidence_to_event(evidence, signal_id);
         self.append_and_project(&event, None).await
     }
@@ -805,7 +805,6 @@ mod tests {
             summary: "test summary".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.85,
-            freshness_score: 0.0,
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: 44.9778,
@@ -819,12 +818,13 @@ mod tests {
             content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 0,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             implied_queries: vec!["test query".to_string()],
             channel_diversity: 1,
-            mentioned_actors: vec!["Test Org".to_string()],
-            author_actor: None,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         }
     }
 
@@ -953,14 +953,14 @@ mod tests {
     #[test]
     fn evidence_node_maps_to_citation_recorded_event() {
         let signal_id = Uuid::new_v4();
-        let evidence = EvidenceNode {
+        let evidence = CitationNode {
             id: Uuid::new_v4(),
             source_url: "https://source.com/article".to_string(),
             retrieved_at: Utc::now(),
             content_hash: "abc123".to_string(),
             snippet: Some("relevant text".to_string()),
             relevance: Some("high".to_string()),
-            evidence_confidence: Some(0.9),
+            confidence: Some(0.9),
             channel_type: Some(ChannelType::Press),
         };
 

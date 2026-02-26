@@ -2,7 +2,7 @@ use tracing::info;
 
 use rootsignal_common::types::{Severity, SourceNode};
 
-use crate::writer::{FieldCorrection, GraphWriter};
+use crate::writer::{FieldCorrection, GraphWriter, NoticeInferenceRow};
 
 /// A source is trusted when it has sustained history, corroborated output,
 /// and hasn't been penalized for quality issues.

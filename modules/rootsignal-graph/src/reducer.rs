@@ -1285,7 +1285,7 @@ fn node_type_label(node_type: NodeType) -> &'static str {
         NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
-        NodeType::Evidence => "Evidence",
+        NodeType::Citation => "Evidence",
     }
 }
 

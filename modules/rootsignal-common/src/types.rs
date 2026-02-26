@@ -13,73 +13,6 @@ pub use rootsignal_world::types::{
 };
 pub use rootsignal_world::values::{Location, Schedule, TagFact, WorldSourceChange};
 
-// --- Story Synthesis Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StoryArc {
-    Emerging,
-    Growing,
-    Stable,
-    Fading,
-    Resurgent,
-}
-
-impl std::fmt::Display for StoryArc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StoryArc::Emerging => write!(f, "emerging"),
-            StoryArc::Growing => write!(f, "growing"),
-            StoryArc::Stable => write!(f, "stable"),
-            StoryArc::Fading => write!(f, "fading"),
-            StoryArc::Resurgent => write!(f, "resurgent"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StoryCategory {
-    Resource,
-    Gathering,
-    Crisis,
-    Governance,
-    Stewardship,
-    Community,
-    Environment,
-}
-
-impl std::fmt::Display for StoryCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StoryCategory::Resource => write!(f, "resource"),
-            StoryCategory::Gathering => write!(f, "gathering"),
-            StoryCategory::Crisis => write!(f, "crisis"),
-            StoryCategory::Governance => write!(f, "governance"),
-            StoryCategory::Stewardship => write!(f, "stewardship"),
-            StoryCategory::Community => write!(f, "community"),
-            StoryCategory::Environment => write!(f, "environment"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionGuidance {
-    pub guidance: String,
-    pub action_urls: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorySynthesis {
-    pub headline: String,
-    pub lede: String,
-    pub narrative: String,
-    pub action_guidance: Vec<ActionGuidance>,
-    pub key_entities: Vec<String>,
-    pub category: StoryCategory,
-    pub arc: StoryArc,
-}
-
 // --- Actor Types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +78,6 @@ pub struct NodeMeta {
     pub summary: String,
     pub sensitivity: SensitivityLevel,
     pub confidence: f32,
-    pub freshness_score: f32,
     pub corroboration_count: u32,
     /// The canonical query/map field — where the content is ABOUT.
     /// At write time: content location if extracted, else falls back to from_location.
@@ -164,9 +96,7 @@ pub struct NodeMeta {
     pub last_confirmed_active: DateTime<Utc>,
     /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
     pub source_diversity: u32,
-    /// Fraction of evidence from sources other than the signal's originating entity (0.0-1.0).
-    pub external_ratio: f32,
-    /// Cross-story cause heat: how much independent community attention exists in this signal's
+    /// Cause heat: how much independent community attention exists in this signal's
     /// semantic neighborhood (0.0–1.0). A food shelf Need rises when the housing crisis is trending.
     pub cause_heat: f64,
     /// Implied search queries from this signal for expansion discovery.
@@ -175,12 +105,24 @@ pub struct NodeMeta {
     /// Number of distinct channel types with external entity evidence (1-4).
     #[serde(default = "default_channel_diversity")]
     pub channel_diversity: u32,
-    /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mentioned_actors: Vec<String>,
-    /// The actor that authored/published this signal's source content.
+    #[serde(default)]
+    pub review_status: ReviewStatus,
+    #[serde(default)]
+    pub was_corrected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author_actor: Option<String>,
+    pub corrections: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    #[default]
+    Staged,
+    Accepted,
+    Rejected,
+    Corrected,
 }
 
 // --- Signal Node Types ---
@@ -230,16 +172,32 @@ pub struct TensionNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvidenceNode {
+pub struct CitationNode {
     pub id: Uuid,
     pub source_url: String,
     pub retrieved_at: DateTime<Utc>,
     pub content_hash: String,
     pub snippet: Option<String>,
     pub relevance: Option<String>,
-    pub evidence_confidence: Option<f32>,
+    /// Stored as `evidence_confidence` in Neo4j and event payloads (immutable schema).
+    pub confidence: Option<f32>,
     #[serde(default)]
     pub channel_type: Option<ChannelType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleNode {
+    pub id: Uuid,
+    pub rrule: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rdates: Vec<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exdates: Vec<DateTime<Utc>>,
+    pub dtstart: Option<DateTime<Utc>>,
+    pub dtend: Option<DateTime<Utc>>,
+    pub timezone: Option<String>,
+    pub schedule_text: Option<String>,
+    pub extracted_at: DateTime<Utc>,
 }
 
 // --- Sum type ---
@@ -252,7 +210,7 @@ pub enum Node {
     Need(NeedNode),
     Notice(NoticeNode),
     Tension(TensionNode),
-    Evidence(EvidenceNode),
+    Citation(CitationNode),
 }
 
 impl Node {
@@ -263,7 +221,7 @@ impl Node {
             Node::Need(_) => NodeType::Need,
             Node::Notice(_) => NodeType::Notice,
             Node::Tension(_) => NodeType::Tension,
-            Node::Evidence(_) => NodeType::Evidence,
+            Node::Citation(_) => NodeType::Citation,
         }
     }
 
@@ -274,7 +232,7 @@ impl Node {
             Node::Need(n) => n.meta.id,
             Node::Notice(n) => n.meta.id,
             Node::Tension(n) => n.meta.id,
-            Node::Evidence(n) => n.id,
+            Node::Citation(n) => n.id,
         }
     }
 
@@ -285,7 +243,7 @@ impl Node {
             Node::Need(n) => Some(&n.meta),
             Node::Notice(n) => Some(&n.meta),
             Node::Tension(n) => Some(&n.meta),
-            Node::Evidence(_) => None,
+            Node::Citation(_) => None,
         }
     }
 
@@ -296,7 +254,7 @@ impl Node {
             Node::Need(n) => Some(&mut n.meta),
             Node::Notice(n) => Some(&mut n.meta),
             Node::Tension(n) => Some(&mut n.meta),
-            Node::Evidence(_) => None,
+            Node::Citation(_) => None,
         }
     }
 
@@ -307,62 +265,9 @@ impl Node {
             Node::Need(n) => &n.meta.title,
             Node::Notice(n) => &n.meta.title,
             Node::Tension(n) => &n.meta.title,
-            Node::Evidence(n) => &n.source_url,
+            Node::Citation(n) => &n.source_url,
         }
     }
-}
-
-// --- Story Node ---
-
-/// A cluster of related signals that form an emergent story.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoryNode {
-    pub id: Uuid,
-    pub headline: String,
-    pub summary: String,
-    pub signal_count: u32,
-    pub first_seen: DateTime<Utc>,
-    pub last_updated: DateTime<Utc>,
-    pub velocity: f64,
-    pub energy: f64,
-    pub centroid_lat: Option<f64>,
-    pub centroid_lng: Option<f64>,
-    pub dominant_type: String,
-    pub sensitivity: String,
-    pub source_count: u32,
-    pub entity_count: u32,
-    pub type_diversity: u32,
-    pub source_domains: Vec<String>,
-    pub corroboration_depth: u32,
-    pub status: String, // "emerging" or "confirmed"
-    // M2: Story synthesis fields
-    pub arc: Option<String>,
-    pub category: Option<String>,
-    pub lede: Option<String>,
-    pub narrative: Option<String>,
-    pub action_guidance: Option<String>, // JSON string of Vec<ActionGuidance>
-    // Story pipeline consolidation fields
-    pub cause_heat: f64,
-    pub ask_count: u32,
-    pub give_count: u32,
-    pub event_count: u32,
-    pub drawn_to_count: u32,
-    pub gap_score: i32,
-    pub gap_velocity: f64,
-    pub channel_diversity: u32,
-}
-
-/// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
-/// Velocity is driven by entity_count growth (not raw signal count) to resist single-source flooding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterSnapshot {
-    pub id: Uuid,
-    pub story_id: Uuid,
-    pub signal_count: u32,
-    pub entity_count: u32,
-    pub ask_count: u32,
-    pub give_count: u32,
-    pub run_at: DateTime<Utc>,
 }
 
 // --- Scout Scope (geographic context for a scout run) ---
@@ -756,6 +661,8 @@ pub struct ArchivedPage {
     pub markdown: String,
     pub title: Option<String>,
     pub links: Vec<String>,
+    #[serde(default)]
+    pub published_at: Option<DateTime<Utc>>,
 }
 
 /// A fetched RSS/Atom feed.
@@ -905,8 +812,11 @@ pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
     if lower.contains("instagram.com") {
         return ScrapingStrategy::Social(SocialPlatform::Instagram);
     }
-    if lower.contains("facebook.com") {
+    if lower.contains("facebook.com") && is_facebook_page_url(value) {
         return ScrapingStrategy::Social(SocialPlatform::Facebook);
+    }
+    if lower.contains("facebook.com") {
+        return ScrapingStrategy::WebPage;
     }
     if lower.contains("reddit.com") {
         return ScrapingStrategy::Social(SocialPlatform::Reddit);
@@ -939,6 +849,75 @@ pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
         return ScrapingStrategy::Rss;
     }
     ScrapingStrategy::WebPage
+}
+
+impl std::fmt::Display for ScrapingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScrapingStrategy::WebQuery => write!(f, "web_query"),
+            ScrapingStrategy::WebPage => write!(f, "web_page"),
+            ScrapingStrategy::Rss => write!(f, "rss"),
+            ScrapingStrategy::Social(p) => {
+                let label = match p {
+                    SocialPlatform::Instagram => "instagram",
+                    SocialPlatform::Facebook => "facebook",
+                    SocialPlatform::Reddit => "reddit",
+                    SocialPlatform::Twitter => "twitter",
+                    SocialPlatform::TikTok => "tiktok",
+                    SocialPlatform::Bluesky => "bluesky",
+                };
+                write!(f, "social:{label}")
+            }
+            ScrapingStrategy::HtmlListing { link_pattern } => {
+                write!(f, "html_listing:{link_pattern}")
+            }
+        }
+    }
+}
+
+/// Returns true if a Facebook URL points to a page or group homepage
+/// (not an individual post, photo, event, etc.).
+pub fn is_facebook_page_url(url: &str) -> bool {
+    let path = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .skip(1) // skip domain
+        .collect::<Vec<_>>();
+
+    match path.as_slice() {
+        // facebook.com/<slug> or facebook.com/<slug>/
+        [slug] | [slug, ""] if is_valid_fb_slug(slug) => true,
+        // facebook.com/groups/<name> or facebook.com/groups/<name>/
+        ["groups", name] | ["groups", name, ""] if !name.is_empty() => true,
+        // facebook.com/pg/<slug> (legacy page URL)
+        ["pg", slug] | ["pg", slug, ""] if is_valid_fb_slug(slug) => true,
+        _ => false,
+    }
+}
+
+/// A valid Facebook slug is non-empty, doesn't start with reserved path
+/// segments, and doesn't look like a numeric post ID.
+fn is_valid_fb_slug(slug: &str) -> bool {
+    let slug = slug.trim_end_matches('/');
+    if slug.is_empty() {
+        return false;
+    }
+    let reserved = [
+        "photo", "photos", "video", "videos", "events", "posts", "story",
+        "stories", "watch", "marketplace", "gaming", "login", "help",
+        "settings", "messages", "notifications", "bookmarks", "pages",
+        "groups", "profile.php", "permalink.php", "share",
+    ];
+    if reserved.contains(&slug.to_lowercase().as_str()) {
+        return false;
+    }
+    // Pure numeric = post/object ID, not a page slug
+    if slug.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    true
 }
 
 /// Compute a canonical value from a source's raw value (URL or query text).
@@ -1306,7 +1285,6 @@ mod tests {
             summary: "Test summary".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.8,
-            freshness_score: 1.0,
             corroboration_count: 0,
             about_location: None,
             about_location_name: None,
@@ -1316,12 +1294,13 @@ mod tests {
             content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
-            author_actor: None,
             implied_queries: vec![],
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         }
     }
 
@@ -1788,5 +1767,54 @@ mod tests {
         assert!(ch.media);
         assert!(!ch.discussion);
         assert!(!ch.events);
+    }
+
+    // --- Facebook classification tests ---
+
+    #[test]
+    fn facebook_page_homepage_routes_to_social() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/lakestreetstories"),
+            ScrapingStrategy::Social(SocialPlatform::Facebook)
+        );
+    }
+
+    #[test]
+    fn facebook_group_routes_to_social() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/groups/mpls-mutual-aid"),
+            ScrapingStrategy::Social(SocialPlatform::Facebook)
+        );
+    }
+
+    #[test]
+    fn facebook_post_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/lakestreetstories/posts/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn facebook_event_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/events/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn facebook_photo_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/photo/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn scraping_strategy_display_formats() {
+        assert_eq!(format!("{}", ScrapingStrategy::WebPage), "web_page");
+        assert_eq!(format!("{}", ScrapingStrategy::WebQuery), "web_query");
+        assert_eq!(format!("{}", ScrapingStrategy::Rss), "rss");
     }
 }

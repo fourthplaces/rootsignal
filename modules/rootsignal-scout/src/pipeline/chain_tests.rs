@@ -321,7 +321,6 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     let mut node = tension("Food Distribution at MLK Park");
     if let Some(meta) = node.meta_mut() {
         meta.about_location_name = Some("Minneapolis, MN".to_string());
-        meta.author_actor = Some("Northside Mutual Aid".to_string());
         meta.confidence = 0.7;
     }
 

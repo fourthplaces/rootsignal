@@ -14,7 +14,6 @@ pub mod severity_inference;
 pub mod similarity;
 pub mod situation_temperature;
 pub mod situation_weaver;
-pub mod synthesizer;
 pub mod embedding_enrichment;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
@@ -34,8 +33,8 @@ pub use reducer::{ApplyResult, GraphProjector};
 pub use writer::{
     ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
     FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphWriter, InvestigationTarget,
-    ReapStats, ResponseFinderTarget, ResponseHeuristic, SignalBrief, SignalTypeCounts,
-    SituationBrief, SourceBrief, SourceStats, StagedSignal,
+    NoticeInferenceRow, ReapStats, ResponseFinderTarget, ResponseHeuristic, SignalBrief,
+    SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal,
     TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent,
     TensionResponseShape, UnmetTension,
 };

@@ -7,7 +7,7 @@ use ai_client::claude::Claude;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SituationBrief, SourceBrief,
-    StoryBrief, TensionResponseShape, UnmetTension,
+    TensionResponseShape, UnmetTension,
 };
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
@@ -41,7 +41,6 @@ impl std::fmt::Display for SourceFinderStats {
 #[derive(Debug, Clone)]
 pub struct DiscoveryBriefing {
     pub tensions: Vec<UnmetTension>,
-    pub stories: Vec<StoryBrief>,
     pub situations: Vec<SituationBrief>,
     pub signal_counts: SignalTypeCounts,
     pub successes: Vec<SourceBrief>,
@@ -56,7 +55,7 @@ pub struct DiscoveryBriefing {
 impl DiscoveryBriefing {
     /// True when the graph is too sparse for LLM discovery to be useful.
     pub fn is_cold_start(&self) -> bool {
-        self.tensions.len() < 3 && self.stories.is_empty() && self.situations.is_empty()
+        self.tensions.len() < 3 && self.situations.is_empty()
     }
 
     /// Render the briefing as structured natural language for the LLM.
@@ -159,25 +158,6 @@ impl DiscoveryBriefing {
                 if s.sensitivity == "SENSITIVE" || s.sensitivity == "RESTRICTED" {
                     out.push_str("   ⚠ SENSITIVE — handle with care in discovery\n");
                 }
-            }
-            out.push('\n');
-        }
-
-        // Legacy Stories (during transition)
-        if !self.stories.is_empty() {
-            out.push_str("## STORY LANDSCAPE (legacy)\n");
-            for (i, s) in self.stories.iter().enumerate() {
-                let arc = s.arc.as_deref().unwrap_or("unknown");
-                out.push_str(&format!(
-                    "{}. \"{}\" — {}, energy={:.1}, {} signals, types: {}, {} sources\n",
-                    i + 1,
-                    s.headline,
-                    arc,
-                    s.energy,
-                    s.signal_count,
-                    s.dominant_type,
-                    s.source_count,
-                ));
             }
             out.push('\n');
         }
@@ -387,14 +367,14 @@ pub fn discovery_system_prompt(city_name: &str) -> String {
          Your job: decide WHERE TO LOOK NEXT to fill gaps in what the scout knows.\n\
          \n\
          You receive a briefing about what the scout has learned — tensions without responses,\n\
-         emerging stories, signal imbalances, and the track record of your past suggestions.\n\
+         emerging situations, signal imbalances, and the track record of your past suggestions.\n\
          \n\
          Generate 3-7 targeted web search queries. Prioritize:\n\
          1. RESPONSE RESOURCES for unmet tensions (highest priority)\n\
          2. DEMAND SIGNALS — if tensions have few associated Needs, search for \
 people expressing needs related to those tensions (GoFundMe campaigns, \
 mutual aid requests, community forum posts, volunteer calls)\n\
-         3. MISSING SIGNAL TYPES for stories with low type diversity\n\
+         3. MISSING SIGNAL TYPES for situations with low type diversity\n\
          4. EMERGING THREADS that deserve deeper investigation\n\
          5. NOVEL ANGLES that existing sources aren't covering\n\
          \n\
@@ -664,7 +644,7 @@ impl<'a> SourceFinder<'a> {
 
         // Cold-start check
         if briefing.is_cold_start() {
-            info!("Cold start detected (< 3 tensions, 0 stories), using mechanical discovery");
+            info!("Cold start detected (< 3 tensions, 0 situations), using mechanical discovery");
             self.discover_from_gaps_mechanical(stats, social_topics).await;
             return;
         }
@@ -674,7 +654,7 @@ impl<'a> SourceFinder<'a> {
         let system = discovery_system_prompt(&self.region_name);
         let user = discovery_user_prompt(&self.region_name, &formatted);
 
-        let plan: DiscoveryPlan = match claude.extract(HAIKU_MODEL, &system, &user).await {
+        let plan: DiscoveryPlan = match claude.extract(&system, &user).await {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");
@@ -815,12 +795,6 @@ impl<'a> SourceFinder<'a> {
             .await
             .map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
 
-        let stories = self
-            .writer
-            .get_story_landscape(8)
-            .await
-            .map_err(|e| anyhow::anyhow!("get_story_landscape: {e}"))?;
-
         let situations = self
             .writer
             .get_situation_landscape(10)
@@ -871,7 +845,6 @@ impl<'a> SourceFinder<'a> {
 
         Ok(DiscoveryBriefing {
             tensions,
-            stories,
             situations,
             signal_counts,
             successes,
@@ -1037,25 +1010,6 @@ mod tests {
         }
     }
 
-    fn make_story(
-        headline: &str,
-        arc: &str,
-        energy: f64,
-        signal_count: u32,
-        dominant_type: &str,
-        source_count: u32,
-    ) -> StoryBrief {
-        StoryBrief {
-            headline: headline.to_string(),
-            arc: Some(arc.to_string()),
-            energy,
-            signal_count,
-            type_diversity: 2,
-            dominant_type: dominant_type.to_string(),
-            source_count,
-        }
-    }
-
     fn make_source_brief(
         cv: &str,
         signals: u32,
@@ -1094,24 +1048,6 @@ mod tests {
                     "medium",
                     Some("affordable housing programs"),
                     false,
-                ),
-            ],
-            stories: vec![
-                make_story(
-                    "Downtown bike lane conflict",
-                    "Emerging",
-                    0.7,
-                    3,
-                    "Tension+Notice",
-                    2,
-                ),
-                make_story(
-                    "Encampment clearance on 3rd Ave",
-                    "Growing",
-                    0.9,
-                    8,
-                    "Tension+Need+Notice",
-                    4,
                 ),
             ],
             signal_counts: SignalTypeCounts {
@@ -1230,16 +1166,6 @@ mod tests {
                 i % 2 == 0,
             ));
         }
-        for i in 0..8 {
-            briefing.stories.push(make_story(
-                &format!("Story number {} about something happening in the city", i),
-                "Growing",
-                0.5 + i as f64 * 0.05,
-                i + 2,
-                "Tension+Notice",
-                i + 1,
-            ));
-        }
         for i in 0..5 {
             briefing.successes.push(make_source_brief(
                 &format!("successful query number {} Minneapolis", i),
@@ -1279,7 +1205,6 @@ mod tests {
     fn briefing_cold_start_with_no_tensions() {
         let briefing = DiscoveryBriefing {
             tensions: vec![],
-            stories: vec![],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1300,7 +1225,6 @@ mod tests {
                 make_tension("Tension 1", "low", None, true),
                 make_tension("Tension 2", "medium", None, true),
             ],
-            stories: vec![],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1313,7 +1237,7 @@ mod tests {
         };
         assert!(
             briefing.is_cold_start(),
-            "2 tensions + 0 stories should be cold start"
+            "2 tensions + 0 situations should be cold start"
         );
     }
 
@@ -1326,10 +1250,6 @@ mod tests {
                 make_tension("T3", "high", None, true),
                 make_tension("T4", "high", None, false),
                 make_tension("T5", "critical", None, true),
-            ],
-            stories: vec![
-                make_story("S1", "Emerging", 0.5, 3, "Tension", 2),
-                make_story("S2", "Growing", 0.8, 6, "Need", 3),
             ],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
@@ -1350,7 +1270,6 @@ mod tests {
     fn briefing_surfaces_successful_discoveries() {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
-            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![
@@ -1389,7 +1308,6 @@ mod tests {
     fn briefing_surfaces_failed_discoveries() {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
-            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1418,7 +1336,6 @@ mod tests {
     fn briefing_separates_successes_from_failures() {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
-            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![make_source_brief("good query", 10, 0.7, 0, "worked", true)],
@@ -1453,7 +1370,6 @@ mod tests {
                 make_tension("Unmet tension A", "high", Some("help A"), true),
                 make_tension("Met tension B", "medium", Some("help B"), false),
             ],
-            stories: vec![],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],
@@ -1492,7 +1408,6 @@ mod tests {
     fn briefing_signal_imbalance_annotation() {
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension("T1", "high", None, true); 3],
-            stories: vec![make_story("S1", "Emerging", 0.5, 3, "Tension", 2)],
             situations: vec![],
             signal_counts: SignalTypeCounts {
                 gatherings: 10,
@@ -1750,7 +1665,7 @@ mod tests {
 
     #[test]
     fn cold_start_ignores_engagement() {
-        // Cold start: < 3 tensions, no stories — mechanical fallback runs regardless of engagement
+        // Cold start: < 3 tensions, no situations — mechanical fallback runs regardless of engagement
         let briefing = DiscoveryBriefing {
             tensions: vec![make_tension_with_engagement(
                 "Only tension",
@@ -1761,7 +1676,6 @@ mod tests {
                 0,
                 0.0,
             )],
-            stories: vec![],
             situations: vec![],
             signal_counts: SignalTypeCounts::default(),
             successes: vec![],

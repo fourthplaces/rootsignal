@@ -139,6 +139,7 @@ impl<'a> Expansion<'a> {
                     run_log.log(EventKind::ExpansionSourceCreated {
                         canonical_key: ck.clone(),
                         query: query_text.clone(),
+                        source_url: ck.clone(),
                     });
                     created += 1;
                     // Store embedding for future dedup

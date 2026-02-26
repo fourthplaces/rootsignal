@@ -1300,7 +1300,8 @@ pub fn node_type_label(nt: NodeType) -> &'static str {
         NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
-        NodeType::Citation => "Citation",
+        // Neo4j label is still "Evidence" — Rust type was renamed to Citation.
+        NodeType::Citation => "Evidence",
     }
 }
 
@@ -1490,7 +1491,15 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         cause_heat,
         channel_diversity: channel_diversity as u32,
         implied_queries: Vec::new(),
-        review_status: n.get::<String>("review_status").unwrap_or_else(|_| "live".to_string()),
+        review_status: {
+            let s: String = n.get("review_status").unwrap_or_default();
+            match s.as_str() {
+                "accepted" => rootsignal_common::ReviewStatus::Accepted,
+                "rejected" => rootsignal_common::ReviewStatus::Rejected,
+                "corrected" => rootsignal_common::ReviewStatus::Corrected,
+                _ => rootsignal_common::ReviewStatus::Staged,
+            }
+        },
         was_corrected: n.get("was_corrected").unwrap_or(false),
         corrections: {
             let c: String = n.get("corrections").unwrap_or_default();
@@ -1500,7 +1509,6 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             let r: String = n.get("rejection_reason").unwrap_or_default();
             if r.is_empty() { None } else { Some(r) }
         },
-        author_actor: None, // Transport field only — not persisted to Neo4j
     };
 
     match node_type {
@@ -1731,7 +1739,7 @@ pub(crate) fn extract_citation(row: &neo4rs::Row) -> Vec<CitationNode> {
                 } else {
                     Some(relevance)
                 },
-                evidence_confidence: if ev_conf > 0.0 {
+                confidence: if ev_conf > 0.0 {
                     Some(ev_conf as f32)
                 } else {
                     None
@@ -1741,8 +1749,8 @@ pub(crate) fn extract_citation(row: &neo4rs::Row) -> Vec<CitationNode> {
         })
         .collect();
     evidence.sort_by(|a, b| {
-        let ca = a.evidence_confidence.unwrap_or(0.0);
-        let cb = b.evidence_confidence.unwrap_or(0.0);
+        let ca = a.confidence.unwrap_or(0.0);
+        let cb = b.confidence.unwrap_or(0.0);
         cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
     });
     evidence

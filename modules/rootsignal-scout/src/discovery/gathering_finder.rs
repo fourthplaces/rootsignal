@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, ScoutScope, SensitivityLevel, SourceNode, SourceRole, Urgency,
+    NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
@@ -425,7 +425,7 @@ impl<'a> GatheringFinder<'a> {
 
         let finding: GravityFinding = self
             .claude
-            .extract(HAIKU_MODEL, STRUCTURING_SYSTEM, &structuring_user)
+            .extract(STRUCTURING_SYSTEM, &structuring_user)
             .await?;
 
         // Handle no_gravity early termination
@@ -638,7 +638,7 @@ impl<'a> GatheringFinder<'a> {
             summary: gathering.summary.clone(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.7,
-            freshness_score: 1.0,
+
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: self.region.center_lat,
@@ -652,12 +652,14 @@ impl<'a> GatheringFinder<'a> {
             content_date: None,
             last_confirmed_active: now,
             source_diversity: 1,
-            external_ratio: 1.0,
+
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
-            author_actor: None,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         };
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
@@ -968,7 +970,7 @@ mod tests {
             summary: "Community singing event".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.7,
-            freshness_score: 1.0,
+
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: region.center_lat,
@@ -982,12 +984,14 @@ mod tests {
             content_date: None,
             last_confirmed_active: now,
             source_diversity: 1,
-            external_ratio: 1.0,
+
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
-            author_actor: None,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         };
 
         let node = Node::Gathering(GatheringNode {

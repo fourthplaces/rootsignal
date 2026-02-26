@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole, TensionNode, Urgency,
+    NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole,
+    TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 
@@ -439,7 +440,7 @@ impl<'a> ResponseFinder<'a> {
 
         let extraction_claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL);
         let finding: ResponseFinding = extraction_claude
-            .extract(HAIKU_MODEL, STRUCTURING_SYSTEM, &structuring_user)
+            .extract(STRUCTURING_SYSTEM, &structuring_user)
             .await?;
 
         // Validate URLs: only keep responses whose URLs were actually visited
@@ -694,7 +695,7 @@ impl<'a> ResponseFinder<'a> {
             summary: response.summary.clone(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.7,
-            freshness_score: 1.0,
+
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: self.region.center_lat,
@@ -708,12 +709,14 @@ impl<'a> ResponseFinder<'a> {
             content_date: None,
             last_confirmed_active: now,
             source_diversity: 1,
-            external_ratio: 1.0,
+
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
-            author_actor: None,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
@@ -873,7 +876,7 @@ impl<'a> ResponseFinder<'a> {
                 summary: tension.summary.clone(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.4, // Capped at 0.4 — below 0.5 target selection threshold
-                freshness_score: 1.0,
+    
                 corroboration_count: 0,
                 about_location: Some(GeoPoint {
                     lat: self.region.center_lat,
@@ -887,12 +890,14 @@ impl<'a> ResponseFinder<'a> {
                 content_date: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
-                external_ratio: 1.0,
+    
                 cause_heat: 0.0,
                 channel_diversity: 1,
-                mentioned_actors: vec![],
                 implied_queries: vec![],
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity,
             category: Some(tension.category.clone()),
@@ -1096,7 +1101,7 @@ mod tests {
             summary: "Free legal workshops".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.7,
-            freshness_score: 1.0,
+
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: region.center_lat,
@@ -1110,12 +1115,14 @@ mod tests {
             content_date: None,
             last_confirmed_active: now,
             source_diversity: 1,
-            external_ratio: 1.0,
+
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
-            author_actor: None,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
         };
 
         let node = Node::Aid(AidNode {

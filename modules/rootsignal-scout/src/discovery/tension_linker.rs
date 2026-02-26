@@ -11,8 +11,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ScoutScope, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, SensitivityLevel, Severity,
-    TensionNode,
+    ScoutScope, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, SensitivityLevel,
+    Severity, TensionNode,
 };
 use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 
@@ -387,7 +387,7 @@ impl<'a> TensionLinker<'a> {
         let structuring_prompt = structuring_system();
         let finding: SignalFinding = self
             .claude
-            .extract(HAIKU_MODEL, &structuring_prompt, &structuring_user)
+            .extract(&structuring_prompt, &structuring_user)
             .await?;
 
         Ok(finding)
@@ -468,7 +468,7 @@ impl<'a> TensionLinker<'a> {
                 summary: tension.summary.clone(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.7,
-                freshness_score: 1.0,
+
                 corroboration_count: 0,
                 about_location: Some(GeoPoint {
                     lat: self.region.center_lat,
@@ -482,12 +482,14 @@ impl<'a> TensionLinker<'a> {
                 content_date: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
-                external_ratio: 1.0,
+
                 cause_heat: 0.0,
                 channel_diversity: 1,
-                mentioned_actors: vec![],
                 implied_queries: vec![],
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity,
             category: Some(tension.category.clone()),
@@ -601,7 +603,7 @@ mod tests {
                 summary: tension.summary.clone(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.7,
-                freshness_score: 1.0,
+
                 corroboration_count: 0,
                 about_location: Some(GeoPoint {
                     lat: region.center_lat,
@@ -615,12 +617,14 @@ mod tests {
                 content_date: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
-                external_ratio: 1.0,
+
                 cause_heat: 0.0,
                 channel_diversity: 1,
-                mentioned_actors: vec![],
                 implied_queries: vec![],
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity,
             category: Some(tension.category.clone()),

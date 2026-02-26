@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, EvidenceNode, Node, NodeType,
+    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
     Post, SourceNode,
 };
 use rootsignal_common::EntityMappingOwned;
@@ -120,7 +120,7 @@ pub trait SignalStore: Send + Sync {
     ) -> Result<Uuid>;
 
     /// Attach an evidence node to a signal.
-    async fn create_evidence(&self, evidence: &EvidenceNode, signal_id: Uuid) -> Result<()>;
+    async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()>;
 
     /// Refresh a signal's last_confirmed_active timestamp (same-source re-encounter).
     async fn refresh_signal(

@@ -928,10 +928,8 @@ async fn blank_author_name_does_not_create_actor() {
             archived_page("https://example.com/ws-author", "# Content"),
         );
 
-    let mut node = tension_at("Signal With Blank Author", 44.975, -93.270);
-    if let Some(meta) = node.meta_mut() {
-        meta.author_actor = Some("   ".to_string()); // whitespace-only
-    }
+    let node = tension_at("Signal With Blank Author", 44.975, -93.270);
+    // NOTE: author_actor field removed from NodeMeta; blank-author path is now a no-op.
 
     let extractor = MockExtractor::new()
         .on_url(
@@ -1528,10 +1526,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     let fetcher = MockFetcher::new()
         .on_posts(ig_url, vec![test_post("Depth test post")]);
 
-    let mut node = tension_at("Depth Signal", 44.9778, -93.2650);
-    if let Some(meta) = node.meta_mut() {
-        meta.author_actor = Some("Depth Child Org".to_string());
-    }
+    let node = tension_at("Depth Signal", 44.9778, -93.2650);
 
     let extractor = MockExtractor::new()
         .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
@@ -1585,10 +1580,7 @@ async fn bootstrap_actor_gets_depth_zero() {
     let fetcher = MockFetcher::new()
         .on_posts(ig_url, vec![test_post("Bootstrap post")]);
 
-    let mut node = tension_at("Bootstrap Signal", 44.9778, -93.2650);
-    if let Some(meta) = node.meta_mut() {
-        meta.author_actor = Some("Bootstrap Org".to_string());
-    }
+    let node = tension_at("Bootstrap Signal", 44.9778, -93.2650);
 
     let extractor = MockExtractor::new()
         .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
@@ -2387,10 +2379,7 @@ async fn owned_source_author_creates_actor_with_url_entity_id() {
     let fetcher = MockFetcher::new()
         .on_posts(ig_url, vec![test_post("Waterfall cleanup this Saturday!")]);
 
-    let mut node = tension_at("Falls Cleanup Day", 44.92, -93.21);
-    if let Some(meta) = node.meta_mut() {
-        meta.author_actor = Some("Friends of the Falls".to_string());
-    }
+    let node = tension_at("Falls Cleanup Day", 44.92, -93.21);
 
     let extractor = MockExtractor::new()
         .on_url(ig_url, crate::pipeline::extractor::ExtractionResult {
@@ -2439,10 +2428,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
             archived_page("https://aggregator.com/news", "# Local News Roundup"),
         );
 
-    let mut node = tension_at("Community Event Coverage", 44.975, -93.270);
-    if let Some(meta) = node.meta_mut() {
-        meta.author_actor = Some("Jane Reporter".to_string());
-    }
+    let node = tension_at("Community Event Coverage", 44.975, -93.270);
 
     let extractor = MockExtractor::new()
         .on_url(
@@ -2490,10 +2476,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
             archived_page("https://example.com/mentions", "# Article with mentions"),
         );
 
-    let mut node = tension_at("Free Legal Clinic", 44.975, -93.270);
-    if let Some(meta) = node.meta_mut() {
-        meta.mentioned_actors = vec!["Legal Aid Society".to_string(), "City Council".to_string()];
-    }
+    let node = tension_at("Free Legal Clinic", 44.975, -93.270);
 
     let extractor = MockExtractor::new()
         .on_url(

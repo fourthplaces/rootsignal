@@ -103,7 +103,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rootsignal_common::{GatheringNode, GeoPoint, GeoPrecision, NodeMeta, SensitivityLevel};
+    use rootsignal_common::{GatheringNode, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, SensitivityLevel};
     use uuid::Uuid;
 
     fn test_meta() -> NodeMeta {
@@ -129,11 +129,10 @@ mod tests {
             cause_heat: 0.0,
             channel_diversity: 1,
             implied_queries: vec![],
-            review_status: "live".to_string(),
+            review_status: ReviewStatus::Staged,
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            author_actor: None,
         }
     }
 

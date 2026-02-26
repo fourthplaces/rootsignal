@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     canonical_value, channel_type, is_web_query, scraping_strategy, ActorNode, ActorType, ActorContext, ScoutScope,
-    DiscoveryMethod, EvidenceNode, Node, NodeType, Post, ScrapingStrategy,
-    SocialPlatform, SourceNode, SourceRole,
+    DiscoveryMethod, CitationNode, Node, NodeType, Post, ScrapingStrategy,
+    SocialPlatform, SourceNode, SourceRole, ReviewStatus,
 };
 use crate::enrichment::link_promoter::{self, CollectedLink};
 use crate::infra::embedder::TextEmbedder;
@@ -209,7 +209,7 @@ pub(crate) fn score_and_filter(
     // 2. Filter to signal nodes only (skip Evidence)
     nodes
         .into_iter()
-        .filter(|n| !matches!(n.node_type(), NodeType::Evidence))
+        .filter(|n| !matches!(n.node_type(), NodeType::Citation))
         .collect()
 }
 
@@ -1510,8 +1510,10 @@ impl ScrapePhase {
                     run_log.log(EventKind::SignalCorroborated {
                         existing_id: existing_id.to_string(),
                         signal_type: format!("{}", node.node_type()),
+                        title: node.title().to_string(),
                         new_source_url: url.clone(),
                         similarity,
+                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
                     });
                     info!(
                         existing_id = %existing_id,
@@ -1522,14 +1524,14 @@ impl ScrapePhase {
                     self.store
                         .corroborate(existing_id, existing_type, now, &entity_mappings, &url, similarity)
                         .await?;
-                    let evidence = EvidenceNode {
+                    let evidence = CitationNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
-                        evidence_confidence: None,
+                        confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store
@@ -1544,6 +1546,8 @@ impl ScrapePhase {
                         matched_id: existing_id.to_string(),
                         similarity,
                         action: "refresh".to_string(),
+                        source_url: url.clone(),
+                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
                     });
                     info!(
                         existing_id = %existing_id,
@@ -1554,14 +1558,14 @@ impl ScrapePhase {
                     self.store
                         .refresh_signal(existing_id, existing_type, now)
                         .await?;
-                    let evidence = EvidenceNode {
+                    let evidence = CitationNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
-                        evidence_confidence: None,
+                        confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store
@@ -1647,7 +1651,7 @@ impl ScrapePhase {
                 NodeType::Need => 2,
                 NodeType::Notice => 3,
                 NodeType::Tension => 4,
-                NodeType::Evidence => continue,
+                NodeType::Citation => continue,
             };
 
             // 3a: Check in-memory cache first (catches cross-batch dupes not yet indexed)
@@ -1693,6 +1697,8 @@ impl ScrapePhase {
                         matched_id: existing_id.to_string(),
                         similarity,
                         action: "refresh".to_string(),
+                        source_url: url.clone(),
+                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
                     });
                     info!(
                         existing_id = %existing_id,
@@ -1704,14 +1710,14 @@ impl ScrapePhase {
                     self.store
                         .refresh_signal(existing_id, existing_type, now)
                         .await?;
-                    let evidence = EvidenceNode {
+                    let evidence = CitationNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
-                        evidence_confidence: None,
+                        confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store.create_evidence(&evidence, existing_id).await?;
@@ -1729,8 +1735,10 @@ impl ScrapePhase {
                     run_log.log(EventKind::SignalCorroborated {
                         existing_id: existing_id.to_string(),
                         signal_type: format!("{}", existing_type),
+                        title: node.title().to_string(),
                         new_source_url: url.clone(),
                         similarity,
+                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
                     });
                     info!(
                         existing_id = %existing_id,
@@ -1742,14 +1750,14 @@ impl ScrapePhase {
                     self.store
                         .corroborate(existing_id, existing_type, now, &entity_mappings, &url, similarity)
                         .await?;
-                    let evidence = EvidenceNode {
+                    let evidence = CitationNode {
                         id: Uuid::new_v4(),
                         source_url: url.clone(),
                         retrieved_at: now,
                         content_hash: content_hash_str.clone(),
                         snippet: node.meta().map(|m| m.summary.clone()),
                         relevance: None,
-                        evidence_confidence: None,
+                        confidence: None,
                         channel_type: Some(channel_type(&url)),
                     };
                     self.store.create_evidence(&evidence, existing_id).await?;
@@ -1780,14 +1788,14 @@ impl ScrapePhase {
             ctx.embed_cache
                 .add(embedding, node_id, node_type, url.clone());
 
-            let evidence = EvidenceNode {
+            let evidence = CitationNode {
                 id: Uuid::new_v4(),
                 source_url: url.clone(),
                 retrieved_at: now,
                 content_hash: content_hash_str.clone(),
                 snippet: node.meta().map(|m| m.summary.clone()),
                 relevance: None,
-                evidence_confidence: None,
+                confidence: None,
                 channel_type: Some(channel_type(&url)),
             };
             self.store.create_evidence(&evidence, node_id).await?;
@@ -1799,70 +1807,9 @@ impl ScrapePhase {
                 }
             }
 
-            // Resolve author_actor → Actor node on owned sources only.
-            // Mentioned actors are kept as metadata strings but do NOT create nodes.
-            let strategy = scraping_strategy(&url);
-            if is_owned_source(&strategy) {
-                if let Some(meta) = node.meta() {
-                    if let Some(author_name) = &meta.author_actor {
-                        let author_name = author_name.trim();
-                        if !author_name.is_empty() {
-                            let entity_id = canonical_value(&url);
-                            let actor_id = match self.store.find_actor_by_entity_id(&entity_id).await {
-                                Ok(Some(id)) => Some(id),
-                                Ok(None) => {
-                                    let actor = ActorNode {
-                                        id: Uuid::new_v4(),
-                                        name: author_name.to_string(),
-                                        actor_type: ActorType::Organization,
-                                        entity_id: entity_id.clone(),
-                                        domains: vec![],
-                                        social_urls: vec![],
-                                        description: String::new(),
-                                        signal_count: 0,
-                                        first_seen: Utc::now(),
-                                        last_active: Utc::now(),
-                                        typical_roles: vec![],
-                                        bio: None,
-                                        location_lat: None,
-                                        location_lng: None,
-                                        location_name: None,
-                                        discovery_depth: actor_ctx.map(|ac| ac.discovery_depth + 1).unwrap_or(0),
-                                    };
-                                    match self.store.upsert_actor(&actor).await {
-                                        Ok(_) => {
-                                            // Wire HAS_SOURCE edge (actor → source)
-                                            if let Some(sid) = source_id {
-                                                if let Err(e) = self.store.link_actor_to_source(actor.id, sid).await {
-                                                    warn!(error = %e, actor = author_name, "Failed to link actor to source (non-fatal)");
-                                                }
-                                            }
-                                            Some(actor.id)
-                                        }
-                                        Err(e) => {
-                                            warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
-                                            None
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, actor = author_name, "Actor entity_id lookup failed (non-fatal)");
-                                    None
-                                }
-                            };
-                            if let Some(actor_id) = actor_id {
-                                if let Err(e) = self
-                                    .store
-                                    .link_actor_to_signal(actor_id, node_id, "authored")
-                                    .await
-                                {
-                                    warn!(error = %e, actor = author_name, "Failed to link author actor to signal (non-fatal)");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // NOTE: author_actor resolution removed — field moved off NodeMeta.
+            // TODO: Carry author_actor from ExtractedSignal through ExtractionResult
+            // and resolve it here once the pipeline plumbing is updated.
 
             // Wire resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
             if let Some(meta) = node.meta() {
@@ -2020,7 +1967,7 @@ mod tests {
                 summary: String::new(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.8,
-                freshness_score: 0.9,
+
                 corroboration_count: 0,
                 about_location: None,
                 about_location_name: None,
@@ -2030,12 +1977,14 @@ mod tests {
                 content_date: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
-                external_ratio: 0.0,
+
                 cause_heat: 0.0,
                 implied_queries: Vec::new(),
                 channel_diversity: 1,
-                mentioned_actors: Vec::new(),
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity: Severity::Medium,
             category: None,
@@ -2051,7 +2000,7 @@ mod tests {
                 summary: String::new(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.8,
-                freshness_score: 0.9,
+
                 corroboration_count: 0,
                 about_location: None,
                 about_location_name: None,
@@ -2061,12 +2010,14 @@ mod tests {
                 content_date: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
-                external_ratio: 0.0,
+
                 cause_heat: 0.0,
                 implied_queries: Vec::new(),
                 channel_diversity: 1,
-                mentioned_actors: Vec::new(),
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             urgency: Urgency::Medium,
             what_needed: None,
@@ -2397,7 +2348,7 @@ mod tests {
                 summary: String::new(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.0, // will be overwritten by score_and_filter
-                freshness_score: 0.9,
+
                 corroboration_count: 0,
                 about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
                 about_location_name: None,
@@ -2407,12 +2358,14 @@ mod tests {
                 content_date: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
-                external_ratio: 0.0,
+
                 cause_heat: 0.0,
                 implied_queries: Vec::new(),
                 channel_diversity: 1,
-                mentioned_actors: Vec::new(),
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity: Severity::Medium,
             category: None,
@@ -2452,15 +2405,15 @@ mod tests {
 
     #[test]
     fn score_filter_removes_evidence_nodes() {
-        use rootsignal_common::EvidenceNode;
-        let evidence = Node::Evidence(EvidenceNode {
+        use rootsignal_common::CitationNode;
+        let evidence = Node::Citation(CitationNode {
             id: Uuid::new_v4(),
             source_url: "https://example.com".to_string(),
             retrieved_at: Utc::now(),
             content_hash: "abc".to_string(),
             snippet: None,
             relevance: None,
-            evidence_confidence: None,
+            confidence: None,
             channel_type: None,
         });
         let nodes = vec![
@@ -2480,7 +2433,7 @@ mod tests {
                 summary: String::new(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.0,
-                freshness_score: 0.9,
+
                 corroboration_count: 0,
                 about_location: None,
                 about_location_name: Some(location_name.to_string()),
@@ -2490,12 +2443,14 @@ mod tests {
                 content_date: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
-                external_ratio: 0.0,
+
                 cause_heat: 0.0,
                 implied_queries: Vec::new(),
                 channel_diversity: 1,
-                mentioned_actors: Vec::new(),
-                author_actor: None,
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
             },
             severity: Severity::Medium,
             category: None,
@@ -2610,14 +2565,14 @@ mod tests {
     #[test]
     fn evidence_nodes_are_filtered_out() {
         // Evidence nodes should be removed by score_and_filter
-        let evidence = Node::Evidence(rootsignal_common::EvidenceNode {
+        let evidence = Node::Citation(rootsignal_common::CitationNode {
             id: Uuid::new_v4(),
             content_hash: "abc".to_string(),
             source_url: "https://example.com".to_string(),
             retrieved_at: Utc::now(),
             snippet: None,
             relevance: None,
-            evidence_confidence: None,
+            confidence: None,
             channel_type: None,
         });
         let nodes = vec![tension("Real Signal"), evidence];
