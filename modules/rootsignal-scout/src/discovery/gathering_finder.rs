@@ -547,8 +547,8 @@ impl<'a> GatheringFinder<'a> {
                 was_new = false;
 
                 // Touch the existing signal so it doesn't age out
-                if let Err(e) = self.writer.touch_signal_timestamp(dup.id).await {
-                    warn!(error = %e, "Failed to touch signal timestamp (non-fatal)");
+                if let Err(e) = self.store.refresh_signal(dup.id, NodeType::Gathering, Utc::now()).await {
+                    warn!(error = %e, "Failed to refresh signal freshness (non-fatal)");
                 }
 
                 dup.id

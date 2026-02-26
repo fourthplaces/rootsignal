@@ -907,7 +907,9 @@ impl GraphProjector {
             } => {
                 for tag in &tags {
                     let q = query(
-                        "MATCH (s:Story {id: $situation_id})
+                        "MATCH (s)
+                         WHERE s.id = $situation_id
+                           AND (s:Story OR s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
                          MERGE (t:Tag {slug: $slug})
                          ON CREATE SET t.name = $name
                          MERGE (s)-[r:TAGGED]->(t)

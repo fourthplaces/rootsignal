@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::events::{Event, Location, Schedule};
+use rootsignal_common::events::{Event, Location, Schedule, TagFact};
 use rootsignal_common::types::{
     ActorNode, EvidenceNode, GeoPoint, Node, NodeType, SourceNode,
 };
@@ -758,7 +758,22 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()> {
-        Ok(self.writer.batch_tag_signals(signal_id, tag_slugs).await?)
+        if tag_slugs.is_empty() {
+            return Ok(());
+        }
+        let tags = tag_slugs
+            .iter()
+            .map(|slug| TagFact {
+                slug: slug.clone(),
+                name: slug.replace('-', " "),
+                weight: 1.0,
+            })
+            .collect();
+        let event = Event::TagsAggregated {
+            situation_id: signal_id,
+            tags,
+        };
+        self.append_and_project(&event, None).await
     }
 
     // --- Actor location enrichment (pass through) ---

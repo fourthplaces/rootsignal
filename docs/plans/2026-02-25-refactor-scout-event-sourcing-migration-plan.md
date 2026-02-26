@@ -2,7 +2,7 @@
 title: "refactor: Migrate scout from direct GraphWriter writes to event-sourcing"
 type: refactor
 date: 2026-02-25
-updated: 2026-02-25
+updated: 2026-02-26
 depends_on: docs/plans/2026-02-25-refactor-enrichment-pipeline-plan.md
 ---
 
@@ -92,10 +92,10 @@ These are the only remaining signal creation paths not going through events. The
 
 **Other direct writer writes (not through EventSourcedStore):**
 - `reap_expired()` → `EntityExpired`/`EntityPurged` events exist + handlers
-- `batch_tag_signals()` → `TagsAggregated` event exists + handler
+- ~~`batch_tag_signals()`~~ → now event-sourced via `TagsAggregated`, removed from GraphWriter
 - `delete_pins()` → `PinsRemoved` event exists + handler
 - `set_query_embedding()` — no event variant (infrastructure)
-- `touch_signal_timestamp()` — covered by `FreshnessConfirmed`
+- ~~`touch_signal_timestamp()`~~ → replaced by `store.refresh_signal()` (`FreshnessConfirmed`), removed from GraphWriter
 - Task management (`set_task_phase_status`, etc.) — operational, not domain events
 
 ---
@@ -145,7 +145,7 @@ These are the only remaining signal creation paths not going through events. The
   - Needs to query which signals are expired first, then emit events
   - Currently `writer.reap_expired()` does query+delete in one Cypher
   - Refactor: split into read (find expired IDs) + emit events (one per type)
-- [ ] EventSourcedStore: `batch_tag_signals()` → emit `TagsAggregated` event → project (deferred — TagsAggregated targets Story nodes, not signals)
+- [x] EventSourcedStore: `batch_tag_signals()` → emit `TagsAggregated` event → project (reducer updated to match any node type, not just Story)
 - [x] Convert pin lifecycle: `delete_pins()` → emit `PinsRemoved` event → project
 - [x] Convert `source_finder.rs`, `bootstrap.rs`, `expansion.rs` `upsert_source()` calls to go through EventSourcedStore or emit events directly
 - [x] Convert `metrics.rs` `record_source_scrape()` call → emit `SourceScrapeRecorded` event
@@ -227,7 +227,7 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 **Explicitly pass-through (not domain events):**
 - `find_or_create_resource` — query+command hybrid returning UUID
 - `find_or_create_place` — query+command hybrid returning UUID
-- `batch_tag_signals` — targets Story nodes, different domain
+- ~~`batch_tag_signals`~~ — now event-sourced via `TagsAggregated`, removed from GraphWriter
 
 **Files:**
 - `modules/rootsignal-common/src/events.rs` — 3 new variants
@@ -251,15 +251,15 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [x] Remove private helpers (`create_gathering`, `create_aid`, `create_need`, `create_notice`, `create_tension`, `add_location_params`)
 - [x] Remove unused free functions (`urgency_str`, `severity_str`, `sensitivity_str`)
 - [x] Migrate discovery modules: `investigator` and `tension_linker` now take `&dyn SignalStore` for writes
-- [ ] Remove enrichment methods that are now in `enrich.rs`
-- [ ] Remove inline diversity computation from corroborate
+- [x] Remove enrichment methods that are now in `enrich.rs` (already moved; no duplicates in writer.rs)
+- [x] Remove inline diversity computation from corroborate (removed with corroborate method)
 - [x] Remove `impl SignalStore for GraphWriter` (non-event bypass path)
 - [x] Route API mutations (`add_source`, `tag_story`) through `Arc<dyn SignalStore>`
 - [x] Add `build_signal_store` factory + `ScoutDeps::build_store` convenience
 - [x] Audit: no direct writes bypass the event path
 - [x] Add `SignalStoreFactory` — per-mutation run_ids for proper event correlation
 - [x] Remove startup panic — graceful error when Postgres is unavailable
-- [ ] Make GraphWriter write methods `pub(crate)` once remaining pass-throughs (`find_or_create_resource`, `batch_tag_signals`) are event-sourced. Currently `pub` — convention-based protection, not type-system enforced.
+- [ ] Make GraphWriter write methods `pub(crate)` once remaining pass-throughs (`find_or_create_resource`) are event-sourced. Currently `pub` — convention-based protection, not type-system enforced.
 - [ ] Consider renaming `GraphWriter` → `GraphReader` or splitting into `GraphReader` + `GraphAdmin`
 
 **Not removed** (kept on GraphWriter or moved to GraphAdmin):
@@ -289,6 +289,6 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - Event data model: `docs/plans/2026-02-25-refactor-event-data-model-plan.md`
 - Event sourcing brainstorm: `docs/brainstorms/2026-02-25-event-sourcing-brainstorm.md`
 - Enrichment brainstorm: `docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md`
-- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,200 lines after Phase 6 cleanup, down from ~5,990)
+- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,126 lines after final cleanup, down from ~5,990)
 - EventSourcedStore: `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs`
 - Reducer: `modules/rootsignal-graph/src/reducer.rs` (all 71 event handlers)

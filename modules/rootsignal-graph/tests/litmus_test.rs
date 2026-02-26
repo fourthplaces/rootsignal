@@ -2262,54 +2262,6 @@ async fn drawn_to_edge_coexists_with_response_edge() {
 }
 
 #[tokio::test]
-async fn touch_signal_timestamp_refreshes_last_confirmed_active() {
-    let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
-
-    let gathering_id = Uuid::new_v4();
-    create_signal(
-        &client,
-        "Gathering",
-        gathering_id,
-        "Weekly Vigil",
-        "https://example.com/vigil",
-    )
-    .await;
-
-    // Get initial timestamp
-    let q = query(
-        "MATCH (e:Gathering {id: $id})
-         RETURN e.last_confirmed_active AS lca",
-    )
-    .param("id", gathering_id.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
-    let row = stream.next().await.unwrap().expect("Should have row");
-    let initial_lca: String = format!("{:?}", row.get::<chrono::NaiveDateTime>("lca"));
-
-    // Wait a tiny bit and touch
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    writer
-        .touch_signal_timestamp(gathering_id)
-        .await
-        .expect("touch failed");
-
-    // Verify timestamp was updated
-    let q2 = query(
-        "MATCH (e:Gathering {id: $id})
-         RETURN e.last_confirmed_active AS lca",
-    )
-    .param("id", gathering_id.to_string());
-    let mut stream2 = client.inner().execute(q2).await.unwrap();
-    let row2 = stream2.next().await.unwrap().expect("Should have row");
-    let updated_lca: String = format!("{:?}", row2.get::<chrono::NaiveDateTime>("lca"));
-
-    assert_ne!(
-        initial_lca, updated_lca,
-        "last_confirmed_active should have been updated"
-    );
-}
-
-#[tokio::test]
 async fn get_existing_gathering_signals_filters_by_bbox() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
