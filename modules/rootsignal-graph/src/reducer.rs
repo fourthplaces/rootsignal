@@ -1,9 +1,9 @@
-//! GraphReducer — pure projection of facts into Neo4j nodes and edges.
+//! GraphProjector — pure projection of facts into Neo4j nodes and edges.
 //!
 //! Each event is either acted upon (MERGE/SET/DELETE) or ignored (no-op).
-//! The reducer never reads the graph, calls APIs, generates UUIDs, or uses wall-clock time.
+//! The projector never reads the graph, calls APIs, generates UUIDs, or uses wall-clock time.
 //! It writes only factual values from event payloads — no embeddings, no diversity counts,
-//! no cause_heat. Those are computed by enrichment passes after the reducer runs.
+//! no cause_heat. Those are computed by enrichment passes after the projector runs.
 //!
 //! Idempotency: all writes use MERGE or conditional SET with the event's seq as a guard.
 //! Replaying the same event twice produces the same graph state.
@@ -23,11 +23,11 @@ use rootsignal_events::StoredEvent;
 use crate::GraphClient;
 
 // ---------------------------------------------------------------------------
-// GraphReducer
+// GraphProjector
 // ---------------------------------------------------------------------------
 
 /// Pure projection of facts into Neo4j nodes and edges.
-pub struct GraphReducer {
+pub struct GraphProjector {
     client: GraphClient,
 }
 
@@ -42,13 +42,13 @@ pub enum ApplyResult {
     DeserializeError(String),
 }
 
-impl GraphReducer {
+impl GraphProjector {
     pub fn new(client: GraphClient) -> Self {
         Self { client }
     }
 
-    /// Apply a single fact to the graph. Idempotent.
-    pub async fn apply(&self, event: &StoredEvent) -> Result<ApplyResult> {
+    /// Project a single fact to the graph. Idempotent.
+    pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
         let parsed = match Event::from_payload(&event.payload) {
             Ok(e) => e,
             Err(e) => {
@@ -103,7 +103,8 @@ impl GraphReducer {
                     ", n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
-                       n.action_url = $action_url, n.organizer = $organizer",
+                       n.action_url = $action_url, n.organizer = $organizer,
+                       n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
                     id, &title, &summary, &sensitivity, confidence, &source_url,
                     &extracted_at, content_date, &location, implied_queries, event,
                 )
@@ -632,6 +633,11 @@ impl GraphReducer {
                 domains,
                 social_urls,
                 description,
+                bio,
+                location_lat,
+                location_lng,
+                location_name,
+                discovery_depth,
             } => {
                 let q = query(
                     "MERGE (a:Actor {entity_id: $entity_id})
@@ -642,7 +648,12 @@ impl GraphReducer {
                          a.domains = $domains,
                          a.social_urls = $social_urls,
                          a.description = $description,
-                         a.signal_count = 1,
+                         a.bio = $bio,
+                         a.location_lat = $location_lat,
+                         a.location_lng = $location_lng,
+                         a.location_name = $location_name,
+                         a.discovery_depth = $discovery_depth,
+                         a.signal_count = 0,
                          a.first_seen = datetime($ts),
                          a.last_active = datetime($ts)
                      ON MATCH SET
@@ -656,6 +667,11 @@ impl GraphReducer {
                 .param("domains", domains)
                 .param("social_urls", social_urls)
                 .param("description", description.as_str())
+                .param::<Option<String>>("bio", bio)
+                .param::<Option<f64>>("location_lat", location_lat)
+                .param::<Option<f64>>("location_lng", location_lng)
+                .param::<Option<String>>("location_name", location_name)
+                .param("discovery_depth", discovery_depth.unwrap_or(0) as i64)
                 .param("ts", format_dt_from_stored(event));
 
                 self.client.graph.run(q).await?;
@@ -1134,6 +1150,25 @@ impl GraphReducer {
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
+
+            // =================================================================
+            // Signal-source linkage
+            // =================================================================
+            Event::SignalLinkedToSource {
+                signal_id,
+                source_id,
+            } => {
+                let q = query(
+                    "MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                     MATCH (s:Source {id: $source_id})
+                     MERGE (n)-[:PRODUCED_BY]->(s)"
+                )
+                .param("signal_id", signal_id.to_string())
+                .param("source_id", source_id.to_string());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
         }
     }
 
@@ -1216,7 +1251,7 @@ impl GraphReducer {
             }
 
             for event in &events {
-                self.apply(event).await?;
+                self.project(event).await?;
                 last_applied = event.seq;
             }
 

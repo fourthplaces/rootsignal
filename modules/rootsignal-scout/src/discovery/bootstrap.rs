@@ -15,6 +15,7 @@ use rootsignal_archive::Archive;
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     archive: Arc<Archive>,
     anthropic_api_key: String,
     region: ScoutScope,
@@ -23,12 +24,14 @@ pub struct Bootstrapper<'a> {
 impl<'a> Bootstrapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: ScoutScope,
     ) -> Self {
         Self {
             writer,
+            store,
             archive,
             anthropic_api_key: anthropic_api_key.to_string(),
             region,
@@ -60,7 +63,7 @@ impl<'a> Bootstrapper<'a> {
                 role.clone(),
                 None,
             );
-            match self.writer.upsert_source(&source).await {
+            match self.store.upsert_source(&source).await {
                 Ok(_) => {
                     sources_created += 1;
                     self.create_pin_for_source(source.id).await;
@@ -73,7 +76,7 @@ impl<'a> Bootstrapper<'a> {
         let platform_sources = self.generate_platform_sources().await;
         for source in platform_sources {
             let source_id = source.id;
-            match self.writer.upsert_source(&source).await {
+            match self.store.upsert_source(&source).await {
                 Ok(_) => {
                     sources_created += 1;
                     self.create_pin_for_source(source_id).await;

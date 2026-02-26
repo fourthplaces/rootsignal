@@ -447,6 +447,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -462,6 +463,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 impl<'a> SourceFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,
@@ -472,6 +474,7 @@ impl<'a> SourceFinder<'a> {
             .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
             writer,
+            store,
             region_slug: region_slug.to_string(),
             region_name: region_name.to_string(),
             claude,
@@ -571,7 +574,7 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                match self.writer.upsert_source(&source).await {
+                match self.store.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
                         info!(
@@ -606,7 +609,7 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                match self.writer.upsert_source(&source).await {
+                match self.store.upsert_source(&source).await {
                     Ok(_) => {
                         stats.actor_sources += 1;
                         info!(
@@ -780,7 +783,7 @@ impl<'a> SourceFinder<'a> {
                 source_role,
                 Some(gap_context),
             );
-            match self.writer.upsert_source(&source).await {
+            match self.store.upsert_source(&source).await {
                 Ok(_) => {
                     stats.gap_sources += 1;
                     info!(
@@ -966,7 +969,7 @@ impl<'a> SourceFinder<'a> {
                 SourceRole::Response,
                 Some(format!("Tension: {}", t.title)),
             );
-            match self.writer.upsert_source(&source).await {
+            match self.store.upsert_source(&source).await {
                 Ok(_) => {
                     gap_count += 1;
                     stats.gap_sources += 1;

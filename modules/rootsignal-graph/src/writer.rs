@@ -25,6 +25,11 @@ impl GraphWriter {
         Self { client }
     }
 
+    /// Access the underlying GraphClient (for read queries).
+    pub fn client(&self) -> &GraphClient {
+        &self.client
+    }
+
     /// Create a typed node in the graph. Returns the node's UUID.
     ///
     /// `created_by` identifies which scout module produced this signal (e.g. "scraper",

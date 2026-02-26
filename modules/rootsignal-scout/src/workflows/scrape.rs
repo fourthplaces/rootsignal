@@ -116,6 +116,7 @@ async fn run_scrape_from_deps(
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<ScrapeResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
+    let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
     let extractor: Arc<dyn crate::pipeline::extractor::SignalExtractor> =
         Arc::new(crate::pipeline::extractor::Extractor::new(
             &deps.anthropic_api_key,
@@ -125,13 +126,14 @@ async fn run_scrape_from_deps(
         ));
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
-    let region_slug = rootsignal_common::slugify(&scope.name);
     let archive = create_archive(deps);
     let budget = crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents);
     let run_id = uuid::Uuid::new_v4().to_string();
 
     let pipeline = crate::pipeline::scrape_pipeline::ScrapePipeline::new(
         writer,
+        deps.graph_client.clone(),
+        event_store,
         extractor,
         embedder,
         archive,

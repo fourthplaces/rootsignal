@@ -57,6 +57,29 @@ impl EventStore {
         })
     }
 
+    /// Append a root fact and return the full StoredEvent (with ts from Postgres).
+    /// Used by the projector path where we need the complete event for projection.
+    pub async fn append_and_read(&self, event: AppendEvent) -> Result<StoredEvent> {
+        let stored = sqlx::query_as::<_, StoredEvent>(
+            r#"
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
+            VALUES ($1, NULL, NULL, $2, $3, $4, $5)
+            RETURNING seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            "#,
+        )
+        .bind(&event.event_type)
+        .bind(&event.run_id)
+        .bind(&event.actor)
+        .bind(&event.payload)
+        .bind(event.schema_v)
+        .fetch_one(&self.pool)
+        .await?;
+
+        notify_new_event(&self.pool, stored.seq).await;
+
+        Ok(stored)
+    }
+
     /// Read facts in flat sequence order starting from `seq_start` (inclusive).
     ///
     /// **Gap-free guarantee:** If concurrent transactions created a momentary gap,

@@ -13,12 +13,17 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
+use crate::pipeline::traits::SignalStore;
+
 use rootsignal_common::{
     is_web_query, scraping_strategy, ScoutScope, DiscoveryMethod, ScrapingStrategy, SourceNode,
 };
-use rootsignal_graph::GraphWriter;
+use rootsignal_events::EventStore;
+use rootsignal_graph::{enrich, enrich_embeddings, GraphClient, GraphProjector, GraphWriter};
 
 use rootsignal_archive::Archive;
+
+use crate::pipeline::event_sourced_store::EventSourcedStore;
 
 use crate::scheduling::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
@@ -44,6 +49,8 @@ pub(crate) fn check_cancelled_flag(cancelled: &AtomicBool) -> Result<()> {
 /// Each phase method borrows `&self` to access them.
 pub struct ScrapePipeline<'a> {
     writer: GraphWriter,
+    graph_client: GraphClient,
+    store: Arc<EventSourcedStore>,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
     archive: Arc<Archive>,
@@ -69,6 +76,8 @@ pub(crate) struct ScheduledRun {
 impl<'a> ScrapePipeline<'a> {
     pub fn new(
         writer: GraphWriter,
+        graph_client: GraphClient,
+        event_store: EventStore,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
         archive: Arc<Archive>,
@@ -79,8 +88,17 @@ impl<'a> ScrapePipeline<'a> {
         run_id: String,
         pg_pool: PgPool,
     ) -> Self {
+        let projector = GraphProjector::new(graph_client.clone());
+        let store = Arc::new(EventSourcedStore::new(
+            writer.clone(),
+            projector,
+            event_store,
+            run_id.clone(),
+        ));
         Self {
             writer,
+            graph_client,
+            store,
             extractor,
             embedder,
             archive,
@@ -96,7 +114,7 @@ impl<'a> ScrapePipeline<'a> {
     /// Remove stale signals from the graph.
     pub async fn reap_expired_signals(&self, run_log: &mut RunLog) {
         info!("Reaping expired signals...");
-        match self.writer.reap_expired().await {
+        match self.store.reap_expired().await {
             Ok(reap) => {
                 run_log.log(EventKind::ReapExpired {
                     gatherings: reap.gatherings,
@@ -150,6 +168,7 @@ impl<'a> ScrapePipeline<'a> {
             info!("No sources found — running cold-start bootstrap");
             let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                 &self.writer,
+                self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
                 self.archive.clone(),
                 &self.anthropic_api_key,
                 self.region.clone(),
@@ -309,7 +328,7 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         let phase = ScrapePhase::new(
-            Arc::new(self.writer.clone()) as Arc<dyn crate::pipeline::traits::SignalStore>,
+            self.store.clone() as Arc<dyn crate::pipeline::traits::SignalStore>,
             self.extractor.clone(),
             self.embedder.clone(),
             self.archive.clone() as Arc<dyn crate::pipeline::traits::ContentFetcher>,
@@ -339,7 +358,7 @@ impl<'a> ScrapePipeline<'a> {
         let config = PromotionConfig::default();
         match link_promoter::promote_links(
             &ctx.collected_links,
-            &self.writer as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &config,
         )
         .await
@@ -388,6 +407,7 @@ impl<'a> ScrapePipeline<'a> {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
@@ -482,7 +502,11 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Record source metrics, update weights/cadence, deactivate dead sources.
     pub(crate) async fn update_source_metrics(&self, run: &ScheduledRun, ctx: &RunContext) {
-        let metrics = Metrics::new(&self.writer, &self.region.name);
+        let metrics = Metrics::new(
+            &self.writer,
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            &self.region.name,
+        );
         metrics.update(&run.all_sources, ctx, Utc::now()).await;
 
         // Log budget status before compute-heavy phases
@@ -499,6 +523,7 @@ impl<'a> ScrapePipeline<'a> {
         // Signal Expansion — create sources from implied queries
         let expansion = Expansion::new(
             &self.writer,
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &*self.embedder,
             &self.region.name,
         );
@@ -509,6 +534,7 @@ impl<'a> ScrapePipeline<'a> {
         // End-of-run discovery — find new sources for next run
         let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
@@ -560,7 +586,7 @@ impl<'a> ScrapePipeline<'a> {
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
-            match self.writer.delete_pins(&run.consumed_pin_ids).await {
+            match self.store.delete_pins(&run.consumed_pin_ids).await {
                 Ok(_) => info!(count = run.consumed_pin_ids.len(), "Deleted consumed pins"),
                 Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
             }
@@ -568,6 +594,46 @@ impl<'a> ScrapePipeline<'a> {
 
         // Enrich actor locations from signal mode before metrics/expansion
         run.phase.enrich_actors().await;
+
+        // Bounding box used by actor extraction and metric enrichment
+        let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
+
+        // Actor extraction — extract actors from signals that have none
+        info!("=== Actor Extraction ===");
+        let actor_stats = crate::enrichment::actor_extractor::run_actor_extraction(
+            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            &self.graph_client,
+            &self.anthropic_api_key,
+            &self.region.name,
+            min_lat,
+            max_lat,
+            min_lng,
+            max_lng,
+        )
+        .await;
+        info!("{actor_stats}");
+
+        // === Post-projection enrichment ===
+        // 1. Embedding enrichment: backfill nodes missing embeddings
+        info!("=== Embedding Enrichment ===");
+        match enrich_embeddings(&self.graph_client, &*self.embedder, 50).await {
+            Ok(stats) => info!("{stats}"),
+            Err(e) => warn!(error = %e, "Embedding enrichment failed, continuing"),
+        }
+
+        // 2. Metric enrichment: diversity, actor stats, cause heat
+        //    Entity mappings are empty — domain fallback in resolve_entity handles grouping.
+        //    Threshold 0.3 matches Pipeline::new in integration tests.
+        info!("=== Metric Enrichment ===");
+        match enrich(
+            &self.graph_client,
+            &[],
+            0.3,
+            min_lat, max_lat, min_lng, max_lng,
+        ).await {
+            Ok(stats) => info!(?stats, "Metric enrichment complete"),
+            Err(e) => warn!(error = %e, "Metric enrichment failed, continuing"),
+        }
 
         self.update_source_metrics(&run, &ctx).await;
         check_cancelled_flag(&self.cancelled)?;

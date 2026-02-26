@@ -114,10 +114,6 @@ async fn main() -> Result<()> {
     // Backfill source diversity for existing signals (no entity mappings — domain fallback handles it)
     backfill_source_diversity(&client, &[]).await?;
 
-    // Save region geo bounds before moving region into pipeline
-    let region_name_key = region.name.clone();
-    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-
     // Connect to Postgres for the web archive
     let database_url = std::env::var("DATABASE_URL")
         .context("DATABASE_URL required for web archive")?;
@@ -156,22 +152,6 @@ async fn main() -> Result<()> {
     let stats = result?;
     info!("Scout run complete. {stats}");
 
-    // Actor extraction — extract actors from signals that have none.
-    // Not yet part of any workflow, so it runs here post-run.
-    info!("Starting actor extraction...");
-    let sweep_stats = rootsignal_scout::enrichment::actor_extractor::run_actor_extraction(
-        &writer,
-        &client,
-        &config.anthropic_api_key,
-        &region_name_key,
-        min_lat,
-        max_lat,
-        min_lng,
-        max_lng,
-    )
-    .await;
-    info!("{sweep_stats}");
-
     Ok(())
 }
 
@@ -195,10 +175,13 @@ async fn run_full_scout(
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
     let writer = GraphWriter::new(deps.graph_client.clone());
+    let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
 
     // === Scrape pipeline ===
     let pipeline = ScrapePipeline::new(
         writer,
+        deps.graph_client.clone(),
+        event_store,
         extractor,
         embedder,
         archive,

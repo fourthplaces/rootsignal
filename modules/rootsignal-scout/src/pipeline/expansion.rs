@@ -24,6 +24,7 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 
 pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
@@ -31,11 +32,13 @@ pub(crate) struct Expansion<'a> {
 impl<'a> Expansion<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
+            store,
             embedder,
             region_slug,
         }
@@ -131,7 +134,7 @@ impl<'a> Expansion<'a> {
                 rootsignal_common::SourceRole::Response,
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );
-            match self.writer.upsert_source(&source).await {
+            match self.store.upsert_source(&source).await {
                 Ok(_) => {
                     run_log.log(EventKind::ExpansionSourceCreated {
                         canonical_key: ck.clone(),

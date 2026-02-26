@@ -21,7 +21,7 @@ use rootsignal_common::types::{
     Post, ScoutScope, SourceNode,
 };
 use rootsignal_common::{canonical_value, EntityMappingOwned};
-use rootsignal_graph::DuplicateMatch;
+use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
 use crate::pipeline::traits::{ContentFetcher, SignalStore};
@@ -608,6 +608,8 @@ impl SignalStore for MockSignalStore {
         _node_type: NodeType,
         _now: DateTime<Utc>,
         _entity_mappings: &[EntityMappingOwned],
+        _source_url: &str,
+        _similarity: f64,
     ) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(signal) = inner.signals.get_mut(&id) {
@@ -790,6 +792,23 @@ impl SignalStore for MockSignalStore {
             .or_default()
             .extend(tag_slugs.iter().cloned());
         Ok(())
+    }
+
+    async fn record_source_scrape(
+        &self,
+        _canonical_key: &str,
+        _signals_produced: u32,
+        _now: DateTime<Utc>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn delete_pins(&self, _pin_ids: &[Uuid]) -> Result<()> {
+        Ok(())
+    }
+
+    async fn reap_expired(&self) -> Result<ReapStats> {
+        Ok(ReapStats::default())
     }
 
     async fn get_signals_for_actor(
@@ -1517,13 +1536,13 @@ mod tests {
         assert_eq!(store.corroborations_for("Bus Route Cut"), 0);
 
         store
-            .corroborate(id, NodeType::Tension, Utc::now(), &[])
+            .corroborate(id, NodeType::Tension, Utc::now(), &[], "https://other.com", 0.92)
             .await
             .unwrap();
         assert_eq!(store.corroborations_for("Bus Route Cut"), 1);
 
         store
-            .corroborate(id, NodeType::Tension, Utc::now(), &[])
+            .corroborate(id, NodeType::Tension, Utc::now(), &[], "https://third.com", 0.88)
             .await
             .unwrap();
         assert_eq!(store.corroborations_for("Bus Route Cut"), 2);

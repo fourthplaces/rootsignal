@@ -2,6 +2,7 @@
 title: "refactor: Migrate scout from direct GraphWriter writes to event-sourcing"
 type: refactor
 date: 2026-02-25
+updated: 2026-02-25
 depends_on: docs/plans/2026-02-25-refactor-enrichment-pipeline-plan.md
 ---
 
@@ -9,170 +10,263 @@ depends_on: docs/plans/2026-02-25-refactor-enrichment-pipeline-plan.md
 
 ## Overview
 
-The scout pipeline currently writes directly to Neo4j via `GraphWriter` — 155 Cypher call sites, ~100 public methods. The event-sourcing infrastructure (EventStore, GraphReducer, Pipeline, Enrichment) is built and tested but nothing calls it. This plan migrates the scout to emit events instead of direct writes, with reduce→enrich running as a separate step after each scout run.
+Migrate all scout write operations from direct `GraphWriter` Cypher to the event-sourcing path: append events to Postgres via `EventStore`, then project each event to Neo4j via `GraphProjector`. The graph is a materialized view of the event log. Enrichment (embeddings, diversity, cause_heat) runs as post-projection passes at end of each scout run.
 
-**Current architecture:**
+**Architecture (implemented):**
 ```
-Scout → GraphWriter.create_node() → Neo4j (immediate Cypher)
-Scout → GraphWriter.corroborate() → Neo4j (immediate Cypher + inline diversity computation)
+Scout Pipeline
+     │
+     ▼
+EventSourcedStore
+     │
+     ├─ 1. Build Event from method args
+     ├─ 2. Append to EventStore (Postgres) → StoredEvent
+     └─ 3. GraphProjector.project(&stored_event) → Neo4j MERGE
+                                                        │
+                                                  (end of run)
+                                                        │
+                                                  Embedding Enrichment
+                                                  Metric Enrichment (diversity, cause_heat, actor_stats)
 ```
 
-**Target architecture:**
-```
-Scout → EventStore.append() → Postgres (facts only)
-                                    ↓
-                              Pipeline.process() → Reducer → Neo4j (factual)
-                                                 → Enrich → Neo4j (derived)
-```
+**Key design choice:** Inline append+project (not batch). Each write appends an event then immediately projects it, so graph reads always see current state. No read-after-write staleness.
 
-## Problem Statement
+## What's Done (Phase 1)
 
-1. **No audit trail**: When the scout writes directly, we have no record of what happened or why. Run logs capture some metadata but not the actual data mutations.
-2. **Duplicate enrichment logic**: `GraphWriter.corroborate()` computes diversity inline. `enrich.rs` does the same. Two places, two chances to diverge.
-3. **Non-idempotent writes**: `GraphWriter.upsert_actor()` increments `signal_count` on MATCH — replaying the same scrape produces different counts.
-4. **No replay guarantee**: If the graph corrupts or we change the schema, there's no way to rebuild from source data.
+Phase 1 is complete. The signal lifecycle goes through events:
 
-## Scope
+- [x] `EventSourcedStore` wraps `EventStore` + `GraphProjector` as the `SignalStore` implementation
+- [x] `create_node` → `{Type}Discovered` event → project
+- [x] `create_evidence` → `CitationRecorded` event → project
+- [x] `corroborate` → `ObservationCorroborated` event → project (idempotent count)
+- [x] `refresh_signal` → `FreshnessConfirmed` event → project
+- [x] `refresh_url_signals` → batch `FreshnessConfirmed` events → project
+- [x] `link_signal_to_source` → `SignalLinkedToSource` event → project
+- [x] `ScrapePipeline::new()` builds `GraphProjector` and wires into `EventSourcedStore`
+- [x] Embedding enrichment runs post-projection in `run_all()`
+- [x] Metric enrichment (diversity, actor_stats, cause_heat) runs post-projection in `run_all()`
+- [x] `append_and_read()` on EventStore returns full `StoredEvent` from INSERT RETURNING
+- [x] All 301 scout tests pass, 82 graph tests pass, 30 event tests pass
 
-### In scope
-- Scout emits events to EventStore instead of calling GraphWriter for **signal lifecycle** operations (create, corroborate, evidence, expire)
-- Pipeline.process() runs after each scout phase or at end of run
-- Remove enrichment logic from GraphWriter (diversity, cause_heat)
+**Key files:**
+- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — append+project implementation
+- `modules/rootsignal-scout/src/pipeline/scrape_pipeline.rs` — enrichment wiring
+- `modules/rootsignal-graph/src/reducer.rs` — all projector handlers
+- `modules/rootsignal-graph/src/embedding_enrichment.rs` — post-projection embedding pass
+- `modules/rootsignal-events/src/store.rs` — `append_and_read()`
 
-### Out of scope (future work)
-- Source management events (SourceRegistered, SourceScrapeRecorded) — these are infrastructure, not signal facts
-- ScoutTask lifecycle — operational coordination, not domain events
-- Story/ClusterSnapshot — deprecated layer, being replaced by SituationWeaver
-- Real-time NOTIFY subscription — future optimization
-- Multi-server consensus — deferred until we actually need horizontal scaling
+## Event Variant Coverage
 
-## Surface Area Analysis
+**71 total variants.** All have either a projector handler or are explicitly no-op:
+- **52 variants** with graph mutation handlers (signal CRUD, actors, sources, situations, tags, pins, resources, etc.)
+- **19 variants** intentionally no-op (observability: `UrlScraped`, `LlmExtractionCompleted`, etc.; informational: `DuplicateDetected`, `ObservationRejected`, etc.)
 
-### GraphWriter methods by category
+No coverage gaps in the reducer. Every Event variant is accounted for.
 
-**Already have Event variants (~30 methods):**
-- Signal creation: `create_node` → `{Type}Discovered`
-- Evidence: `create_evidence` → `CitationRecorded`
-- Corroboration: `corroborate` → `ObservationCorroborated`
-- Freshness: `refresh_signal` → `FreshnessConfirmed`
-- Confidence: `update_signal_confidence` → `ConfidenceScored`
-- Expiry: `reap_expired` → `EntityExpired` + `EntityPurged`
-- Sources: `upsert_source` → `SourceRegistered`, `record_source_scrape` → `SourceScrapeRecorded`
-- Actors: `upsert_actor` → `ActorIdentified`, `link_actor_to_signal` → `ActorLinkedToEntity`
-- Situations: `create_situation` → `SituationIdentified`, `create_dispatch` → `DispatchCreated`
-- Tags: `batch_tag_signals` → `TagsAggregated`
+## Remaining Work
 
-**Need new Event variants (~20 methods):**
-- `create_response_edge` → needs `ResponseLinked`
-- `create_drawn_to_edge` → needs `GravityLinked`
-- `find_or_create_place` → needs `PlaceDiscovered`
-- `find_or_create_resource` → needs `ResourceDiscovered`
-- `create_requires/prefers/offers_edge` → needs `ResourceEdgeCreated`
-- `link_signal_to_source` → needs `SignalLinkedToSource`
-- `merge_duplicate_tensions` → needs `DuplicateTensionsMerged`
-- `consolidate_resources` → needs `ResourcesConsolidated`
-- `mark_response_found/mark_gathering_found/mark_investigated` → needs scout lifecycle events
+### What still bypasses events
 
-**Pure reads (~25 methods) — no migration needed:**
-- `find_duplicate`, `find_by_titles_and_types`, `existing_titles_for_url`, `content_already_processed`
-- `get_active_tensions`, `get_tension_landscape`, `find_tension_hubs`
-- All `find_*_targets` methods
-- All `get_*` accessor methods
+**Discovery workflows create signals via `GraphWriter` directly:**
+- `gathering_finder.rs` — calls `writer.create_node()` for discovered gatherings
+- `response_finder.rs` — calls `writer.create_node()` for discovered aid signals and tensions
 
-**Enrichment logic to remove from GraphWriter (~8 methods):**
-- `compute_source_diversity` — move to `enrich.rs` (already done)
-- `compute_channel_diversity` — move to `enrich.rs` (already done)
-- Inline diversity in `corroborate` — remove, let enrichment handle it
-- `merge_duplicate_tensions` cosine similarity — enrichment pass
-- `consolidate_resources` cosine clustering — enrichment pass
-- `boost_sources_for_situation_headline` — enrichment pass
-- Story metrics (cause_heat, gap_score, velocity, energy) — enrichment pass
+These are the only remaining signal creation paths not going through events. They're called from `ScrapePhase` discovery methods, which run during scrape phases.
 
-## Implementation Phases
+**Actor lifecycle via `GraphWriter` (pass-through in EventSourcedStore):**
+- `upsert_actor()` → `ActorIdentified` event variant exists, reducer handler exists, but EventSourcedStore passes through to writer
+- `link_actor_to_signal()` → `ActorLinkedToEntity` event exists + handler, but passes through
+- `link_actor_to_source()` → `ActorLinkedToSource` event exists + handler, but passes through
+- `update_actor_location()` → `ActorLocationIdentified` event exists + handler, but passes through
+- `actor_extractor.rs` calls `writer.upsert_actor()` and `writer.find_actor_by_name()` directly
 
-### Phase 1: Scout emits events for signal lifecycle
+**Source lifecycle via `GraphWriter`:**
+- `upsert_source()` → `SourceRegistered` event exists + handler, but passes through
+- `record_source_scrape()` → `SourceScrapeRecorded` event exists + handler, called from `metrics.rs` directly
+- Source weight/cadence updates via `update_source_weight()` → `SourceChanged` event exists
 
-The smallest valuable increment. Scout appends events to EventStore for the core signal lifecycle, then Pipeline.process() runs those events through reduce→enrich.
+**Resource/place lifecycle via `GraphWriter`:**
+- `find_or_create_resource()` — no event variant (graph-only operation)
+- `create_requires/prefers/offers_edge()` — no event variants
+- `find_or_create_place()` — no event variant
 
-**Key change**: `ScrapePhase` calls `EventStore.append()` instead of `GraphWriter.create_node()`.
+**Other direct writer writes (not through EventSourcedStore):**
+- `reap_expired()` → `EntityExpired`/`EntityPurged` events exist + handlers
+- `batch_tag_signals()` → `TagsAggregated` event exists + handler
+- `delete_pins()` → `PinsRemoved` event exists + handler
+- `set_query_embedding()` — no event variant (infrastructure)
+- `touch_signal_timestamp()` — covered by `FreshnessConfirmed`
+- Task management (`set_task_phase_status`, etc.) — operational, not domain events
+
+---
+
+## Phase 2: Actor Events through EventSourcedStore
+
+**Goal:** Actor lifecycle emits events instead of direct writer calls. All event variants and reducer handlers already exist.
+
+**Scope:** Convert EventSourcedStore pass-throughs from `writer.upsert_actor()` → `append_and_project(ActorIdentified)`, etc. Then convert `actor_extractor.rs` to call through EventSourcedStore instead of writer directly.
+
+**Events (all have reducer handlers):**
+- `ActorIdentified` — MERGE Actor node (idempotent on entity_id)
+- `ActorLinkedToEntity` — MERGE ACTED_IN edge with role
+- `ActorLinkedToSource` — MERGE HAS_SOURCE edge
+- `ActorLocationIdentified` — SET location on Actor
+
+**Tasks:**
+- [x] EventSourcedStore: `upsert_actor()` → emit `ActorIdentified` event → project
+- [x] EventSourcedStore: `link_actor_to_signal()` → emit `ActorLinkedToEntity` event → project
+- [x] EventSourcedStore: `link_actor_to_source()` → emit `ActorLinkedToSource` event → project
+- [x] EventSourcedStore: `update_actor_location()` → emit `ActorLocationIdentified` event → project
+- [x] Refactor `actor_extractor.rs` to accept `&dyn SignalStore` instead of `&GraphWriter`
+- [x] Verify: 301 scout tests pass, actor lifecycle test still passes
 
 **Files:**
-- `modules/rootsignal-scout/src/pipeline/scrape_phase.rs` — MODIFY: emit events instead of direct writes
-- `modules/rootsignal-scout/src/pipeline/scrape_pipeline.rs` — MODIFY: call Pipeline.process() at end of phase
-- `modules/rootsignal-scout/src/pipeline/traits.rs` — MODIFY: SignalStore trait to emit events
-- `modules/rootsignal-scout/Cargo.toml` — ADD: rootsignal-events dependency
+- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — convert pass-throughs
+- `modules/rootsignal-scout/src/enrichment/actor_extractor.rs` — accept trait instead of concrete type
+- `modules/rootsignal-scout/src/pipeline/traits.rs` — may need actor methods on SignalStore trait
 
-**Events covered:**
-- `{Type}Discovered` (5 variants)
-- `CitationRecorded`
-- `ObservationCorroborated`
-- `FreshnessConfirmed`
+**Risk:** `actor_extractor.rs` calls `writer.find_actor_by_name()` (read) and `writer.upsert_actor()` (write). The read doesn't need events, but the write does. These are already in the SignalStore trait, so the refactor is straightforward.
 
-**Tasks:**
-- [ ] Add rootsignal-events dependency to scout
-- [ ] Modify SignalStore trait: `create_node` → `append(TypeDiscovered)` + return ID
-- [ ] Modify SignalStore trait: `create_evidence` → `append(CitationRecorded)`
-- [ ] Modify SignalStore trait: `corroborate` → `append(ObservationCorroborated)` (remove inline diversity)
-- [ ] Modify SignalStore trait: `refresh_signal` → `append(FreshnessConfirmed)`
-- [ ] Add Pipeline.process() call at end of each scrape phase
-- [ ] Remove `compute_source_diversity` and `compute_channel_diversity` from GraphWriter
-- [ ] Verify: same signals created, same diversity values, same corroboration counts
-- [ ] Write integration test: scrape phase emits events → pipeline produces correct graph
+---
 
-### Phase 2: Actor and source events
+## Phase 3: Source and Reap Events through EventSourcedStore
 
-Extend event coverage to actor management and source lifecycle.
+**Goal:** Source lifecycle and signal cleanup emit events. All event variants and reducer handlers already exist.
 
-**Events covered:**
-- `ActorIdentified`, `ActorLinkedToEntity`, `ActorLinkedToSource`, `ActorLocationIdentified`
-- `SourceRegistered`, `SourceScrapeRecorded`, `SourceDeactivated`
-- `ConfidenceScored`, `EntityExpired`, `EntityPurged`
+**Scope:**
+- `upsert_source()` → `SourceRegistered`
+- `reap_expired()` → `EntityExpired` + `EntityPurged`
+- `batch_tag_signals()` → `TagsAggregated`
+- `delete_pins()` → `PinsRemoved`
 
 **Tasks:**
-- [ ] Modify actor_extractor.rs: emit actor events instead of GraphWriter calls
-- [ ] Modify source management: emit source events
-- [ ] Modify reap_expired: emit expiry events
-- [ ] Add reducer handlers for any missing event types
-- [ ] Integration test: actors created correctly via events
+- [x] EventSourcedStore: `upsert_source()` → emit `SourceRegistered` event → project
+- [x] Convert `scrape_pipeline.reap_expired_signals()` to emit `EntityExpired`/`EntityPurged` events
+  - Needs to query which signals are expired first, then emit events
+  - Currently `writer.reap_expired()` does query+delete in one Cypher
+  - Refactor: split into read (find expired IDs) + emit events (one per type)
+- [ ] EventSourcedStore: `batch_tag_signals()` → emit `TagsAggregated` event → project (deferred — TagsAggregated targets Story nodes, not signals)
+- [x] Convert pin lifecycle: `delete_pins()` → emit `PinsRemoved` event → project
+- [x] Convert `source_finder.rs`, `bootstrap.rs`, `expansion.rs` `upsert_source()` calls to go through EventSourcedStore or emit events directly
+- [x] Convert `metrics.rs` `record_source_scrape()` call → emit `SourceScrapeRecorded` event
+- [x] Verify: all tests pass (301 scout, 82 graph, 65 common)
 
-### Phase 3: Edge and relationship events
+**Files:**
+- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs`
+- `modules/rootsignal-scout/src/pipeline/scrape_pipeline.rs` — reap refactor
+- `modules/rootsignal-scout/src/discovery/source_finder.rs`
+- `modules/rootsignal-scout/src/discovery/bootstrap.rs`
+- `modules/rootsignal-scout/src/pipeline/expansion.rs`
+- `modules/rootsignal-scout/src/scheduling/metrics.rs`
 
-Add events for the graph edges that currently have no Event variant.
+**Complication:** Many of these callers hold a `&GraphWriter` reference, not `&dyn SignalStore`. Some source management methods aren't on the `SignalStore` trait yet. Two options:
+1. Add source methods to `SignalStore` trait (makes trait larger but keeps one interface)
+2. Create a separate `SourceStore` trait (cleaner separation but more wiring)
 
-**New Event variants needed:**
-- [ ] `ResponseLinked { signal_id, tension_id, strength, explanation }`
-- [ ] `GravityLinked { signal_id, tension_id, gathering_type }`
-- [ ] `PlaceDiscovered { place_id, name, slug }`
-- [ ] `ResourceDiscovered { resource_id, name, slug, description }`
-- [ ] `ResourceEdgeCreated { signal_id, resource_id, edge_type }` (requires/prefers/offers)
-- [ ] `SignalLinkedToSource { signal_id, source_id }`
+Recommend option 1 for now — the trait already has source methods (`get_active_sources`, `upsert_source`).
+
+---
+
+## Phase 4: Discovery Workflows through EventSourcedStore
+
+**Goal:** `gathering_finder.rs` and `response_finder.rs` create signals through events instead of direct `writer.create_node()`.
+
+**Scope:** These are the last remaining signal creation paths that bypass events. They need access to `EventSourcedStore` (or at least `&dyn SignalStore`).
 
 **Tasks:**
-- [ ] Add Event variants to events.rs
+- [ ] Refactor `GatheringFinder` to accept `Arc<dyn SignalStore>` instead of `&GraphWriter`
+  - `writer.create_node()` → `store.create_node()` (already event-sourced)
+  - Keep `writer` reference for read-only methods (`find_gathering_finder_targets()`, etc.)
+- [ ] Refactor `ResponseFinder` to accept `Arc<dyn SignalStore>` instead of `&GraphWriter`
+  - `writer.create_node()` → `store.create_node()` (already event-sourced)
+  - `writer.mark_response_found()` → needs event or stays as writer call (marking flags, not domain facts)
+- [ ] Pass `store: Arc<dyn SignalStore>` through `ScrapePhase` discovery methods
+- [ ] Verify: all signal creation goes through events
+
+**Files:**
+- `modules/rootsignal-scout/src/discovery/gathering_finder.rs`
+- `modules/rootsignal-scout/src/discovery/response_finder.rs`
+- `modules/rootsignal-scout/src/pipeline/scrape_phase.rs` — pass store to discovery
+- `modules/rootsignal-scout/src/pipeline/scrape_pipeline.rs` — may need to expose store
+
+**Risk:** Discovery workflows currently take `&GraphWriter` directly. Changing to `Arc<dyn SignalStore>` means read methods like `find_gathering_finder_targets()` need to be accessible. Options:
+1. Pass both `store` + `writer` (store for writes, writer for reads) — pragmatic
+2. Add read methods to `SignalStore` trait — cleaner but trait grows
+3. Accept `&GraphClient` for reads — most minimal
+
+Recommend option 1 for now.
+
+---
+
+## Phase 5: Resource and Edge Events (New Variants)
+
+**Goal:** Resource and relationship operations emit events. These need NEW event variants.
+
+**Scope:**
+- `find_or_create_resource()` → new `ResourceDiscovered` event + reducer handler
+- `create_requires/prefers/offers_edge()` → new `ResourceEdgeCreated` event + handler
+- `create_response_edge()` → new `ResponseLinked` event + handler
+- `create_drawn_to_edge()` → new `GravityLinked` event + handler
+- `find_or_create_place()` → new `PlaceDiscovered` event + handler
+
+**Tasks:**
+- [ ] Add `ResourceDiscovered { resource_id, name, slug, description }` to Event enum
+- [ ] Add `ResourceEdgeCreated { signal_id, resource_id, edge_type, confidence }` to Event enum
+- [ ] Add `ResponseLinked { signal_id, tension_id, strength, explanation }` to Event enum
+- [ ] Add `GravityLinked { signal_id, tension_id }` to Event enum
+- [ ] Add `PlaceDiscovered { place_id, name, slug }` to Event enum
 - [ ] Add reducer handlers for each new variant
-- [ ] Modify scout callers to emit events instead of direct GraphWriter calls
-- [ ] Contract test: verify new variants are classified correctly
+- [ ] Convert EventSourcedStore resource methods to emit events
+- [ ] Convert synthesis workflow edge creation to emit events
+- [ ] Verify: all tests pass
 
-### Phase 4: Remove GraphWriter signal write methods
+**Files:**
+- `modules/rootsignal-common/src/events.rs` — new variants
+- `modules/rootsignal-graph/src/reducer.rs` — new handlers
+- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — convert resource methods
 
-Once all signal lifecycle operations go through events, remove the direct-write methods from GraphWriter. Keep read methods (they become part of a `GraphReader` interface).
+---
+
+## Phase 6: Clean Up GraphWriter
+
+**Goal:** Once all writes go through events, GraphWriter becomes read-only. Remove write methods, rename to clarify its role.
 
 **Tasks:**
-- [ ] Remove `create_node`, `corroborate`, `create_evidence`, `refresh_signal` from GraphWriter
-- [ ] Remove enrichment methods from GraphWriter
-- [ ] Rename remaining GraphWriter to something clearer (it's now mostly reads)
-- [ ] Verify no direct writes bypass the event path
+- [ ] Remove signal write methods from GraphWriter (`create_node`, `corroborate`, `create_evidence`, `refresh_signal`)
+- [ ] Remove source write methods (`upsert_source`, `record_source_scrape`)
+- [ ] Remove actor write methods (`upsert_actor`, `link_actor_to_signal`)
+- [ ] Remove enrichment methods that are now in `enrich.rs`
+- [ ] Remove inline diversity computation from corroborate
+- [ ] Audit: no direct writes bypass the event path
+- [ ] Consider renaming `GraphWriter` → `GraphReader` or splitting into `GraphReader` + `GraphAdmin`
+
+**Not removed** (kept on GraphWriter or moved to GraphAdmin):
+- Task management methods (operational, not domain events)
+- `set_query_embedding()` (infrastructure)
+- Discovery marking methods (`mark_response_found`, etc.) — operational flags
+- Story/situation management (separate domain, future event-sourcing scope)
+
+---
+
+## Out of Scope
+
+- **Story/situation event-sourcing** — SituationWeaver is its own domain; events exist but the weaver writes directly. Future work.
+- **Multi-server consensus** — deferred until horizontal scaling is needed.
+- **Real-time NOTIFY subscription** — optimization for reactive consumers.
+- **Task lifecycle events** — operational coordination, not domain facts.
 
 ## Risks
 
-- **Performance**: EventStore.append() + Pipeline.process() is two DB round-trips instead of one direct Cypher. Mitigate: batch events per scrape phase, process once at end.
-- **Read-after-write**: Scout reads graph state mid-run (e.g., `find_duplicate` during scraping). If events aren't reduced yet, reads see stale data. Mitigate: Phase 1 runs Pipeline.process() after each scrape phase, not just at end of run.
-- **Migration complexity**: 155 Cypher call sites. Mitigate: phase the migration — start with signal lifecycle (Phase 1), which covers the most important audit trail.
+- **Performance**: append+project is two DB round-trips (Postgres + Neo4j) per write. Acceptable — scout is I/O bound on scraping, not on graph writes. Monitor if batch operations (reap, tag) become slow.
+- **Discovery refactor scope**: `gathering_finder` and `response_finder` take `&GraphWriter` and use both read and write methods. Refactoring to `Arc<dyn SignalStore>` + `&GraphWriter` (reads) is the pragmatic path.
+- **Trait growth**: `SignalStore` trait already has ~30 methods. Adding source/actor/resource methods makes it larger. Consider splitting into focused traits if it gets unwieldy.
 
 ## References
 
 - Enrichment pipeline plan: `docs/plans/2026-02-25-refactor-enrichment-pipeline-plan.md`
 - Event data model: `docs/plans/2026-02-25-refactor-event-data-model-plan.md`
-- Current writer: `modules/rootsignal-graph/src/writer.rs` (5,917 lines)
-- Current scrape phase: `modules/rootsignal-scout/src/pipeline/scrape_phase.rs`
-- SignalStore trait: `modules/rootsignal-scout/src/pipeline/traits.rs`
+- Event sourcing brainstorm: `docs/brainstorms/2026-02-25-event-sourcing-brainstorm.md`
+- Enrichment brainstorm: `docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md`
+- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,900 lines, 102 public methods)
+- EventSourcedStore: `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs`
+- Reducer: `modules/rootsignal-graph/src/reducer.rs` (all 71 event handlers)

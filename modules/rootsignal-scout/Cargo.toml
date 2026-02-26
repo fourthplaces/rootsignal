@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 rootsignal-common = { workspace = true }
+rootsignal-events = { workspace = true }
 rootsignal-graph = { workspace = true }
 rootsignal-archive = { workspace = true }
 ai-client = { workspace = true }

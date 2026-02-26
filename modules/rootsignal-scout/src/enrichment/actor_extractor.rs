@@ -9,7 +9,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{ActorNode, ActorType};
-use rootsignal_graph::{query, GraphClient, GraphWriter};
+use rootsignal_graph::{query, GraphClient};
+
+use crate::pipeline::traits::SignalStore;
 
 /// Response schema for actor extraction LLM call.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -66,7 +68,7 @@ If a signal mentions no extractable actors, simply omit it. Return an empty acto
 
 /// Find signals with no ACTED_IN edges and extract actors from their text via LLM.
 pub async fn run_actor_extraction(
-    writer: &GraphWriter,
+    store: &dyn SignalStore,
     client: &GraphClient,
     anthropic_api_key: &str,
     region_slug: &str,
@@ -75,7 +77,7 @@ pub async fn run_actor_extraction(
     min_lng: f64,
     max_lng: f64,
 ) -> ActorExtractorStats {
-    match run_actor_extraction_inner(writer, client, anthropic_api_key, region_slug, min_lat, max_lat, min_lng, max_lng).await {
+    match run_actor_extraction_inner(store, client, anthropic_api_key, region_slug, min_lat, max_lat, min_lng, max_lng).await {
         Ok(stats) => stats,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
@@ -85,7 +87,7 @@ pub async fn run_actor_extraction(
 }
 
 async fn run_actor_extraction_inner(
-    writer: &GraphWriter,
+    store: &dyn SignalStore,
     client: &GraphClient,
     anthropic_api_key: &str,
     _region_slug: &str,
@@ -184,7 +186,7 @@ async fn run_actor_extraction_inner(
             };
 
             // Find or create actor
-            let actor_id = match writer.find_actor_by_name(&extracted.name).await {
+            let actor_id = match store.find_actor_by_name(&extracted.name).await {
                 Ok(Some(id)) => id,
                 Ok(None) => {
                     let actor = ActorNode {
@@ -205,7 +207,7 @@ async fn run_actor_extraction_inner(
                         location_name: None,
                         discovery_depth: 0,
                     };
-                    if let Err(e) = writer.upsert_actor(&actor).await {
+                    if let Err(e) = store.upsert_actor(&actor).await {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");
                         continue;
                     }
@@ -218,7 +220,7 @@ async fn run_actor_extraction_inner(
                 }
             };
 
-            if let Err(e) = writer
+            if let Err(e) = store
                 .link_actor_to_signal(actor_id, signal.id, "mentioned")
                 .await
             {

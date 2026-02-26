@@ -1,3 +1,4 @@
+pub mod event_sourced_store;
 pub mod expansion;
 pub mod extractor;
 pub mod news_scanner;

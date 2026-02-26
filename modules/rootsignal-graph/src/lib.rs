@@ -17,6 +17,7 @@ pub mod story_weaver;
 pub mod synthesizer;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
+pub mod embedding_enrichment;
 pub mod reducer;
 pub mod writer;
 
@@ -32,7 +33,8 @@ pub use synthesizer::Synthesizer;
 pub use embedding_store::EmbeddingStore;
 pub use enrich::{enrich, EnrichStats};
 pub use pipeline::{BBox, Pipeline, PipelineStats};
-pub use reducer::{ApplyResult, GraphReducer};
+pub use embedding_enrichment::{enrich_embeddings, EmbeddingEnrichStats};
+pub use reducer::{ApplyResult, GraphProjector};
 pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
     GatheringFinderTarget, GraphWriter, InvestigationTarget, ReapStats, ResponseFinderTarget,

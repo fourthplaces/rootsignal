@@ -1,11 +1,11 @@
-//! Pipeline — orchestrates reducer + enrichment into a complete graph build.
+//! Pipeline — orchestrates projector + enrichment into a complete graph build.
 //!
 //! The pipeline sequences two steps:
-//! 1. **Reduce**: apply factual events to the graph (via GraphReducer)
+//! 1. **Project**: apply factual events to the graph (via GraphProjector)
 //! 2. **Enrich**: compute derived properties from graph state (diversity, actor stats, cause_heat)
 //!
 //! Replay guarantee: the same events always produce the same graph. Enrichment is
-//! deterministically recomputed from the graph state that the reducer produced.
+//! deterministically recomputed from the graph state that the projector produced.
 
 use anyhow::Result;
 use tracing::info;
@@ -14,7 +14,7 @@ use rootsignal_common::EntityMappingOwned;
 use rootsignal_events::{EventStore, StoredEvent};
 
 use crate::enrich::{enrich, EnrichStats};
-use crate::reducer::{ApplyResult, GraphReducer};
+use crate::reducer::{ApplyResult, GraphProjector};
 use crate::GraphClient;
 
 /// Stats from a full pipeline run.
@@ -35,19 +35,19 @@ pub struct BBox {
     pub max_lng: f64,
 }
 
-/// Orchestrates reducer + enrichment into a complete graph build.
+/// Orchestrates projector + enrichment into a complete graph build.
 pub struct Pipeline {
     client: GraphClient,
-    reducer: GraphReducer,
+    projector: GraphProjector,
     cause_heat_threshold: f64,
 }
 
 impl Pipeline {
     pub fn new(client: GraphClient, cause_heat_threshold: f64) -> Self {
-        let reducer = GraphReducer::new(client.clone());
+        let projector = GraphProjector::new(client.clone());
         Self {
             client,
-            reducer,
+            projector,
             cause_heat_threshold,
         }
     }
@@ -62,7 +62,7 @@ impl Pipeline {
         let (mut applied, mut noop, mut errors) = (0u32, 0u32, 0u32);
 
         for event in events {
-            match self.reducer.apply(event).await? {
+            match self.projector.project(event).await? {
                 ApplyResult::Applied => applied += 1,
                 ApplyResult::NoOp => noop += 1,
                 ApplyResult::DeserializeError(_) => errors += 1,
@@ -97,7 +97,7 @@ impl Pipeline {
     ) -> Result<PipelineStats> {
         info!("Pipeline: full rebuild starting");
 
-        let last_seq = self.reducer.rebuild(store).await?;
+        let last_seq = self.projector.rebuild(store).await?;
 
         let enrich_stats = enrich(
             &self.client,
@@ -134,7 +134,7 @@ impl Pipeline {
     ) -> Result<PipelineStats> {
         info!(seq, "Pipeline: incremental replay starting");
 
-        let last_seq = self.reducer.replay_from(store, seq).await?;
+        let last_seq = self.projector.replay_from(store, seq).await?;
 
         let enrich_stats = enrich(
             &self.client,
@@ -168,8 +168,8 @@ impl Pipeline {
         &self.client
     }
 
-    /// Access the underlying GraphReducer.
-    pub fn reducer(&self) -> &GraphReducer {
-        &self.reducer
+    /// Access the underlying GraphProjector.
+    pub fn projector(&self) -> &GraphProjector {
+        &self.projector
     }
 }

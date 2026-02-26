@@ -73,6 +73,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 let writer = GraphWriter::new(graph_client);
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
+                    &writer as &dyn crate::pipeline::traits::SignalStore,
                     archive,
                     &api_key,
                     scope,

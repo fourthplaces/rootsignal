@@ -14,12 +14,17 @@ use crate::pipeline::scrape_phase::RunContext;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
-    pub fn new(writer: &'a GraphWriter, region_slug: &'a str) -> Self {
-        Self { writer, _region_slug: region_slug }
+    pub fn new(
+        writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
+        region_slug: &'a str,
+    ) -> Self {
+        Self { writer, store, _region_slug: region_slug }
     }
 
     /// Update source metrics, weights, cadences, and deactivate dead sources.
@@ -39,7 +44,7 @@ impl<'a> Metrics<'a> {
                 continue;
             }
             if let Err(e) = self
-                .writer
+                .store
                 .record_source_scrape(canonical_key, *signals_produced, now)
                 .await
             {

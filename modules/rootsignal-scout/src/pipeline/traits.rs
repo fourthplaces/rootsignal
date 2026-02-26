@@ -18,7 +18,7 @@ use rootsignal_common::types::{
     Post, SourceNode,
 };
 use rootsignal_common::EntityMappingOwned;
-use rootsignal_graph::DuplicateMatch;
+use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 // ---------------------------------------------------------------------------
 // ContentFetcher — replaces Arc<Archive>
@@ -140,6 +140,8 @@ pub trait SignalStore: Send + Sync {
         node_type: NodeType,
         now: DateTime<Utc>,
         entity_mappings: &[EntityMappingOwned],
+        source_url: &str,
+        similarity: f64,
     ) -> Result<()>;
 
     // --- Dedup queries ---
@@ -240,6 +242,26 @@ pub trait SignalStore: Send + Sync {
     /// Batch-create Tag nodes and TAGGED edges for a signal.
     async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()>;
 
+    // --- Source scrape metrics ---
+
+    /// Record that a source was scraped, updating scrape_count and consecutive_empty_runs.
+    async fn record_source_scrape(
+        &self,
+        canonical_key: &str,
+        signals_produced: u32,
+        now: DateTime<Utc>,
+    ) -> Result<()>;
+
+    // --- Pin lifecycle ---
+
+    /// Delete consumed pins by their IDs.
+    async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()>;
+
+    // --- Signal reaping ---
+
+    /// Remove expired signals from the graph. Returns counts by category.
+    async fn reap_expired(&self) -> Result<ReapStats>;
+
     // --- Actor location enrichment ---
 
     /// Get signal location observations for an actor (authored signals with about_location).
@@ -305,6 +327,8 @@ impl SignalStore for rootsignal_graph::GraphWriter {
         node_type: NodeType,
         now: DateTime<Utc>,
         entity_mappings: &[EntityMappingOwned],
+        _source_url: &str,
+        _similarity: f64,
     ) -> Result<()> {
         Ok(self.corroborate(id, node_type, now, entity_mappings).await?)
     }
@@ -422,6 +446,23 @@ impl SignalStore for rootsignal_graph::GraphWriter {
 
     async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()> {
         Ok(self.batch_tag_signals(signal_id, tag_slugs).await?)
+    }
+
+    async fn record_source_scrape(
+        &self,
+        canonical_key: &str,
+        signals_produced: u32,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        Ok(self.record_source_scrape(canonical_key, signals_produced, now).await?)
+    }
+
+    async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {
+        Ok(self.delete_pins(pin_ids).await?)
+    }
+
+    async fn reap_expired(&self) -> Result<ReapStats> {
+        Ok(self.reap_expired().await?)
     }
 
     async fn get_signals_for_actor(

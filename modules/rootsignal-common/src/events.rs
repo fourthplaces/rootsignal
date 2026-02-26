@@ -549,6 +549,16 @@ pub enum Event {
         domains: Vec<String>,
         social_urls: Vec<String>,
         description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bio: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_lat: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_lng: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        discovery_depth: Option<u32>,
     },
 
     ActorLinkedToEntity {
@@ -703,6 +713,14 @@ pub enum Event {
         reason: Option<String>,
         source_canonical_key: Option<String>,
     },
+
+    // -----------------------------------------------------------------------
+    // Signal-source linkage facts
+    // -----------------------------------------------------------------------
+    SignalLinkedToSource {
+        signal_id: Uuid,
+        source_id: Uuid,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -788,6 +806,8 @@ impl Event {
             Event::DemandReceived { .. } => "demand_received",
             Event::DemandAggregated { .. } => "demand_aggregated",
             Event::SubmissionReceived { .. } => "submission_received",
+            // Signal-source linkage
+            Event::SignalLinkedToSource { .. } => "signal_linked_to_source",
         }
     }
 

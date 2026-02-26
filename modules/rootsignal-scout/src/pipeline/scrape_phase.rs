@@ -1530,7 +1530,7 @@ impl ScrapePhase {
                         "Global title+type match from different source, corroborating"
                     );
                     self.store
-                        .corroborate(existing_id, existing_type, now, &entity_mappings)
+                        .corroborate(existing_id, existing_type, now, &entity_mappings, &url, similarity)
                         .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
@@ -1750,7 +1750,7 @@ impl ScrapePhase {
                         "Cross-source duplicate, corroborating"
                     );
                     self.store
-                        .corroborate(existing_id, existing_type, now, &entity_mappings)
+                        .corroborate(existing_id, existing_type, now, &entity_mappings, &url, similarity)
                         .await?;
                     let evidence = EvidenceNode {
                         id: Uuid::new_v4(),
