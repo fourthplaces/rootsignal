@@ -174,56 +174,69 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 **Scope:** These are the last remaining signal creation paths that bypass events. They need access to `EventSourcedStore` (or at least `&dyn SignalStore`).
 
 **Tasks:**
-- [ ] Refactor `GatheringFinder` to accept `Arc<dyn SignalStore>` instead of `&GraphWriter`
-  - `writer.create_node()` → `store.create_node()` (already event-sourced)
-  - Keep `writer` reference for read-only methods (`find_gathering_finder_targets()`, etc.)
-- [ ] Refactor `ResponseFinder` to accept `Arc<dyn SignalStore>` instead of `&GraphWriter`
-  - `writer.create_node()` → `store.create_node()` (already event-sourced)
-  - `writer.mark_response_found()` → needs event or stays as writer call (marking flags, not domain facts)
-- [ ] Pass `store: Arc<dyn SignalStore>` through `ScrapePhase` discovery methods
-- [ ] Verify: all signal creation goes through events
+- [x] Refactor `GatheringFinder` to accept `&dyn SignalStore` alongside `&GraphWriter`
+  - `writer.create_node()` → `store.create_node()` (event-sourced)
+  - `writer.upsert_source()` → `store.upsert_source()` (event-sourced)
+  - `writer.find_duplicate()` → `store.find_duplicate()` (pass-through read)
+  - Keep `writer` for read-only methods (`find_gathering_finder_targets()`, etc.) and non-trait writes (`create_drawn_to_edge`, `touch_signal_timestamp`, etc.)
+- [x] Refactor `ResponseFinder` to accept `&dyn SignalStore` alongside `&GraphWriter`
+  - `writer.create_node()` → `store.create_node()` (event-sourced)
+  - `writer.upsert_source()` → `store.upsert_source()` (event-sourced)
+  - `writer.find_duplicate()` → `store.find_duplicate()` (pass-through read)
+  - `writer.find_or_create_resource()` → `store.find_or_create_resource()` (pass-through)
+  - `writer.create_requires/prefers/offers_edge()` → `store.*` (pass-through)
+  - `writer.mark_response_found()` stays on writer (marking flags, not domain facts)
+  - `writer.create_response_edge()` moved to store in Phase 5
+- [x] Pass `&writer as &dyn SignalStore` in `synthesis.rs` to both finder constructors
+- [x] Verify: `cargo build --workspace`, 301 scout tests + 82 graph tests pass
 
-**Files:**
+**Approach taken:** Option 1 — pass both `store` + `writer`. Store handles all `SignalStore` trait methods (event-sourced writes + pass-through reads). Writer handles non-trait reads and writes that don't have event variants yet.
+
+**Files changed:**
 - `modules/rootsignal-scout/src/discovery/gathering_finder.rs`
 - `modules/rootsignal-scout/src/discovery/response_finder.rs`
-- `modules/rootsignal-scout/src/pipeline/scrape_phase.rs` — pass store to discovery
-- `modules/rootsignal-scout/src/pipeline/scrape_pipeline.rs` — may need to expose store
-
-**Risk:** Discovery workflows currently take `&GraphWriter` directly. Changing to `Arc<dyn SignalStore>` means read methods like `find_gathering_finder_targets()` need to be accessible. Options:
-1. Pass both `store` + `writer` (store for writes, writer for reads) — pragmatic
-2. Add read methods to `SignalStore` trait — cleaner but trait grows
-3. Accept `&GraphClient` for reads — most minimal
-
-Recommend option 1 for now.
+- `modules/rootsignal-scout/src/workflows/synthesis.rs`
 
 ---
 
-## Phase 5: Resource and Edge Events (New Variants)
+## Phase 5: Edge Events ✅
 
-**Goal:** Resource and relationship operations emit events. These need NEW event variants.
+**Goal:** Resource edge and relationship edge operations emit events.
+
+**Design decision:** `find_or_create_resource` and `find_or_create_place` stay as pass-throughs — they're reference data management (lookup tables), not domain events. The meaningful domain facts are the edges.
 
 **Scope:**
-- `find_or_create_resource()` → new `ResourceDiscovered` event + reducer handler
-- `create_requires/prefers/offers_edge()` → new `ResourceEdgeCreated` event + handler
-- `create_response_edge()` → new `ResponseLinked` event + handler
-- `create_drawn_to_edge()` → new `GravityLinked` event + handler
-- `find_or_create_place()` → new `PlaceDiscovered` event + handler
+- `create_requires/prefers/offers_edge()` → `ResourceEdgeCreated` event (role field distinguishes)
+- `create_response_edge()` → `ResponseLinked` event
+- `create_drawn_to_edge()` → `GravityLinked` event
+- Route finder `writer` calls through `store` for edge creation
 
 **Tasks:**
-- [ ] Add `ResourceDiscovered { resource_id, name, slug, description }` to Event enum
-- [ ] Add `ResourceEdgeCreated { signal_id, resource_id, edge_type, confidence }` to Event enum
-- [ ] Add `ResponseLinked { signal_id, tension_id, strength, explanation }` to Event enum
-- [ ] Add `GravityLinked { signal_id, tension_id }` to Event enum
-- [ ] Add `PlaceDiscovered { place_id, name, slug }` to Event enum
-- [ ] Add reducer handlers for each new variant
-- [ ] Convert EventSourcedStore resource methods to emit events
-- [ ] Convert synthesis workflow edge creation to emit events
-- [ ] Verify: all tests pass
+- [x] Add `ResourceEdgeCreated { signal_id, resource_id, role, confidence, quantity, notes, capacity }` to Event enum
+- [x] Add `ResponseLinked { signal_id, tension_id, strength, explanation }` to Event enum
+- [x] Add `GravityLinked { signal_id, tension_id, strength, explanation, gathering_type }` to Event enum
+- [x] Add reducer handlers for each new variant
+- [x] Add `create_response_edge` and `create_drawn_to_edge` to SignalStore trait + GraphWriter impl
+- [x] Convert EventSourcedStore resource edge methods to emit events
+- [x] Implement EventSourcedStore `create_response_edge` and `create_drawn_to_edge`
+- [x] Route GatheringFinder `writer.create_drawn_to_edge()` through `store`
+- [x] Route ResponseFinder `writer.create_response_edge()` through `store`
+- [x] Add mock implementations for new trait methods
+- [x] Verify: all tests pass (301 scout, 82 graph, 65 common)
+
+**Explicitly pass-through (not domain events):**
+- `find_or_create_resource` — query+command hybrid returning UUID
+- `find_or_create_place` — query+command hybrid returning UUID
+- `batch_tag_signals` — targets Story nodes, different domain
 
 **Files:**
-- `modules/rootsignal-common/src/events.rs` — new variants
-- `modules/rootsignal-graph/src/reducer.rs` — new handlers
-- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — convert resource methods
+- `modules/rootsignal-common/src/events.rs` — 3 new variants
+- `modules/rootsignal-graph/src/reducer.rs` — 3 new handlers
+- `modules/rootsignal-scout/src/pipeline/traits.rs` — 2 new trait methods + GraphWriter impls
+- `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — 3 converted + 2 new methods
+- `modules/rootsignal-scout/src/discovery/gathering_finder.rs` — routed 2 writer calls through store
+- `modules/rootsignal-scout/src/discovery/response_finder.rs` — routed 2 writer calls through store
+- `modules/rootsignal-scout/src/testing.rs` — mock impls
 
 ---
 

@@ -7,7 +7,7 @@
 //! The events table is the single source of truth. The graph is a projection.
 //!
 //! Read methods delegate to GraphWriter (graph is always current).
-//! Actor/source/resource methods pass through to GraphWriter (Phase 2 scope).
+//! Resource/edge methods pass through to GraphWriter (no event variants yet).
 
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +31,7 @@ use super::traits::SignalStore;
 
 /// SignalStore that appends events then projects them to the graph.
 pub struct EventSourcedStore {
-    writer: GraphWriter,         // kept for READ methods + Phase 2 pass-through
+    writer: GraphWriter,         // kept for READ methods + resource/edge pass-through
     projector: GraphProjector,   // sole write path for signal lifecycle
     event_store: EventStore,
     run_id: String,
@@ -480,7 +480,7 @@ impl SignalStore for EventSourcedStore {
         Ok(self.writer.find_actor_by_entity_id(entity_id).await?)
     }
 
-    // --- Resource graph (pass through, Phase 2 scope) ---
+    // --- Resource graph (pass through for find_or_create, events for edges) ---
 
     async fn find_or_create_resource(
         &self,
@@ -503,10 +503,16 @@ impl SignalStore for EventSourcedStore {
         quantity: Option<&str>,
         notes: Option<&str>,
     ) -> Result<()> {
-        Ok(self
-            .writer
-            .create_requires_edge(signal_id, resource_id, confidence, quantity, notes)
-            .await?)
+        let event = Event::ResourceEdgeCreated {
+            signal_id,
+            resource_id,
+            role: "requires".to_string(),
+            confidence,
+            quantity: quantity.map(|s| s.to_string()),
+            notes: notes.map(|s| s.to_string()),
+            capacity: None,
+        };
+        self.append_and_project(&event, None).await
     }
 
     async fn create_prefers_edge(
@@ -515,10 +521,16 @@ impl SignalStore for EventSourcedStore {
         resource_id: Uuid,
         confidence: f32,
     ) -> Result<()> {
-        Ok(self
-            .writer
-            .create_prefers_edge(signal_id, resource_id, confidence)
-            .await?)
+        let event = Event::ResourceEdgeCreated {
+            signal_id,
+            resource_id,
+            role: "prefers".to_string(),
+            confidence,
+            quantity: None,
+            notes: None,
+            capacity: None,
+        };
+        self.append_and_project(&event, None).await
     }
 
     async fn create_offers_edge(
@@ -528,10 +540,52 @@ impl SignalStore for EventSourcedStore {
         confidence: f32,
         capacity: Option<&str>,
     ) -> Result<()> {
-        Ok(self
-            .writer
-            .create_offers_edge(signal_id, resource_id, confidence, capacity)
-            .await?)
+        let event = Event::ResourceEdgeCreated {
+            signal_id,
+            resource_id,
+            role: "offers".to_string(),
+            confidence,
+            quantity: None,
+            notes: None,
+            capacity: capacity.map(|s| s.to_string()),
+        };
+        self.append_and_project(&event, None).await
+    }
+
+    // --- Relationship edges (append event → project to graph) ---
+
+    async fn create_response_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+    ) -> Result<()> {
+        let event = Event::ResponseLinked {
+            signal_id,
+            tension_id,
+            strength,
+            explanation: explanation.to_string(),
+        };
+        self.append_and_project(&event, None).await
+    }
+
+    async fn create_drawn_to_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+        gathering_type: &str,
+    ) -> Result<()> {
+        let event = Event::GravityLinked {
+            signal_id,
+            tension_id,
+            strength,
+            explanation: explanation.to_string(),
+            gathering_type: gathering_type.to_string(),
+        };
+        self.append_and_project(&event, None).await
     }
 
     // --- Source management (append event → project to graph) ---

@@ -1169,6 +1169,114 @@ impl GraphProjector {
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
+
+            // =================================================================
+            // Edge facts — resource and relationship edges
+            // =================================================================
+            Event::ResourceEdgeCreated {
+                signal_id,
+                resource_id,
+                role,
+                confidence,
+                quantity,
+                notes,
+                capacity,
+            } => {
+                let q = match role.as_str() {
+                    "requires" => {
+                        query(
+                            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
+                             MATCH (r:Resource {id: $rid})
+                             MERGE (s)-[e:REQUIRES]->(r)
+                             ON CREATE SET e.confidence = $confidence, e.quantity = $quantity, e.notes = $notes
+                             ON MATCH SET e.confidence = $confidence, e.quantity = $quantity, e.notes = $notes"
+                        )
+                        .param("sid", signal_id.to_string())
+                        .param("rid", resource_id.to_string())
+                        .param("confidence", confidence as f64)
+                        .param("quantity", quantity.unwrap_or_default())
+                        .param("notes", notes.unwrap_or_default())
+                    }
+                    "prefers" => {
+                        query(
+                            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
+                             MATCH (r:Resource {id: $rid})
+                             MERGE (s)-[e:PREFERS]->(r)
+                             ON CREATE SET e.confidence = $confidence
+                             ON MATCH SET e.confidence = $confidence"
+                        )
+                        .param("sid", signal_id.to_string())
+                        .param("rid", resource_id.to_string())
+                        .param("confidence", confidence as f64)
+                    }
+                    "offers" => {
+                        query(
+                            "MATCH (s:Aid {id: $sid})
+                             MATCH (r:Resource {id: $rid})
+                             MERGE (s)-[e:OFFERS]->(r)
+                             ON CREATE SET e.confidence = $confidence, e.capacity = $capacity
+                             ON MATCH SET e.confidence = $confidence, e.capacity = $capacity"
+                        )
+                        .param("sid", signal_id.to_string())
+                        .param("rid", resource_id.to_string())
+                        .param("confidence", confidence as f64)
+                        .param("capacity", capacity.unwrap_or_default())
+                    }
+                    _ => {
+                        warn!(role = role.as_str(), "Unknown resource edge role, skipping");
+                        return Ok(ApplyResult::NoOp);
+                    }
+                };
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::ResponseLinked {
+                signal_id,
+                tension_id,
+                strength,
+                explanation,
+            } => {
+                let q = query(
+                    "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
+                     MATCH (t:Tension {id: $tid})
+                     MERGE (resp)-[r:RESPONDS_TO]->(t)
+                     ON CREATE SET r.match_strength = $strength, r.explanation = $explanation
+                     ON MATCH SET r.match_strength = $strength, r.explanation = $explanation"
+                )
+                .param("resp_id", signal_id.to_string())
+                .param("tid", tension_id.to_string())
+                .param("strength", strength)
+                .param("explanation", explanation.as_str());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            Event::GravityLinked {
+                signal_id,
+                tension_id,
+                strength,
+                explanation,
+                gathering_type,
+            } => {
+                let q = query(
+                    "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
+                     MATCH (t:Tension {id: $tid})
+                     MERGE (resp)-[r:DRAWN_TO]->(t)
+                     ON CREATE SET r.match_strength = $strength, r.explanation = $explanation, r.gathering_type = $gathering_type
+                     ON MATCH SET r.match_strength = $strength, r.explanation = $explanation, r.gathering_type = $gathering_type"
+                )
+                .param("resp_id", signal_id.to_string())
+                .param("tid", tension_id.to_string())
+                .param("strength", strength)
+                .param("explanation", explanation.as_str())
+                .param("gathering_type", gathering_type.as_str());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
         }
     }
 

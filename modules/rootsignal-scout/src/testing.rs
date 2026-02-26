@@ -771,6 +771,27 @@ impl SignalStore for MockSignalStore {
         Ok(())
     }
 
+    async fn create_response_edge(
+        &self,
+        _signal_id: Uuid,
+        _tension_id: Uuid,
+        _strength: f64,
+        _explanation: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn create_drawn_to_edge(
+        &self,
+        _signal_id: Uuid,
+        _tension_id: Uuid,
+        _strength: f64,
+        _explanation: &str,
+        _gathering_type: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.sources.values().cloned().collect())

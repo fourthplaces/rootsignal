@@ -231,6 +231,27 @@ pub trait SignalStore: Send + Sync {
         capacity: Option<&str>,
     ) -> Result<()>;
 
+    // --- Relationship edges ---
+
+    /// Create a RESPONDS_TO edge from a signal to a tension.
+    async fn create_response_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+    ) -> Result<()>;
+
+    /// Create a DRAWN_TO edge from a signal to a tension.
+    async fn create_drawn_to_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+        gathering_type: &str,
+    ) -> Result<()>;
+
     // --- Source management ---
 
     /// Get all active source nodes.
@@ -433,6 +454,31 @@ impl SignalStore for rootsignal_graph::GraphWriter {
     ) -> Result<()> {
         Ok(self
             .create_offers_edge(signal_id, resource_id, confidence, capacity)
+            .await?)
+    }
+
+    async fn create_response_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+    ) -> Result<()> {
+        Ok(self
+            .create_response_edge(signal_id, tension_id, strength, explanation)
+            .await?)
+    }
+
+    async fn create_drawn_to_edge(
+        &self,
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: &str,
+        gathering_type: &str,
+    ) -> Result<()> {
+        Ok(self
+            .create_drawn_to_edge(signal_id, tension_id, strength, explanation, gathering_type)
             .await?)
     }
 

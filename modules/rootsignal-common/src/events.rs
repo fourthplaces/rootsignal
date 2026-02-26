@@ -721,6 +721,37 @@ pub enum Event {
         signal_id: Uuid,
         source_id: Uuid,
     },
+
+    // -----------------------------------------------------------------------
+    // Edge facts — resource and relationship edges
+    // -----------------------------------------------------------------------
+    ResourceEdgeCreated {
+        signal_id: Uuid,
+        resource_id: Uuid,
+        role: String,
+        confidence: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quantity: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notes: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capacity: Option<String>,
+    },
+
+    ResponseLinked {
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: String,
+    },
+
+    GravityLinked {
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: String,
+        gathering_type: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +839,10 @@ impl Event {
             Event::SubmissionReceived { .. } => "submission_received",
             // Signal-source linkage
             Event::SignalLinkedToSource { .. } => "signal_linked_to_source",
+            // Edge facts
+            Event::ResourceEdgeCreated { .. } => "resource_edge_created",
+            Event::ResponseLinked { .. } => "response_linked",
+            Event::GravityLinked { .. } => "gravity_linked",
         }
     }
 

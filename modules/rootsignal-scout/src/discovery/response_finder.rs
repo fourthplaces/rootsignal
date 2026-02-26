@@ -273,6 +273,7 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -289,6 +290,7 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -301,6 +303,7 @@ impl<'a> ResponseFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
+            store,
             anthropic_api_key: anthropic_api_key.to_string(),
             archive,
             embedder,
@@ -541,7 +544,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .writer
+            .store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -576,7 +579,7 @@ impl<'a> ResponseFinder<'a> {
         };
 
         // Wire RESPONDS_TO edge to the target tension
-        self.writer
+        self.store
             .create_response_edge(
                 signal_id,
                 target.tension_id,
@@ -626,7 +629,7 @@ impl<'a> ResponseFinder<'a> {
             let embedding = self.embedder.embed(&embed_text).await?;
 
             let resource_id = self
-                .writer
+                .store
                 .find_or_create_resource(
                     &tag.slug,
                     &slug,
@@ -638,7 +641,7 @@ impl<'a> ResponseFinder<'a> {
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
             match tag.role.as_str() {
                 "requires" => {
-                    self.writer
+                    self.store
                         .create_requires_edge(
                             signal_id,
                             resource_id,
@@ -649,12 +652,12 @@ impl<'a> ResponseFinder<'a> {
                         .await?;
                 }
                 "prefers" => {
-                    self.writer
+                    self.store
                         .create_prefers_edge(signal_id, resource_id, confidence)
                         .await?;
                 }
                 "offers" => {
-                    self.writer
+                    self.store
                         .create_offers_edge(
                             signal_id,
                             resource_id,
@@ -747,7 +750,7 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.writer.create_node(&node, &embedding, "response_finder", &self.run_id).await?;
+        let node_id = self.store.create_node(&node, &embedding, "response_finder", &self.run_id).await?;
 
         info!(
             node_id = %node_id,
@@ -806,7 +809,7 @@ impl<'a> ResponseFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring also_addresses edge"
                 );
-                self.writer
+                self.store
                     .create_response_edge(signal_id, tension_id, sim.clamp(0.0, 1.0), explanation)
                     .await?;
             }
@@ -825,7 +828,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Dedup check (region-scoped)
         let existing = self
-            .writer
+            .store
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,
@@ -897,7 +900,7 @@ impl<'a> ResponseFinder<'a> {
         };
 
         let tension_id = self
-            .writer
+            .store
             .create_node(&Node::Tension(tension_node), &embedding, "response_finder", &self.run_id)
             .await?;
 
@@ -950,7 +953,7 @@ impl<'a> ResponseFinder<'a> {
             scrape_count: 0,
         };
 
-        self.writer.upsert_source(&source).await?;
+        self.store.upsert_source(&source).await?;
         stats.future_sources_created += 1;
 
         info!(

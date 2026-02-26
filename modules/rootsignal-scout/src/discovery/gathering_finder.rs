@@ -266,6 +266,7 @@ Return valid JSON matching the GravityFinding schema.";
 
 pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
+    store: &'a dyn crate::pipeline::traits::SignalStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -281,6 +282,7 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
+        store: &'a dyn crate::pipeline::traits::SignalStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -302,6 +304,7 @@ impl<'a> GatheringFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
+            store,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -519,7 +522,7 @@ impl<'a> GatheringFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .writer
+            .store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -560,7 +563,7 @@ impl<'a> GatheringFinder<'a> {
         };
 
         // Wire DRAWN_TO edge to the target tension
-        self.writer
+        self.store
             .create_drawn_to_edge(
                 signal_id,
                 target.tension_id,
@@ -691,7 +694,7 @@ impl<'a> GatheringFinder<'a> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.writer.create_node(&node, &embedding, "gathering_finder", &self.run_id).await?;
+        let node_id = self.store.create_node(&node, &embedding, "gathering_finder", &self.run_id).await?;
 
         info!(
             node_id = %node_id,
@@ -753,7 +756,7 @@ impl<'a> GatheringFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring gravity also_addresses edge"
                 );
-                self.writer
+                self.store
                     .create_drawn_to_edge(
                         signal_id,
                         tension_id,
@@ -806,7 +809,7 @@ impl<'a> GatheringFinder<'a> {
             scrape_count: 0,
         };
 
-        self.writer.upsert_source(&source).await?;
+        self.store.upsert_source(&source).await?;
         stats.future_sources_created += 1;
 
         info!(
