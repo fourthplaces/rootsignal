@@ -1,45 +1,33 @@
 use std::sync::LazyLock;
 use regex::Regex;
 
-/// Matches any absolute URL anywhere in the text — href, data attributes, JS, plain text, etc.
-static URL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"https?://[^\s"'<>\]\)}{]+"#).expect("valid regex"));
-
-/// Matches href attributes specifically (for relative URL resolution).
+/// Matches `href` attributes — the only semantic "link" in HTML.
+/// Covers `<a href>`, `<link href>`, `<area href>`.
 static HREF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("valid regex"));
 
-/// Resolve a raw href against a base URL, returning an absolute URL.
+/// Resolve a raw href against a base URL, returning an absolute URL with fragment stripped.
 fn resolve_href(raw: &str, base: Option<&url::Url>) -> Option<String> {
-    if raw.starts_with("http://") || raw.starts_with("https://") {
-        Some(raw.to_string())
+    let mut parsed = if raw.starts_with("http://") || raw.starts_with("https://") {
+        url::Url::parse(raw).ok()?
     } else {
-        base?.join(raw).ok().map(|u| u.to_string())
-    }
+        base?.join(raw).ok()?
+    };
+    parsed.set_fragment(None);
+    Some(parsed.to_string())
 }
 
 /// Extract all links from raw HTML.
-/// Finds every URL in the document — href attributes, data attributes, inline JS, plain text.
-/// Also resolves relative hrefs against `base_url`. Deduplicates.
+/// Only extracts URLs from `href` attributes (`<a>`, `<link>`, `<area>`),
+/// ignoring URLs in `src`, `xmlns`, data attributes, JS, CSS, and plain text.
+/// Resolves relative hrefs against `base_url`. Deduplicates.
 pub fn extract_all_links(html: &str, base_url: &str) -> Vec<String> {
     let base = url::Url::parse(base_url).ok();
     let mut seen = std::collections::HashSet::new();
     let mut links = Vec::new();
 
-    // Absolute URLs anywhere in the HTML
-    for m in URL_RE.find_iter(html) {
-        let url = m.as_str().to_string();
-        if seen.insert(url.clone()) {
-            links.push(url);
-        }
-    }
-
-    // Relative hrefs resolved against the base
     for cap in HREF_RE.captures_iter(html) {
         let raw = &cap[1];
-        if raw.starts_with("http://") || raw.starts_with("https://") {
-            continue; // already caught by URL_RE
-        }
         if let Some(resolved) = resolve_href(raw, base.as_ref()) {
             if seen.insert(resolved.clone()) {
                 links.push(resolved);
@@ -51,7 +39,7 @@ pub fn extract_all_links(html: &str, base_url: &str) -> Vec<String> {
 }
 
 /// Extract links from raw HTML that match a given URL pattern.
-/// Catches all URLs (not just href), deduplicates.
+/// Only extracts from `href` attributes; deduplicates.
 pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Vec<String> {
     extract_all_links(html, base_url)
         .into_iter()
@@ -63,10 +51,10 @@ pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Ve
 mod tests {
     use super::*;
 
-    // --- Absolute href extraction ---
+    // --- href extraction ---
 
     #[test]
-    fn extracts_absolute_href() {
+    fn href_links_are_extracted() {
         let html = r#"<a href="https://instagram.com/org">IG</a>"#;
         let links = extract_all_links(html, "https://example.com");
         assert_eq!(links, vec!["https://instagram.com/org"]);
@@ -79,8 +67,8 @@ mod tests {
             <a href="https://b.com">B</a>
         "#;
         let links = extract_all_links(html, "https://example.com");
-        assert!(links.contains(&"https://a.com".to_string()));
-        assert!(links.contains(&"https://b.com".to_string()));
+        assert!(links.contains(&"https://a.com/".to_string()));
+        assert!(links.contains(&"https://b.com/".to_string()));
     }
 
     #[test]
@@ -90,10 +78,49 @@ mod tests {
         assert!(links.contains(&"https://example.com/page".to_string()));
     }
 
+    // --- Non-href URLs are ignored ---
+
+    #[test]
+    fn namespace_uris_are_not_extracted() {
+        let html = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>
+            <div about="http://purl.org/dc/terms/">RDF</div>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert!(links.is_empty(), "namespace/RDF URIs should not be extracted");
+    }
+
+    #[test]
+    fn image_src_is_not_extracted() {
+        let html = r#"<img src="https://avatars.githubusercontent.com/u/123">"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert!(links.is_empty(), "img src should not be extracted");
+    }
+
+    #[test]
+    fn script_urls_are_not_extracted() {
+        let html = r#"<script src="https://cdn.example.com/app.js"></script>
+            <script>var u = "https://api.example.com/v1";</script>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert!(links.is_empty(), "script src and inline JS URLs should not be extracted");
+    }
+
+    #[test]
+    fn plain_text_urls_are_not_extracted() {
+        let html = "Visit us at https://example.com/about for more info";
+        let links = extract_all_links(html, "https://base.com");
+        assert!(links.is_empty(), "plain text URLs should not be extracted");
+    }
+
+    #[test]
+    fn data_attribute_urls_are_not_extracted() {
+        let html = r#"<div data-url="https://cdn.example.com/img.png">content</div>"#;
+        let links = extract_all_links(html, "https://base.com");
+        assert!(links.is_empty(), "data attribute URLs should not be extracted");
+    }
+
     // --- Relative URL resolution ---
 
     #[test]
-    fn resolves_relative_href() {
+    fn relative_hrefs_still_resolve() {
         let html = r#"<a href="/about">About</a>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(links.contains(&"https://example.com/about".to_string()));
@@ -106,34 +133,51 @@ mod tests {
         assert!(links.contains(&"https://example.com/calendar/events/today".to_string()));
     }
 
-    // --- URLs in non-href contexts ---
-
-    #[test]
-    fn extracts_url_from_text() {
-        let html = "Visit us at https://example.com/about for more info";
-        let links = extract_all_links(html, "https://base.com");
-        assert!(links.contains(&"https://example.com/about".to_string()));
-    }
-
-    #[test]
-    fn extracts_url_from_data_attribute() {
-        let html = r#"<div data-url="https://cdn.example.com/img.png">content</div>"#;
-        let links = extract_all_links(html, "https://base.com");
-        assert!(links.contains(&"https://cdn.example.com/img.png".to_string()));
-    }
-
     // --- Deduplication ---
 
     #[test]
-    fn deduplicates_same_url() {
+    fn deduplication_still_works() {
         let html = r#"
             <a href="https://example.com/page">link1</a>
             <a href="https://example.com/page">link2</a>
-            Visit https://example.com/page for info
         "#;
         let links = extract_all_links(html, "https://base.com");
         let count = links.iter().filter(|u| *u == "https://example.com/page").count();
         assert_eq!(count, 1, "Same URL should appear exactly once");
+    }
+
+    // --- Fragment stripping ---
+
+    #[test]
+    fn fragment_is_stripped_from_absolute_href() {
+        let html = r#"<a href="https://example.com/page#section">link</a>"#;
+        let links = extract_all_links(html, "https://base.com");
+        assert_eq!(links, vec!["https://example.com/page"]);
+    }
+
+    #[test]
+    fn fragment_is_stripped_from_relative_href() {
+        let html = r#"<a href="/page#breadcrumb">link</a>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert_eq!(links, vec!["https://example.com/page"]);
+    }
+
+    #[test]
+    fn same_page_with_different_fragments_deduplicates() {
+        let html = r#"
+            <a href="/page#breadcrumb">one</a>
+            <a href="/page#primaryimage">two</a>
+            <a href="/page#footer">three</a>
+        "#;
+        let links = extract_all_links(html, "https://example.com");
+        assert_eq!(links, vec!["https://example.com/page"]);
+    }
+
+    #[test]
+    fn bare_fragment_resolves_to_base_url() {
+        let html = r##"<a href="#top">back to top</a>"##;
+        let links = extract_all_links(html, "https://example.com/page");
+        assert_eq!(links, vec!["https://example.com/page"]);
     }
 
     // --- Empty / malformed ---
@@ -162,10 +206,9 @@ mod tests {
     #[test]
     fn malformed_base_url_does_not_crash() {
         let html = r#"<a href="/about">link</a>"#;
-        // Invalid base URL — relative resolution fails gracefully
         let links = extract_all_links(html, "not a url");
         // Should not panic; relative hrefs just get skipped
-        assert!(links.is_empty() || !links.is_empty()); // no panic is the test
+        assert!(links.is_empty() || !links.is_empty());
     }
 
     // --- Mixed content (realistic page) ---

@@ -45,8 +45,9 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
             .run(|| async {
                 run_news_scan_from_deps(&deps)
                     .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+                    .map_err(|e| -> HandlerError { e.into() })
             })
+            .retry_policy(super::phase_retry_policy())
             .await?;
 
         ctx.set(

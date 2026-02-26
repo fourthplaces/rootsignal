@@ -26,7 +26,6 @@ fn test_meta() -> NodeMeta {
         summary: "A test signal".into(),
         sensitivity: SensitivityLevel::General,
         confidence: 0.0,
-        freshness_score: 1.0,
         corroboration_count: 0,
         about_location: None,
         about_location_name: None,
@@ -36,11 +35,13 @@ fn test_meta() -> NodeMeta {
         content_date: None,
         last_confirmed_active: Utc::now(),
         source_diversity: 1,
-        external_ratio: 0.0,
         cause_heat: 0.0,
         implied_queries: vec![],
         channel_diversity: 1,
-        mentioned_actors: vec![],
+        review_status: "staged".to_string(),
+        was_corrected: false,
+        corrections: None,
+        rejection_reason: None,
         author_actor: None,
     }
 }
@@ -65,11 +66,6 @@ fn community_garden_gathering_scores_high_confidence() {
             about_location_name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
             from_location: None,
             source_url: "https://powderhornpark.org/events".into(),
-            mentioned_actors: vec![
-                "Powderhorn Park Neighborhood Association".into(),
-                "Cafe Racer".into(),
-                "Briva Health".into(),
-            ],
             ..test_meta()
         },
         starts_at: Some(
@@ -187,10 +183,6 @@ fn ice_enforcement_tension_moderate_confidence() {
             }),
             about_location_name: Some("Phillips neighborhood, Minneapolis".into()),
             from_location: None,
-            mentioned_actors: vec![
-                "Minneapolis Immigrant Rights Coalition".into(),
-                "MIRC".into(),
-            ],
             ..test_meta()
         },
         severity: Severity::High,

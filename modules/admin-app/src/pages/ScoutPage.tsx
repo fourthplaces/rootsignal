@@ -3,26 +3,24 @@ import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
   ADMIN_SCOUT_RUNS,
-  ADMIN_REGION_SOURCES,
   ADMIN_SCOUT_TASKS,
   SUPERVISOR_FINDINGS,
   SUPERVISOR_SUMMARY,
 } from "@/graphql/queries";
 import {
-  ADD_SOURCE,
   RUN_SCOUT,
   RUN_SCOUT_PHASE,
   CREATE_SCOUT_TASK,
   CANCEL_SCOUT_TASK,
   DISMISS_FINDING,
   RESET_SCOUT_STATUS,
+  STOP_SCOUT,
 } from "@/graphql/mutations";
 
-type Tab = "tasks" | "runs" | "sources" | "findings";
+type Tab = "tasks" | "runs" | "findings";
 const TABS: { key: Tab; label: string }[] = [
   { key: "tasks", label: "Tasks" },
   { key: "runs", label: "Runs" },
-  { key: "sources", label: "Sources" },
   { key: "findings", label: "Findings" },
 ];
 
@@ -53,6 +51,7 @@ type ScoutTask = {
   source: string;
   status: string;
   phaseStatus: string;
+  restateStatus: string | null;
   createdAt: string;
   completedAt: string | null;
 };
@@ -166,6 +165,7 @@ function TaskRow({
   runScout,
   runScoutPhase,
   resetStatus,
+  stopScout,
   onCancel,
   onRefetch,
 }: {
@@ -173,11 +173,13 @@ function TaskRow({
   runScout: MutationFn;
   runScoutPhase: MutationFn;
   resetStatus: MutationFn;
+  stopScout: MutationFn;
   onCancel: (id: string) => void;
   onRefetch: () => void;
 }) {
   const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -211,6 +213,19 @@ function TaskRow({
     }
   };
 
+  const handleStop = async () => {
+    setStopping(true);
+    setError(null);
+    try {
+      await stopScout({ variables: { taskId: t.id } });
+      onRefetch();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to stop");
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/30">
       <td className="px-4 py-2 max-w-[200px] truncate">
@@ -225,34 +240,23 @@ function TaskRow({
       <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
       <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
       <td className="px-4 py-2">
-        <div className="flex flex-col gap-1">
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-              t.status === "pending"
+        <span
+          className={`text-xs px-2 py-0.5 rounded-full w-fit ${
+            t.phaseStatus.startsWith("running_")
+              ? "bg-green-900 text-green-300"
+              : t.status === "pending"
                 ? "bg-amber-500/10 text-amber-400"
-                : t.status === "running"
-                  ? "bg-green-900 text-green-300"
-                  : t.status === "completed"
-                    ? "bg-secondary text-muted-foreground"
-                    : "bg-red-500/10 text-red-400"
-            }`}
-          >
-            {t.status}
-          </span>
-          {t.phaseStatus !== "idle" && (
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-                t.phaseStatus.startsWith("running_")
-                  ? "bg-green-900 text-green-300"
-                  : t.phaseStatus === "complete"
-                    ? "bg-secondary text-muted-foreground"
-                    : "bg-blue-500/10 text-blue-400"
-              }`}
-            >
-              {phaseStatusLabel(t.phaseStatus)}
-            </span>
-          )}
-        </div>
+                : t.status === "completed"
+                  ? "bg-secondary text-muted-foreground"
+                  : t.status === "cancelled"
+                    ? "bg-red-500/10 text-red-400"
+                    : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          {t.phaseStatus.startsWith("running_")
+            ? phaseStatusLabel(t.phaseStatus)
+            : t.status}
+        </span>
       </td>
       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
         {formatDate(t.createdAt)}
@@ -284,24 +288,31 @@ function TaskRow({
               >
                 {running ? "Running..." : "Run"}
               </button>
+              <button
+                onClick={() => onCancel(t.id)}
+                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              >
+                Cancel
+              </button>
             </>
           )}
           {t.phaseStatus.startsWith("running_") && (
-            <button
-              onClick={handleReset}
-              disabled={resetting}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-            >
-              {resetting ? "Resetting..." : "Reset Status"}
-            </button>
-          )}
-          {(t.status === "pending" || t.status === "running") && (
-            <button
-              onClick={() => onCancel(t.id)}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            >
-              Cancel
-            </button>
+            <>
+              <button
+                onClick={handleStop}
+                disabled={stopping}
+                className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+              >
+                {stopping ? "Stopping..." : "Stop"}
+              </button>
+              <button
+                onClick={handleReset}
+                disabled={resetting}
+                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+              >
+                {resetting ? "Resetting..." : "Reset"}
+              </button>
+            </>
           )}
         </div>
         {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
@@ -384,28 +395,6 @@ export function ScoutPage() {
   });
   const runs: ScoutRun[] = runsData?.adminScoutRuns ?? [];
 
-  // --- Sources ---
-  const { data: sourcesData, refetch: refetchSources } = useQuery(ADMIN_REGION_SOURCES, {
-    variables: { regionSlug: "" },
-    skip: tab !== "sources",
-  });
-  const sources = sourcesData?.adminRegionSources ?? [];
-  const [addSource] = useMutation(ADD_SOURCE);
-  const [showAddSource, setShowAddSource] = useState(false);
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [sourceReason, setSourceReason] = useState("");
-
-  const handleAddSource = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await addSource({
-      variables: { url: sourceUrl, reason: sourceReason || undefined },
-    });
-    setSourceUrl("");
-    setSourceReason("");
-    setShowAddSource(false);
-    refetchSources();
-  };
-
   // --- Tasks ---
   const { data: tasksData, loading: tasksLoading, refetch: refetchTasks } = useQuery(
     ADMIN_SCOUT_TASKS,
@@ -444,7 +433,9 @@ export function ScoutPage() {
   // --- Task actions ---
   const [runScout] = useMutation(RUN_SCOUT);
   const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+
   const [resetScoutStatus] = useMutation(RESET_SCOUT_STATUS);
+  const [stopScout] = useMutation(STOP_SCOUT);
 
   // --- Findings ---
   const region = "twincities";
@@ -553,86 +544,6 @@ export function ScoutPage() {
         )
       )}
 
-      {/* Sources tab */}
-      {tab === "sources" && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium">Sources ({sources.length})</h2>
-            <button
-              onClick={() => setShowAddSource(!showAddSource)}
-              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-            >
-              Add Source
-            </button>
-          </div>
-
-          {showAddSource && (
-            <form onSubmit={handleAddSource} className="mb-4 space-y-2">
-              <input
-                type="url"
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value)}
-                placeholder="https://..."
-                className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-                required
-              />
-              <input
-                type="text"
-                value={sourceReason}
-                onChange={(e) => setSourceReason(e.target.value)}
-                placeholder="Reason (optional)"
-                className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-              >
-                Add
-              </button>
-            </form>
-          )}
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="pb-2 font-medium">Source</th>
-                  <th className="pb-2 font-medium">Type</th>
-                  <th className="pb-2 font-medium">Weight</th>
-                  <th className="pb-2 font-medium">Signals</th>
-                  <th className="pb-2 font-medium">Cadence</th>
-                  <th className="pb-2 font-medium">Last Scraped</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map(
-                  (s: {
-                    id: string;
-                    canonicalValue: string;
-                    sourceLabel: string;
-                    effectiveWeight: number;
-                    signalsProduced: number;
-                    cadenceHours: number;
-                    lastScraped: string | null;
-                  }) => (
-                    <tr key={s.id} className="border-b border-border/50">
-                      <td className="py-2 truncate max-w-[200px]">{s.canonicalValue}</td>
-                      <td className="py-2">{s.sourceLabel}</td>
-                      <td className="py-2">{s.effectiveWeight.toFixed(2)}</td>
-                      <td className="py-2">{s.signalsProduced}</td>
-                      <td className="py-2">{s.cadenceHours}h</td>
-                      <td className="py-2 text-muted-foreground">
-                        {s.lastScraped ? new Date(s.lastScraped).toLocaleDateString() : "Never"}
-                      </td>
-                    </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* Tasks tab */}
       {tab === "tasks" && (
         <div>
@@ -684,6 +595,7 @@ export function ScoutPage() {
                       runScout={runScout}
                       runScoutPhase={runScoutPhase}
                       resetStatus={resetScoutStatus}
+                      stopScout={stopScout}
                       onCancel={handleCancelTask}
                       onRefetch={refetchTasks}
                     />

@@ -36,6 +36,7 @@ impl ContentFetcher for SimulatedWeb {
             markdown: sim.content,
             title: None,
             links,
+            published_at: None,
         })
     }
 

@@ -17,6 +17,7 @@ export default defineConfig({
     host: true,
     proxy: {
       "/graphql": apiTarget,
+      "/api": apiTarget,
     },
   },
 });

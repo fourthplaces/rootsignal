@@ -5,26 +5,31 @@ const SIGNAL_FIELDS = `
   ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
     startsAt endsAt actionUrl organizer isRecurring
   }
   ... on GqlAidSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
     actionUrl availability isOngoing
   }
   ... on GqlNeedSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
     urgency whatNeeded actionUrl goal
   }
   ... on GqlNoticeSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
     severity category effectiveDate sourceAuthority
   }
   ... on GqlTensionSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
     severity category whatWouldHelp
   }
 `;
@@ -42,7 +47,6 @@ export const ADMIN_DASHBOARD = gql`
   query AdminDashboard($region: String!) {
     adminDashboard(region: $region) {
       totalSignals
-      totalStories
       totalActors
       totalSources
       activeSources
@@ -53,7 +57,6 @@ export const ADMIN_DASHBOARD = gql`
         lastScouted
         sourcesDue
         running
-        phaseStatus
       }
       signalVolumeByDay {
         day
@@ -65,14 +68,6 @@ export const ADMIN_DASHBOARD = gql`
       }
       countByType {
         signalType
-        count
-      }
-      storyCountByArc {
-        label
-        count
-      }
-      storyCountByCategory {
-        label
         count
       }
       freshnessDistribution {
@@ -119,8 +114,8 @@ export const ADMIN_DASHBOARD = gql`
 `;
 
 export const ADMIN_REGION_SOURCES = gql`
-  query AdminRegionSources($regionSlug: String!) {
-    adminRegionSources(regionSlug: $regionSlug) {
+  query AdminRegionSources {
+    adminRegionSources {
       id
       url
       canonicalValue
@@ -150,6 +145,7 @@ export const ADMIN_SCOUT_TASKS = gql`
       source
       status
       phaseStatus
+      restateStatus
       createdAt
       completedAt
     }
@@ -207,91 +203,53 @@ export const SIGNALS_RECENT = gql`
   }
 `;
 
+export const SIGNALS_WITHOUT_LOCATION = gql`
+  query SignalsWithoutLocation($limit: Int) {
+    signalsWithoutLocation(limit: $limit) {
+      ${SIGNAL_FIELDS}
+    }
+  }
+`;
+
+export const ADMIN_SIGNALS = gql`
+  query AdminSignals($limit: Int, $status: String) {
+    adminSignals(limit: $limit, status: $status) {
+      ${SIGNAL_FIELDS}
+    }
+  }
+`;
+
 export const SIGNAL_DETAIL = gql`
-  query Signal($id: UUID!) {
+  query Signal($id: UUID!, $scheduleFrom: DateTime!, $scheduleTo: DateTime!) {
     signal(id: $id) {
       ${SIGNAL_FIELDS}
       ... on GqlGatheringSignal {
-        evidence { id sourceUrl snippet relevance }
+        citations { id sourceUrl snippet relevance }
         actors { id name actorType }
-        story { id headline arc }
+        schedule {
+          id rrule scheduleText dtstart dtend timezone
+          occurrences(from: $scheduleFrom, to: $scheduleTo)
+        }
       }
       ... on GqlAidSignal {
-        evidence { id sourceUrl snippet relevance }
+        citations { id sourceUrl snippet relevance }
         actors { id name actorType }
-        story { id headline arc }
+        schedule {
+          id rrule scheduleText dtstart dtend timezone
+          occurrences(from: $scheduleFrom, to: $scheduleTo)
+        }
       }
       ... on GqlNeedSignal {
-        evidence { id sourceUrl snippet relevance }
+        citations { id sourceUrl snippet relevance }
         actors { id name actorType }
-        story { id headline arc }
       }
       ... on GqlNoticeSignal {
-        evidence { id sourceUrl snippet relevance }
+        citations { id sourceUrl snippet relevance }
         actors { id name actorType }
-        story { id headline arc }
       }
       ... on GqlTensionSignal {
-        evidence { id sourceUrl snippet relevance }
+        citations { id sourceUrl snippet relevance }
         actors { id name actorType }
-        story { id headline arc }
-      }
-    }
-  }
-`;
-
-export const STORIES = gql`
-  query Stories($limit: Int, $status: String) {
-    stories(limit: $limit, status: $status) {
-      id
-      headline
-      summary
-      arc
-      category
-      energy
-      signalCount
-      firstSeen
-      status
-    }
-  }
-`;
-
-export const STORIES_IN_BOUNDS = gql`
-  query StoriesInBounds($minLat: Float!, $maxLat: Float!, $minLng: Float!, $maxLng: Float!, $limit: Int) {
-    storiesInBounds(minLat: $minLat, maxLat: $maxLat, minLng: $minLng, maxLng: $maxLng, limit: $limit) {
-      id
-      headline
-      summary
-      arc
-      category
-      energy
-      signalCount
-      firstSeen
-      status
-    }
-  }
-`;
-
-export const STORY_DETAIL = gql`
-  query Story($id: UUID!) {
-    story(id: $id) {
-      id
-      headline
-      summary
-      arc
-      category
-      energy
-      signalCount
-      firstSeen
-      lastUpdated
-      velocity
-      dominantType
-      status
-      lede
-      narrative
-      tags {
-        slug
-        name
       }
     }
   }
@@ -367,43 +325,69 @@ export const ADMIN_SCOUT_RUN = gql`
         expansionQueriesCollected
         expansionSourcesCreated
       }
-      events {
-        seq
-        ts
-        type
-        query
-        url
-        provider
-        platform
-        identifier
-        signalType
-        title
-        resultCount
-        postCount
-        items
-        contentBytes
-        contentChars
-        signalsExtracted
-        impliedQueries
-        similarity
-        confidence
-        success
-        action
-        nodeId
-        matchedId
-        existingId
-        sourceUrl
-        newSourceUrl
-        canonicalKey
-        gatherings
-        needs
-        stale
-        sourcesCreated
-        spentCents
-        remainingCents
-        topics
-        postsFound
-      }
+    }
+  }
+`;
+
+export const ADMIN_SCOUT_RUN_EVENTS = gql`
+  query AdminScoutRunEvents($runId: String!, $eventTypeFilter: String) {
+    adminScoutRunEvents(runId: $runId, eventTypeFilter: $eventTypeFilter) {
+      id
+      parentId
+      seq
+      ts
+      type
+      sourceUrl
+      query
+      url
+      provider
+      platform
+      identifier
+      signalType
+      title
+      resultCount
+      postCount
+      items
+      contentBytes
+      contentChars
+      signalsExtracted
+      impliedQueries
+      similarity
+      confidence
+      success
+      action
+      nodeId
+      matchedId
+      existingId
+      newSourceUrl
+      canonicalKey
+      gatherings
+      needs
+      stale
+      sourcesCreated
+      spentCents
+      remainingCents
+      topics
+      postsFound
+      reason
+      strategy
+      field
+      oldValue
+      newValue
+      signalCount
+      summary
+    }
+  }
+`;
+
+export const SIGNAL_BRIEF = gql`
+  query SignalBrief($id: UUID!) {
+    signal(id: $id) {
+      ... on GqlGatheringSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlAidSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlNeedSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlNoticeSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlTensionSignal { id title summary sourceUrl confidence contentDate locationName }
     }
   }
 `;
@@ -488,6 +472,7 @@ export const ADMIN_ARCHIVE_POSTS = gql`
       hashtags
       engagementSummary
       publishedAt
+      fetchCount
     }
   }
 `;
@@ -501,6 +486,7 @@ export const ADMIN_ARCHIVE_SHORT_VIDEOS = gql`
       textPreview
       engagementSummary
       publishedAt
+      fetchCount
     }
   }
 `;
@@ -515,6 +501,7 @@ export const ADMIN_ARCHIVE_STORIES = gql`
       location
       expiresAt
       fetchedAt
+      fetchCount
     }
   }
 `;
@@ -528,6 +515,7 @@ export const ADMIN_ARCHIVE_LONG_VIDEOS = gql`
       textPreview
       engagementSummary
       publishedAt
+      fetchCount
     }
   }
 `;
@@ -539,6 +527,7 @@ export const ADMIN_ARCHIVE_PAGES = gql`
       sourceUrl
       title
       fetchedAt
+      fetchCount
     }
   }
 `;
@@ -551,6 +540,7 @@ export const ADMIN_ARCHIVE_FEEDS = gql`
       title
       itemCount
       fetchedAt
+      fetchCount
     }
   }
 `;
@@ -576,6 +566,68 @@ export const ADMIN_ARCHIVE_FILES = gql`
       duration
       pageCount
       fetchedAt
+    }
+  }
+`;
+
+// --- Source detail ---
+
+export const SOURCE_DETAIL = gql`
+  query SourceDetail($id: UUID!) {
+    sourceDetail(id: $id) {
+      id
+      url
+      canonicalValue
+      sourceLabel
+      weight
+      qualityPenalty
+      effectiveWeight
+      discoveryMethod
+      lastScraped
+      cadenceHours
+      signalsProduced
+      signalsCorroborated
+      consecutiveEmptyRuns
+      active
+      gapContext
+      scrapeCount
+      avgSignalsPerScrape
+      sourceRole
+      createdAt
+      lastProducedSignal
+      signals {
+        id
+        title
+        signalType
+        confidence
+        extractedAt
+        sourceUrl
+      }
+      archiveSummary {
+        posts
+        pages
+        feeds
+        shortVideos
+        longVideos
+        stories
+        searchResults
+        files
+        lastFetchedAt
+      }
+      discoveryTree {
+        nodes {
+          id
+          canonicalValue
+          discoveryMethod
+          active
+          signalsProduced
+        }
+        edges {
+          childId
+          parentId
+        }
+        rootId
+      }
     }
   }
 `;
@@ -614,6 +666,68 @@ export const SITUATIONS = gql`
       clarity
       firstSeen
       lastUpdated
+    }
+  }
+`;
+
+export const GRAPH_NEIGHBORHOOD = gql`
+  query GraphNeighborhood(
+    $minLat: Float, $maxLat: Float, $minLng: Float, $maxLng: Float,
+    $from: DateTime!, $to: DateTime!,
+    $nodeTypes: [String!]!,
+    $limit: Int!
+  ) {
+    graphNeighborhood(
+      minLat: $minLat, maxLat: $maxLat, minLng: $minLng, maxLng: $maxLng,
+      from: $from, to: $to, nodeTypes: $nodeTypes, limit: $limit
+    ) {
+      nodes {
+        id
+        nodeType
+        label
+        lat
+        lng
+        confidence
+        metadata
+      }
+      edges {
+        sourceId
+        targetId
+        edgeType
+      }
+      totalCount
+    }
+  }
+`;
+
+export const ADMIN_NODE_EVENTS = gql`
+  query AdminNodeEvents($nodeId: String!, $limit: Int) {
+    adminNodeEvents(nodeId: $nodeId, limit: $limit) {
+      id
+      parentId
+      seq
+      ts
+      type
+      sourceUrl
+      query
+      url
+      provider
+      platform
+      signalType
+      title
+      resultCount
+      confidence
+      success
+      action
+      nodeId
+      matchedId
+      existingId
+      spentCents
+      reason
+      field
+      oldValue
+      newValue
+      summary
     }
   }
 `;

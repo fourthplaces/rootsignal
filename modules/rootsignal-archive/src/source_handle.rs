@@ -219,7 +219,7 @@ impl PostsRequest {
             Platform::Facebook => {
                 let svc = self.inner.facebook.as_ref()
                     .ok_or_else(|| ArchiveError::Unsupported("Facebook service not configured".into()))?;
-                svc.fetch_posts(&self.identifier, source_id, self.limit)
+                svc.fetch_posts(&self.source.url, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
                     .into_iter()
@@ -291,6 +291,7 @@ impl PostsRequest {
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
         self.inner.store.update_last_scraped(source_id, "posts").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
         Ok(posts)
     }
 }
@@ -360,6 +361,7 @@ impl StoriesRequest {
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
         self.inner.store.update_last_scraped(source_id, "stories").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
         Ok(stories)
     }
 }
@@ -444,6 +446,7 @@ impl ShortVideoRequest {
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
         self.inner.store.update_last_scraped(source_id, "short_videos").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
         Ok(videos)
     }
 }
@@ -509,6 +512,7 @@ impl PageRequest {
         };
 
         let links = crate::links::extract_all_links(&fetched.raw_html, &self.source.url);
+        let published_at = crate::services::page::extract_published_date(&fetched.raw_html);
         let page = crate::store::InsertPage {
             source_id,
             content_hash: fetched.page.content_hash,
@@ -518,6 +522,7 @@ impl PageRequest {
         };
         let page_id = self.inner.store.insert_page(&page).await?;
         self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
             id: page_id,
@@ -528,6 +533,7 @@ impl PageRequest {
             markdown: page.markdown,
             title: page.title,
             links,
+            published_at,
         })
     }
 }
@@ -556,6 +562,7 @@ impl PageRequest {
         let hash = rootsignal_common::content_hash(&html).to_string();
         let title = crate::services::page::extract_title(&html);
         let links = crate::links::extract_all_links(&html, &self.source.url);
+        let published_at = crate::services::page::extract_published_date(&html);
 
         let page = crate::store::InsertPage {
             source_id,
@@ -566,6 +573,7 @@ impl PageRequest {
         };
         let page_id = self.inner.store.insert_page(&page).await?;
         self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
             id: page_id,
@@ -576,6 +584,7 @@ impl PageRequest {
             markdown: page.markdown,
             title: page.title,
             links,
+            published_at,
         })
     }
 }
@@ -605,6 +614,7 @@ impl FeedRequest {
 
         let feed_id = self.inner.store.insert_feed(&fetched.feed).await?;
         self.inner.store.update_last_scraped(source_id, "feeds").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
 
         let items: Vec<FeedItem> = serde_json::from_value(fetched.feed.items).unwrap_or_default();
         Ok(ArchivedFeed {
@@ -653,6 +663,7 @@ impl SearchRequest {
 
         let results_id = self.inner.store.insert_search_results(&fetched.results).await?;
         self.inner.store.update_last_scraped(source_id, "search_results").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
 
         let results: Vec<SearchResult> =
             serde_json::from_value(fetched.results.results).unwrap_or_default();
@@ -783,6 +794,7 @@ impl TopicSearchRequest {
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
         self.inner.store.update_last_scraped(source_id, "posts").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
         Ok(posts)
     }
 }
@@ -912,6 +924,7 @@ impl CrawlRequest {
         };
 
         let links = crate::links::extract_all_links(&fetched.raw_html, url);
+        let published_at = crate::services::page::extract_published_date(&fetched.raw_html);
         let page = crate::store::InsertPage {
             source_id,
             content_hash: fetched.page.content_hash,
@@ -921,6 +934,7 @@ impl CrawlRequest {
         };
         let page_id = self.inner.store.insert_page(&page).await?;
         self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
             id: page_id,
@@ -931,6 +945,7 @@ impl CrawlRequest {
             markdown: page.markdown,
             title: page.title,
             links,
+            published_at,
         })
     }
 }

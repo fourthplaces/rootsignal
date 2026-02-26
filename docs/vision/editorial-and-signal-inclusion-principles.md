@@ -91,7 +91,9 @@ Platform hashtag queries are particularly vulnerable to political noise — coor
 
 **Partisan political content.** Root Signal surfaces public process (hearings, meetings, comment periods, ballot information, voting records) but never endorses candidates, parties, or positions. "When is the school board meeting and how do I testify" is in scope. "Who you should vote for" is not.
 
-**Rumors, unverified sightings, and crowdsourced threat reports.** If the provenance is "someone reported seeing something," it doesn't meet Root Signal's standard. Signals must trace back to an identifiable organization, government entity, or established community group — or be directly reported by a person (human-reported signal with clear provenance).
+**Rumors, unverified sightings, and surveillance-style threat data.** Crime-map sightings, police scanner crowdsourcing, "suspicious person" reports, and anonymous threat tips. These create fear without agency and fail the inclusion test. Signals must trace back to an identifiable organization, government entity, or established community group — or be directly reported by a person (human-reported signal with clear provenance).
+
+This exclusion does not apply to **community mutual-protection reporting** — community members publicly warning each other about enforcement activity, environmental hazards, or other threats where protective action is possible. When enforcement is the threat, the institutions that would normally be authoritative sources may be silent or complicit, and the community voices doing the warning *are* the signal infrastructure. These reports are valid signal — but they must earn confidence through the system's existing triangulation machinery before surfacing at high severity. A single uncorroborated social media post stays low-confidence. Multiple independent reports across channels, linked to an investigated Tension with evidence, earn escalation. The corroboration requirement is both an epistemological standard and a defense against adversarial false reports (see `adversarial-threat-model.md`).
 
 **Personal disputes, complaints, and grievances.** Nextdoor-style neighbor complaints, landlord reviews, business callouts. Root Signal is not a reputation platform. It surfaces what's available, not what's wrong with individuals.
 
@@ -146,6 +148,8 @@ These principles extend beyond data ingestion into how Root Signal presents info
 - Language should assume the user wants to participate, not that they need to be protected
 - Public community voice should be amplified, never suppressed out of fear of bad actors
 - Gaps in coverage should be acknowledged honestly, not papered over with fear-based framing
+
+**Crisis-mode exception:** When corroborated enforcement signal is linked to an active Tension — people are being detained, deported, or disappeared — direct, urgent language is appropriate. This isn't alarmism; it's accuracy. "ICE enforcement activity reported in Rosemount — legal aid resources available" is not a fear-based framing. It's a fact connected to action. The invitational tone applies to steady-state community life. When the situation is urgent and the signal is triangulated, the tone should match the reality.
 
 ---
 

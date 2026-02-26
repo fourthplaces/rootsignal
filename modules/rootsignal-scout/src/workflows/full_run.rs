@@ -105,7 +105,24 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
             .await?;
         info!("Situation weaving phase complete");
 
-        // 5. Supervisor
+        // 5. Signal Lint
+        ctx.set("status", WorkflowPhase::SignalLint.to_string());
+        let lint_result: SignalLintResult = ctx
+            .workflow_client::<super::lint::SignalLintWorkflowClient>(&sub_key)
+            .run(TaskRequest {
+                task_id: task_id.clone(),
+                scope: scope.clone(),
+            })
+            .call()
+            .await?;
+        info!(
+            passed = lint_result.passed,
+            corrected = lint_result.corrected,
+            rejected = lint_result.rejected,
+            "Signal lint phase complete"
+        );
+
+        // 6. Supervisor
         ctx.set("status", WorkflowPhase::Supervisor.to_string());
         let supervisor_result: SupervisorResult = ctx
             .workflow_client::<super::supervisor::SupervisorWorkflowClient>(&sub_key)

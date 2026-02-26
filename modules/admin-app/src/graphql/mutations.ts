@@ -89,25 +89,35 @@ export const CANCEL_SCOUT_TASK = gql`
   }
 `;
 
-export const TAG_STORY = gql`
-  mutation TagStory($storyId: UUID!, $tagSlug: String!) {
-    tagStory(storyId: $storyId, tagSlug: $tagSlug) {
-      success
-    }
-  }
-`;
-
-export const UNTAG_STORY = gql`
-  mutation UntagStory($storyId: UUID!, $tagSlug: String!) {
-    untagStory(storyId: $storyId, tagSlug: $tagSlug) {
-      success
-    }
-  }
-`;
-
 export const MERGE_TAGS = gql`
   mutation MergeTags($sourceSlug: String!, $targetSlug: String!) {
     mergeTags(sourceSlug: $sourceSlug, targetSlug: $targetSlug) {
+      success
+    }
+  }
+`;
+
+export const UPDATE_SOURCE = gql`
+  mutation UpdateSource(
+    $id: UUID!
+    $active: Boolean
+    $weight: Float
+    $qualityPenalty: Float
+  ) {
+    updateSource(
+      id: $id
+      active: $active
+      weight: $weight
+      qualityPenalty: $qualityPenalty
+    ) {
+      success
+    }
+  }
+`;
+
+export const DELETE_SOURCE = gql`
+  mutation DeleteSource($id: UUID!) {
+    deleteSource(id: $id) {
       success
     }
   }
@@ -125,5 +135,57 @@ export const SUBMIT_SOURCE = gql`
 export const DISMISS_FINDING = gql`
   mutation DismissFinding($id: String!) {
     dismissFinding(id: $id)
+  }
+`;
+
+export const SCRAPE_URL = gql`
+  mutation ScrapeUrl($url: String!) {
+    scrapeUrl(url: $url) {
+      success
+      message
+    }
+  }
+`;
+
+export const PURGE_AREA = gql`
+  mutation PurgeArea($taskId: String!) {
+    purgeArea(taskId: $taskId) {
+      success
+      message
+      signals
+      situations
+    }
+  }
+`;
+
+export const RE_EXTRACT_SIGNAL = gql`
+  mutation ReExtractSignal($signalId: UUID!) {
+    reExtractSignal(signalId: $signalId) {
+      sourceUrl
+      signals {
+        signalType
+        title
+        summary
+        sensitivity
+        latitude
+        longitude
+        locationName
+        startsAt
+        endsAt
+        organizer
+        urgency
+        severity
+        category
+        contentDate
+        tags
+        isFirsthand
+        whatWouldHelp
+      }
+      rejected {
+        title
+        sourceUrl
+        reason
+      }
+    }
   }
 `;

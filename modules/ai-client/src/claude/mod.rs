@@ -69,14 +69,13 @@ impl Claude {
 
     pub async fn extract<T: StructuredOutput>(
         &self,
-        model: &str,
         system_prompt: impl Into<String>,
         user_prompt: impl Into<String>,
     ) -> Result<T> {
         let schema = T::openai_schema();
 
         let tool_name = "structured_response";
-        let mut request = ChatRequest::new(model)
+        let mut request = ChatRequest::new(&self.model)
             .system(system_prompt)
             .message(WireMessage::user(user_prompt))
             .tool(ToolDefinitionWire {

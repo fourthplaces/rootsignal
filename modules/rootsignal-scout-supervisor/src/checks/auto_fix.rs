@@ -14,7 +14,7 @@ pub async fn run_auto_fixes(
 ) -> Result<AutoFixStats, neo4rs::Error> {
     let mut stats = AutoFixStats::default();
 
-    stats.orphaned_evidence_deleted = fix_orphaned_evidence(client).await?;
+    stats.orphaned_citations_deleted = fix_orphaned_citations(client).await?;
     stats.orphaned_edges_deleted = fix_orphaned_acted_in_edges(client).await?;
     stats.actors_merged = fix_duplicate_actors(client).await?;
     stats.empty_signals_deleted = fix_empty_signals(client).await?;
@@ -25,10 +25,10 @@ pub async fn run_auto_fixes(
     Ok(stats)
 }
 
-/// Delete Evidence nodes that have no SOURCED_FROM edge pointing to them.
-async fn fix_orphaned_evidence(client: &GraphClient) -> Result<u64, neo4rs::Error> {
+/// Delete Citation nodes that have no SOURCED_FROM edge pointing to them.
+async fn fix_orphaned_citations(client: &GraphClient) -> Result<u64, neo4rs::Error> {
     let q = query(
-        "MATCH (ev:Evidence)
+        "MATCH (ev:Citation)
          WHERE NOT ()-[:SOURCED_FROM]->(ev)
          DETACH DELETE ev
          RETURN count(ev) AS deleted",
@@ -38,7 +38,7 @@ async fn fix_orphaned_evidence(client: &GraphClient) -> Result<u64, neo4rs::Erro
     if let Some(row) = stream.next().await? {
         let deleted: i64 = row.get("deleted").unwrap_or(0);
         if deleted > 0 {
-            info!(deleted, "Deleted orphaned Evidence nodes");
+            info!(deleted, "Deleted orphaned Citation nodes");
         }
         return Ok(deleted as u64);
     }

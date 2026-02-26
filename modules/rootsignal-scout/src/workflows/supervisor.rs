@@ -1,7 +1,7 @@
 //! Restate durable workflow for the supervisor.
 //!
-//! Wraps post-run cleanup: `Supervisor::run()` + `merge_duplicate_tensions`
-//! + `compute_cause_heat`.
+//! Wraps post-run cleanup: `Supervisor::run()` + `compute_cause_heat`
+//! + beacon detection.
 
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
-                    &["situation_weaver_complete", "complete"],
+                    &["lint_complete", "situation_weaver_complete", "complete"],
                     "running_supervisor",
                 )
                 .await
@@ -68,18 +68,19 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
             .run(|| async {
                 run_supervisor_pipeline(&deps, &scope)
                     .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+                    .map_err(|e| -> HandlerError { e.into() })
             })
+            .retry_policy(super::phase_retry_policy())
             .await
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
+                let _ = super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        super::write_task_phase_status(&self.deps, &task_id, "complete").await;
+        super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "complete").await?;
 
         ctx.set(
             "status",
@@ -112,6 +113,7 @@ pub async fn run_supervisor_pipeline(
 
     let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
         deps.graph_client.clone(),
+        deps.pg_pool.clone(),
         scope.clone(),
         deps.anthropic_api_key.clone(),
         notifier,
@@ -128,17 +130,7 @@ pub async fn run_supervisor_pipeline(
         }
     };
 
-    // 2. Merge duplicate tensions
-    match writer
-        .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
-        .await
-    {
-        Ok(merged) if merged > 0 => info!(merged, "Duplicate tensions merged"),
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "Failed to merge duplicate tensions"),
-    }
-
-    // 3. Compute cause heat
+    // 2. Compute cause heat
     match rootsignal_graph::cause_heat::compute_cause_heat(
         &deps.graph_client,
         0.7,
@@ -153,7 +145,7 @@ pub async fn run_supervisor_pipeline(
         Err(e) => warn!(error = %e, "Failed to compute cause heat"),
     }
 
-    // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
+    // 3. Detect beacons (geographic signal clusters → new ScoutTasks)
     match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &writer).await {
         Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
         Ok(_) => {}

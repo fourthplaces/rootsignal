@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta, NoticeNode,
-    SensitivityLevel, Severity, TensionNode, Urgency,
+    ScheduleNode, SensitivityLevel, Severity, TensionNode, Urgency,
 };
 
 /// What the LLM returns for each extracted signal.
@@ -83,6 +83,20 @@ pub struct ExtractedSignal {
     /// For social posts: the account holder. For org pages: the organization.
     /// For news: the journalist or publication.
     pub author_actor: Option<String>,
+    /// RFC 5545 RRULE string for recurring schedules (e.g., "FREQ=WEEKLY;BYDAY=TU").
+    /// For gathering and aid signals with recurring schedules.
+    pub rrule: Option<String>,
+    /// Natural language schedule text from the source (e.g., "Every Tuesday 6-8pm").
+    /// Always include when the source mentions a schedule, even if rrule is also provided.
+    pub schedule_text: Option<String>,
+    /// Explicit dates for irregular schedules as ISO 8601 strings.
+    #[serde(default)]
+    pub explicit_dates: Vec<String>,
+    /// Exception dates to exclude from recurrence as ISO 8601 strings.
+    #[serde(default)]
+    pub exception_dates: Vec<String>,
+    /// IANA timezone for the schedule (e.g., "America/Chicago").
+    pub schedule_timezone: Option<String>,
 }
 
 /// A resource capability extracted from a signal.
@@ -130,6 +144,14 @@ where
 
 // StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
 
+/// A signal that was extracted by the LLM but rejected by post-processing filters.
+#[derive(Debug, Clone)]
+pub struct RejectedSignal {
+    pub title: String,
+    pub source_url: String,
+    pub reason: String,
+}
+
 /// Result of signal extraction — nodes plus any implied discovery queries.
 #[derive(Default)]
 pub struct ExtractionResult {
@@ -139,6 +161,10 @@ pub struct ExtractionResult {
     pub resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
     /// Thematic tags paired with the signal node UUID they came from.
     pub signal_tags: Vec<(Uuid, Vec<String>)>,
+    /// Signals that were extracted but rejected by filters (for audit logging).
+    pub rejected: Vec<RejectedSignal>,
+    /// Schedule nodes paired with the signal node UUID they belong to.
+    pub schedules: Vec<(Uuid, ScheduleNode)>,
 }
 
 // --- SignalExtractor trait ---
@@ -208,13 +234,29 @@ impl Extractor {
         let response: ExtractionResponse = self
             .claude
             .extract(
-                "claude-haiku-4-5-20251001",
                 &self.system_prompt,
                 &user_prompt,
             )
             .await?;
 
-        // Collect implied queries before converting to nodes
+        Ok(Self::convert_signals(response, source_url))
+    }
+
+    /// Convert raw LLM extraction output into typed domain nodes.
+    ///
+    /// Pure transformation — no I/O, no LLM. Handles:
+    /// - Junk signal filtering ("unable to extract", "page not found")
+    /// - Non-firsthand signal rejection
+    /// - Sensitivity/severity/urgency string → enum mapping
+    /// - Date parsing (RFC3339 → DateTime<Utc>)
+    /// - Geo precision mapping
+    /// - RRULE validation
+    /// - Tag slugification
+    /// - source_url fallback (signal-level → page-level)
+    pub fn convert_signals(
+        response: ExtractionResponse,
+        source_url: &str,
+    ) -> ExtractionResult {
         let implied_queries: Vec<String> = response
             .signals
             .iter()
@@ -225,6 +267,8 @@ impl Extractor {
         let mut nodes = Vec::new();
         let mut resource_tags: Vec<(Uuid, Vec<ResourceTag>)> = Vec::new();
         let mut signal_tags: Vec<(Uuid, Vec<String>)> = Vec::new();
+        let mut rejected: Vec<RejectedSignal> = Vec::new();
+        let mut schedules: Vec<(Uuid, ScheduleNode)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -238,6 +282,11 @@ impl Extractor {
                     title = signal.title,
                     "Filtered junk signal from extraction"
                 );
+                rejected.push(RejectedSignal {
+                    title: signal.title.clone(),
+                    source_url: source_url.to_string(),
+                    reason: "junk_extraction".to_string(),
+                });
                 continue;
             }
 
@@ -248,6 +297,11 @@ impl Extractor {
                     title = signal.title,
                     "Dropped non-first-hand signal"
                 );
+                rejected.push(RejectedSignal {
+                    title: signal.title.clone(),
+                    source_url: source_url.to_string(),
+                    reason: "not_firsthand".to_string(),
+                });
                 continue;
             }
 
@@ -273,8 +327,6 @@ impl Extractor {
                 _ => None,
             };
 
-            let mentioned_actors = signal.mentioned_actors.unwrap_or_default();
-
             // Use the LLM-returned source_url when present (specific post URL),
             // falling back to the page-level source_url.
             let effective_source_url = signal
@@ -297,7 +349,7 @@ impl Extractor {
                 summary: signal.summary.clone(),
                 sensitivity,
                 confidence: 0.0,      // Will be computed by QualityScorer
-                freshness_score: 1.0, // Fresh at extraction time
+
                 corroboration_count: 0,
                 about_location: location,
                 about_location_name: signal.location_name.clone(),
@@ -307,11 +359,13 @@ impl Extractor {
                 content_date,
                 last_confirmed_active: now,
                 source_diversity: 1,
-                external_ratio: 0.0,
                 cause_heat: 0.0,
                 channel_diversity: 1,
-                mentioned_actors,
                 implied_queries: signal.implied_queries.clone(),
+                review_status: "staged".to_string(),
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
                 author_actor: signal.author_actor.clone(),
             };
 
@@ -421,6 +475,66 @@ impl Extractor {
                 }
             }
 
+            // Build ScheduleNode for gathering/aid signals with schedule data
+            if signal.rrule.is_some() || signal.schedule_text.is_some() || !signal.explicit_dates.is_empty() {
+                let is_schedule_type = matches!(signal.signal_type.as_str(), "gathering" | "aid");
+                if is_schedule_type {
+                    // Validate RRULE at write time — discard if invalid, keep schedule_text
+                    let validated_rrule = signal.rrule.as_ref().and_then(|rule| {
+                        // Build a minimal RRuleSet string for parsing validation
+                        let dtstart_str = signal.starts_at.as_deref()
+                            .unwrap_or("20260101T000000Z");
+                        let rrule_str = format!("DTSTART:{dtstart_str}\nRRULE:{rule}");
+                        match rrule_str.parse::<rrule::RRuleSet>() {
+                            Ok(_) => Some(rule.clone()),
+                            Err(e) => {
+                                warn!(
+                                    source_url,
+                                    rrule = rule.as_str(),
+                                    error = %e,
+                                    "Invalid RRULE from extraction, falling back to schedule_text"
+                                );
+                                None
+                            }
+                        }
+                    });
+
+                    let rdates: Vec<chrono::DateTime<Utc>> = signal.explicit_dates.iter()
+                        .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .collect();
+
+                    let exdates: Vec<chrono::DateTime<Utc>> = signal.exception_dates.iter()
+                        .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .collect();
+
+                    let dtstart = signal.starts_at.as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    let dtend = signal.ends_at.as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    // Only create a ScheduleNode if we have something useful
+                    if validated_rrule.is_some() || !rdates.is_empty() || signal.schedule_text.is_some() {
+                        let schedule = ScheduleNode {
+                            id: Uuid::new_v4(),
+                            rrule: validated_rrule,
+                            rdates,
+                            exdates,
+                            dtstart,
+                            dtend,
+                            timezone: signal.schedule_timezone.clone(),
+                            schedule_text: signal.schedule_text.clone(),
+                            extracted_at: now,
+                        };
+                        schedules.push((node_id, schedule));
+                    }
+                }
+            }
+
             nodes.push(node);
         }
 
@@ -430,12 +544,14 @@ impl Extractor {
             implied_queries = implied_queries.len(),
             "Extracted signals"
         );
-        Ok(ExtractionResult {
+        ExtractionResult {
             nodes,
             implied_queries,
             resource_tags,
             signal_tags,
-        })
+            rejected,
+            schedules,
+        }
     }
 }
 
@@ -487,7 +603,11 @@ Your job: find real problems and the people addressing them. The most valuable s
 - Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
 
 **Context signals:**
-- **Notice**: An official advisory or policy change. Has source authority and effective date.
+- **Notice**: An official advisory, policy change, OR community warning about active threats.
+  Community members publicly warning each other about enforcement activity (ICE sightings),
+  environmental hazards, or safety concerns are valid Notices with category "community_report".
+  These are distinct from rumors — they come from people with first-hand or local knowledge
+  broadcasting publicly to enable protective action.
 
 If content doesn't map to one of these types, return an empty signals array.
 
@@ -530,9 +650,35 @@ Do NOT classify news reportage as a Need based on the urgency of the topic alone
 - is_ongoing: true for ongoing services
 - is_recurring: true for recurring events
 
+## Schedule / Recurrence (Gathering and Aid signals)
+For gathering and aid signals with recurring schedules, extract structured recurrence data:
+
+- **rrule**: An RFC 5545 RRULE string describing the recurrence pattern.
+  - "Every Tuesday at 7pm" → "FREQ=WEEKLY;BYDAY=TU"
+  - "First Saturday of the month" → "FREQ=MONTHLY;BYDAY=1SA"
+  - "Daily 9am-5pm Monday through Friday" → "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+  - "Every other Thursday" → "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"
+  - Only emit rrule when you can confidently map to a valid RRULE. If unsure, omit it.
+- **schedule_text**: The natural language schedule text exactly as it appears in the source (e.g., "Every Tuesday and Thursday, 6-8pm, except holidays"). Always include when the source mentions a schedule.
+- **explicit_dates**: For irregular schedules that don't fit a pattern, list specific dates as ISO 8601 strings (e.g., ["2026-03-05T19:00:00Z", "2026-03-19T19:00:00Z", "2026-04-02T19:00:00Z"]).
+- **exception_dates**: Dates excluded from the recurrence pattern as ISO 8601 strings (e.g., holiday closures).
+- **schedule_timezone**: IANA timezone if stated or clearly implied (e.g., "America/Chicago"). Omit if unknown.
+
+When the source mentions a recurring schedule, always set is_recurring to true AND provide schedule fields. The schedule_text fallback is always valuable, even when rrule is also provided.
+
+## Publication Date (content_date)
+Set content_date to the ISO 8601 date when this content was originally published.
+Look for: byline dates, "Published on...", article timestamps, post dates.
+- Use the ORIGINAL publication date, not "Updated" or "Modified" dates
+- If the page shows a clear publication date, use it (e.g. "2026-02-20T00:00:00Z")
+- If only a relative date is visible ("2 days ago", "last week"), resolve it against today ({today})
+- If no publication date is visible anywhere in the content, leave content_date null
+- Do NOT use event start times as content_date — content_date is when the page was written, not when an event occurs
+Signals without a content_date may be dropped, so extracting this accurately is important.
+
 ## Notice Fields
 - severity: "low", "medium", "high", "critical"
-- category: "psa", "policy", "advisory", "enforcement", "health"
+- category: "psa", "policy", "advisory", "enforcement", "health", "community_report"
 - effective_date: ISO 8601 when the notice takes effect
 - source_authority: The official body issuing it
 
@@ -691,6 +837,11 @@ mod tests {
             tags: vec![],
             is_firsthand: None,
             author_actor: None,
+            rrule: None,
+            schedule_text: None,
+            explicit_dates: vec![],
+            exception_dates: vec![],
+            schedule_timezone: None,
         };
 
         assert_eq!(signal.signal_type, "tension");
@@ -727,7 +878,6 @@ mod tests {
             summary: "Weekly groceries".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
-            freshness_score: 1.0,
             corroboration_count: 0,
             about_location: None,
             about_location_name: None,
@@ -737,11 +887,13 @@ mod tests {
             content_date: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
+            review_status: "staged".to_string(),
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
             author_actor: None,
         };
         let aid = AidNode {
@@ -762,7 +914,6 @@ mod tests {
             summary: "Help at shelter".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
-            freshness_score: 1.0,
             corroboration_count: 0,
             about_location: None,
             about_location_name: None,
@@ -772,11 +923,13 @@ mod tests {
             content_date: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
+            review_status: "staged".to_string(),
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
             author_actor: None,
         };
         let need = NeedNode {
@@ -854,7 +1007,7 @@ mod tests {
             nodes: vec![],
             implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
     }

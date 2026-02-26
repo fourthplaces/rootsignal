@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@apollo/client";
+import { useMutation } from "@apollo/client";
+import { SCRAPE_URL } from "@/graphql/mutations";
 import {
   ADMIN_ARCHIVE_COUNTS,
   ADMIN_ARCHIVE_VOLUME,
@@ -70,6 +72,7 @@ type ArchivePost = {
   hashtags: string[];
   engagementSummary: string;
   publishedAt: string | null;
+  fetchCount: number;
 };
 
 type ArchiveShortVideo = {
@@ -79,6 +82,7 @@ type ArchiveShortVideo = {
   textPreview: string | null;
   engagementSummary: string;
   publishedAt: string | null;
+  fetchCount: number;
 };
 
 type ArchiveStory = {
@@ -89,6 +93,7 @@ type ArchiveStory = {
   location: string | null;
   expiresAt: string | null;
   fetchedAt: string;
+  fetchCount: number;
 };
 
 type ArchiveLongVideo = {
@@ -98,6 +103,7 @@ type ArchiveLongVideo = {
   textPreview: string | null;
   engagementSummary: string;
   publishedAt: string | null;
+  fetchCount: number;
 };
 
 type ArchivePage = {
@@ -105,6 +111,7 @@ type ArchivePage = {
   sourceUrl: string;
   title: string | null;
   fetchedAt: string;
+  fetchCount: number;
 };
 
 type ArchiveFeed = {
@@ -113,6 +120,7 @@ type ArchiveFeed = {
   title: string | null;
   itemCount: number;
   fetchedAt: string;
+  fetchCount: number;
 };
 
 type ArchiveSearchResult = {
@@ -281,7 +289,7 @@ export function ArchivePage() {
         <TabTable loading={postsLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>Link</Th><Th>Author</Th><Th>Text</Th><Th>Platform</Th><Th>Hashtags</Th><Th>Engagement</Th><Th className="text-right">Published</Th>
+            <Th>Link</Th><Th>Author</Th><Th>Text</Th><Th>Platform</Th><Th>Hashtags</Th><Th>Engagement</Th><Th className="text-right">Published</Th><Th className="text-right">Fetches</Th><Th></Th>
           </tr>
           </thead>
           <tbody>
@@ -294,6 +302,8 @@ export function ArchivePage() {
                 <Td className="max-w-[120px] truncate">{p.hashtags.length ? p.hashtags.map(h => `#${h}`).join(" ") : "-"}</Td>
                 <Td>{p.engagementSummary || "-"}</Td>
                 <Td className="text-right">{fmtDate(p.publishedAt)}</Td>
+                <Td className="text-right">{p.fetchCount}</Td>
+                <Td><ScrapeBtn url={linkUrl(p.permalink, p.sourceUrl)} /></Td>
               </Tr>
             ))}
           </tbody>
@@ -304,7 +314,7 @@ export function ArchivePage() {
         <TabTable loading={reelsLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>Link</Th><Th>Text</Th><Th>Engagement</Th><Th className="text-right">Published</Th>
+            <Th>Link</Th><Th>Text</Th><Th>Engagement</Th><Th className="text-right">Published</Th><Th className="text-right">Fetches</Th>
           </tr>
           </thead>
           <tbody>
@@ -314,6 +324,7 @@ export function ArchivePage() {
                 <Td className="max-w-md truncate">{v.textPreview || "-"}</Td>
                 <Td>{v.engagementSummary || "-"}</Td>
                 <Td className="text-right">{fmtDate(v.publishedAt)}</Td>
+                <Td className="text-right">{v.fetchCount}</Td>
               </Tr>
             ))}
           </tbody>
@@ -324,7 +335,7 @@ export function ArchivePage() {
         <TabTable loading={storiesLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>Link</Th><Th>Text</Th><Th>Location</Th><Th>Expires</Th><Th className="text-right">Fetched</Th>
+            <Th>Link</Th><Th>Text</Th><Th>Location</Th><Th>Expires</Th><Th className="text-right">Fetched</Th><Th className="text-right">Fetches</Th>
           </tr>
           </thead>
           <tbody>
@@ -335,6 +346,7 @@ export function ArchivePage() {
                 <Td>{s.location || "-"}</Td>
                 <Td>{s.expiresAt ? fmtDate(s.expiresAt) : "-"}</Td>
                 <Td className="text-right">{fmtDate(s.fetchedAt)}</Td>
+                <Td className="text-right">{s.fetchCount}</Td>
               </Tr>
             ))}
           </tbody>
@@ -345,7 +357,7 @@ export function ArchivePage() {
         <TabTable loading={videosLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>Link</Th><Th>Text</Th><Th>Engagement</Th><Th className="text-right">Published</Th>
+            <Th>Link</Th><Th>Text</Th><Th>Engagement</Th><Th className="text-right">Published</Th><Th className="text-right">Fetches</Th>
           </tr>
           </thead>
           <tbody>
@@ -355,6 +367,7 @@ export function ArchivePage() {
                 <Td className="max-w-md truncate">{v.textPreview || "-"}</Td>
                 <Td>{v.engagementSummary || "-"}</Td>
                 <Td className="text-right">{fmtDate(v.publishedAt)}</Td>
+                <Td className="text-right">{v.fetchCount}</Td>
               </Tr>
             ))}
           </tbody>
@@ -365,7 +378,7 @@ export function ArchivePage() {
         <TabTable loading={pagesLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>URL</Th><Th>Title</Th><Th className="text-right">Fetched</Th>
+            <Th>URL</Th><Th>Title</Th><Th className="text-right">Fetched</Th><Th className="text-right">Fetches</Th><Th></Th>
           </tr>
           </thead>
           <tbody>
@@ -374,6 +387,8 @@ export function ArchivePage() {
                 <Td><ExtLink href={p.sourceUrl} /></Td>
                 <Td className="max-w-md truncate">{p.title || "-"}</Td>
                 <Td className="text-right">{fmtDate(p.fetchedAt)}</Td>
+                <Td className="text-right">{p.fetchCount}</Td>
+                <Td><ScrapeBtn url={p.sourceUrl} /></Td>
               </Tr>
             ))}
           </tbody>
@@ -384,7 +399,7 @@ export function ArchivePage() {
         <TabTable loading={feedsLoading}>
           <thead className="border-b border-border bg-muted/50">
           <tr>
-            <Th>URL</Th><Th>Title</Th><Th className="text-right">Items</Th><Th className="text-right">Fetched</Th>
+            <Th>URL</Th><Th>Title</Th><Th className="text-right">Items</Th><Th className="text-right">Fetched</Th><Th className="text-right">Fetches</Th>
           </tr>
           </thead>
           <tbody>
@@ -394,6 +409,7 @@ export function ArchivePage() {
                 <Td className="max-w-md truncate">{f.title || "-"}</Td>
                 <Td className="text-right">{f.itemCount}</Td>
                 <Td className="text-right">{fmtDate(f.fetchedAt)}</Td>
+                <Td className="text-right">{f.fetchCount}</Td>
               </Tr>
             ))}
           </tbody>
@@ -471,6 +487,19 @@ function Tr({ children, className }: { children: React.ReactNode; className?: st
 
 function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <td className={`px-3 py-2 ${className ?? ""}`}>{children}</td>;
+}
+
+function ScrapeBtn({ url }: { url: string }) {
+  const [scrape, { loading }] = useMutation(SCRAPE_URL);
+  return (
+    <button
+      onClick={() => scrape({ variables: { url } })}
+      disabled={loading}
+      className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+    >
+      {loading ? "..." : "Scrape"}
+    </button>
+  );
 }
 
 function ExtLink({ href }: { href: string }) {

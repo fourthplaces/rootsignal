@@ -125,6 +125,14 @@ impl Store {
 
     // --- Source content types (freshness tracking) ---
 
+    pub(crate) async fn increment_fetch_count(&self, source_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE sources SET fetch_count = fetch_count + 1 WHERE id = $1")
+            .bind(source_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub(crate) async fn update_last_scraped(
         &self,
         source_id: Uuid,
@@ -557,6 +565,7 @@ impl Store {
             markdown: r.5,
             title: r.6,
             links: r.7,
+            published_at: None, // Computed at scrape time from raw_html, not stored in DB
         }))
     }
 

@@ -52,24 +52,17 @@ export function SignalDetail({ signalId, onBack }: SignalDetailProps) {
             <LinkPreview url={signal.sourceUrl} fallbackLabel="Source" />
           )}
 
-          {signal.story && (
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground mb-1">Part of situation</p>
-              <p className="text-sm font-medium">{signal.story.headline}</p>
-            </div>
-          )}
-
-          {signal.evidence?.length > 0 && (
+          {signal.citations?.length > 0 && (
             <details className="group">
               <summary className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-foreground select-none list-none [&::-webkit-details-marker]:hidden">
                 <span className="transition-transform group-open:rotate-90">&#9656;</span>
-                Evidence
+                Citations
                 <span className="text-xs font-normal text-muted-foreground">
-                  ({signal.evidence.length})
+                  ({signal.citations.length})
                 </span>
               </summary>
               <div className="mt-2 space-y-2">
-                {signal.evidence.map((ev: Record<string, string>, i: number) => (
+                {signal.citations.map((ev: Record<string, string>, i: number) => (
                   <div key={i} className="rounded border border-border p-2 text-xs">
                     {ev.snippet && (
                       <p className="text-muted-foreground mb-1">{ev.snippet}</p>

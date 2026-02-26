@@ -221,9 +221,16 @@ impl ApifyClient {
     ) -> Result<Vec<FacebookPost>> {
         tracing::info!(page_url, limit, "Starting Facebook page scrape");
 
+        // Accept both normalized URLs ("facebook.com/page") and full URLs
+        let full_url = if page_url.starts_with("http") {
+            page_url.to_string()
+        } else {
+            format!("https://{}", page_url)
+        };
+
         let input = FacebookScraperInput {
             start_urls: vec![StartUrl {
-                url: page_url.to_string(),
+                url: full_url,
             }],
             results_limit: limit,
         };

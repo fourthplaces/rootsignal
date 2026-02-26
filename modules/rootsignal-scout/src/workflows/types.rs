@@ -3,9 +3,11 @@
 //! All types implement `serde::{Serialize, Deserialize}` plus the Restate SDK
 //! serialization traits via `impl_restate_serde!`.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use rootsignal_common::ScoutScope;
+use chrono::{DateTime, Utc};
+use rootsignal_common::{ActorContext, ScoutScope, SourceNode};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ pub enum WorkflowPhase {
     Scraping,
     Synthesis,
     SituationWeaving,
+    SignalLint,
     Supervisor,
     Complete,
 }
@@ -35,6 +38,7 @@ impl fmt::Display for WorkflowPhase {
             Self::Scraping => write!(f, "Scraping sources..."),
             Self::Synthesis => write!(f, "Running synthesis..."),
             Self::SituationWeaving => write!(f, "Weaving situations..."),
+            Self::SignalLint => write!(f, "Linting signals..."),
             Self::Supervisor => write!(f, "Running supervisor..."),
             Self::Complete => write!(f, "Full scout run complete"),
         }
@@ -65,6 +69,12 @@ pub struct BudgetedTaskRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmptyRequest;
 
+/// Input for the single-URL scrape workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrapeUrlRequest {
+    pub url: String,
+}
+
 // ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
@@ -93,6 +103,15 @@ pub struct SituationWeaverResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalLintResult {
+    pub passed: u32,
+    pub corrected: u32,
+    pub rejected: u32,
+    pub situations_promoted: u32,
+    pub stories_promoted: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorResult {
     pub issues_found: u32,
 }
@@ -104,11 +123,82 @@ pub struct NewsScanResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrapeUrlResult {
+    pub signals_stored: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullRunResult {
     pub sources_created: u32,
     pub urls_scraped: u32,
     pub signals_stored: u32,
     pub issues_found: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Scrape workflow journaled types
+// ---------------------------------------------------------------------------
+
+/// Source scheduling data (fully serializable, no capabilities).
+/// Produced by the load-and-schedule step, consumed by scrape phases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleData {
+    pub all_sources: Vec<SourceNode>,
+    pub scheduled_sources: Vec<SourceNode>,
+    pub tension_phase_keys: HashSet<String>,
+    pub response_phase_keys: HashSet<String>,
+    pub scheduled_keys: HashSet<String>,
+    pub consumed_pin_ids: Vec<uuid::Uuid>,
+    pub actor_contexts: HashMap<String, ActorContext>,
+    pub url_to_canonical_key: HashMap<String, String>,
+    pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
+    pub run_id: String,
+}
+
+/// Outcome of scraping a single web URL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UrlOutcome {
+    pub url: String,
+    pub canonical_key: String,
+    pub signals_stored: u32,
+    /// True when the extractor produced at least one node (before dedup/filtering).
+    pub had_extracted_nodes: bool,
+    pub status: UrlStatus,
+    pub expansion_queries: Vec<String>,
+    pub collected_links: Vec<SerializableLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UrlStatus {
+    Scraped,
+    Unchanged,
+    Failed,
+}
+
+/// Outcome of scraping a single social account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SocialOutcome {
+    pub canonical_key: String,
+    pub signals_stored: u32,
+    pub post_count: u32,
+    pub expansion_queries: Vec<String>,
+    pub collected_links: Vec<SerializableLink>,
+}
+
+/// Resolved URL from search query or RSS feed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedUrl {
+    pub url: String,
+    pub canonical_key: String,
+    pub pub_date: Option<DateTime<Utc>>,
+}
+
+/// Serializable link discovered during scraping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableLink {
+    pub url: String,
+    pub discovered_on: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -118,10 +208,17 @@ pub struct FullRunResult {
 crate::impl_restate_serde!(TaskRequest);
 crate::impl_restate_serde!(BudgetedTaskRequest);
 crate::impl_restate_serde!(EmptyRequest);
+crate::impl_restate_serde!(ScrapeUrlRequest);
+crate::impl_restate_serde!(ScrapeUrlResult);
 crate::impl_restate_serde!(BootstrapResult);
 crate::impl_restate_serde!(ScrapeResult);
 crate::impl_restate_serde!(SynthesisResult);
 crate::impl_restate_serde!(SituationWeaverResult);
+crate::impl_restate_serde!(SignalLintResult);
 crate::impl_restate_serde!(SupervisorResult);
 crate::impl_restate_serde!(NewsScanResult);
 crate::impl_restate_serde!(FullRunResult);
+crate::impl_restate_serde!(ScheduleData);
+crate::impl_restate_serde!(UrlOutcome);
+crate::impl_restate_serde!(SocialOutcome);
+crate::impl_restate_serde!(ResolvedUrl);

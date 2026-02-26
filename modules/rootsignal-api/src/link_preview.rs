@@ -1,14 +1,15 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 const MAX_CACHE_ENTRIES: usize = 500;
@@ -35,15 +36,36 @@ struct CacheEntry {
     inserted_at: Instant,
 }
 
+const PREVIEW_RATE_LIMIT_PER_HOUR: usize = 30;
+
 pub struct LinkPreviewCache {
     entries: RwLock<HashMap<String, CacheEntry>>,
+    rate_limits: Mutex<HashMap<IpAddr, Vec<Instant>>>,
 }
 
 impl LinkPreviewCache {
     pub fn new() -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
+            rate_limits: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Returns true if the request is within rate limits, false if exceeded.
+    async fn check_rate_limit(&self, ip: IpAddr) -> bool {
+        let mut guard = self.rate_limits.lock().await;
+        let entries = guard.entry(ip).or_default();
+        let now = Instant::now();
+        let cutoff = now - Duration::from_secs(3600);
+        entries.retain(|t| *t > cutoff);
+        if entries.is_empty() {
+            // Will be re-populated below; if not, remove to prevent unbounded growth
+        }
+        if entries.len() >= PREVIEW_RATE_LIMIT_PER_HOUR {
+            return false;
+        }
+        entries.push(now);
+        true
     }
 
     async fn get(&self, url: &str) -> Option<LinkPreviewData> {
@@ -145,18 +167,20 @@ pub struct LinkPreviewQuery {
 }
 
 pub async fn link_preview_handler(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     State(cache): State<Arc<LinkPreviewCache>>,
     Query(params): Query<LinkPreviewQuery>,
 ) -> impl IntoResponse {
-    // Validate URL: must be http or https
-    let parsed = match url::Url::parse(&params.url) {
-        Ok(u) => u,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid URL").into_response(),
-    };
-    match parsed.scheme() {
-        "http" | "https" => {}
-        _ => return (StatusCode::BAD_REQUEST, "URL must be http or https").into_response(),
+    // Per-IP rate limiting
+    if !cache.check_rate_limit(addr.ip()).await {
+        return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
+
+    // Validate URL: scheme, length, SSRF protection
+    let parsed = match rootsignal_common::validate_external_url(&params.url) {
+        Ok(u) => u,
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
+    };
 
     let url_str = parsed.to_string();
 
@@ -168,7 +192,7 @@ pub async fn link_preview_handler(
     // Fetch
     let client = reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
 

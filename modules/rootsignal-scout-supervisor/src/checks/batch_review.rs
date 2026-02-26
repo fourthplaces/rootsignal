@@ -14,7 +14,7 @@ use rootsignal_graph::GraphClient;
 use super::triage::Suspect;
 use crate::types::{IssueType, Severity, ValidationIssue};
 
-const SONNET_MODEL: &str = "claude-sonnet-4-5-20250929";
+
 
 // =============================================================================
 // Types for LLM structured output
@@ -113,7 +113,7 @@ pub async fn fetch_staged_signals(
                 "MATCH (s:{label}) WHERE s.review_status = 'staged'
                    AND s.lat >= $min_lat AND s.lat <= $max_lat
                    AND s.lng >= $min_lng AND s.lng <= $max_lng
-                 OPTIONAL MATCH (s)-[:EVIDENCES]->(sit:Situation)
+                 OPTIONAL MATCH (s)-[:PART_OF]->(sit:Situation)
                  WITH s, head(collect(sit.headline)) AS situation_headline
                  RETURN s.id AS id, labels(s)[0] AS signal_type, s.title AS title,
                         s.summary AS summary, s.confidence AS confidence,
@@ -310,8 +310,8 @@ pub async fn review_batch(
     let user = build_user_prompt(&signals);
 
     // 4. Call LLM
-    let claude = Claude::new(api_key, SONNET_MODEL);
-    let result: BatchReviewResult = claude.extract(SONNET_MODEL, &system, &user).await?;
+    let claude = Claude::new(api_key, "claude-sonnet-4-5-20250929");
+    let result: BatchReviewResult = claude.extract(&system, &user).await?;
 
     debug!(raw_verdicts = ?result.verdicts.len(), "Batch review LLM response");
 
@@ -342,13 +342,12 @@ pub async fn review_batch(
                 passed += 1;
             }
             "reject" => {
-                mark_rejected(g, &verdict.signal_id).await?;
-                rejected += 1;
-
                 let reason = verdict
                     .rejection_reason
                     .as_deref()
                     .unwrap_or("unspecified");
+                mark_rejected(g, &verdict.signal_id, reason).await?;
+                rejected += 1;
                 let explanation = verdict
                     .explanation
                     .as_deref()
@@ -421,24 +420,25 @@ async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), n
     Ok(())
 }
 
-async fn mark_rejected(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
+async fn mark_rejected(graph: &neo4rs::Graph, signal_id: &str, reason: &str) -> Result<(), neo4rs::Error> {
     let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
     for label in &labels {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'rejected'"
+            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' \
+             SET n.review_status = 'rejected', n.rejection_reason = $reason"
         );
-        graph.run(query(&cypher).param("id", signal_id)).await?;
+        graph.run(query(&cypher).param("id", signal_id).param("reason", reason)).await?;
     }
     Ok(())
 }
 
 async fn promote_ready_situations(graph: &neo4rs::Graph) -> Result<(), neo4rs::Error> {
-    // A situation is ready when all its EVIDENCES signals are 'live' (none are 'staged')
+    // A situation is ready when all its PART_OF signals are 'live' (none are 'staged')
     let q = query(
         "MATCH (s:Situation)
          WHERE s.review_status = 'staged'
          AND NOT EXISTS {
-           MATCH (n)-[:EVIDENCES]->(s)
+           MATCH (n)-[:PART_OF]->(s)
            WHERE n.review_status <> 'live'
          }
          SET s.review_status = 'live'

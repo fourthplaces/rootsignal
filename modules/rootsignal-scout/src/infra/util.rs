@@ -12,6 +12,12 @@ pub const DISCOVERED_SOURCE_WEIGHT: f64 = 0.3;
 /// Reddit posts are shorter; subreddits have many authors.
 pub const REDDIT_POST_LIMIT: u32 = 20;
 
+/// Give every URL at least this many scrapes before suppressing it.
+pub const SUPPRESS_MIN_FETCHES: i64 = 3;
+
+/// Any URL that has ever yielded a signal stays active.
+pub const SUPPRESS_MIN_YIELD: i64 = 1;
+
 /// Standard limit for single-org social accounts.
 pub const SOCIAL_POST_LIMIT: u32 = 10;
 
@@ -60,6 +66,8 @@ pub fn sanitize_url(url: &str) -> String {
     }) else {
         return url.to_string();
     };
+
+    parsed.set_fragment(None);
 
     let had_query = parsed.query().is_some();
     if !had_query {
@@ -153,6 +161,22 @@ mod tests {
         let url = "example.com/page";
         let clean = sanitize_url(url);
         assert_eq!(clean, "https://example.com/page");
+    }
+
+    #[test]
+    fn sanitize_url_strips_fragment() {
+        let url = "https://example.com/page#section";
+        let clean = sanitize_url(url);
+        assert_eq!(clean, "https://example.com/page");
+    }
+
+    #[test]
+    fn sanitize_url_strips_fragment_and_tracking() {
+        let url = "https://example.com/page?id=1&utm_source=x#section";
+        let clean = sanitize_url(url);
+        assert!(clean.contains("id=1"));
+        assert!(!clean.contains("utm_source"));
+        assert!(!clean.contains("#section"));
     }
 
     #[test]

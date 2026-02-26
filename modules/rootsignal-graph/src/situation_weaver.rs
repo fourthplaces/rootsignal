@@ -7,7 +7,7 @@
 //! 1. **Discover** new signals from a scout run (by scout_run_id)
 //! 2. **Retrieve** candidate situations via embedding similarity
 //! 3. **Weave** via LLM (Haiku): assign signals, write dispatches, update state
-//! 4. **Write** graph updates (EVIDENCES, CITES, Dispatch nodes)
+//! 4. **Write** graph updates (PART_OF, CITES, Dispatch nodes)
 //! 5. **Verify** dispatches post-hoc (citations, PII, fidelity)
 //!
 //! Dependency inversion: takes `Arc<dyn TextEmbedder>` — concrete Voyage AI
@@ -120,6 +120,7 @@ struct DiscoveredSignal {
     lat: Option<f64>,
     lng: Option<f64>,
     embedding: Vec<f32>,
+    content_date: Option<String>,
 }
 
 struct CandidateSituation {
@@ -284,13 +285,14 @@ impl SituationWeaver {
         for label in &labels {
             let q = query(&format!(
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
-                 WHERE NOT (n)-[:EVIDENCES]->(:Situation)
-                   AND NOT n:Evidence
+                 WHERE NOT (n)-[:PART_OF]->(:Situation)
+                   AND NOT n:Citation
                  RETURN n.id AS id, n.title AS title, n.summary AS summary,
                         '{label}' AS node_type, n.embedding AS embedding,
                         n.source_url AS source_url,
                         coalesce(n.cause_heat, 0.0) AS cause_heat,
-                        n.lat AS lat, n.lng AS lng"
+                        n.lat AS lat, n.lng AS lng,
+                        n.content_date AS content_date"
             ))
             .param("run_id", scout_run_id);
 
@@ -316,6 +318,7 @@ impl SituationWeaver {
                     lat: row.get("lat").ok(),
                     lng: row.get("lng").ok(),
                     embedding,
+                    content_date: row.get("content_date").ok(),
                 });
             }
         }
@@ -446,7 +449,11 @@ impl SituationWeaver {
         let mut signal_candidates: Vec<serde_json::Value> = Vec::new();
         let mut all_candidate_ids: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
 
-        let signals_json: Vec<serde_json::Value> = signals
+        // Sort signals chronologically before building JSON
+        let mut sorted_signals: Vec<&DiscoveredSignal> = signals.iter().collect();
+        sorted_signals.sort_by(|a, b| a.content_date.cmp(&b.content_date));
+
+        let signals_json: Vec<serde_json::Value> = sorted_signals
             .iter()
             .map(|s| {
                 let cands = self.find_candidates(s, candidates);
@@ -461,15 +468,7 @@ impl SituationWeaver {
                     })
                 }).collect::<Vec<_>>()));
 
-                serde_json::json!({
-                    "id": s.id.to_string(),
-                    "title": s.title,
-                    "summary": truncate(&s.summary, 300),
-                    "type": s.node_type,
-                    "cause_heat": format!("{:.2}", s.cause_heat),
-                    "source_url": s.source_url,
-                    "location": format_location(s.lat, s.lng),
-                })
+                signal_to_json(s)
             })
             .collect();
 
@@ -492,7 +491,6 @@ impl SituationWeaver {
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
         let response: WeavingResponse = claude
             .extract(
-                "claude-haiku-4-5-20251001",
                 SYSTEM_PROMPT,
                 &prompt,
             )
@@ -594,7 +592,7 @@ impl SituationWeaver {
                 "MATCH (s:Situation {id: $id})
                  SET s.signal_count = s.signal_count + 1
                  WITH s
-                 MATCH (sig)-[:EVIDENCES]->(s)
+                 MATCH (sig)-[:PART_OF]->(s)
                  WHERE sig:Tension
                  WITH s, count(sig) AS tc
                  SET s.tension_count = tc",
@@ -793,7 +791,7 @@ impl SituationWeaver {
         let mut situations = Vec::new();
 
         let q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
              WHERE sig.scout_run_id = $run_id
              RETURN DISTINCT s.id AS id",
         )
@@ -819,7 +817,7 @@ impl SituationWeaver {
         for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
-                 WHERE NOT (n)-[:EVIDENCES]->(:Situation)
+                 WHERE NOT (n)-[:PART_OF]->(:Situation)
                  SET n.situation_pending = true"
             ))
             .param("run_id", scout_run_id);
@@ -846,6 +844,7 @@ HARD RULES:
 10. Actively challenge the existing root_cause_thesis when new evidence suggests alternatives. Do not confirm the thesis by default.
 11. SEMANTIC FRICTION: If two signals are geographically close but semantically distant, you MUST explain why they belong to the SAME situation. Default to separate situations when geography overlaps but content diverges.
 12. LEAD WITH RESPONSES: When writing dispatches about situations that have both tensions AND responses, lead with the response. The response is the primary signal; the tension provides context.
+13. Signals are listed in chronological order by publication date. Respect this ordering in dispatches.
 
 Respond with valid JSON matching the WeavingResponse schema."#;
 
@@ -894,6 +893,25 @@ Return JSON with: assignments, new_situations, dispatches, state_updates"#,
 }
 
 // --- Utility functions ---
+
+/// Format a signal as JSON for the LLM prompt. Extracted for testability.
+fn signal_to_json(s: &DiscoveredSignal) -> serde_json::Value {
+    let mut obj = serde_json::json!({
+        "id": s.id.to_string(),
+        "title": s.title,
+        "summary": truncate(&s.summary, 300),
+        "type": s.node_type,
+        "cause_heat": format!("{:.2}", s.cause_heat),
+        "source_url": s.source_url,
+        "location": format_location(s.lat, s.lng),
+    });
+    if let Some(date) = &s.content_date {
+        obj.as_object_mut()
+            .unwrap()
+            .insert("published".to_string(), serde_json::json!(date));
+    }
+    obj
+}
 
 fn truncate(s: &str, max_len: usize) -> &str {
     if s.len() <= max_len {
@@ -958,4 +976,73 @@ fn has_uncited_factual_claims(body: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signals_sorted_chronologically_with_published_field() {
+        // Two signals fed in reverse chronological order
+        let signals = vec![
+            DiscoveredSignal {
+                id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+                title: "Resolution announced".into(),
+                summary: "Council approved fix".into(),
+                node_type: "Aid".into(),
+                source_url: "https://example.com/resolution".into(),
+                cause_heat: 0.0,
+                lat: None,
+                lng: None,
+                embedding: vec![],
+                content_date: Some("2024-01-15".into()),
+            },
+            DiscoveredSignal {
+                id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+                title: "Tension identified".into(),
+                summary: "Water main break reported".into(),
+                node_type: "Tension".into(),
+                source_url: "https://example.com/tension".into(),
+                cause_heat: 0.8,
+                lat: None,
+                lng: None,
+                embedding: vec![],
+                content_date: Some("2024-01-05".into()),
+            },
+        ];
+
+        // Sort the same way weave_batch does
+        let mut sorted: Vec<&DiscoveredSignal> = signals.iter().collect();
+        sorted.sort_by(|a, b| a.content_date.cmp(&b.content_date));
+
+        let json_values: Vec<serde_json::Value> = sorted.iter().map(|s| signal_to_json(s)).collect();
+
+        // First element should be the tension (Jan 5), second the resolution (Jan 15)
+        assert_eq!(json_values[0]["title"], "Tension identified");
+        assert_eq!(json_values[1]["title"], "Resolution announced");
+
+        // Both should have "published" field
+        assert_eq!(json_values[0]["published"], "2024-01-05");
+        assert_eq!(json_values[1]["published"], "2024-01-15");
+    }
+
+    #[test]
+    fn signal_without_content_date_omits_published_field() {
+        let signal = DiscoveredSignal {
+            id: Uuid::new_v4(),
+            title: "No date signal".into(),
+            summary: "Some summary".into(),
+            node_type: "Notice".into(),
+            source_url: "https://example.com".into(),
+            cause_heat: 0.0,
+            lat: None,
+            lng: None,
+            embedding: vec![],
+            content_date: None,
+        };
+
+        let json = signal_to_json(&signal);
+        assert!(json.get("published").is_none(), "Should not have published field when content_date is None");
+    }
 }

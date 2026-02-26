@@ -1,117 +1,260 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@apollo/client";
-import { ADMIN_SCOUT_RUN } from "@/graphql/queries";
+import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_EVENTS, SIGNAL_BRIEF } from "@/graphql/queries";
+import { EVENT_COLORS, eventDetail, truncate, formatBytes, type ScoutRunEvent } from "@/lib/event-colors";
 
-const EVENT_COLORS: Record<string, string> = {
-  reap_expired: "bg-gray-500/10 text-gray-400 border-gray-500/20",
-  bootstrap: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  search_query: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  scrape_url: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
-  scrape_feed: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
-  social_scrape: "bg-pink-500/10 text-pink-400 border-pink-500/20",
-  social_topic_search: "bg-pink-500/10 text-pink-400 border-pink-500/20",
-  llm_extraction: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  signal_created: "bg-green-500/10 text-green-400 border-green-500/20",
-  signal_deduplicated: "bg-orange-500/10 text-orange-400 border-orange-500/20",
-  signal_corroborated:
-    "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  expansion_query_collected:
-    "bg-violet-500/10 text-violet-400 border-violet-500/20",
-  expansion_source_created:
-    "bg-violet-500/10 text-violet-400 border-violet-500/20",
-  budget_checkpoint: "bg-gray-500/10 text-gray-400 border-gray-500/20",
-};
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">
+      {children}
+    </a>
+  );
+}
 
-type ScoutRunEvent = {
-  seq: number;
-  ts: string;
-  type: string;
-  query?: string;
-  url?: string;
-  provider?: string;
-  platform?: string;
-  identifier?: string;
-  signalType?: string;
-  title?: string;
-  resultCount?: number;
-  postCount?: number;
-  items?: number;
-  contentBytes?: number;
-  contentChars?: number;
-  signalsExtracted?: number;
-  impliedQueries?: number;
-  similarity?: number;
-  confidence?: number;
-  success?: boolean;
-  action?: string;
-  nodeId?: string;
-  matchedId?: string;
-  existingId?: string;
-  sourceUrl?: string;
-  newSourceUrl?: string;
-  canonicalKey?: string;
-  gatherings?: number;
-  needs?: number;
-  stale?: number;
-  sourcesCreated?: number;
-  spentCents?: number;
-  remainingCents?: number;
-  topics?: string[];
-  postsFound?: number;
-};
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  if (children == null || children === "") return null;
+  return (
+    <div className="flex gap-2 text-xs">
+      <span className="text-muted-foreground shrink-0">{label}:</span>
+      <span className="text-foreground break-all">{children}</span>
+    </div>
+  );
+}
 
-/** Build a human-readable detail string for an event. */
-function eventDetail(e: ScoutRunEvent): string {
+function SignalBriefCard({ signalId, label }: { signalId: string; label: string }) {
+  const { data, loading } = useQuery(SIGNAL_BRIEF, {
+    variables: { id: signalId },
+    skip: !signalId,
+  });
+
+  const signal = data?.signal;
+
+  return (
+    <div className="flex-1 rounded border border-border p-3 space-y-2 min-w-0">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
+      {loading && <p className="text-xs text-muted-foreground">Loading...</p>}
+      {signal && (
+        <>
+          <p className="text-sm font-medium">
+            <Link to={`/signals/${signal.id}`} className="text-blue-400 hover:underline">
+              {signal.title}
+            </Link>
+          </p>
+          {signal.summary && <p className="text-xs text-muted-foreground">{signal.summary}</p>}
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            {signal.confidence != null && <span>confidence: {signal.confidence.toFixed(2)}</span>}
+            {signal.contentDate && <span>date: {signal.contentDate}</span>}
+            {signal.locationName && <span>{signal.locationName}</span>}
+          </div>
+          {signal.sourceUrl && (
+            <ExternalLink href={signal.sourceUrl}>{truncate(signal.sourceUrl, 60)}</ExternalLink>
+          )}
+        </>
+      )}
+      {!loading && !signal && <p className="text-xs text-muted-foreground">Signal not found</p>}
+    </div>
+  );
+}
+
+function DedupPanel({ e }: { e: ScoutRunEvent }) {
+  const matchId = e.matchedId ?? e.existingId;
+  return (
+    <div className="flex gap-4">
+      <div className="flex-1 rounded border border-border p-3 space-y-2 min-w-0">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Incoming Signal</p>
+        <p className="text-sm font-medium">{e.title}</p>
+        {e.summary && <p className="text-xs text-muted-foreground">{e.summary}</p>}
+        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+          {e.signalType && <span>{e.signalType}</span>}
+          {e.confidence != null && <span>confidence: {e.confidence.toFixed(2)}</span>}
+        </div>
+        {(e.sourceUrl ?? e.newSourceUrl) && (
+          <ExternalLink href={(e.sourceUrl ?? e.newSourceUrl)!}>
+            {truncate((e.sourceUrl ?? e.newSourceUrl)!, 60)}
+          </ExternalLink>
+        )}
+      </div>
+      <div className="flex flex-col items-center justify-center px-2">
+        <span className="text-xs font-mono text-muted-foreground">sim</span>
+        <span className="text-lg font-bold tabular-nums">
+          {(e.similarity ?? 0).toFixed(3)}
+        </span>
+        {e.action && <span className="text-xs text-muted-foreground mt-1">{e.action}</span>}
+      </div>
+      {matchId ? (
+        <SignalBriefCard signalId={matchId} label="Existing Signal" />
+      ) : (
+        <div className="flex-1 rounded border border-border p-3">
+          <p className="text-xs text-muted-foreground">No matched signal ID</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventDetailPanel({ e }: { e: ScoutRunEvent }) {
   switch (e.type) {
-    case "reap_expired":
-      return `gatherings=${e.gatherings} needs=${e.needs} stale=${e.stale}`;
-    case "bootstrap":
-      return `${e.sourcesCreated} sources created`;
-    case "search_query":
-      return `"${e.query}" → ${e.resultCount} results (${e.provider})`;
-    case "scrape_url":
-      return `${truncate(e.url ?? "", 60)} ${e.success ? `(${formatBytes(e.contentBytes ?? 0)})` : "(failed)"}`;
-    case "scrape_feed":
-      return `${truncate(e.url ?? "", 50)} → ${e.items} items`;
-    case "social_scrape":
-      return `${e.platform}: ${truncate(e.identifier ?? "", 40)} → ${e.postCount} posts`;
-    case "social_topic_search":
-      return `${e.platform}: ${e.topics?.join(", ")} → ${e.postsFound} posts`;
-    case "llm_extraction":
-      return `${truncate(e.sourceUrl ?? "", 40)} → ${e.signalsExtracted} signals, ${e.impliedQueries ?? 0} queries`;
-    case "signal_created":
-      return `${e.signalType}: "${truncate(e.title ?? "", 40)}" (${(e.confidence ?? 0).toFixed(2)})`;
     case "signal_deduplicated":
-      return `${e.signalType}: "${truncate(e.title ?? "", 30)}" → ${e.action} (sim=${(e.similarity ?? 0).toFixed(3)})`;
     case "signal_corroborated":
-      return `${e.signalType}: ${e.existingId?.slice(0, 8)} ← ${truncate(e.newSourceUrl ?? "", 30)} (sim=${(e.similarity ?? 0).toFixed(3)})`;
+      return <DedupPanel e={e} />;
+
+    case "signal_created":
+      return (
+        <div className="space-y-1">
+          <KV label="Title">{e.title}</KV>
+          <KV label="Type">{e.signalType}</KV>
+          <KV label="Confidence">{e.confidence?.toFixed(2)}</KV>
+          {e.nodeId && (
+            <KV label="Signal">
+              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">{e.nodeId.slice(0, 8)}</Link>
+            </KV>
+          )}
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+        </div>
+      );
+
+    case "signal_rejected":
+      return (
+        <div className="space-y-1">
+          <KV label="Title">{e.title}</KV>
+          <KV label="Reason"><span className="text-red-400">{e.reason}</span></KV>
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+        </div>
+      );
+
+    case "signal_dropped_no_date":
+      return (
+        <div className="space-y-1">
+          <KV label="Title">{e.title}</KV>
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+        </div>
+      );
+
+    case "scrape_url":
+      return (
+        <div className="space-y-1">
+          {e.url && <KV label="URL"><ExternalLink href={e.url}>{e.url}</ExternalLink></KV>}
+          <KV label="Strategy">{e.strategy}</KV>
+          <KV label="Result">{e.success ? `Success (${formatBytes(e.contentBytes ?? 0)})` : "Failed"}</KV>
+        </div>
+      );
+
+    case "search_query":
+      return (
+        <div className="space-y-1">
+          <KV label="Query">{e.query}</KV>
+          <KV label="Provider">{e.provider}</KV>
+          <KV label="Results">{e.resultCount}</KV>
+          <KV label="Canonical Key">{e.canonicalKey}</KV>
+        </div>
+      );
+
+    case "llm_extraction":
+      return (
+        <div className="space-y-1">
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+          <KV label="Content">{e.contentChars?.toLocaleString()} chars</KV>
+          <KV label="Signals Extracted">{e.signalsExtracted}</KV>
+          <KV label="Implied Queries">{e.impliedQueries}</KV>
+        </div>
+      );
+
+    case "lint_batch":
+      return (
+        <div className="space-y-1">
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+          <KV label="Total Signals">{e.signalCount}</KV>
+          <div className="flex gap-4 text-xs">
+            <span className="text-green-400">{e.resultCount} passed</span>
+            <span className="text-yellow-400">{e.postCount} corrected</span>
+            <span className="text-red-400">{e.items} rejected</span>
+          </div>
+        </div>
+      );
+
+    case "lint_correction":
+      return (
+        <div className="space-y-1">
+          {e.nodeId && (
+            <KV label="Signal">
+              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">
+                {e.title ?? e.nodeId.slice(0, 8)}
+              </Link>
+              {e.signalType && <span className="text-muted-foreground ml-2">({e.signalType})</span>}
+            </KV>
+          )}
+          <KV label="Field">{e.field}</KV>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="rounded bg-red-500/10 border border-red-500/20 px-2 py-0.5 line-through">{e.oldValue}</span>
+            <span className="text-muted-foreground">→</span>
+            <span className="rounded bg-green-500/10 border border-green-500/20 px-2 py-0.5">{e.newValue}</span>
+          </div>
+          <KV label="Reason">{e.reason}</KV>
+        </div>
+      );
+
+    case "lint_rejection":
+      return (
+        <div className="space-y-1">
+          {e.nodeId && (
+            <KV label="Signal">
+              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">
+                {e.title ?? e.nodeId.slice(0, 8)}
+              </Link>
+              {e.signalType && <span className="text-muted-foreground ml-2">({e.signalType})</span>}
+            </KV>
+          )}
+          <KV label="Reason"><span className="text-red-400">{e.reason}</span></KV>
+        </div>
+      );
+
     case "expansion_query_collected":
-      return `"${e.query}"`;
+      return (
+        <div className="space-y-1">
+          <KV label="Query">{e.query}</KV>
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+        </div>
+      );
+
     case "expansion_source_created":
-      return `"${e.query}" → ${e.canonicalKey}`;
-    case "budget_checkpoint":
-      return `spent=${e.spentCents}¢ remaining=${e.remainingCents === 18446744073709551615 ? "∞" : `${e.remainingCents}¢`}`;
-    default:
-      return "";
+      return (
+        <div className="space-y-1">
+          <KV label="Canonical Key">{e.canonicalKey}</KV>
+          <KV label="Query">{e.query}</KV>
+          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
+        </div>
+      );
+
+    default: {
+      // Fallback: show all non-null fields as key-value pairs
+      const skip = new Set(["id", "parentId", "seq", "ts", "type"]);
+      const entries = Object.entries(e).filter(
+        ([k, v]) => !skip.has(k) && v != null && v !== "",
+      );
+      if (entries.length === 0) return <p className="text-xs text-muted-foreground">No additional details</p>;
+      return (
+        <div className="space-y-1">
+          {entries.map(([k, v]) => (
+            <KV key={k} label={k}>{typeof v === "object" ? JSON.stringify(v) : String(v)}</KV>
+          ))}
+        </div>
+      );
+    }
   }
-}
-
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
-}
-
-function formatBytes(b: number): string {
-  if (b < 1024) return `${b}B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)}KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 export function ScoutRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { data, loading } = useQuery(ADMIN_SCOUT_RUN, {
+    variables: { runId: runId ?? "" },
+    skip: !runId,
+  });
+
+  const { data: eventsData, loading: eventsLoading } = useQuery(ADMIN_SCOUT_RUN_EVENTS, {
     variables: { runId: runId ?? "" },
     skip: !runId,
   });
@@ -126,7 +269,7 @@ export function ScoutRunDetailPage() {
     return <p className="text-muted-foreground">Run not found.</p>;
   }
 
-  const events: ScoutRunEvent[] = run.events ?? [];
+  const events: ScoutRunEvent[] = eventsData?.adminScoutRunEvents ?? [];
   const eventTypes = [...new Set(events.map((e: ScoutRunEvent) => e.type))].sort();
   const filtered = typeFilter
     ? events.filter((e: ScoutRunEvent) => e.type === typeFilter)
@@ -171,7 +314,7 @@ export function ScoutRunDetailPage() {
           { label: "URLs Scraped", value: run.stats.urlsScraped },
           { label: "Signals Stored", value: run.stats.signalsStored },
           { label: "Deduplicated", value: run.stats.signalsDeduplicated },
-          { label: "Events", value: events.length },
+          { label: "Events", value: eventsLoading ? "..." : events.length },
         ].map((stat) => (
           <div key={stat.label} className="rounded-lg border border-border p-4">
             <p className="text-xs text-muted-foreground">{stat.label}</p>
@@ -200,43 +343,63 @@ export function ScoutRunDetailPage() {
       </div>
 
       {/* Event timeline */}
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th className="text-left px-4 py-2 font-medium w-12">#</th>
-              <th className="text-left px-4 py-2 font-medium w-24">Time</th>
-              <th className="text-left px-4 py-2 font-medium w-48">Type</th>
-              <th className="text-left px-4 py-2 font-medium">Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((e: ScoutRunEvent) => (
-              <tr
-                key={e.seq}
-                className="border-b border-border last:border-0 hover:bg-muted/30"
-              >
-                <td className="px-4 py-2 text-muted-foreground tabular-nums">
-                  {e.seq}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground whitespace-nowrap tabular-nums text-xs">
-                  {formatTime(e.ts)}
-                </td>
-                <td className="px-4 py-2">
-                  <span
-                    className={`inline-block px-2 py-0.5 rounded text-xs border ${EVENT_COLORS[e.type] ?? "bg-muted text-muted-foreground"}`}
-                  >
-                    {e.type}
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-muted-foreground font-mono text-xs truncate max-w-lg">
-                  {eventDetail(e)}
-                </td>
+      {eventsLoading ? (
+        <p className="text-muted-foreground">Loading events...</p>
+      ) : (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-4 py-2 font-medium w-12">#</th>
+                <th className="text-left px-4 py-2 font-medium w-24">Time</th>
+                <th className="text-left px-4 py-2 font-medium w-48">Type</th>
+                <th className="text-left px-4 py-2 font-medium">Details</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {filtered.map((e: ScoutRunEvent) => {
+                const isExpanded = expandedId === e.id;
+                return (
+                  <>
+                    <tr
+                      key={e.id}
+                      className={`border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer ${isExpanded ? "bg-muted/40" : ""}`}
+                      onClick={() => setExpandedId(isExpanded ? null : e.id)}
+                    >
+                      <td className="px-4 py-2 text-muted-foreground tabular-nums">
+                        {e.seq}
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap tabular-nums text-xs">
+                        {formatTime(e.ts)}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-xs border ${EVENT_COLORS[e.type] ?? "bg-muted text-muted-foreground"}`}
+                        >
+                          {e.type}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground font-mono text-xs truncate max-w-lg">
+                        <span className="flex items-center gap-2">
+                          <span className={`transition-transform text-xs ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                          {eventDetail(e)}
+                        </span>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr key={`${e.id}-detail`} className="border-b border-border bg-muted/20">
+                        <td colSpan={4} className="px-6 py-4">
+                          <EventDetailPanel e={e} />
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

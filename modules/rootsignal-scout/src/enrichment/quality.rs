@@ -38,7 +38,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
         Node::Need(a) => (a.action_url.is_some(), false),
         Node::Notice(_) => (false, false),
         Node::Tension(_) => (false, false),
-        Node::Evidence(_) => (false, false),
+        Node::Citation(_) => (false, false),
     };
 
     let actionable = matches!(node, Node::Notice(_))
@@ -70,7 +70,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
             // location only
             (has_location as u8, 1)
         }
-        Node::Evidence(_) => (0, 0),
+        Node::Citation(_) => (0, 0),
     };
     let completeness = if optional_total > 0 {
         optional_filled as f32 / optional_total as f32
@@ -113,7 +113,6 @@ mod tests {
             summary: "Free dinner at the park".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
-            freshness_score: 1.0,
             corroboration_count: 0,
             about_location: Some(GeoPoint {
                 lat: 44.97,
@@ -127,11 +126,13 @@ mod tests {
             content_date: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
             implied_queries: vec![],
+            review_status: "live".to_string(),
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
             author_actor: None,
         }
     }

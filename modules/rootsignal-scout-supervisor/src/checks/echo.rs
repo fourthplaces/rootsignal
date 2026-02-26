@@ -18,14 +18,14 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
 
     // Find situations with enough signals to evaluate
     let q = query(
-        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+        "MATCH (sig)-[:PART_OF]->(s:Situation)
          WITH s, count(sig) AS signal_count,
               count(DISTINCT labels(sig)[0]) AS type_count
          WHERE signal_count >= 5
-         OPTIONAL MATCH (sig2)-[:EVIDENCES]->(s) WHERE (sig2)-[:ACTED_IN]->(:Actor)
+         OPTIONAL MATCH (sig2)-[:PART_OF]->(s) WHERE (sig2)-[:ACTED_IN]->(:Actor)
          WITH s, signal_count, type_count,
               count(DISTINCT sig2) AS sigs_with_actors
-         OPTIONAL MATCH (sig3)-[:EVIDENCES]->(s), (sig3)-[:ACTED_IN]->(a:Actor)
+         OPTIONAL MATCH (sig3)-[:PART_OF]->(s), (sig3)-[:ACTED_IN]->(a:Actor)
          WITH s, signal_count, type_count,
               count(DISTINCT a.id) AS entity_count
          RETURN s.id AS id, s.headline AS headline,

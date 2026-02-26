@@ -4,22 +4,22 @@ use std::sync::Arc;
 use async_graphql::dataloader::Loader;
 use uuid::Uuid;
 
-use rootsignal_common::{ActorNode, EvidenceNode, SituationNode, StoryNode, TagNode};
+use rootsignal_common::{ActorNode, CitationNode, ScheduleNode, SituationNode, TagNode};
 use rootsignal_graph::CachedReader;
 
-// --- EvidenceBySignalLoader ---
+// --- CitationBySignalLoader ---
 
-pub struct EvidenceBySignalLoader {
+pub struct CitationBySignalLoader {
     pub reader: Arc<CachedReader>,
 }
 
-impl Loader<Uuid> for EvidenceBySignalLoader {
-    type Value = Vec<EvidenceNode>;
+impl Loader<Uuid> for CitationBySignalLoader {
+    type Value = Vec<CitationNode>;
     type Error = Arc<anyhow::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
         self.reader
-            .batch_evidence_by_signal_ids(keys)
+            .batch_citation_by_signal_ids(keys)
             .await
             .map_err(|e| Arc::new(anyhow::anyhow!(e)))
     }
@@ -43,24 +43,6 @@ impl Loader<Uuid> for ActorsBySignalLoader {
     }
 }
 
-// --- StoryBySignalLoader ---
-
-pub struct StoryBySignalLoader {
-    pub reader: Arc<CachedReader>,
-}
-
-impl Loader<Uuid> for StoryBySignalLoader {
-    type Value = StoryNode;
-    type Error = Arc<anyhow::Error>;
-
-    async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
-        self.reader
-            .batch_story_by_signal_ids(keys)
-            .await
-            .map_err(|e| Arc::new(anyhow::anyhow!(e)))
-    }
-}
-
 // --- SituationsBySignalLoader ---
 
 pub struct SituationsBySignalLoader {
@@ -79,21 +61,21 @@ impl Loader<Uuid> for SituationsBySignalLoader {
     }
 }
 
-// --- TagsByStoryLoader ---
+// --- ScheduleBySignalLoader ---
 
-pub struct TagsByStoryLoader {
+pub struct ScheduleBySignalLoader {
     pub reader: Arc<CachedReader>,
 }
 
-impl Loader<Uuid> for TagsByStoryLoader {
-    type Value = Vec<TagNode>;
+impl Loader<Uuid> for ScheduleBySignalLoader {
+    type Value = ScheduleNode;
     type Error = Arc<anyhow::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
         self.reader
-            .batch_tags_by_story_ids(keys)
+            .batch_schedules_by_signal_ids(keys)
             .await
-            .map_err(Arc::new)
+            .map_err(|e| Arc::new(anyhow::anyhow!(e)))
     }
 }
 

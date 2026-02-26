@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// Stats from a scout run.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ScoutStats {
     pub urls_scraped: u32,
     pub urls_unchanged: u32,
@@ -18,6 +20,33 @@ pub struct ScoutStats {
     pub expansion_sources_created: u32,
     pub expansion_deferred_expanded: u32,
     pub expansion_social_topics_queued: u32,
+    pub link_failures: u32,
+}
+
+impl ScoutStats {
+    /// Merge another stats snapshot into this one (additive).
+    pub fn merge(&mut self, other: &ScoutStats) {
+        self.urls_scraped += other.urls_scraped;
+        self.urls_unchanged += other.urls_unchanged;
+        self.urls_failed += other.urls_failed;
+        self.signals_extracted += other.signals_extracted;
+        self.signals_deduplicated += other.signals_deduplicated;
+        self.signals_stored += other.signals_stored;
+        for i in 0..5 {
+            self.by_type[i] += other.by_type[i];
+        }
+        self.fresh_7d += other.fresh_7d;
+        self.fresh_30d += other.fresh_30d;
+        self.fresh_90d += other.fresh_90d;
+        self.social_media_posts += other.social_media_posts;
+        self.discovery_posts_found += other.discovery_posts_found;
+        self.discovery_accounts_found += other.discovery_accounts_found;
+        self.expansion_queries_collected += other.expansion_queries_collected;
+        self.expansion_sources_created += other.expansion_sources_created;
+        self.expansion_deferred_expanded += other.expansion_deferred_expanded;
+        self.expansion_social_topics_queued += other.expansion_social_topics_queued;
+        self.link_failures += other.link_failures;
+    }
 }
 
 impl std::fmt::Display for ScoutStats {
@@ -58,6 +87,9 @@ impl std::fmt::Display for ScoutStats {
             self.fresh_90d,
             self.fresh_90d as f64 / total as f64 * 100.0
         )?;
+        if self.link_failures > 0 {
+            writeln!(f, "Link failures:      {}", self.link_failures)?;
+        }
         if self.expansion_queries_collected > 0 {
             writeln!(f, "\nSignal expansion:")?;
             writeln!(

@@ -23,6 +23,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 neo4rs = { workspace = true }
+sqlx = { workspace = true }
 reqwest = { workspace = true }
 async-trait = { workspace = true }
 

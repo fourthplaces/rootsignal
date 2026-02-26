@@ -160,7 +160,7 @@ async fn compute_tension_heat_agg(
     situation_id: &str,
 ) -> Result<f64, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Tension)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
          RETURN avg(coalesce(t.cause_heat, 0.0)) AS avg_heat,
                 count(t) AS cnt",
@@ -192,11 +192,11 @@ async fn compute_entity_velocity(
 
     // Count unique source domains in the 7-day window that weren't present before
     let fast_q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.created_at >= $window_start
          WITH collect(DISTINCT sig.source_domain) AS recent_domains
-         OPTIONAL MATCH (old_sig)-[e2:EVIDENCES]->(s2:Situation {id: $id})
+         OPTIONAL MATCH (old_sig)-[e2:PART_OF]->(s2:Situation {id: $id})
          WHERE coalesce(e2.debunked, false) = false
            AND old_sig.created_at < $window_start
          WITH recent_domains, collect(DISTINCT old_sig.source_domain) AS old_domains
@@ -209,11 +209,11 @@ async fn compute_entity_velocity(
 
     // Count unique source domains in the 30-day window
     let slow_q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.created_at >= $window_start
          WITH collect(DISTINCT sig.source_domain) AS recent_domains
-         OPTIONAL MATCH (old_sig)-[e2:EVIDENCES]->(s2:Situation {id: $id})
+         OPTIONAL MATCH (old_sig)-[e2:PART_OF]->(s2:Situation {id: $id})
          WHERE coalesce(e2.debunked, false) = false
            AND old_sig.created_at < $window_start
          WITH recent_domains, collect(DISTINCT old_sig.source_domain) AS old_domains
@@ -249,7 +249,7 @@ async fn compute_response_gap(
     let cutoff = (Utc::now() - Duration::days(90)).to_rfc3339();
 
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Tension)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND t.created_at >= $cutoff
          WITH t
@@ -282,7 +282,7 @@ async fn compute_amplification(
     // Count signals with external geographic references (signals that mention
     // the situation's location but originate from elsewhere)
     let q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.external_reference = true
          RETURN count(DISTINCT sig.source_domain) AS external_refs",
@@ -306,7 +306,7 @@ async fn compute_clarity_need(
     last_updated: DateTime<Utc>,
 ) -> Result<f64, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Tension)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND coalesce(t.cause_heat, 0.0) >= 0.5
          RETURN count(t) AS thesis_support,
@@ -380,7 +380,7 @@ async fn derive_clarity(
     situation_id: &str,
 ) -> Result<Clarity, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Tension)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND coalesce(t.cause_heat, 0.0) >= 0.5
          RETURN count(t) AS support,
@@ -435,7 +435,7 @@ async fn compute_dampened_centroid(
     situation_id: &str,
 ) -> Result<(Vec<f32>, Option<f64>, Option<f64>), neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.embedding IS NOT NULL
          RETURN sig.embedding AS embedding,

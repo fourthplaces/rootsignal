@@ -76,7 +76,7 @@ impl NotifyBackend for SlackWebhook {
 
     async fn send_digest(&self, stats: &SupervisorStats) -> anyhow::Result<()> {
         let auto = &stats.auto_fix;
-        let has_fixes = auto.orphaned_evidence_deleted > 0
+        let has_fixes = auto.orphaned_citations_deleted > 0
             || auto.orphaned_edges_deleted > 0
             || auto.actors_merged > 0
             || auto.empty_signals_deleted > 0
@@ -91,10 +91,10 @@ impl NotifyBackend for SlackWebhook {
 
         if has_fixes {
             lines.push("*Auto-fixes applied:*".to_string());
-            if auto.orphaned_evidence_deleted > 0 {
+            if auto.orphaned_citations_deleted > 0 {
                 lines.push(format!(
-                    "  - Orphaned evidence deleted: {}",
-                    auto.orphaned_evidence_deleted
+                    "  - Orphaned citations deleted: {}",
+                    auto.orphaned_citations_deleted
                 ));
             }
             if auto.orphaned_edges_deleted > 0 {

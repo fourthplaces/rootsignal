@@ -10,6 +10,21 @@ use uuid::Uuid;
 use crate::store::{InsertFile, InsertPost, InsertShortVideo};
 use crate::text_extract;
 
+/// Build a TikTok permalink from available fields.
+/// Prefers `web_video_url` when present; falls back to constructing from author + id.
+fn tiktok_permalink(
+    web_video_url: Option<String>,
+    id: Option<&str>,
+    author_name: Option<&str>,
+) -> Option<String> {
+    if web_video_url.is_some() {
+        return web_video_url;
+    }
+    let id = id?;
+    let author = author_name?;
+    Some(format!("https://www.tiktok.com/@{author}/video/{id}"))
+}
+
 /// Raw fetched post before persistence.
 pub(crate) struct FetchedPost {
     pub post: InsertPost,
@@ -60,6 +75,12 @@ impl TikTokService {
                     .filter_map(|h| h.name.map(|n| n.to_lowercase()))
                     .collect();
 
+                let permalink = tiktok_permalink(
+                    p.web_video_url,
+                    p.id.as_deref(),
+                    p.author_meta.as_ref().and_then(|a| a.name.as_deref()),
+                );
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -71,7 +92,7 @@ impl TikTokService {
                         published_at: p.create_time_iso.as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
-                        permalink: p.web_video_url,
+                        permalink,
                         mentions,
                         hashtags,
                         media_type: Some("video".to_string()),
@@ -109,6 +130,12 @@ impl TikTokService {
                     "plays": p.play_count,
                 });
 
+                let permalink = tiktok_permalink(
+                    p.web_video_url.clone(),
+                    p.id.as_deref(),
+                    p.author_meta.as_ref().and_then(|a| a.name.as_deref()),
+                );
+
                 let mut files = Vec::new();
                 if let Some(ref video_url) = p.web_video_url {
                     files.push(InsertFile {
@@ -133,7 +160,7 @@ impl TikTokService {
                         published_at: p.create_time_iso.as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
-                        permalink: p.web_video_url,
+                        permalink,
                     },
                     files,
                 })
@@ -174,6 +201,12 @@ impl TikTokService {
                     .filter_map(|h| h.name.map(|n| n.to_lowercase()))
                     .collect();
 
+                let permalink = tiktok_permalink(
+                    p.web_video_url,
+                    p.id.as_deref(),
+                    p.author_meta.as_ref().and_then(|a| a.name.as_deref()),
+                );
+
                 Some(FetchedPost {
                     post: InsertPost {
                         source_id,
@@ -185,7 +218,7 @@ impl TikTokService {
                         published_at: p.create_time_iso.as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
-                        permalink: p.web_video_url,
+                        permalink,
                         mentions,
                         hashtags,
                         media_type: Some("video".to_string()),
@@ -196,5 +229,38 @@ impl TikTokService {
             .collect();
 
         Ok(posts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permalink_uses_web_video_url_when_present() {
+        let url = "https://www.tiktok.com/@user/video/123".to_string();
+        let result = tiktok_permalink(Some(url.clone()), Some("123"), Some("user"));
+        assert_eq!(result, Some(url));
+    }
+
+    #[test]
+    fn permalink_constructed_from_author_and_id() {
+        let result = tiktok_permalink(None, Some("7890"), Some("cooluser"));
+        assert_eq!(
+            result,
+            Some("https://www.tiktok.com/@cooluser/video/7890".to_string())
+        );
+    }
+
+    #[test]
+    fn permalink_none_when_id_missing() {
+        let result = tiktok_permalink(None, None, Some("cooluser"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn permalink_none_when_author_missing() {
+        let result = tiktok_permalink(None, Some("7890"), None);
+        assert_eq!(result, None);
     }
 }

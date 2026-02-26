@@ -37,7 +37,6 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {[
           { label: "Signals", value: d.totalSignals },
-          { label: "Stories", value: d.totalStories },
           { label: "Actors", value: d.totalActors },
           { label: "Sources", value: d.activeSources },
           { label: "Tensions", value: d.totalTensions },
@@ -96,18 +95,6 @@ export function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Story arcs */}
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">Story Arcs</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={d.storyCountByArc} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={100} />
-              <Tooltip />
-              <Bar dataKey="count" fill="#8b5cf6" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       {/* Unmet tensions table */}

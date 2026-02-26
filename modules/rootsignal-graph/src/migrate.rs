@@ -106,7 +106,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE CONSTRAINT need_id_unique IF NOT EXISTS FOR (n:Need) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT notice_id_unique IF NOT EXISTS FOR (n:Notice) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT tension_id_unique IF NOT EXISTS FOR (n:Tension) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT evidence_id_unique IF NOT EXISTS FOR (n:Evidence) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT citation_id_unique IF NOT EXISTS FOR (n:Citation) REQUIRE n.id IS UNIQUE",
     ];
 
     for c in &constraints {
@@ -244,40 +244,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         g.run(query(v)).await?;
     }
     info!("Vector indexes created");
-
-    // --- Story and ClusterSnapshot constraints ---
-    let story_constraints = [
-        "CREATE CONSTRAINT story_id_unique IF NOT EXISTS FOR (n:Story) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT clustersnapshot_id_unique IF NOT EXISTS FOR (n:ClusterSnapshot) REQUIRE n.id IS UNIQUE",
-    ];
-
-    for c in &story_constraints {
-        g.run(query(c)).await?;
-    }
-    info!("Story/ClusterSnapshot constraints created");
-
-    // --- Story indexes ---
-    let story_indexes = [
-        "CREATE INDEX story_energy IF NOT EXISTS FOR (n:Story) ON (n.energy)",
-        "CREATE INDEX story_status IF NOT EXISTS FOR (n:Story) ON (n.status)",
-        "CREATE INDEX story_last_updated IF NOT EXISTS FOR (n:Story) ON (n.last_updated)",
-    ];
-
-    for idx in &story_indexes {
-        g.run(query(idx)).await?;
-    }
-    info!("Story indexes created");
-
-    // --- Story synthesis indexes ---
-    let synthesis_indexes = [
-        "CREATE INDEX story_arc IF NOT EXISTS FOR (n:Story) ON (n.arc)",
-        "CREATE INDEX story_category IF NOT EXISTS FOR (n:Story) ON (n.category)",
-    ];
-
-    for idx in &synthesis_indexes {
-        g.run(query(idx)).await?;
-    }
-    info!("Story synthesis indexes created");
 
     // --- Actor constraints and indexes ---
     let actor_constraints = [
@@ -421,18 +387,14 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
     info!("Tag constraints created");
 
-    // --- Story geo composite index (benefits all story geo queries) ---
-    g.run(query(
-        "CREATE INDEX story_centroid_lat_lng IF NOT EXISTS FOR (s:Story) ON (s.centroid_lat, s.centroid_lng)",
-    ))
-    .await?;
-    info!("Story geo composite index created");
-
     // --- Convert RESPONDS_TO gathering edges to DRAWN_TO ---
     convert_gathering_edges(client).await?;
 
     // --- Reclassify query sources: web → *_query for listing pages ---
     reclassify_query_sources(client).await?;
+
+    // --- Relabel Evidence → Citation ---
+    relabel_evidence_to_citation(client).await?;
 
     // --- Deduplicate evidence + recompute corroboration ---
     deduplicate_evidence(client).await?;
@@ -463,19 +425,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // NOTE: cleanup_off_geo_signals and deactivate_duplicate_cities removed
     // as part of city concept removal (demand-driven scout swarm).
 
-    // --- Story pipeline consolidation: delete Leiden-created stories (no Tension in CONTAINS set) ---
-    cleanup_leiden_stories(client).await?;
-
-    // --- New story metric indexes ---
-    let metric_indexes = [
-        "CREATE INDEX story_cause_heat IF NOT EXISTS FOR (n:Story) ON (n.cause_heat)",
-        "CREATE INDEX story_gap_score IF NOT EXISTS FOR (n:Story) ON (n.gap_score)",
-    ];
-    for idx in &metric_indexes {
-        g.run(query(idx)).await?;
-    }
-    info!("Story metric indexes created");
-
     // --- extracted_at indexes for supervisor time-window queries ---
     let extracted_at_indexes = [
         "CREATE INDEX gathering_extracted_at IF NOT EXISTS FOR (n:Gathering) ON (n.extracted_at)",
@@ -496,15 +445,18 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         "CREATE INDEX need_review_status IF NOT EXISTS FOR (n:Need) ON (n.review_status)",
         "CREATE INDEX notice_review_status IF NOT EXISTS FOR (n:Notice) ON (n.review_status)",
         "CREATE INDEX tension_review_status IF NOT EXISTS FOR (n:Tension) ON (n.review_status)",
-        "CREATE INDEX story_review_status IF NOT EXISTS FOR (n:Story) ON (n.review_status)",
     ];
     for idx in &review_status_indexes {
         g.run(query(idx)).await?;
     }
     info!("Review status indexes created");
 
-    // --- Backfill existing signals and stories as 'live' (already visible to users) ---
+    // --- Backfill existing signals as 'live' (already visible to users) ---
     backfill_review_status(client).await?;
+
+    // --- Rename quarantined → rejected and backfill was_corrected ---
+    rename_quarantined_to_rejected(client).await?;
+    backfill_was_corrected(client).await?;
 
     // --- Migrate canonical keys: remove source_type from key format, add domain to social values ---
     migrate_canonical_keys_remove_source_type(client).await?;
@@ -522,6 +474,9 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // --- Remove city concept: drop legacy indexes and properties ---
     remove_city_concept(client).await?;
+
+    // --- Rename EVIDENCES → PART_OF edges ---
+    rename_evidences_to_part_of(client).await?;
 
     // --- Situation and Dispatch node constraints and indexes ---
     let situation_constraints = [
@@ -556,17 +511,22 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         g.run(query(idx)).await?;
     }
 
-    // EVIDENCES edge index (for signal→situation lookups)
+    // PART_OF edge index (for signal→situation lookups)
     g.run(query(
-        "CREATE INDEX evidences_match_confidence IF NOT EXISTS FOR ()-[r:EVIDENCES]-() ON (r.match_confidence)",
+        "CREATE INDEX part_of_match_confidence IF NOT EXISTS FOR ()-[r:PART_OF]-() ON (r.match_confidence)",
+    )).await?;
+
+    // EVIDENCE_OF edge index (for signal→tension epistemic linkage)
+    g.run(query(
+        "CREATE INDEX evidence_of_match_strength IF NOT EXISTS FOR ()-[r:EVIDENCE_OF]-() ON (r.match_strength)",
     )).await?;
 
     info!("Situation/Dispatch constraints and indexes created");
 
     // --- Story → LegacyStory archive migration ---
     // Relabel Story nodes to LegacyStory for rollback safety.
-    // Create EVIDENCES edges from existing CONTAINS edges (reversed direction).
-    // Both operations are idempotent (MERGE on EVIDENCES, check for remaining Story nodes).
+    // Create PART_OF edges from existing CONTAINS edges (reversed direction).
+    // Both operations are idempotent (MERGE on PART_OF, check for remaining Story nodes).
     let story_count_q = query("MATCH (s:Story) RETURN count(s) AS cnt");
     let mut stream = g.execute(story_count_q).await?;
     if let Some(row) = stream.next().await? {
@@ -574,17 +534,17 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         if story_count > 0 {
             info!(count = story_count, "Migrating Story→LegacyStory...");
 
-            // 1. Create EVIDENCES edges from existing CONTAINS edges (reversed direction)
-            // Story-[:CONTAINS]->Signal  becomes  Signal-[:EVIDENCES]->Situation (via matching headline)
-            // For now, create a placeholder EVIDENCES edge back to the LegacyStory for traceability
+            // 1. Create PART_OF edges from existing CONTAINS edges (reversed direction)
+            // Story-[:CONTAINS]->Signal  becomes  Signal-[:PART_OF]->Situation (via matching headline)
+            // For now, create a placeholder PART_OF edge back to the LegacyStory for traceability
             match g.run(query(
                 "MATCH (s:Story)-[:CONTAINS]->(sig)
-                 WHERE NOT (sig)-[:EVIDENCES]->(s)
+                 WHERE NOT (sig)-[:PART_OF]->(s)
                  WITH s, sig
-                 MERGE (sig)-[:EVIDENCES {match_confidence: 1.0, migrated: true}]->(s)",
+                 MERGE (sig)-[:PART_OF {match_confidence: 1.0, migrated: true}]->(s)",
             )).await {
-                Ok(_) => info!("Created EVIDENCES edges from existing CONTAINS"),
-                Err(e) => warn!("EVIDENCES migration failed (non-fatal): {e}"),
+                Ok(_) => info!("Created PART_OF edges from existing CONTAINS"),
+                Err(e) => warn!("PART_OF migration failed (non-fatal): {e}"),
             }
 
             // 2. Relabel Story → LegacyStory (keeps all properties and edges)
@@ -610,11 +570,42 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         Err(e) => warn!("ScoutTask phase_status backfill failed (non-fatal): {e}"),
     }
 
+    // --- Schedule node constraints and indexes ---
+    g.run(query(
+        "CREATE CONSTRAINT schedule_id_unique IF NOT EXISTS FOR (n:Schedule) REQUIRE n.id IS UNIQUE",
+    ))
+    .await?;
+    g.run(query(
+        "CREATE INDEX schedule_dtstart IF NOT EXISTS FOR (n:Schedule) ON (n.dtstart)",
+    ))
+    .await?;
+    info!("Schedule constraints and indexes created");
+
+    // --- DomainVerdict constraint ---
+    g.run(query(
+        "CREATE CONSTRAINT domainverdict_domain_unique IF NOT EXISTS FOR (d:DomainVerdict) REQUIRE d.domain IS UNIQUE",
+    ))
+    .await?;
+    info!("DomainVerdict constraint created");
+
+    // --- Backfill last_confirmed_active on Notices for TTL migration ---
+    // Notices now expire based on last_confirmed_active instead of extracted_at.
+    // Set last_confirmed_active = now for existing Notices that haven't been refreshed,
+    // giving them a fresh 7-day window from migration date instead of mass-expiring.
+    match g.run(query(
+        "MATCH (n:Notice) \
+         WHERE n.last_confirmed_active IS NULL OR n.last_confirmed_active = n.extracted_at \
+         SET n.last_confirmed_active = datetime()"
+    )).await {
+        Ok(_) => info!("Backfilled last_confirmed_active on Notice nodes"),
+        Err(e) => warn!("Notice last_confirmed_active backfill failed (non-fatal): {e}"),
+    }
+
     info!("Schema migration complete");
     Ok(())
 }
 
-/// Backfill `channel_diversity = 1` on existing signal and story nodes where null.
+/// Backfill `channel_diversity = 1` on existing signal nodes where null.
 /// Also creates property indexes for channel_diversity.
 /// Idempotent — WHERE clause matches nothing after the first run.
 async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::Error> {
@@ -622,7 +613,7 @@ async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::
 
     info!("Backfilling channel_diversity...");
 
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.channel_diversity IS NULL SET n.channel_diversity = 1 RETURN count(n) AS updated"
@@ -647,7 +638,6 @@ async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::
         "CREATE INDEX need_channel_diversity IF NOT EXISTS FOR (n:Need) ON (n.channel_diversity)",
         "CREATE INDEX notice_channel_diversity IF NOT EXISTS FOR (n:Notice) ON (n.channel_diversity)",
         "CREATE INDEX tension_channel_diversity IF NOT EXISTS FOR (n:Tension) ON (n.channel_diversity)",
-        "CREATE INDEX story_channel_diversity IF NOT EXISTS FOR (n:Story) ON (n.channel_diversity)",
     ];
 
     for idx in &channel_indexes {
@@ -721,7 +711,7 @@ pub async fn reclassify_query_sources(client: &GraphClient) -> Result<(), neo4rs
     Ok(())
 }
 
-/// Backfill source_diversity and external_ratio for all existing signal nodes.
+/// Backfill source_diversity for all existing signal nodes.
 /// Traverses SOURCED_FROM edges to count unique entity sources per signal.
 pub async fn backfill_source_diversity(
     client: &GraphClient,
@@ -737,8 +727,8 @@ pub async fn backfill_source_diversity(
     for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let q = query(&format!(
             "MATCH (n:{label})
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-             RETURN n.id AS id, n.source_url AS self_url,
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             RETURN n.id AS id,
                     collect(ev.source_url) AS evidence_urls"
         ));
 
@@ -746,37 +736,22 @@ pub async fn backfill_source_diversity(
         while let Some(row) = stream.next().await? {
             total += 1;
             let id: String = row.get("id").unwrap_or_default();
-            let self_url: String = row.get("self_url").unwrap_or_default();
             let evidence_urls: Vec<String> = row.get("evidence_urls").unwrap_or_default();
 
-            let self_entity = rootsignal_common::resolve_entity(&self_url, entity_mappings);
-
             let mut entities = std::collections::HashSet::new();
-            let mut external_count = 0u32;
-            let evidence_total = evidence_urls.len() as u32;
-
             for url in &evidence_urls {
                 let entity = rootsignal_common::resolve_entity(url, entity_mappings);
-                entities.insert(entity.clone());
-                if entity != self_entity {
-                    external_count += 1;
-                }
+                entities.insert(entity);
             }
 
             let diversity = entities.len().max(1) as u32;
-            let external_ratio = if evidence_total > 0 {
-                external_count as f64 / evidence_total as f64
-            } else {
-                0.0
-            };
 
             let update = query(&format!(
                 "MATCH (n:{label} {{id: $id}})
-                 SET n.source_diversity = $diversity, n.external_ratio = $ratio"
+                 SET n.source_diversity = $diversity"
             ))
             .param("id", id)
-            .param("diversity", diversity as i64)
-            .param("ratio", external_ratio);
+            .param("diversity", diversity as i64);
 
             g.run(update).await?;
             updated += 1;
@@ -808,7 +783,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Step 1: For each (signal, source_url) with multiple evidence nodes, delete extras.
     // Keeps evs[0] (arbitrary but stable), deletes evs[1..].
     let dedup_q = query(
-        "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
          WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
          WITH n, ev.source_url AS src, collect(ev) AS evs
          WHERE size(evs) > 1
@@ -835,7 +810,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
         let recount_q = query(&format!(
             "MATCH (n:{label})
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count
              SET n.corroboration_count = CASE WHEN ev_count > 0 THEN ev_count - 1 ELSE 0 END"
         ));
@@ -1192,43 +1167,15 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
 
 
 
-/// Delete stories created by Leiden clustering that don't contain a Tension node.
-pub async fn cleanup_leiden_stories(client: &GraphClient) -> Result<(), neo4rs::Error> {
-    let g = &client.graph;
 
-    info!("Cleaning up Leiden-created stories (no Tension in CONTAINS set)...");
-
-    let q = query(
-        "MATCH (s:Story)
-         WHERE NOT (s)-[:CONTAINS]->(:Tension)
-         DETACH DELETE s
-         RETURN count(s) AS deleted",
-    );
-
-    match g.execute(q).await {
-        Ok(mut stream) => {
-            if let Some(row) = stream.next().await? {
-                let deleted: i64 = row.get("deleted").unwrap_or(0);
-                if deleted > 0 {
-                    info!(deleted, "Deleted Leiden-created stories without Tension");
-                }
-            }
-        }
-        Err(e) => warn!("Leiden story cleanup failed (non-fatal): {e}"),
-    }
-
-    info!("Leiden story cleanup complete");
-    Ok(())
-}
-
-/// Backfill existing signals and stories with review_status = 'live'.
+/// Backfill existing signals with review_status = 'live'.
 /// Only sets the field on nodes where it is not already set (idempotent).
 async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = &client.graph;
 
-    info!("Backfilling review_status on existing signals and stories...");
+    info!("Backfilling review_status on existing signals...");
 
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension", "Story"];
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.review_status IS NULL SET n.review_status = 'live' RETURN count(n) AS updated"
@@ -1247,6 +1194,56 @@ async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Erro
     }
 
     info!("Review status backfill complete");
+    Ok(())
+}
+
+/// Rename any leftover `quarantined` review_status values to `rejected`.
+/// Idempotent — only touches nodes that still have the old value.
+async fn rename_quarantined_to_rejected(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.review_status = 'quarantined' \
+             SET n.review_status = 'rejected' RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Renamed quarantined → rejected");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "quarantined rename failed (non-fatal): {e}"),
+        }
+    }
+    Ok(())
+}
+
+/// Backfill `was_corrected = false` on signal nodes where it is NULL.
+/// Idempotent — only sets the default on nodes missing the property.
+async fn backfill_was_corrected(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    for label in &labels {
+        let cypher = format!(
+            "MATCH (n:{label}) WHERE n.was_corrected IS NULL \
+             SET n.was_corrected = false RETURN count(n) AS updated"
+        );
+        match g.execute(query(&cypher)).await {
+            Ok(mut stream) => {
+                if let Some(row) = stream.next().await? {
+                    let updated: i64 = row.get("updated").unwrap_or(0);
+                    if updated > 0 {
+                        info!(label, updated, "Backfilled was_corrected = false");
+                    }
+                }
+            }
+            Err(e) => warn!(label, "was_corrected backfill failed (non-fatal): {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -1501,5 +1498,79 @@ async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> 
     }
 
     info!("City concept removal complete");
+    Ok(())
+}
+
+/// Rename `EVIDENCES` edges to `PART_OF` (signal → situation cluster membership).
+/// Copies properties via MERGE, deletes old edges, swaps the index.
+/// Idempotent — MATCH on :EVIDENCES returns nothing after the first run.
+pub async fn rename_evidences_to_part_of(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Renaming EVIDENCES → PART_OF edges...");
+
+    let q = query(
+        "MATCH (sig)-[old:EVIDENCES]->(sit:Situation)
+         WITH sig, sit, old, properties(old) AS props
+         MERGE (sig)-[new:PART_OF]->(sit)
+         SET new = props
+         DELETE old
+         RETURN count(old) AS converted",
+    );
+
+    match g.execute(q).await {
+        Ok(mut stream) => {
+            if let Some(row) = stream.next().await? {
+                let converted: i64 = row.get("converted").unwrap_or(0);
+                if converted > 0 {
+                    info!(converted, "Converted EVIDENCES edges to PART_OF");
+                }
+            }
+        }
+        Err(e) => warn!("EVIDENCES→PART_OF conversion failed (non-fatal): {e}"),
+    }
+
+    // Drop old index (may not exist on fresh deploys)
+    match g
+        .run(query(
+            "DROP INDEX evidences_match_confidence IF EXISTS",
+        ))
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => warn!("Drop evidences_match_confidence index failed (non-fatal): {e}"),
+    }
+
+    info!("EVIDENCES → PART_OF rename complete");
+    Ok(())
+}
+
+/// Relabel `:Evidence` nodes to `:Citation` and swap the uniqueness constraint.
+/// Idempotent — MATCH on :Evidence returns nothing after the first run.
+pub async fn relabel_evidence_to_citation(client: &GraphClient) -> Result<(), neo4rs::Error> {
+    let g = &client.graph;
+
+    info!("Relabeling Evidence → Citation...");
+
+    match g
+        .run(query(
+            "MATCH (n:Evidence) SET n:Citation REMOVE n:Evidence",
+        ))
+        .await
+    {
+        Ok(_) => info!("Relabeled :Evidence → :Citation"),
+        Err(e) => warn!("Evidence→Citation relabel failed (non-fatal): {e}"),
+    }
+
+    // Drop old constraint (may not exist on fresh deploys)
+    match g
+        .run(query("DROP CONSTRAINT evidence_id_unique IF EXISTS"))
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => warn!("Drop evidence_id_unique constraint failed (non-fatal): {e}"),
+    }
+
+    info!("Evidence → Citation relabel complete");
     Ok(())
 }

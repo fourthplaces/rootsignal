@@ -62,7 +62,7 @@ async fn triage_misclassification(
             "MATCH (n:{label})
              WHERE n.extracted_at >= datetime($from) AND n.extracted_at <= datetime($to)
                AND n.confidence < 0.5
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count, collect(ev.snippet) AS snippets
              WHERE ev_count <= 1
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
@@ -109,7 +109,7 @@ async fn triage_incoherent_stories(
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+        "MATCH (sig)-[:PART_OF]->(s:Situation)
          WHERE s.last_updated >= datetime($from) AND s.last_updated <= datetime($to)
          WITH s, collect(sig) AS signals,
               count(DISTINCT labels(sig)[0]) AS type_count
@@ -140,7 +140,7 @@ async fn triage_incoherent_stories(
 
         // Fetch signal titles for LLM context
         let signals_q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation {id: $id})
+            "MATCH (sig)-[:PART_OF]->(s:Situation {id: $id})
              RETURN labels(sig)[0] AS label, sig.title AS title, sig.summary AS summary
              LIMIT 20",
         )
@@ -302,7 +302,7 @@ async fn triage_low_confidence_high_visibility(
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+        "MATCH (sig)-[:PART_OF]->(s:Situation)
          WHERE sig.extracted_at >= datetime($from) AND sig.extracted_at <= datetime($to)
            AND sig.confidence < 0.3
            AND s.temperature >= 0.3

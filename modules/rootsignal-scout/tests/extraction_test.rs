@@ -1,9 +1,11 @@
-//! Layer 1: Extraction snapshot tests.
+//! Extraction snapshot tests.
 //!
-//! Fixture markdown → `Extractor::extract()` → assert fields on the result.
+//! Fixture content → LLM (recorded once) → ExtractionResponse snapshot →
+//! `Extractor::convert_signals()` → assert domain fields.
 //!
 //! **Snapshots:** Each test calls the LLM once and saves the raw `ExtractionResponse`
-//! JSON. Subsequent runs compare against the saved snapshot without calling the LLM.
+//! JSON. Subsequent runs replay the snapshot through `convert_signals()` — testing
+//! both the LLM output quality AND the conversion pipeline on every run.
 //!
 //! - Record snapshots:  `RECORD=1 cargo test -p rootsignal-scout --test extraction_test`
 //! - Replay snapshots:  `cargo test -p rootsignal-scout --test extraction_test`
@@ -14,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Datelike;
 use rootsignal_scout::pipeline::extractor::{
-    ExtractionResponse, ExtractionResult, Extractor, ExtractedSignal, SignalExtractor,
+    build_system_prompt, ExtractionResponse, ExtractionResult, Extractor,
 };
 
 // ---------------------------------------------------------------------------
@@ -43,13 +45,15 @@ fn save_snapshot(path: &Path, response: &ExtractionResponse) {
     std::fs::write(path, json).expect("write snapshot");
 }
 
-/// Load a saved snapshot or record a new one by calling the extractor.
+/// Load a saved snapshot or record a new one by calling the LLM.
 ///
-/// When `RECORD=1` is set OR no snapshot file exists, calls the LLM and saves
-/// the raw `ExtractionResponse` JSON. Otherwise, loads from disk.
+/// - **Replay:** loads the `ExtractionResponse` JSON from disk, then runs it
+///   through `Extractor::convert_signals()` — the real conversion pipeline.
+/// - **Record:** calls the LLM to get the raw `ExtractionResponse`, saves it,
+///   then converts via `convert_signals()`.
 ///
-/// Returns `(ExtractionResponse, ExtractionResult)` — the raw LLM response and
-/// the converted nodes so tests can assert on both levels.
+/// Returns `(ExtractionResponse, ExtractionResult)` so tests can assert on
+/// both the raw LLM output and the converted domain nodes.
 async fn load_or_record(
     name: &str,
     content: &str,
@@ -58,317 +62,43 @@ async fn load_or_record(
     let snap_path = snapshots_dir().join(format!("{name}.json"));
 
     if snap_path.exists() && std::env::var("RECORD").is_err() {
-        // Replay: load snapshot and convert through the same pipeline
+        // Replay: load snapshot and convert through the real pipeline
         let response = load_snapshot(&snap_path);
-        let result = convert_response(&response, url);
+        let result = Extractor::convert_signals(response.clone(), url);
         return (response, result);
     }
 
-    // Record mode: call LLM
+    // Record mode: call LLM directly to capture the raw ExtractionResponse
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .expect("ANTHROPIC_API_KEY required to record extraction snapshots");
-    let extractor = Extractor::new(&api_key, "Minneapolis", 44.9778, -93.2650);
-    let result = extractor.extract(content, url).await.unwrap();
 
-    // We need the raw ExtractionResponse for the snapshot. Re-extract to get it.
-    // Since ExtractionResult doesn't preserve the raw response, we call the LLM
-    // again via a lower-level path. Instead, let's snapshot the result by
-    // reconstructing an ExtractionResponse from what we have.
-    //
-    // Better approach: call extract and capture the response at the same time.
-    // For now, we record by calling extract a second time to get the raw JSON.
-    // This is wasteful but only happens during RECORD — optimize later if needed.
-    //
-    // Actually, let's just record the ExtractionResult's nodes as our snapshot
-    // format, since that's what we actually assert on.
-    //
-    // REVISED: snapshot the ExtractionResponse directly by extracting via the
-    // lower-level Claude call. For simplicity, we'll snapshot the ExtractionResult
-    // serialized as JSON since Node derives Serialize/Deserialize.
+    let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");
+    let system_prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
 
-    // Save as ExtractionResponse-compatible JSON for forward compatibility
-    let response = extraction_result_to_response(&result);
+    // Truncate content to match what extract_impl does
+    let content = if content.len() > 30_000 {
+        let mut end = 30_000;
+        while !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        &content[..end]
+    } else {
+        content
+    };
+
+    let user_prompt = format!(
+        "Extract all signals from this web page.\n\nSource URL: {url}\n\n---\n\n{content}"
+    );
+
+    let response: ExtractionResponse = claude
+        .extract(&system_prompt, &user_prompt)
+        .await
+        .expect("LLM extraction failed");
+
     save_snapshot(&snap_path, &response);
+    let result = Extractor::convert_signals(response.clone(), url);
 
     (response, result)
-}
-
-/// Convert an ExtractionResponse through the same node-conversion pipeline
-/// the extractor uses internally.
-fn convert_response(response: &ExtractionResponse, _source_url: &str) -> ExtractionResult {
-    // Reuse the signal→node conversion logic. Since this is internal to
-    // Extractor, we reimplement the key parts here for snapshot replay.
-    use chrono::Utc;
-    use rootsignal_common::*;
-    use uuid::Uuid;
-
-    let now = Utc::now();
-    let mut nodes = Vec::new();
-
-    for signal in &response.signals {
-        let sensitivity = match signal.sensitivity.as_str() {
-            "sensitive" => SensitivityLevel::Sensitive,
-            "elevated" => SensitivityLevel::Elevated,
-            _ => SensitivityLevel::General,
-        };
-
-        let location = match (signal.latitude, signal.longitude) {
-            (Some(lat), Some(lng)) => {
-                let precision = match signal.geo_precision.as_deref() {
-                    Some("exact") => GeoPrecision::Exact,
-                    Some("neighborhood") => GeoPrecision::Neighborhood,
-                    _ => GeoPrecision::Approximate,
-                };
-                Some(GeoPoint {
-                    lat,
-                    lng,
-                    precision,
-                })
-            }
-            _ => None,
-        };
-
-        let mentioned_actors = signal.mentioned_actors.clone().unwrap_or_default();
-
-        let meta = NodeMeta {
-            id: Uuid::new_v4(),
-            title: signal.title.clone(),
-            summary: signal.summary.clone(),
-            sensitivity,
-            confidence: 0.0,
-            freshness_score: 1.0,
-            corroboration_count: 0,
-            about_location: location,
-            about_location_name: signal.location_name.clone(),
-            from_location: None,
-            source_url: signal.source_url.clone().unwrap_or_default(),
-            extracted_at: now,
-            content_date: None,
-            last_confirmed_active: now,
-            source_diversity: 1,
-            external_ratio: 0.0,
-            cause_heat: 0.0,
-            implied_queries: signal.implied_queries.clone(),
-            channel_diversity: 1,
-            mentioned_actors,
-            author_actor: None,
-        };
-
-        let node = match signal.signal_type.as_str() {
-            "gathering" => {
-                let starts_at = signal.starts_at.as_deref().and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s)
-                        .ok()
-                        .map(|d| d.with_timezone(&Utc))
-                        .or_else(|| {
-                            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                                .ok()
-                                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
-                        })
-                });
-                let ends_at = signal.ends_at.as_deref().and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s)
-                        .ok()
-                        .map(|d| d.with_timezone(&Utc))
-                });
-                Node::Gathering(GatheringNode {
-                    meta,
-                    starts_at,
-                    ends_at,
-                    action_url: signal.action_url.clone().unwrap_or_default(),
-                    organizer: signal.organizer.clone(),
-                    is_recurring: signal.is_recurring.unwrap_or(false),
-                })
-            }
-            "aid" => Node::Aid(AidNode {
-                meta,
-                action_url: signal.action_url.clone().unwrap_or_default(),
-                availability: signal.availability.clone(),
-                is_ongoing: signal.is_ongoing.unwrap_or(false),
-            }),
-            "need" => Node::Need(NeedNode {
-                meta,
-                urgency: match signal.urgency.as_deref() {
-                    Some("critical") => Urgency::Critical,
-                    Some("high") => Urgency::High,
-                    Some("medium") => Urgency::Medium,
-                    _ => Urgency::Low,
-                },
-                what_needed: signal.what_needed.clone(),
-                action_url: signal.action_url.clone(),
-                goal: signal.goal.clone(),
-            }),
-            "notice" => Node::Notice(NoticeNode {
-                meta,
-                severity: match signal.severity.as_deref() {
-                    Some("critical") => Severity::Critical,
-                    Some("high") => Severity::High,
-                    Some("medium") => Severity::Medium,
-                    _ => Severity::Low,
-                },
-                category: signal.category.clone(),
-                effective_date: signal.effective_date.as_deref().and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s)
-                        .ok()
-                        .map(|d| d.with_timezone(&Utc))
-                }),
-                source_authority: signal.source_authority.clone(),
-            }),
-            "tension" => Node::Tension(TensionNode {
-                meta,
-                severity: match signal.severity.as_deref() {
-                    Some("critical") => Severity::Critical,
-                    Some("high") => Severity::High,
-                    Some("medium") => Severity::Medium,
-                    _ => Severity::Low,
-                },
-                category: signal.category.clone(),
-                what_would_help: signal.what_would_help.clone(),
-            }),
-            _ => continue,
-        };
-
-        nodes.push(node);
-    }
-
-    ExtractionResult {
-        nodes,
-        implied_queries: response
-            .signals
-            .iter()
-            .flat_map(|s| s.implied_queries.iter().cloned())
-            .collect(),
-        resource_tags: vec![],
-        signal_tags: vec![],
-    }
-}
-
-/// Reconstruct an ExtractionResponse from an ExtractionResult for snapshotting.
-/// This captures the node-level data; for full fidelity, record at the
-/// ExtractionResponse level in the future.
-fn extraction_result_to_response(result: &ExtractionResult) -> ExtractionResponse {
-    let signals = result
-        .nodes
-        .iter()
-        .map(|node| {
-            let meta = node.meta().unwrap();
-            let (signal_type, starts_at, ends_at, action_url, organizer, is_recurring,
-                 availability, is_ongoing, urgency, what_needed, goal, severity, category,
-                 effective_date, source_authority, what_would_help) = match node {
-                rootsignal_common::Node::Gathering(n) => (
-                    "gathering",
-                    n.starts_at.map(|d| d.to_rfc3339()),
-                    n.ends_at.map(|d| d.to_rfc3339()),
-                    Some(n.action_url.clone()).filter(|s| !s.is_empty()),
-                    n.organizer.clone(),
-                    Some(n.is_recurring),
-                    None, None, None, None, None, None, None, None, None, None,
-                ),
-                rootsignal_common::Node::Aid(n) => (
-                    "aid",
-                    None, None,
-                    Some(n.action_url.clone()).filter(|s| !s.is_empty()),
-                    None, None,
-                    n.availability.clone(),
-                    Some(n.is_ongoing),
-                    None, None, None, None, None, None, None, None,
-                ),
-                rootsignal_common::Node::Need(n) => (
-                    "need",
-                    None, None,
-                    n.action_url.clone(),
-                    None, None, None, None,
-                    Some(format!("{:?}", n.urgency).to_lowercase()),
-                    n.what_needed.clone(),
-                    n.goal.clone(),
-                    None, None, None, None, None,
-                ),
-                rootsignal_common::Node::Notice(n) => (
-                    "notice",
-                    None, None, None, None, None, None, None, None, None, None,
-                    Some(format!("{:?}", n.severity).to_lowercase()),
-                    n.category.clone(),
-                    n.effective_date.map(|d| d.to_rfc3339()),
-                    n.source_authority.clone(),
-                    None,
-                ),
-                rootsignal_common::Node::Tension(n) => (
-                    "tension",
-                    None, None, None, None, None, None, None, None, None, None,
-                    Some(format!("{:?}", n.severity).to_lowercase()),
-                    n.category.clone(),
-                    None, None,
-                    n.what_would_help.clone(),
-                ),
-                _ => return ExtractedSignal {
-                    signal_type: "unknown".into(),
-                    title: String::new(),
-                    summary: String::new(),
-                    sensitivity: "general".into(),
-                    latitude: None, longitude: None, geo_precision: None,
-                    location_name: None, starts_at: None, ends_at: None,
-                    action_url: None, organizer: None, is_recurring: None,
-                    availability: None, is_ongoing: None, urgency: None,
-                    what_needed: None, goal: None, severity: None, category: None,
-                    effective_date: None, source_authority: None, content_date: None,
-                    mentioned_actors: None, source_url: None, what_would_help: None,
-                    implied_queries: vec![], resources: vec![], tags: vec![],
-                    is_firsthand: None,
-                    author_actor: None,
-                },
-            };
-
-            let sensitivity = match meta.sensitivity {
-                rootsignal_common::SensitivityLevel::Sensitive => "sensitive",
-                rootsignal_common::SensitivityLevel::Elevated => "elevated",
-                rootsignal_common::SensitivityLevel::General => "general",
-            };
-
-            ExtractedSignal {
-                signal_type: signal_type.into(),
-                title: meta.title.clone(),
-                summary: meta.summary.clone(),
-                sensitivity: sensitivity.into(),
-                latitude: meta.about_location.map(|l| l.lat),
-                longitude: meta.about_location.map(|l| l.lng),
-                geo_precision: meta.about_location.map(|l| match l.precision {
-                    rootsignal_common::GeoPrecision::Exact => "exact".into(),
-                    rootsignal_common::GeoPrecision::Neighborhood => "neighborhood".into(),
-                    _ => "approximate".into(),
-                }),
-                location_name: meta.about_location_name.clone(),
-                starts_at,
-                ends_at,
-                action_url,
-                organizer,
-                is_recurring,
-                availability,
-                is_ongoing,
-                urgency,
-                what_needed,
-                goal,
-                severity,
-                category,
-                effective_date,
-                source_authority,
-                content_date: None,
-                mentioned_actors: if meta.mentioned_actors.is_empty() {
-                    None
-                } else {
-                    Some(meta.mentioned_actors.clone())
-                },
-                source_url: Some(meta.source_url.clone()).filter(|s| !s.is_empty()),
-                what_would_help,
-                implied_queries: meta.implied_queries.clone(),
-                resources: vec![],
-                tags: vec![],
-                is_firsthand: None,
-                author_actor: None,
-            }
-        })
-        .collect();
-
-    ExtractionResponse { signals }
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +119,7 @@ fn fixture(name: &str) -> String {
 // ===========================================================================
 
 #[tokio::test]
-async fn community_garden_event_extraction() {
+async fn community_garden_post_yields_gathering_signal() {
     let content = fixture("community_garden_event.txt");
     let (response, result) = load_or_record(
         "community_garden_event",
@@ -486,7 +216,7 @@ async fn community_garden_event_extraction() {
 // ===========================================================================
 
 #[tokio::test]
-async fn food_shelf_give_extraction() {
+async fn food_shelf_post_yields_aid_signal() {
     let content = fixture("food_shelf_give.txt");
     let (response, result) = load_or_record(
         "food_shelf_give",
@@ -560,7 +290,7 @@ async fn food_shelf_give_extraction() {
 // ===========================================================================
 
 #[tokio::test]
-async fn urgent_community_tension_extraction() {
+async fn urgent_community_issue_yields_tension_signal() {
     let content = fixture("urgent_community_tension.txt");
     let (response, result) = load_or_record(
         "urgent_community_tension",
@@ -861,7 +591,7 @@ async fn multi_location_service_extracts_multiple_signals() {
     // Each Aid signal should have a distinct location
     let locations: Vec<Option<&rootsignal_common::GeoPoint>> = aid_signals
         .iter()
-        .map(|n| n.meta().unwrap().location.as_ref())
+        .map(|n| n.meta().unwrap().about_location.as_ref())
         .collect();
 
     let with_coords: Vec<_> = locations.iter().filter(|l| l.is_some()).collect();
@@ -874,7 +604,7 @@ async fn multi_location_service_extracts_multiple_signals() {
     // Location names should cover different neighborhoods
     let location_names: Vec<String> = aid_signals
         .iter()
-        .filter_map(|n| n.meta().unwrap().location_name.clone())
+        .filter_map(|n| n.meta().unwrap().about_location_name.clone())
         .map(|n| n.to_lowercase())
         .collect();
 
@@ -960,7 +690,7 @@ async fn phone_only_resource_extracts_aid_signals() {
 // ===========================================================================
 
 #[tokio::test]
-async fn spanish_content_extracts_correctly() {
+async fn spanish_content_yields_signals_in_english() {
     let content = fixture("spanish_community_alert.txt");
     let (response, result) = load_or_record(
         "spanish_community_alert",
@@ -1009,7 +739,7 @@ async fn spanish_content_extracts_correctly() {
             })
             .unwrap_or(false)
             || meta
-                .location
+                .about_location
                 .map(|loc| {
                     rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9486, -93.2476) < 5.0
                 })
@@ -1043,7 +773,7 @@ async fn spanish_content_extracts_correctly() {
 // ===========================================================================
 
 #[tokio::test]
-async fn stale_closed_program_handled_appropriately() {
+async fn closed_program_excluded_or_marked_inactive() {
     let content = fixture("stale_closed_program.txt");
     let (response, result) = load_or_record(
         "stale_closed_program",

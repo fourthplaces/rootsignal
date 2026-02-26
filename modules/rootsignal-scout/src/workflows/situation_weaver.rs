@@ -71,18 +71,19 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
             .run(|| async {
                 run_situation_weaving_from_deps(&deps, &scope, spent_cents)
                     .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+                    .map_err(|e| -> HandlerError { e.into() })
             })
+            .retry_policy(super::phase_retry_policy())
             .await
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
+                let _ = super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle").await;
                 return Err(e.into());
             }
         };
 
-        super::write_task_phase_status(&self.deps, &task_id, "situation_weaver_complete").await;
+        super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "situation_weaver_complete").await?;
 
         ctx.set("status", "Situation weaving complete".to_string());
         info!("SituationWeaverWorkflow complete");

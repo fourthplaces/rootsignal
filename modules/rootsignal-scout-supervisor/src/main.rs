@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use sqlx::postgres::PgPoolOptions;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::{Config, ScoutScope};
-use rootsignal_graph::{migrate::migrate, GraphClient, GraphWriter};
+use rootsignal_graph::{migrate::migrate, GraphClient};
 use rootsignal_scout_supervisor::{
     notify::{backend::NotifyBackend, noop::NoopBackend, router::NotifyRouter},
     supervisor::Supervisor,
@@ -58,8 +59,17 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Connect to Postgres
+    let database_url =
+        std::env::var("DATABASE_URL").context("DATABASE_URL required for validation issues")?;
+    let pg_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .context("Failed to connect to Postgres")?;
+
     // Create and run supervisor
-    let supervisor = Supervisor::new(client, region, config.anthropic_api_key.clone(), notifier);
+    let supervisor = Supervisor::new(client, pg_pool, region, config.anthropic_api_key.clone(), notifier);
     let stats = supervisor.run().await?;
 
     info!("Supervisor complete. {stats}");

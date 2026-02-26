@@ -68,6 +68,9 @@ feed-rs = "2"
 # Geohash (spatial bucketing)
 geohash = "0.13"
 
+# Recurrence rules (RFC 5545)
+rrule = "0.14"
+
 # Regex (PII detection)
 regex = "1"
 

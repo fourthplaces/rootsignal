@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { useParams, Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_SCOUT_TASKS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS, ACTORS_IN_BOUNDS } from "@/graphql/queries";
-import { RUN_SCOUT, RUN_SCOUT_PHASE } from "@/graphql/mutations";
+import { ADMIN_SCOUT_TASKS, ADMIN_SCOUT_RUNS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS, ACTORS_IN_BOUNDS } from "@/graphql/queries";
+import { RUN_SCOUT, RUN_SCOUT_PHASE, SCRAPE_URL, PURGE_AREA } from "@/graphql/mutations";
 import { RegionMap, type MapSignal } from "@/pages/MapPage";
+import { SourceTrace } from "@/components/SourceTrace";
 
-type Tab = "map" | "signals" | "situations" | "actors";
+type Tab = "map" | "signals" | "situations" | "actors" | "trace";
 const TABS: { key: Tab; label: string }[] = [
   { key: "map", label: "Map" },
   { key: "signals", label: "Signals" },
   { key: "situations", label: "Situations" },
   { key: "actors", label: "Actors" },
+  { key: "trace", label: "Trace" },
 ];
 
 type Signal = {
@@ -148,6 +150,19 @@ function toBounds(lat: number, lng: number, radiusKm: number) {
   };
 }
 
+function ScrapeBtn({ url }: { url: string }) {
+  const [scrape, { loading }] = useMutation(SCRAPE_URL);
+  return (
+    <button
+      onClick={() => scrape({ variables: { url } })}
+      disabled={loading}
+      className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+    >
+      {loading ? "..." : "Scrape"}
+    </button>
+  );
+}
+
 export function ScoutTaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -166,8 +181,11 @@ export function ScoutTaskDetailPage() {
 
   const [runScout] = useMutation(RUN_SCOUT);
   const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
+  const [purgeArea] = useMutation(PURGE_AREA);
   const [runLoading, setRunLoading] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [purgeLoading, setPurgeLoading] = useState(false);
+  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
 
   const handleRunPhase = async () => {
     if (!task) return;
@@ -184,6 +202,30 @@ export function ScoutTaskDetailPage() {
       setRunError(err instanceof Error ? err.message : "Failed to run phase");
     } finally {
       setRunLoading(false);
+    }
+  };
+
+  const handlePurge = async () => {
+    if (!task) return;
+    if (
+      !window.confirm(
+        `Purge ALL signals and situations within ${task.radiusKm} km of ${task.context}?\n\nThis cannot be undone.`,
+      )
+    )
+      return;
+    setPurgeLoading(true);
+    setPurgeMessage(null);
+    try {
+      const { data } = await purgeArea({ variables: { taskId: task.id } });
+      const r = data?.purgeArea;
+      setPurgeMessage(
+        r?.message ?? "Purge complete",
+      );
+      refetchTasks();
+    } catch (err: unknown) {
+      setPurgeMessage(err instanceof Error ? err.message : "Purge failed");
+    } finally {
+      setPurgeLoading(false);
     }
   };
 
@@ -210,6 +252,13 @@ export function ScoutTaskDetailPage() {
     skip: !bounds,
   });
   const actors: Actor[] = actorsData?.actorsInBounds ?? [];
+
+  // Fetch most recent scout run for trace tab
+  const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {
+    variables: task ? { region: task.context, limit: 1 } : undefined,
+    skip: !task || tab !== "trace",
+  });
+  const latestRunId: string | null = runsData?.adminScoutRuns?.[0]?.runId ?? null;
 
   if (taskLoading) return <p className="text-muted-foreground">Loading...</p>;
   if (!task) return <p className="text-muted-foreground">Task not found</p>;
@@ -262,8 +311,18 @@ export function ScoutTaskDetailPage() {
               </button>
             </div>
           )}
+          <button
+            onClick={handlePurge}
+            disabled={purgeLoading}
+            className="text-xs px-2 py-1 rounded border border-red-500/50 text-red-400 hover:bg-red-500/10 disabled:opacity-50 ml-2"
+          >
+            {purgeLoading ? "Purging..." : "Purge Area"}
+          </button>
           {runError && (
             <p className="text-xs text-red-400 mt-1">{runError}</p>
+          )}
+          {purgeMessage && (
+            <p className="text-xs text-amber-400 mt-1">{purgeMessage}</p>
           )}
         </div>
       </div>
@@ -375,10 +434,18 @@ export function ScoutTaskDetailPage() {
                   <th className="text-right px-4 py-2 font-medium">Heat</th>
                   <th className="text-left px-4 py-2 font-medium">Published</th>
                   <th className="text-left px-4 py-2 font-medium">Extracted</th>
+                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {signals.map((s) => {
+                {[...signals]
+                  .sort((a, b) => {
+                    if (!a.contentDate && !b.contentDate) return 0;
+                    if (!a.contentDate) return 1;
+                    if (!b.contentDate) return -1;
+                    return new Date(b.contentDate).getTime() - new Date(a.contentDate).getTime();
+                  })
+                  .map((s) => {
                   const typeName = signalTypeName(s.__typename);
                   return (
                     <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30">
@@ -409,6 +476,9 @@ export function ScoutTaskDetailPage() {
                       </td>
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                         {formatDate(s.extractedAt)}
+                      </td>
+                      <td className="px-4 py-2">
+                        {s.sourceUrl && <ScrapeBtn url={s.sourceUrl} />}
                       </td>
                     </tr>
                   );
@@ -501,6 +571,17 @@ export function ScoutTaskDetailPage() {
               </tbody>
             </table>
           </div>
+        )
+      )}
+
+      {/* Trace tab — latest run */}
+      {tab === "trace" && (
+        runsLoading ? (
+          <p className="text-muted-foreground">Loading...</p>
+        ) : !latestRunId ? (
+          <p className="text-muted-foreground">No scout runs found for this task.</p>
+        ) : (
+          <SourceTrace runId={latestRunId} />
         )
       )}
     </div>

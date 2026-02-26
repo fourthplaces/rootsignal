@@ -10,6 +10,8 @@ struct SignalEmbed {
     embedding: Vec<f64>,
     source_diversity: u32,
     channel_diversity: u32,
+    /// Multiplier from EVIDENCE_OF edges (Tensions only). 1.0 = no evidence, up to 3.0.
+    evidence_boost: f64,
 }
 
 /// Compute cause_heat for signals within a geographic bounding box.
@@ -74,6 +76,7 @@ pub async fn compute_cause_heat(
                 embedding,
                 source_diversity: source_diversity.max(1) as u32,
                 channel_diversity: channel_diversity.max(1) as u32,
+                evidence_boost: 1.0,
             });
         }
     }
@@ -83,6 +86,38 @@ pub async fn compute_cause_heat(
 
     if n == 0 {
         return Ok(());
+    }
+
+    // Compute evidence_boost for Tensions from EVIDENCE_OF edges.
+    // Severity weights: Low=1, Medium=2, High=3, Critical=4.
+    // Boost = 1.0 + ln(1 + score) * 0.5, capped at 3.0.
+    let tension_ids: Vec<&str> = signals
+        .iter()
+        .filter(|s| s.label == "Tension")
+        .map(|s| s.id.as_str())
+        .collect();
+
+    if !tension_ids.is_empty() {
+        let q = query(
+            "UNWIND $ids AS tid
+             MATCH (sig)-[r:EVIDENCE_OF]->(t:Tension {id: tid})
+             WHERE sig.severity IS NOT NULL
+             RETURN t.id AS tension_id,
+                    collect(sig.severity) AS severities"
+        )
+        .param("ids", tension_ids);
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let tid: String = row.get("tension_id").unwrap_or_default();
+            let sevs: Vec<String> = row.get("severities").unwrap_or_default();
+            let score: f64 = sevs.iter().map(|s| severity_weight(s)).sum();
+            let boost = (1.0 + (score).ln_1p() * 0.5).min(3.0);
+
+            if let Some(sig) = signals.iter_mut().find(|s| s.id == tid && s.label == "Tension") {
+                sig.evidence_boost = boost;
+            }
+        }
     }
 
     let heats = compute_heats(&signals, threshold);
@@ -142,7 +177,7 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
                 norms[j],
             );
             if sim > threshold {
-                heat += sim * signals[j].source_diversity as f64 * (signals[j].channel_diversity as f64).sqrt();
+                heat += sim * signals[j].source_diversity as f64 * (signals[j].channel_diversity as f64).sqrt() * signals[j].evidence_boost;
             }
         }
         heats[i] = heat;
@@ -157,6 +192,17 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
     }
 
     heats
+}
+
+/// Map severity string to numeric weight for evidence boost calculation.
+fn severity_weight(s: &str) -> f64 {
+    match s {
+        "low" => 1.0,
+        "medium" => 2.0,
+        "high" => 3.0,
+        "critical" => 4.0,
+        _ => 1.0,
+    }
 }
 
 /// Cosine similarity with precomputed norms.
@@ -183,6 +229,7 @@ mod tests {
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
+            evidence_boost: 1.0,
         }
     }
 
@@ -193,6 +240,18 @@ mod tests {
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
+            evidence_boost: 1.0,
+        }
+    }
+
+    fn tension_with_evidence(id: &str, embedding: Vec<f64>, diversity: u32, evidence_boost: f64) -> SignalEmbed {
+        SignalEmbed {
+            id: id.to_string(),
+            label: "Tension".to_string(),
+            embedding,
+            source_diversity: diversity,
+            channel_diversity: 1,
+            evidence_boost,
         }
     }
 
@@ -203,6 +262,7 @@ mod tests {
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
+            evidence_boost: 1.0,
         }
     }
 
@@ -546,6 +606,7 @@ mod tests {
                 embedding: vec![0.99, 0.1, 0.0],
                 source_diversity: 3,
                 channel_diversity: 3,
+                evidence_boost: 1.0,
             },
             gathering("b", vec![0.0, 1.0, 0.0], 1),
             SignalEmbed {
@@ -554,6 +615,7 @@ mod tests {
                 embedding: vec![0.1, 0.99, 0.0],
                 source_diversity: 3,
                 channel_diversity: 1,
+                evidence_boost: 1.0,
             },
         ];
         let heats = compute_heats(&signals, 0.7);
@@ -621,5 +683,71 @@ mod tests {
             let zero_count: i64 = row.get("cnt").unwrap_or(0);
             println!("\nSignals with zero/null cause_heat: {zero_count}");
         }
+    }
+
+    // --- evidence_boost tests ---
+
+    #[test]
+    fn tension_with_high_severity_evidence_radiates_more_heat() {
+        // Two gatherings near two tensions with same diversity but different evidence boost.
+        // The gathering near the evidenced tension should get more heat.
+        // 3 High notices: score = 9.0, boost = 1.0 + ln(1+9) * 0.5 ≈ 2.15
+        let boost = (1.0 + (9.0_f64).ln_1p() * 0.5).min(3.0);
+        let signals = vec![
+            gathering("shelter", vec![1.0, 0.0, 0.0], 1),
+            tension_with_evidence("ice_raids", vec![0.99, 0.1, 0.0], 3, boost),
+            gathering("park_event", vec![0.0, 1.0, 0.0], 1),
+            tension("unrelated", vec![0.1, 0.99, 0.0], 3),
+        ];
+        let heats = compute_heats(&signals, 0.7);
+
+        assert!(
+            heats[0] > heats[2],
+            "Gathering near evidenced tension ({}) should get more heat than near unevidenced tension ({})",
+            heats[0],
+            heats[2]
+        );
+    }
+
+    #[test]
+    fn tension_with_no_evidence_of_edges_unchanged() {
+        // A Tension with evidence_boost = 1.0 (no EVIDENCE_OF edges) should behave
+        // identically to the original algorithm.
+        let signals = vec![
+            gathering("shelter", vec![1.0, 0.0, 0.0], 1),
+            tension("housing", vec![0.99, 0.1, 0.0], 5),
+        ];
+        let heats = compute_heats(&signals, 0.7);
+
+        // evidence_boost defaults to 1.0 — same as multiplying by 1
+        let signals_explicit = vec![
+            gathering("shelter", vec![1.0, 0.0, 0.0], 1),
+            tension_with_evidence("housing", vec![0.99, 0.1, 0.0], 5, 1.0),
+        ];
+        let heats_explicit = compute_heats(&signals_explicit, 0.7);
+
+        assert_eq!(heats[0], heats_explicit[0]);
+        assert_eq!(heats[1], heats_explicit[1]);
+    }
+
+    #[test]
+    fn evidence_boost_caps_at_three() {
+        // Even with extreme evidence scores, the boost should not exceed 3.0.
+        // 50 Critical notices: score = 200, boost = 1.0 + ln(201) * 0.5 ≈ 3.65 → capped at 3.0
+        let extreme_boost = (1.0 + (200.0_f64).ln_1p() * 0.5).min(3.0);
+        assert_eq!(extreme_boost, 3.0, "Extreme evidence should cap at 3.0");
+
+        let moderate_boost = (1.0 + (9.0_f64).ln_1p() * 0.5).min(3.0);
+        assert!(moderate_boost < 3.0, "Moderate evidence should be below cap");
+        assert!(moderate_boost > 1.0, "Moderate evidence should boost above baseline");
+    }
+
+    #[test]
+    fn severity_weight_maps_correctly() {
+        assert_eq!(severity_weight("low"), 1.0);
+        assert_eq!(severity_weight("medium"), 2.0);
+        assert_eq!(severity_weight("high"), 3.0);
+        assert_eq!(severity_weight("critical"), 4.0);
+        assert_eq!(severity_weight("unknown"), 1.0);
     }
 }

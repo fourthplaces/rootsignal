@@ -16,3 +16,5 @@ regex = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 rootsignal-world = { workspace = true }
+rrule = { workspace = true }
+url = "2"
