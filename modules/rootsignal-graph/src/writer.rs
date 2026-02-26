@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     ActorNode, DemandSignal, DiscoveryMethod,
-    NodeType, PinNode, SourceNode, SourceRole,
+    NodeType, PinNode, ScheduleNode, SourceNode, SourceRole,
     ScoutTask, ScoutTaskSource, ScoutTaskStatus,
     NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
 };
@@ -3744,6 +3744,84 @@ impl GraphWriter {
 
         let mut stream = self.client.inner().execute(q).await?;
         Ok(stream.next().await?.is_some())
+    }
+
+    // --- Schedule ---
+
+    /// Create a Schedule node in the graph. Returns the schedule's UUID.
+    pub async fn create_schedule(&self, schedule: &ScheduleNode) -> Result<Uuid, neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let rdates_str: Vec<String> = schedule.rdates.iter().map(|d| format_datetime(d)).collect();
+        let exdates_str: Vec<String> = schedule.exdates.iter().map(|d| format_datetime(d)).collect();
+
+        let q = query(
+            "CREATE (s:Schedule {
+                id: $id,
+                rrule: $rrule,
+                rdates: [d IN $rdates | datetime(d)],
+                exdates: [d IN $exdates | datetime(d)],
+                dtstart: CASE WHEN $dtstart = '' THEN null ELSE datetime($dtstart) END,
+                dtend: CASE WHEN $dtend = '' THEN null ELSE datetime($dtend) END,
+                timezone: $timezone,
+                schedule_text: $schedule_text,
+                extracted_at: datetime($extracted_at)
+            })
+            RETURN s.id AS id",
+        )
+        .param("id", schedule.id.to_string())
+        .param("rrule", schedule.rrule.clone().unwrap_or_default())
+        .param("rdates", rdates_str)
+        .param("exdates", exdates_str)
+        .param(
+            "dtstart",
+            schedule
+                .dtstart
+                .map(|d| format_datetime(&d))
+                .unwrap_or_default(),
+        )
+        .param(
+            "dtend",
+            schedule
+                .dtend
+                .map(|d| format_datetime(&d))
+                .unwrap_or_default(),
+        )
+        .param("timezone", schedule.timezone.clone().unwrap_or_default())
+        .param(
+            "schedule_text",
+            schedule.schedule_text.clone().unwrap_or_default(),
+        )
+        .param("extracted_at", format_datetime(&schedule.extracted_at));
+
+        g.run(q).await?;
+        Ok(schedule.id)
+    }
+
+    /// Link a Schedule node to a signal via a HAS_SCHEDULE edge.
+    pub async fn link_schedule_to_signal(
+        &self,
+        signal_id: Uuid,
+        schedule_id: Uuid,
+    ) -> Result<(), neo4rs::Error> {
+        let g = &self.client.graph;
+
+        let q = query(
+            "OPTIONAL MATCH (e:Gathering {id: $signal_id})
+             OPTIONAL MATCH (a:Aid {id: $signal_id})
+             OPTIONAL MATCH (n:Need {id: $signal_id})
+             OPTIONAL MATCH (nc:Notice {id: $signal_id})
+             OPTIONAL MATCH (t:Tension {id: $signal_id})
+             WITH coalesce(e, a, n, nc, t) AS sig
+             WHERE sig IS NOT NULL
+             MATCH (s:Schedule {id: $schedule_id})
+             MERGE (sig)-[:HAS_SCHEDULE]->(s)",
+        )
+        .param("signal_id", signal_id.to_string())
+        .param("schedule_id", schedule_id.to_string());
+
+        g.run(q).await?;
+        Ok(())
     }
 }
 

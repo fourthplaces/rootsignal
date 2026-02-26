@@ -250,6 +250,25 @@ pub async fn run_synthesis_from_deps(
 
     info!("Parallel synthesis complete");
 
+    // Severity inference — re-evaluate Notice severity after tension linking
+    // creates EVIDENCE_OF edges. Cheap: graph reads + pure computation, no LLM calls.
+    let lat_delta = scope.radius_km / 111.0;
+    let lng_delta = scope.radius_km / (111.0 * scope.center_lat.to_radians().cos());
+    let (min_lat, max_lat) = (scope.center_lat - lat_delta, scope.center_lat + lat_delta);
+    let (min_lng, max_lng) = (scope.center_lng - lng_delta, scope.center_lng + lng_delta);
+    match rootsignal_graph::severity_inference::run_severity_inference(
+        &writer, min_lat, max_lat, min_lng, max_lng,
+    )
+    .await
+    {
+        Ok(updated) => {
+            if updated > 0 {
+                info!(updated, "Severity inference updated notices");
+            }
+        }
+        Err(e) => warn!(error = %e, "Severity inference failed (non-fatal)"),
+    }
+
     Ok(SynthesisResult {
         spent_cents: budget.total_spent(),
     })
