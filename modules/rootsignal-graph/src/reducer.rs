@@ -647,8 +647,7 @@ impl GraphReducer {
                          a.last_active = datetime($ts)
                      ON MATCH SET
                          a.name = $name,
-                         a.last_active = datetime($ts),
-                         a.signal_count = a.signal_count + 1"
+                         a.last_active = datetime($ts)"
                 )
                 .param("id", actor_id.to_string())
                 .param("entity_id", entity_id.as_str())

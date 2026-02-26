@@ -9,11 +9,13 @@ brainstorm: docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md
 
 ## Overview
 
-Add an EmbeddingStore (get-or-compute Postgres cache), enrichment event variants, and a pipeline orchestrator on top of the existing GraphReducer. The reducer keeps its current Cypher logic. Enrichment passes (diversity, cause_heat, actor stats) read the graph and emit typed events that the reducer handles like any other event.
+Add an EmbeddingStore (get-or-compute Postgres cache), enrichment passes that write derived properties directly to Neo4j, and a pipeline orchestrator on top of the existing GraphReducer. The reducer keeps its current Cypher logic and owns factual properties. Enrichment passes own derived properties (diversity, cause_heat, actor stats) and write them directly to the graph after the reducer runs.
 
-This builds on the event data model redesign (committed) and precedes Phase 3 (wiring GraphWriter through events).
+**Replay guarantee**: `reducer(events) → enrich(graph)` always produces the same graph. Enrichment is a deterministic function of graph state — it's recomputed fresh on every replay, never stored in the event log.
 
-> **Deferred**: The project/apply split (separating event interpretation from Cypher execution) was pressure-tested and deferred. See brainstorm doc "Resolved Questions" for rationale. Revisit when batching becomes a bottleneck or the reducer exceeds ~1500 lines.
+**Key design decision**: Enrichment results are NOT events. Events are facts about what happened (the Event enum header: "No embeddings, no derived metrics, no infrastructure artifacts"). Derived metrics are computed by enrichment and written directly to Neo4j. This keeps the event log pure and avoids the complexity of filtering enrichment events on replay.
+
+> **Deferred**: The project/apply split was pressure-tested and deferred. See brainstorm doc "Resolved Questions" for rationale.
 
 ## Problem Statement
 
@@ -28,27 +30,21 @@ The current GraphReducer handles event interpretation and execution in one step,
 ### Keep the reducer, add enrichment on top
 
 ```
-reducer.reduce(events, &embeddings)             // existing Cypher logic, unchanged
-enrich(&graph, &embeddings) → Vec<Event>        // reads graph, emits enrichment events
-reducer.reduce(enrichment_events, &embeddings)  // reducer handles enrichment events too
+reducer.apply(events)       // existing Cypher logic, writes factual properties
+enrich(&graph)              // reads graph, writes derived properties directly to Neo4j
 ```
 
-- **`reducer`** keeps its current Cypher logic. No rewrite. It gains an `EmbeddingStore` dependency for writing embeddings to nodes, and new `match` arms for enrichment event variants.
-- **`enrich`** reads the graph that the reducer just wrote and produces new events (diversity counts, cause_heat, actor stats). These events flow back through the reducer once (depth limit = 1).
+- **`reducer`** keeps its current Cypher logic. No rewrite. Owns all factual properties.
+- **`enrich`** reads the graph that the reducer built and writes derived properties (diversity counts, cause_heat, actor stats) directly to Neo4j via SET queries. No events involved.
+
+**Clear ownership boundary**:
+- Reducer: factual properties (title, summary, confidence, corroboration_count, etc.)
+- Enrichment: derived properties (source_diversity, channel_diversity, external_ratio, cause_heat, signal_count)
+- Already enforced by contract tests (`reducer_source_has_no_diversity_writes`, `reducer_source_has_no_cause_heat_writes`)
 
 ### EmbeddingStore
 
 Get-or-compute cache backed by Postgres. Keyed by `hash(model_version + input_text)`. The scout pipeline writes to it during extraction (it already computes embeddings for dedup). The reducer reads from it to include embeddings in graph operations.
-
-### Enrichment passes
-
-Each enricher reads the graph and emits typed events:
-
-1. **DiversityEnricher** — reads Evidence edges per entity, emits `DiversityComputed { entity_id, node_type, source_diversity, channel_diversity, external_ratio }`
-2. **CauseHeatEnricher** — reads embeddings + diversity in a bbox, emits `CauseHeatComputed { entity_id, heat: f64 }`
-3. **ActorStatsEnricher** — counts ACTED_IN edges per actor, emits `ActorStatsComputed { actor_id, signal_count }`
-
-These events are persisted to the EventStore (actor = "enricher"). On replay, enrichment events are filtered out and recomputed fresh — ensuring determinism.
 
 ## Technical Approach
 
@@ -60,63 +56,23 @@ These events are persisted to the EventStore (actor = "enricher"). On replay, en
 >
 > See: `docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md` → "Resolved Questions"
 
-### EmbeddingLookup trait
+### EmbeddingStore (Phase 1 — DONE)
 
 ```rust
-/// modules/rootsignal-graph/src/embedding_store.rs (or shared types)
-
+/// modules/rootsignal-common/src/types.rs
 pub trait EmbeddingLookup: Send + Sync {
-    /// Get an embedding for the given text. Cache hit or compute.
-    fn get(&self, text: &str) -> Result<Vec<f64>>;
+    async fn get(&self, text: &str) -> Result<Vec<f32>>;
 }
-```
 
-The reducer gains this as a dependency. Discovery handlers call `embeddings.get(text)` to fetch/compute embeddings and include them in the Cypher SET clause.
-
-### EmbeddingStore
-
-```rust
 /// modules/rootsignal-graph/src/embedding_store.rs
-
-use async_trait::async_trait;
-
 pub struct EmbeddingStore {
-    pool: sqlx::PgPool,
+    pool: PgPool,
     embedder: Arc<dyn TextEmbedder>,
     model_version: String,
 }
-
-#[async_trait]
-impl EmbeddingLookup for EmbeddingStore {
-    fn get(&self, text: &str) -> Result<Vec<f64>> {
-        let hash = self.hash_key(text);
-        // 1. Check Postgres cache
-        // 2. Hit → return
-        // 3. Miss → compute via self.embedder, store, return
-    }
-}
-
-impl EmbeddingStore {
-    /// Pre-warm cache for a batch of texts. Single API call.
-    pub async fn warm(&self, texts: &[&str]) -> Result<()>;
-
-    fn hash_key(&self, text: &str) -> String {
-        // SHA-256 of (model_version + text)
-    }
-}
-```
-
-Postgres table (migration):
-
-```sql
-CREATE TABLE embedding_cache (
-    input_hash    TEXT PRIMARY KEY,
-    model_version TEXT NOT NULL,
-    embedding     FLOAT4[] NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_embedding_cache_model ON embedding_cache (model_version);
+// Implements EmbeddingLookup with get-or-compute semantics.
+// SHA-256 of (model_version + text) as cache key.
+// warm() for batch pre-computation.
 ```
 
 ### Enrichment passes
@@ -124,64 +80,41 @@ CREATE INDEX idx_embedding_cache_model ON embedding_cache (model_version);
 ```rust
 /// modules/rootsignal-graph/src/enrich.rs
 
-/// Read the graph and emit enrichment events.
-pub async fn enrich(
-    client: &GraphClient,
-    bbox: &BBox,
-) -> Result<Vec<Event>> {
-    let mut events = Vec::new();
+/// Run all enrichment passes. Reads the graph, writes derived properties directly.
+pub async fn enrich(client: &GraphClient) -> Result<EnrichStats> {
+    let mut stats = EnrichStats::default();
 
-    // 1. Diversity enrichment
-    events.extend(compute_diversity(client).await?);
+    // 1. Diversity: count citation edges per entity → SET diversity properties
+    stats.diversity = compute_diversity(client).await?;
 
-    // 2. cause_heat enrichment
-    events.extend(compute_cause_heat_events(client, bbox).await?);
+    // 2. Actor stats: count ACTED_IN edges per actor → SET signal_count
+    stats.actor_stats = compute_actor_stats(client).await?;
 
-    events
-}
+    // 3. Cause heat: read embeddings + diversity, compute heats → SET cause_heat
+    // (depends on diversity being written first)
+    stats.cause_heat = compute_cause_heat(client).await?;
 
-/// Compute diversity for all entities that need it.
-/// "Need it" = entities with Evidence edges whose diversity
-/// hasn't been computed since last corroboration.
-async fn compute_diversity(client: &GraphClient) -> Result<Vec<Event>> {
-    // For each entity type label:
-    //   Query entities with SOURCED_FROM edges
-    //   Count distinct source URLs → source_diversity
-    //   Count distinct channel types from external sources → channel_diversity
-    //   Compute external_ratio
-    //   Emit DiversityComputed event
-}
-
-/// Compute cause_heat for all signals in bbox.
-/// Uses the existing compute_heats() pure function.
-async fn compute_cause_heat_events(
-    client: &GraphClient,
-    bbox: &BBox,
-) -> Result<Vec<Event>> {
-    // Load signals with embeddings + diversity from graph
-    // Call compute_heats() (existing pure function in cause_heat.rs)
-    // Emit CauseHeatComputed per signal
+    Ok(stats)
 }
 ```
 
-New event variants:
+Each enrichment pass reads graph state and writes derived properties directly:
 
-```rust
-// In modules/rootsignal-common/src/events.rs
+```cypher
+-- Diversity: single Cypher query per entity type
+MATCH (n:Gathering)
+OPTIONAL MATCH (n)<-[:CITES]-(c:Citation)
+WITH n, count(DISTINCT c.url) AS src_div, count(DISTINCT c.channel_type) AS ch_div
+SET n.source_diversity = src_div, n.channel_diversity = ch_div,
+    n.external_ratio = CASE WHEN src_div = 0 THEN 0.0 ELSE ... END
 
-DiversityComputed {
-    entity_id: Uuid,
-    node_type: NodeType,
-    source_diversity: u32,
-    channel_diversity: u32,
-    external_ratio: f32,
-},
+-- Actor stats: count edges
+MATCH (a:Actor)-[r:ACTED_IN]->()
+WITH a, count(r) AS cnt, max(r.ts) AS last
+SET a.signal_count = cnt
 
-CauseHeatComputed {
-    entity_id: Uuid,
-    node_type: NodeType,
-    heat: f64,
-},
+-- Cause heat: wraps existing compute_heats() pure function
+-- Reads embeddings + diversity from graph, computes, writes back
 ```
 
 ### Pipeline orchestrator
@@ -191,58 +124,32 @@ CauseHeatComputed {
 
 pub struct Pipeline {
     reducer: GraphReducer,
-    embeddings: Arc<EmbeddingStore>,
+    client: GraphClient,
 }
 
 impl Pipeline {
-    /// Process a batch of events through the full pipeline.
-    pub async fn process(&self, events: &[StoredEvent], bbox: &BBox) -> Result<PipelineStats> {
-        // Phase 1: reduce observation events (existing reducer logic)
-        let reduce_stats = self.reducer.reduce(events, &self.embeddings).await?;
+    /// Process events through the full pipeline.
+    pub async fn process(&self, events: &[StoredEvent]) -> Result<PipelineStats> {
+        // Step 1: reduce factual events → graph has factual properties
+        let reduce_stats = self.reducer.apply_batch(events).await?;
 
-        // Phase 2: enrichment reads graph, emits new events
-        let enrichment_events = enrich(&self.reducer.client, bbox).await?;
-
-        // Phase 3: reduce enrichment events (reducer handles them like any other event)
-        let enrich_stats = self.reducer.reduce(&enrichment_events, &self.embeddings).await?;
+        // Step 2: enrich → graph gets derived properties
+        let enrich_stats = enrich(&self.client).await?;
 
         Ok(PipelineStats { reduce_stats, enrich_stats })
     }
 
     /// Full rebuild: wipe graph, replay all events, enrich.
-    pub async fn rebuild(&self, store: &EventStore, bbox: &BBox) -> Result<PipelineStats>;
+    pub async fn rebuild(&self, store: &EventStore) -> Result<PipelineStats>;
 
     /// Replay from a specific sequence number.
-    pub async fn replay_from(&self, store: &EventStore, seq: i64, bbox: &BBox) -> Result<PipelineStats>;
+    pub async fn replay_from(&self, store: &EventStore, seq: i64) -> Result<PipelineStats>;
 }
 ```
 
-The reducer gains new `match` arms for enrichment events (`DiversityComputed`, `CauseHeatComputed`, `ActorStatsComputed`). These are simple SET operations — no complex Cypher needed.
-
 ### Fix: ActorIdentified idempotency
 
-The current `ON MATCH SET a.signal_count = a.signal_count + 1` is not idempotent. Fix:
-
-```rust
-// Instead of incrementing, the project function emits a MergeNode
-// with signal_count = 1 on CREATE. On subsequent ActorIdentified events
-// for the same actor, the ON MATCH clause does NOT increment signal_count.
-// signal_count becomes an enrichment-computed value: count of ACTED_IN edges.
-```
-
-Add to the diversity enricher: after computing per-entity diversity, also count ACTED_IN edges per actor and emit `ActorStatsComputed { actor_id, signal_count }`.
-
-New event variant:
-
-```rust
-ActorStatsComputed {
-    actor_id: Uuid,
-    signal_count: u32,
-    last_active: DateTime<Utc>,
-},
-```
-
-This replaces the current `ActorStatsUpdated` producer-computed event with an enrichment-computed one. The `ActorIdentified` handler no longer touches `signal_count` on MATCH — it just updates `name` and `last_active`.
+The current `ON MATCH SET a.signal_count = a.signal_count + 1` is not idempotent. Fix: remove the increment from the reducer. `signal_count` becomes an enrichment-computed value (count of ACTED_IN edges). The `ActorIdentified` handler keeps `signal_count = 1` on CREATE but no longer touches it on MATCH.
 
 ## Implementation Phases
 
@@ -272,34 +179,28 @@ Build the get-or-compute embedding cache.
 - [x] Write test: model version change causes cache miss
 - [x] Write test: warm() batch-computes and stores
 
-### Phase 2: Enrichment events + enrich()
+### Phase 2: Enrichment passes + enrich()
 
-Add enrichment event variants and the enrich function.
+Build enrichment functions that read the graph and write derived properties directly to Neo4j. No event variants needed — enrichment results are not facts, they're derived metrics.
 
 **Files:**
-- `modules/rootsignal-common/src/events.rs` — ADD: `DiversityComputed`, `CauseHeatComputed`, `ActorStatsComputed`
-- `modules/rootsignal-graph/src/enrich.rs` — NEW: `enrich()`, diversity computation, cause_heat event emission
-- `modules/rootsignal-graph/src/reducer.rs` — ADD: match arms for enrichment event variants
+- `modules/rootsignal-graph/src/enrich.rs` — NEW: `enrich()`, `compute_diversity()`, `compute_actor_stats()`, `compute_cause_heat()`
+- `modules/rootsignal-graph/src/reducer.rs` — FIX: `ActorIdentified` idempotency
+- `modules/rootsignal-graph/src/lib.rs` — UPDATE: export enrich module
 - `modules/rootsignal-graph/tests/enrich_test.rs` — NEW: tests
 
 **Tasks:**
-- [ ] Add `DiversityComputed`, `CauseHeatComputed`, `ActorStatsComputed` event variants
-- [ ] Update `event_type()` for new variants
-- [ ] Implement `compute_diversity()` — reads Evidence edges, emits events
-- [ ] Implement `compute_cause_heat_events()` — wraps existing `compute_heats()` pure function
-- [ ] Implement `compute_actor_stats()` — counts ACTED_IN edges per actor
-- [ ] Implement `enrich()` orchestrator
-- [ ] Add reducer match arms for enrichment events (simple SET operations)
-- [ ] Fix `ActorIdentified` idempotency: stop incrementing `signal_count` on MATCH
-- [ ] Write test: diversity computed correctly from Evidence edges
-- [ ] Write test: cause_heat events emitted for signals in bbox
-- [ ] Write test: actor stats computed from edge counts
-- [ ] Update reducer contract test: add new event types to APPLIED list
-- [ ] Update boundary test: classify new event types
+- [x] Fix `ActorIdentified` idempotency: stop incrementing `signal_count` on MATCH
+- [x] Implement `compute_diversity()` — reads SOURCED_FROM→Evidence edges, writes diversity properties via SET
+- [x] Implement `compute_actor_stats()` — counts ACTED_IN edges, writes signal_count via SET
+- [x] Implement `enrich()` orchestrator — runs diversity → actor stats → cause_heat (wraps existing `compute_cause_heat`)
+- [ ] Write test: diversity properties set correctly from Citation edges
+- [ ] Write test: actor signal_count matches ACTED_IN edge count
+- [ ] Write test: cause_heat computed for signals with embeddings
 
 ### Phase 3: Pipeline orchestrator
 
-Wire reducer + enrich into a Pipeline struct that orchestrates the two-pass flow.
+Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 
 **Files:**
 - `modules/rootsignal-graph/src/pipeline.rs` — NEW: Pipeline struct with process(), rebuild(), replay_from()
@@ -307,28 +208,24 @@ Wire reducer + enrich into a Pipeline struct that orchestrates the two-pass flow
 - `modules/rootsignal-graph/tests/pipeline_test.rs` — NEW: end-to-end tests
 
 **Tasks:**
-- [ ] Implement `Pipeline::process()` — reducer.reduce → enrich → reducer.reduce
+- [ ] Implement `Pipeline::process()` — reducer.apply_batch → enrich
 - [ ] Implement `Pipeline::rebuild()` — wipe + replay + enrich
 - [ ] Implement `Pipeline::replay_from()` — incremental replay + enrich
-- [ ] Implement enrichment event persistence (append to EventStore with actor="enricher")
-- [ ] Implement replay filtering (skip enrichment events, recompute fresh)
 - [ ] Migrate call sites to use `Pipeline` (wraps existing `GraphReducer`)
 - [ ] Write end-to-end test: events → pipeline → graph state matches expectations
-- [ ] Write test: replay produces identical graph
-- [ ] Write test: enrichment events are persisted and filtered on replay
+- [ ] Write test: replay produces identical graph (same events → same factual + derived properties)
 
 ## Acceptance Criteria
 
 ### Functional
-- [ ] `EmbeddingStore` caches embeddings in Postgres with get-or-compute semantics
-- [ ] Reducer uses `EmbeddingStore` to write embeddings to graph nodes
-- [ ] `enrich()` reads graph and emits `DiversityComputed`, `CauseHeatComputed`, `ActorStatsComputed` events
-- [ ] Enrichment events flow through the reducer (depth = 1)
+- [x] `EmbeddingStore` caches embeddings in Postgres with get-or-compute semantics
+- [ ] `enrich()` reads graph and writes diversity, cause_heat, signal_count directly to Neo4j
 - [ ] `ActorIdentified` no longer increments `signal_count` — computed by enrichment
-- [ ] Pipeline orchestrates the full cycle: reducer → enrich → reducer
+- [ ] Pipeline orchestrates: reducer(events) → enrich(graph)
+- [ ] Enrichment properties are never set by the reducer (enforced by contract tests)
 
 ### Quality Gates
-- [ ] Replay test: same events produce identical graph
+- [ ] Replay test: same events produce identical graph (factual + derived properties)
 - [ ] All tests follow MOCK → FUNCTION → OUTPUT pattern
 - [ ] Test names describe behavior, not implementation
 
@@ -337,6 +234,7 @@ Wire reducer + enrich into a Pipeline struct that orchestrates the two-pass flow
 - SIMILAR_TO edge rebuilding (separate enrichment pass, not in scope)
 - EmbeddingStore backfill from existing Neo4j data (migration script, separate)
 - Real-time NOTIFY subscription for enrichment triggering (future)
+- Enrichment results as Event variants (derived metrics don't belong in the event log)
 
 ## Dependencies & Risks
 

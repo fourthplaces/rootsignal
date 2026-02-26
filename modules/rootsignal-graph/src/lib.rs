@@ -4,6 +4,7 @@ pub mod cached_reader;
 pub mod cause_heat;
 pub mod client;
 pub mod embedding_store;
+pub mod enrich;
 pub mod migrate;
 pub mod reader;
 pub mod response;
@@ -28,6 +29,7 @@ pub use situation_weaver::SituationWeaver;
 pub use story_weaver::StoryWeaver;
 pub use synthesizer::Synthesizer;
 pub use embedding_store::EmbeddingStore;
+pub use enrich::{enrich, EnrichStats};
 pub use reducer::{ApplyResult, GraphReducer};
 pub use writer::{
     ConsolidationStats, DuplicateMatch, EvidenceSummary, ExtractionYield, GapTypeStats,
