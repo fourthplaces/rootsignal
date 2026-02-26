@@ -23,6 +23,9 @@ anyhow = { workspace = true }
 schemars = { workspace = true }
 url = "2"
 arc-swap = "1"
+sqlx = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
 geohash = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }

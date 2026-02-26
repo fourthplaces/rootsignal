@@ -1474,6 +1474,14 @@ pub trait TextEmbedder: Send + Sync {
     async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 
+// --- EmbeddingLookup trait (get-or-compute cache interface) ---
+
+#[async_trait::async_trait]
+pub trait EmbeddingLookup: Send + Sync {
+    /// Get an embedding for the given text. Cache hit = instant. Miss = compute + store.
+    async fn get(&self, text: &str) -> Result<Vec<f32>>;
+}
+
 // --- Situation Types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
