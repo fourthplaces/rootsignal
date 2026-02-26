@@ -3,6 +3,8 @@ pub mod error;
 pub mod events;
 pub mod quality;
 pub mod safety;
+pub mod system_events;
+pub mod telemetry_events;
 pub mod types;
 
 pub use config::Config;

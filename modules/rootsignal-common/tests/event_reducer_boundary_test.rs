@@ -9,7 +9,7 @@
 
 use chrono::Utc;
 use rootsignal_common::events::{
-    Event, GatheringCorrection, SourceChange, SituationChange, TagFact,
+    Event, GatheringCorrection, SourceChange, SituationChange,
 };
 use rootsignal_common::types::*;
 use rootsignal_common::safety::SensitivityLevel;
@@ -49,13 +49,10 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "source_registered",
     "source_changed",
     "source_deactivated",
-    "source_removed",
-    "source_scrape_recorded",
     // Actors
     "actor_identified",
     "actor_linked_to_entity",
     "actor_linked_to_source",
-    "actor_stats_updated",
     "actor_location_identified",
     "duplicate_actors_merged",
     "orphaned_actors_cleaned",
@@ -64,12 +61,9 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "situation_changed",
     "situation_promoted",
     // Tags
-    "tags_aggregated",
     "tag_suppressed",
     "tags_merged",
     // Quality / lint
-    "lint_correction_applied",
-    "lint_rejection_issued",
     "empty_entities_cleaned",
     "fake_coordinates_nulled",
     // Pins / demand / submissions
@@ -78,6 +72,10 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "demand_received",
     "demand_aggregated",
     "submission_received",
+    // Edge facts
+    "resource_edge_created",
+    "response_linked",
+    "gravity_linked",
 ];
 
 /// Events that the reducer should ignore (observability / informational / no-ops).
@@ -93,13 +91,11 @@ const OBSERVABILITY_TYPES: &[&str] = &[
     "agent_web_searched",
     "agent_page_read",
     "agent_future_query",
-    "lint_batch_completed",
     // Informational — no graph mutation
     "observation_rejected",
     "extraction_dropped_no_date",
     "duplicate_detected",
     "expansion_query_collected",
-    "expansion_source_created",
     "source_link_discovered",
     // Non-graph artifact
     "dispatch_created",
@@ -463,7 +459,6 @@ fn reducer_skips_observability_events() {
                 | Event::AgentWebSearched { .. }
                 | Event::AgentPageRead { .. }
                 | Event::AgentFutureQuery { .. }
-                | Event::LintBatchCompleted { .. }
                 | Event::ExtractionDroppedNoDate { .. }
         );
         assert!(
@@ -551,13 +546,10 @@ fn build_all_events() -> Vec<Event> {
         Event::SourceRegistered { source_id: id, canonical_key: "x".into(), canonical_value: "y".into(), url: None, discovery_method: DiscoveryMethod::Curated, weight: 0.5, source_role: SourceRole::Mixed, gap_context: None },
         Event::SourceChanged { source_id: id, canonical_key: "x".into(), change: SourceChange::Weight { old: 0.5, new: 0.8 } },
         Event::SourceDeactivated { source_ids: vec![id], reason: "empty".into() },
-        Event::SourceRemoved { source_id: id, canonical_key: "x".into() },
-        Event::SourceScrapeRecorded { canonical_key: "x".into(), entities_produced: 0, scrape_count: 1, consecutive_empty_runs: 0 },
         Event::SourceLinkDiscovered { child_id: id, parent_canonical_key: "x".into() },
         Event::ExpansionQueryCollected { query: "x".into(), source_url: "y".into() },
-        Event::ExpansionSourceCreated { canonical_key: "x".into(), query: "y".into(), source_url: "z".into() },
         // Actors
-        Event::ActorIdentified { actor_id: id, name: "x".into(), actor_type: ActorType::Organization, entity_id: "y".into(), domains: vec![], social_urls: vec![], description: "z".into() },
+        Event::ActorIdentified { actor_id: id, name: "x".into(), actor_type: ActorType::Organization, entity_id: "y".into(), domains: vec![], social_urls: vec![], description: "z".into(), bio: None, location_lat: None, location_lng: None, location_name: None, discovery_depth: None },
         Event::ActorLinkedToEntity { actor_id: id, entity_id: id, role: "organizer".into() },
         Event::ActorLinkedToSource { actor_id: id, source_id: id },
         Event::ActorLocationIdentified { actor_id: id, location_lat: 44.9, location_lng: -93.2, location_name: Some("Minneapolis".into()) },
@@ -569,13 +561,9 @@ fn build_all_events() -> Vec<Event> {
         Event::SituationPromoted { situation_ids: vec![id] },
         Event::DispatchCreated { dispatch_id: id, situation_id: id, body: "x".into(), entity_ids: vec![], dispatch_type: DispatchType::Emergence, supersedes: None, fidelity_score: Some(0.9) },
         // Tags
-        Event::TagsAggregated { situation_id: id, tags: vec![TagFact { slug: "housing".into(), name: "Housing".into(), weight: 0.8 }] },
         Event::TagSuppressed { situation_id: id, tag_slug: "generic".into() },
         Event::TagsMerged { source_slug: "old".into(), target_slug: "new".into() },
         // Quality
-        Event::LintBatchCompleted { source_url: "x".into(), entity_count: 5, passed: 3, corrected: 1, rejected: 1 },
-        Event::LintCorrectionApplied { node_id: id, node_type: NodeType::Gathering, title: "x".into(), field: "title".into(), old_value: "old".into(), new_value: "new".into(), reason: "typo".into() },
-        Event::LintRejectionIssued { node_id: id, node_type: NodeType::Aid, title: "x".into(), reason: "spam".into() },
         Event::EmptyEntitiesCleaned { entity_ids: vec![id] },
         Event::FakeCoordinatesNulled { entity_ids: vec![id], old_coords: vec![(0.0, 0.0)] },
         // Pins / demand / submissions
@@ -584,5 +572,9 @@ fn build_all_events() -> Vec<Event> {
         Event::DemandReceived { demand_id: id, query: "food shelf".into(), center_lat: 44.9, center_lng: -93.2, radius_km: 10.0 },
         Event::DemandAggregated { created_task_ids: vec![id], consumed_demand_ids: vec![id] },
         Event::SubmissionReceived { submission_id: id, url: "https://example.com".into(), reason: Some("good source".into()), source_canonical_key: Some("example.com".into()) },
+        // Edge facts
+        Event::ResourceEdgeCreated { signal_id: id, resource_id: id, role: "requires".into(), confidence: 0.8, quantity: None, notes: None, capacity: None },
+        Event::ResponseLinked { signal_id: id, tension_id: id, strength: 0.7, explanation: "x".into() },
+        Event::GravityLinked { signal_id: id, tension_id: id, strength: 0.6, explanation: "x".into(), gathering_type: "community".into() },
     ]
 }

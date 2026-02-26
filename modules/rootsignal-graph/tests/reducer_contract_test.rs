@@ -45,13 +45,11 @@ const NOOP_EVENT_TYPES: &[&str] = &[
     "agent_web_searched",
     "agent_page_read",
     "agent_future_query",
-    "lint_batch_completed",
     // Informational — no graph mutation
     "observation_rejected",
     "extraction_dropped_no_date",
     "duplicate_detected",
     "expansion_query_collected",
-    "expansion_source_created",
     "source_link_discovered",
     // Non-graph artifact
     "dispatch_created",
@@ -86,8 +84,6 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "source_registered",
     "source_changed",
     "source_deactivated",
-    "source_removed",
-    "source_scrape_recorded",
     // Actors
     "actor_identified",
     "actor_linked_to_entity",
@@ -100,12 +96,9 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "situation_changed",
     "situation_promoted",
     // Tags
-    "tags_aggregated",
     "tag_suppressed",
     "tags_merged",
     // Quality / lint
-    "lint_correction_applied",
-    "lint_rejection_issued",
     "empty_entities_cleaned",
     "fake_coordinates_nulled",
     // Pins / demand / submissions
@@ -114,6 +107,10 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "demand_received",
     "demand_aggregated",
     "submission_received",
+    // Edge facts
+    "resource_edge_created",
+    "response_linked",
+    "gravity_linked",
 ];
 
 #[test]
@@ -303,16 +300,6 @@ fn discovery_payload_has_no_enrichment_fields() {
     assert!(payload.get("source_diversity").is_none(), "Discovery must not carry source_diversity");
 }
 
-#[test]
-fn sanitize_field_name_used_for_dynamic_fields() {
-    let source = include_str!("../src/reducer.rs");
-
-    assert!(
-        source.contains("sanitize_field_name"),
-        "Reducer must use sanitize_field_name for dynamic field names (LintCorrectionApplied)"
-    );
-}
-
 // =========================================================================
 // Helper: build one instance of every Event variant
 // =========================================================================
@@ -390,13 +377,10 @@ fn build_all_events() -> Vec<Event> {
         Event::SourceRegistered { source_id: id, canonical_key: "".into(), canonical_value: "".into(), url: None, discovery_method: DiscoveryMethod::Curated, weight: 0.5, source_role: SourceRole::Mixed, gap_context: None },
         Event::SourceChanged { source_id: id, canonical_key: "".into(), change: SourceChange::Weight { old: 0.0, new: 0.0 } },
         Event::SourceDeactivated { source_ids: vec![id], reason: "".into() },
-        Event::SourceRemoved { source_id: id, canonical_key: "".into() },
-        Event::SourceScrapeRecorded { canonical_key: "".into(), entities_produced: 0, scrape_count: 1, consecutive_empty_runs: 1 },
         Event::SourceLinkDiscovered { child_id: id, parent_canonical_key: "".into() },
         Event::ExpansionQueryCollected { query: "".into(), source_url: "".into() },
-        Event::ExpansionSourceCreated { canonical_key: "".into(), query: "".into(), source_url: "".into() },
         // Actors
-        Event::ActorIdentified { actor_id: id, name: "".into(), actor_type: ActorType::Organization, entity_id: "".into(), domains: vec![], social_urls: vec![], description: "".into() },
+        Event::ActorIdentified { actor_id: id, name: "".into(), actor_type: ActorType::Organization, entity_id: "".into(), domains: vec![], social_urls: vec![], description: "".into(), bio: None, location_lat: None, location_lng: None, location_name: None, discovery_depth: None },
         Event::ActorLinkedToEntity { actor_id: id, entity_id: id, role: "".into() },
         Event::ActorLinkedToSource { actor_id: id, source_id: id },
         Event::ActorLocationIdentified { actor_id: id, location_lat: 0.0, location_lng: 0.0, location_name: None },
@@ -408,13 +392,9 @@ fn build_all_events() -> Vec<Event> {
         Event::SituationPromoted { situation_ids: vec![id] },
         Event::DispatchCreated { dispatch_id: id, situation_id: id, body: "".into(), entity_ids: vec![], dispatch_type: DispatchType::Update, supersedes: None, fidelity_score: None },
         // Tags
-        Event::TagsAggregated { situation_id: id, tags: vec![] },
         Event::TagSuppressed { situation_id: id, tag_slug: "".into() },
         Event::TagsMerged { source_slug: "".into(), target_slug: "".into() },
         // Quality / lint
-        Event::LintBatchCompleted { source_url: "".into(), entity_count: 0, passed: 0, corrected: 0, rejected: 0 },
-        Event::LintCorrectionApplied { node_id: id, node_type: NodeType::Gathering, title: "".into(), field: "".into(), old_value: "".into(), new_value: "".into(), reason: "".into() },
-        Event::LintRejectionIssued { node_id: id, node_type: NodeType::Gathering, title: "".into(), reason: "".into() },
         Event::EmptyEntitiesCleaned { entity_ids: vec![] },
         Event::FakeCoordinatesNulled { entity_ids: vec![], old_coords: vec![] },
         // Pins / demand / submissions
@@ -423,5 +403,9 @@ fn build_all_events() -> Vec<Event> {
         Event::DemandReceived { demand_id: id, query: "".into(), center_lat: 0.0, center_lng: 0.0, radius_km: 0.0 },
         Event::DemandAggregated { created_task_ids: vec![], consumed_demand_ids: vec![] },
         Event::SubmissionReceived { submission_id: id, url: "".into(), reason: None, source_canonical_key: None },
+        // Edge facts
+        Event::ResourceEdgeCreated { signal_id: id, resource_id: id, role: "requires".into(), confidence: 0.8, quantity: None, notes: None, capacity: None },
+        Event::ResponseLinked { signal_id: id, tension_id: id, strength: 0.7, explanation: "".into() },
+        Event::GravityLinked { signal_id: id, tension_id: id, strength: 0.6, explanation: "".into(), gathering_type: "community".into() },
     ]
 }

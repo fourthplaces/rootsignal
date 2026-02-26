@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::events::{Event, Location, Schedule, TagFact};
+use rootsignal_common::events::{Event, Location, Schedule};
 use rootsignal_common::types::{
     ActorNode, EvidenceNode, GeoPoint, Node, NodeType, SourceNode,
 };
@@ -248,29 +248,6 @@ impl EventSourcedStore {
         }
     }
 
-    /// Read current scrape_count and consecutive_empty_runs from the graph.
-    ///
-    /// Same read-then-write pattern as `read_corroboration_count`.
-    async fn read_source_scrape_stats(&self, canonical_key: &str) -> Result<(u32, u32)> {
-        let q = rootsignal_graph::query(
-            "MATCH (s:Source {canonical_key: $key}) RETURN s.scrape_count AS sc, s.consecutive_empty_runs AS cer"
-        )
-        .param("key", canonical_key);
-
-        let graph = self.writer.client().inner();
-        let mut stream = match graph.execute(q).await {
-            Ok(s) => s,
-            Err(_) => return Ok((0, 0)),
-        };
-        if let Some(row) = stream.next().await? {
-            let sc: i64 = row.get("sc").unwrap_or(0);
-            let cer: i64 = row.get("cer").unwrap_or(0);
-            Ok((sc as u32, cer as u32))
-        } else {
-            Ok((0, 0))
-        }
-    }
-
     /// Append an event and project it to the graph.
     async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
         let mut append = AppendEvent::new(event.event_type(), event.to_payload())
@@ -472,8 +449,17 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
-        let event = Event::SignalLinkedToSource { signal_id, source_id };
-        self.append_and_project(&event, None).await
+        // Derivable from source_url in discovery payloads — write PRODUCED_BY edge directly.
+        let q = rootsignal_graph::query(
+            "MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+             MATCH (s:Source {id: $source_id})
+             MERGE (n)-[:PRODUCED_BY]->(s)"
+        )
+        .param("signal_id", signal_id.to_string())
+        .param("source_id", source_id.to_string());
+
+        self.writer.client().inner().run(q).await?;
+        Ok(())
     }
 
     async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>> {
@@ -612,23 +598,10 @@ impl SignalStore for EventSourcedStore {
         &self,
         canonical_key: &str,
         signals_produced: u32,
-        _now: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> Result<()> {
-        let (scrape_count, consecutive_empty_runs) =
-            self.read_source_scrape_stats(canonical_key).await?;
-        let new_scrape_count = scrape_count + 1;
-        let new_consecutive_empty_runs = if signals_produced > 0 {
-            0
-        } else {
-            consecutive_empty_runs + 1
-        };
-        let event = Event::SourceScrapeRecorded {
-            canonical_key: canonical_key.to_string(),
-            entities_produced: signals_produced,
-            scrape_count: new_scrape_count,
-            consecutive_empty_runs: new_consecutive_empty_runs,
-        };
-        self.append_and_project(&event, None).await
+        // Derivable from discovery events per source — write scrape stats directly.
+        Ok(self.writer.record_source_scrape(canonical_key, signals_produced, now).await?)
     }
 
     async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {
@@ -761,19 +734,27 @@ impl SignalStore for EventSourcedStore {
         if tag_slugs.is_empty() {
             return Ok(());
         }
-        let tags = tag_slugs
-            .iter()
-            .map(|slug| TagFact {
-                slug: slug.clone(),
-                name: slug.replace('-', " "),
-                weight: 1.0,
-            })
-            .collect();
-        let event = Event::TagsAggregated {
-            situation_id: signal_id,
-            tags,
-        };
-        self.append_and_project(&event, None).await
+        // Computed roll-up — write Tag nodes and TAGGED edges directly.
+        let graph = self.writer.client().inner();
+        for slug in tag_slugs {
+            let name = slug.replace('-', " ");
+            let q = rootsignal_graph::query(
+                "MATCH (s)
+                 WHERE s.id = $signal_id
+                   AND (s:Story OR s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
+                 MERGE (t:Tag {slug: $slug})
+                 ON CREATE SET t.name = $name
+                 MERGE (s)-[r:TAGGED]->(t)
+                 SET r.weight = $weight"
+            )
+            .param("signal_id", signal_id.to_string())
+            .param("slug", slug.as_str())
+            .param("name", name.as_str())
+            .param("weight", 1.0_f64);
+
+            graph.run(q).await?;
+        }
+        Ok(())
     }
 
     // --- Actor location enrichment (pass through) ---

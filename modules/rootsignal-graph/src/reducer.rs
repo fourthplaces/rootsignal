@@ -71,8 +71,7 @@ impl GraphProjector {
             | Event::BootstrapCompleted { .. }
             | Event::AgentWebSearched { .. }
             | Event::AgentPageRead { .. }
-            | Event::AgentFutureQuery { .. }
-            | Event::LintBatchCompleted { .. } => {
+            | Event::AgentFutureQuery { .. } => {
                 debug!(seq = event.seq, event_type = event.event_type, "No-op (observability)");
                 Ok(ApplyResult::NoOp)
             }
@@ -82,7 +81,6 @@ impl GraphProjector {
             | Event::ExtractionDroppedNoDate { .. }
             | Event::DuplicateDetected { .. }
             | Event::ExpansionQueryCollected { .. }
-            | Event::ExpansionSourceCreated { .. }
             | Event::SourceLinkDiscovered { .. } => {
                 debug!(seq = event.seq, event_type = event.event_type, "No-op (informational)");
                 Ok(ApplyResult::NoOp)
@@ -346,15 +344,18 @@ impl GraphProjector {
             Event::EntityExpired {
                 entity_id,
                 node_type,
-                ..
+                reason,
             } => {
                 let label = node_type_label(node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
-                     OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-                     DETACH DELETE n, ev"
+                     SET n.expired = true,
+                         n.expired_at = datetime($ts),
+                         n.expired_reason = $reason"
                 ))
-                .param("id", entity_id.to_string());
+                .param("id", entity_id.to_string())
+                .param("ts", format_dt_from_stored(event))
+                .param("reason", reason.as_str());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -576,51 +577,9 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            Event::SourceRemoved { canonical_key, .. } => {
-                let q = query(
-                    "MATCH (s:Source {canonical_key: $key})
-                     DETACH DELETE s"
-                )
-                .param("key", canonical_key.as_str());
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            Event::SourceScrapeRecorded {
-                canonical_key,
-                entities_produced,
-                scrape_count,
-                consecutive_empty_runs,
-            } => {
-                let q = if entities_produced > 0 {
-                    query(
-                        "MATCH (s:Source {canonical_key: $key})
-                         SET s.last_scraped = datetime($ts),
-                             s.last_produced_signal = datetime($ts),
-                             s.signals_produced = s.signals_produced + $count,
-                             s.consecutive_empty_runs = 0,
-                             s.scrape_count = $scrape_count"
-                    )
-                    .param("count", entities_produced as i64)
-                } else {
-                    query(
-                        "MATCH (s:Source {canonical_key: $key})
-                         SET s.last_scraped = datetime($ts),
-                             s.consecutive_empty_runs = $empty_runs,
-                             s.scrape_count = $scrape_count"
-                    )
-                    .param("empty_runs", consecutive_empty_runs as i64)
-                };
-
-                let q = q
-                    .param("key", canonical_key.as_str())
-                    .param("ts", format_dt_from_stored(event))
-                    .param("scrape_count", scrape_count as i64);
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
+            // NOTE: SourceRemoved and SourceScrapeRecorded removed (Phase 1 cleanup).
+            // SourceRemoved was redundant with SourceDeactivated.
+            // SourceScrapeRecorded is derivable; writes go through GraphWriter directly.
 
             // =================================================================
             // Actor facts
@@ -901,29 +860,8 @@ impl GraphProjector {
             // =================================================================
             // Tag facts
             // =================================================================
-            Event::TagsAggregated {
-                situation_id,
-                tags,
-            } => {
-                for tag in &tags {
-                    let q = query(
-                        "MATCH (s)
-                         WHERE s.id = $situation_id
-                           AND (s:Story OR s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
-                         MERGE (t:Tag {slug: $slug})
-                         ON CREATE SET t.name = $name
-                         MERGE (s)-[r:TAGGED]->(t)
-                         SET r.weight = $weight"
-                    )
-                    .param("situation_id", situation_id.to_string())
-                    .param("slug", tag.slug.as_str())
-                    .param("name", tag.name.as_str())
-                    .param("weight", tag.weight);
-
-                    self.client.graph.run(q).await?;
-                }
-                Ok(ApplyResult::Applied)
-            }
+            // NOTE: TagsAggregated removed (Phase 1 cleanup).
+            // Tag writes go through GraphWriter directly.
 
             Event::TagSuppressed {
                 situation_id,
@@ -961,44 +899,8 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            // =================================================================
-            // Quality / lint facts (graph-mutating subset)
-            // =================================================================
-            Event::LintCorrectionApplied {
-                node_id,
-                node_type,
-                field,
-                new_value,
-                ..
-            } => {
-                let label = node_type_label(node_type);
-                let q = query(&format!(
-                    "MATCH (n:{label} {{id: $id}})
-                     SET n.{} = $value",
-                    sanitize_field_name(&field)
-                ))
-                .param("id", node_id.to_string())
-                .param("value", new_value.as_str());
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            Event::LintRejectionIssued {
-                node_id,
-                node_type,
-                ..
-            } => {
-                let label = node_type_label(node_type);
-                let q = query(&format!(
-                    "MATCH (n:{label} {{id: $id}})
-                     SET n.review_status = 'rejected'"
-                ))
-                .param("id", node_id.to_string());
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
+            // NOTE: LintCorrectionApplied and LintRejectionIssued removed (Phase 1 cleanup).
+            // Redundant with typed *Corrected events and ObservationRejected.
 
             Event::EmptyEntitiesCleaned { entity_ids } => {
                 let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
@@ -1153,24 +1055,8 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            // =================================================================
-            // Signal-source linkage
-            // =================================================================
-            Event::SignalLinkedToSource {
-                signal_id,
-                source_id,
-            } => {
-                let q = query(
-                    "MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-                     MATCH (s:Source {id: $source_id})
-                     MERGE (n)-[:PRODUCED_BY]->(s)"
-                )
-                .param("signal_id", signal_id.to_string())
-                .param("source_id", source_id.to_string());
-
-                self.client.graph.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
+            // NOTE: SignalLinkedToSource removed (Phase 1 cleanup).
+            // Derivable from source_url in discovery payloads; writes go through GraphWriter directly.
 
             // =================================================================
             // Edge facts — resource and relationship edges
@@ -1527,10 +1413,3 @@ fn severity_str(s: rootsignal_common::types::Severity) -> &'static str {
     }
 }
 
-/// Sanitize a field name to prevent Cypher injection.
-/// Only used by LintCorrectionApplied which has dynamic field names.
-fn sanitize_field_name(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_')
-        .collect()
-}

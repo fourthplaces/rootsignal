@@ -3548,6 +3548,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "regex",
+ "rootsignal-world",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -3587,6 +3588,7 @@ dependencies = [
  "neo4rs",
  "rootsignal-common",
  "rootsignal-events",
+ "rootsignal-world",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -3660,6 +3662,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "rootsignal-world"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

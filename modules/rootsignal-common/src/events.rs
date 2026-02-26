@@ -13,61 +13,22 @@ use uuid::Uuid;
 
 use crate::safety::SensitivityLevel;
 use crate::types::{
-    ActorType, ChannelType, DiscoveryMethod, DispatchType, GeoPoint, NodeType, Severity,
-    SituationArc, SourceRole, Urgency,
+    ActorType, ChannelType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc,
+    SourceRole, Urgency,
 };
 
 // ---------------------------------------------------------------------------
-// Value types — reusable structs for event payloads
+// Value types — re-exported from rootsignal-world
 // ---------------------------------------------------------------------------
 
-/// When something happens. Enough to put it on a calendar.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Schedule {
-    /// Start of the first/next occurrence (None = unknown)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub starts_at: Option<DateTime<Utc>>,
-    /// End of the occurrence (None = open-ended or unknown)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ends_at: Option<DateTime<Utc>>,
-    /// True if this is a whole-day event (ignore time component of starts_at/ends_at)
-    #[serde(default)]
-    pub all_day: bool,
-    /// RFC 5545 recurrence rule (e.g. "FREQ=WEEKLY;BYDAY=SA")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rrule: Option<String>,
-    /// IANA timezone (e.g. "America/Chicago") for local time rendering
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-}
-
-/// Where something is. Enough to put it on a map and give directions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Location {
-    /// Coordinates with precision level
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub point: Option<GeoPoint>,
-    /// Human-readable name (e.g. "Lake Harriet Bandshell")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Street address if known
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
-}
-
-/// A tag with its computed weight.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagFact {
-    pub slug: String,
-    pub name: String,
-    pub weight: f64,
-}
+pub use rootsignal_world::values::{Location, Schedule, TagFact};
 
 // ---------------------------------------------------------------------------
 // Nested change enums — typed field mutations
 // ---------------------------------------------------------------------------
 
-/// A typed change to a Source entity.
+/// A typed change to a Source entity (legacy — includes both world + system fields).
+/// Kept for backward compat with existing events in Postgres.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum SourceChange {
@@ -77,6 +38,14 @@ pub enum SourceChange {
     QualityPenalty { old: f64, new: f64 },
     GapContext { old: Option<String>, new: Option<String> },
     Active { old: bool, new: bool },
+}
+
+/// System-layer source changes — editorial decisions about a source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "field", content = "value", rename_all = "snake_case")]
+pub enum SystemSourceChange {
+    QualityPenalty { old: f64, new: f64 },
+    GapContext { old: Option<String>, new: Option<String> },
 }
 
 /// A typed change to a Situation entity.
@@ -510,30 +479,12 @@ pub enum Event {
         reason: String,
     },
 
-    SourceRemoved {
-        source_id: Uuid,
-        canonical_key: String,
-    },
-
-    SourceScrapeRecorded {
-        canonical_key: String,
-        entities_produced: u32,
-        scrape_count: u32,
-        consecutive_empty_runs: u32,
-    },
-
     SourceLinkDiscovered {
         child_id: Uuid,
         parent_canonical_key: String,
     },
 
     ExpansionQueryCollected {
-        query: String,
-        source_url: String,
-    },
-
-    ExpansionSourceCreated {
-        canonical_key: String,
         query: String,
         source_url: String,
     },
@@ -627,11 +578,6 @@ pub enum Event {
     // -----------------------------------------------------------------------
     // Tag facts
     // -----------------------------------------------------------------------
-    TagsAggregated {
-        situation_id: Uuid,
-        tags: Vec<TagFact>,
-    },
-
     TagSuppressed {
         situation_id: Uuid,
         tag_slug: String,
@@ -645,31 +591,6 @@ pub enum Event {
     // -----------------------------------------------------------------------
     // Quality / lint facts
     // -----------------------------------------------------------------------
-    LintBatchCompleted {
-        source_url: String,
-        entity_count: u32,
-        passed: u32,
-        corrected: u32,
-        rejected: u32,
-    },
-
-    LintCorrectionApplied {
-        node_id: Uuid,
-        node_type: NodeType,
-        title: String,
-        field: String,
-        old_value: String,
-        new_value: String,
-        reason: String,
-    },
-
-    LintRejectionIssued {
-        node_id: Uuid,
-        node_type: NodeType,
-        title: String,
-        reason: String,
-    },
-
     EmptyEntitiesCleaned {
         entity_ids: Vec<Uuid>,
     },
@@ -712,14 +633,6 @@ pub enum Event {
         url: String,
         reason: Option<String>,
         source_canonical_key: Option<String>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Signal-source linkage facts
-    // -----------------------------------------------------------------------
-    SignalLinkedToSource {
-        signal_id: Uuid,
-        source_id: Uuid,
     },
 
     // -----------------------------------------------------------------------
@@ -804,11 +717,8 @@ impl Event {
             Event::SourceRegistered { .. } => "source_registered",
             Event::SourceChanged { .. } => "source_changed",
             Event::SourceDeactivated { .. } => "source_deactivated",
-            Event::SourceRemoved { .. } => "source_removed",
-            Event::SourceScrapeRecorded { .. } => "source_scrape_recorded",
             Event::SourceLinkDiscovered { .. } => "source_link_discovered",
             Event::ExpansionQueryCollected { .. } => "expansion_query_collected",
-            Event::ExpansionSourceCreated { .. } => "expansion_source_created",
             // Actors
             Event::ActorIdentified { .. } => "actor_identified",
             Event::ActorLinkedToEntity { .. } => "actor_linked_to_entity",
@@ -822,13 +732,9 @@ impl Event {
             Event::SituationPromoted { .. } => "situation_promoted",
             Event::DispatchCreated { .. } => "dispatch_created",
             // Tags
-            Event::TagsAggregated { .. } => "tags_aggregated",
             Event::TagSuppressed { .. } => "tag_suppressed",
             Event::TagsMerged { .. } => "tags_merged",
             // Quality / lint
-            Event::LintBatchCompleted { .. } => "lint_batch_completed",
-            Event::LintCorrectionApplied { .. } => "lint_correction_applied",
-            Event::LintRejectionIssued { .. } => "lint_rejection_issued",
             Event::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
             Event::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
             // Pins / demand / submissions
@@ -838,7 +744,6 @@ impl Event {
             Event::DemandAggregated { .. } => "demand_aggregated",
             Event::SubmissionReceived { .. } => "submission_received",
             // Signal-source linkage
-            Event::SignalLinkedToSource { .. } => "signal_linked_to_source",
             // Edge facts
             Event::ResourceEdgeCreated { .. } => "resource_edge_created",
             Event::ResponseLinked { .. } => "response_linked",
@@ -887,7 +792,7 @@ mod tests {
             extracted_at: Utc::now(),
             content_date: Some(Utc::now()),
             location: Some(Location {
-                point: Some(GeoPoint {
+                point: Some(crate::types::GeoPoint {
                     lat: 44.9778,
                     lng: -93.265,
                     precision: crate::types::GeoPrecision::Neighborhood,

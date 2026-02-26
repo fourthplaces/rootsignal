@@ -1,5 +1,5 @@
 [package]
-name = "rootsignal-common"
+name = "rootsignal-world"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,9 +10,3 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-regex = { workspace = true }
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-rootsignal-world = { workspace = true }
