@@ -325,10 +325,16 @@ impl<'a> ResponseFinder<'a> {
         let claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
                 archive: self.archive.clone(),
+                run_log: None,
+                agent_name: String::new(),
+                tension_title: String::new(),
             })
             .tool(ReadPageTool {
                 archive: self.archive.clone(),
                 visited_urls: Some(visited.clone()),
+                run_log: None,
+                agent_name: String::new(),
+                tension_title: String::new(),
             });
         (claude, visited)
     }

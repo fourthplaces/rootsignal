@@ -120,6 +120,35 @@ pub async fn write_task_phase_status(deps: &ScoutDeps, task_id: &str, status: &s
     }
 }
 
+/// Standard retry policy for durable workflow side-effects.
+pub fn phase_retry_policy() -> RunRetryPolicy {
+    RunRetryPolicy::new()
+        .initial_delay(std::time::Duration::from_secs(5))
+        .exponentiation_factor(2.0)
+        .max_attempts(3)
+}
+
+/// Write task phase status as a journaled side-effect (skipped on replay).
+pub async fn journaled_write_task_phase_status(
+    ctx: &WorkflowContext<'_>,
+    deps: &ScoutDeps,
+    task_id: &str,
+    status: &str,
+) -> Result<(), HandlerError> {
+    let graph_client = deps.graph_client.clone();
+    let tid = task_id.to_string();
+    let st = status.to_string();
+    ctx.run::<_, _, ()>(|| async move {
+        let writer = rootsignal_graph::GraphWriter::new(graph_client);
+        if let Err(e) = writer.set_task_phase_status(&tid, &st).await {
+            tracing::warn!(%e, task_id = %tid, status = %st, "Failed to write task phase status");
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
 /// Read the `"status"` key from Restate workflow state. Returns `"pending"` if unset.
 ///
 /// Every workflow exposes a `get_status` shared handler with identical logic;

@@ -31,7 +31,7 @@ use crate::pipeline::extractor::SignalExtractor;
 use crate::pipeline::expansion::Expansion;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
 use crate::scheduling::metrics::Metrics;
-use crate::infra::run_log::{EventKind, RunLog};
+use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::pipeline::stats::ScoutStats;
 use crate::discovery::source_finder::SourceFinderStats;
@@ -112,7 +112,7 @@ impl<'a> ScrapePipeline<'a> {
     }
 
     /// Remove stale signals from the graph.
-    pub async fn reap_expired_signals(&self, run_log: &mut RunLog) {
+    pub async fn reap_expired_signals(&self, run_log: &RunLogger) {
         info!("Reaping expired signals...");
         match self.store.reap_expired().await {
             Ok(reap) => {
@@ -138,7 +138,7 @@ impl<'a> ScrapePipeline<'a> {
     /// Returns the ScheduledRun and RunContext needed by subsequent phases.
     pub(crate) async fn load_and_schedule_sources(
         &self,
-        run_log: &mut RunLog,
+        run_log: &RunLogger,
     ) -> Result<(ScheduledRun, RunContext)> {
         let mut all_sources = match self.writer.get_sources_for_region(
             self.region.center_lat,
@@ -376,7 +376,7 @@ impl<'a> ScrapePipeline<'a> {
         &self,
         run: &ScheduledRun,
         ctx: &mut RunContext,
-        run_log: &mut RunLog,
+        run_log: &RunLogger,
     ) {
         info!("=== Phase A: Find Problems ===");
         let phase_a_sources: Vec<&SourceNode> = run.scheduled_sources
@@ -428,7 +428,7 @@ impl<'a> ScrapePipeline<'a> {
         run: &ScheduledRun,
         social_topics: Vec<String>,
         ctx: &mut RunContext,
-        run_log: &mut RunLog,
+        run_log: &RunLogger,
     ) -> Result<()> {
         info!("=== Phase B: Find Responses ===");
 
@@ -518,7 +518,7 @@ impl<'a> ScrapePipeline<'a> {
         &self,
         run: &ScheduledRun,
         ctx: &mut RunContext,
-        run_log: &mut RunLog,
+        run_log: &RunLogger,
     ) -> Result<()> {
         // Signal Expansion — create sources from implied queries
         let expansion = Expansion::new(
@@ -555,12 +555,12 @@ impl<'a> ScrapePipeline<'a> {
     }
 
     /// Save run log and return final stats.
-    pub(crate) async fn finalize(&self, ctx: RunContext, mut run_log: RunLog) -> ScoutStats {
+    pub(crate) async fn finalize(&self, ctx: RunContext, run_log: RunLogger) -> ScoutStats {
         run_log.log(EventKind::BudgetCheckpoint {
             spent_cents: self.budget.total_spent(),
             remaining_cents: self.budget.remaining(),
         });
-        if let Err(e) = run_log.save_to_db(&self.pg_pool, &ctx.stats).await {
+        if let Err(e) = run_log.save_stats(&self.pg_pool, &ctx.stats).await {
             warn!(error = %e, "Failed to save scout run log");
         }
 
@@ -570,19 +570,19 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Run all phases in sequence.
     pub async fn run_all(self) -> Result<ScoutStats> {
-        let mut run_log = RunLog::new(self.run_id.clone(), self.region.name.clone());
+        let run_log = RunLogger::new(self.run_id.clone(), self.region.name.clone(), self.pg_pool.clone()).await;
 
-        self.reap_expired_signals(&mut run_log).await;
+        self.reap_expired_signals(&run_log).await;
 
-        let (run, mut ctx) = self.load_and_schedule_sources(&mut run_log).await?;
+        let (run, mut ctx) = self.load_and_schedule_sources(&run_log).await?;
 
-        self.scrape_tension_sources(&run, &mut ctx, &mut run_log).await;
+        self.scrape_tension_sources(&run, &mut ctx, &run_log).await;
         check_cancelled_flag(&self.cancelled)?;
 
         let (_, social_topics) = self.discover_mid_run_sources().await;
         check_cancelled_flag(&self.cancelled)?;
 
-        self.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
+        self.scrape_response_sources(&run, social_topics, &mut ctx, &run_log).await?;
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
@@ -638,7 +638,7 @@ impl<'a> ScrapePipeline<'a> {
         self.update_source_metrics(&run, &ctx).await;
         check_cancelled_flag(&self.cancelled)?;
 
-        self.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
+        self.expand_and_discover(&run, &mut ctx, &run_log).await?;
 
         Ok(self.finalize(ctx, run_log).await)
     }

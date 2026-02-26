@@ -145,15 +145,15 @@ async fn run_scrape_from_deps(
         deps.pg_pool.clone(),
     );
 
-    let mut run_log = crate::infra::run_log::RunLog::new(run_id, scope.name.clone());
+    let run_log = crate::infra::run_log::RunLogger::new(run_id, scope.name.clone(), deps.pg_pool.clone()).await;
 
-    pipeline.reap_expired_signals(&mut run_log).await;
-    let (run, mut ctx) = pipeline.load_and_schedule_sources(&mut run_log).await?;
-    pipeline.scrape_tension_sources(&run, &mut ctx, &mut run_log).await;
+    pipeline.reap_expired_signals(&run_log).await;
+    let (run, mut ctx) = pipeline.load_and_schedule_sources(&run_log).await?;
+    pipeline.scrape_tension_sources(&run, &mut ctx, &run_log).await;
     let (_, social_topics) = pipeline.discover_mid_run_sources().await;
-    pipeline.scrape_response_sources(&run, social_topics, &mut ctx, &mut run_log).await?;
+    pipeline.scrape_response_sources(&run, social_topics, &mut ctx, &run_log).await?;
     pipeline.update_source_metrics(&run, &ctx).await;
-    pipeline.expand_and_discover(&run, &mut ctx, &mut run_log).await?;
+    pipeline.expand_and_discover(&run, &mut ctx, &run_log).await?;
 
     let stats = pipeline.finalize(ctx, run_log).await;
 

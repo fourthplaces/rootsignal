@@ -24,7 +24,7 @@ use crate::enrichment::link_promoter::{self, CollectedLink};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
 use crate::enrichment::quality;
-use crate::infra::run_log::{EventKind, RunLog};
+use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::pipeline::stats::ScoutStats;
 use crate::infra::util::{content_hash, sanitize_url};
 
@@ -365,7 +365,7 @@ impl ScrapePhase {
     ///
     /// Query API errors are inserted into `ctx.query_api_errors`. These queries
     /// should NOT be counted as empty scrapes — the query was never executed.
-    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
+    pub async fn run_web(&self, sources: &[&SourceNode], ctx: &mut RunContext, run_log: &RunLogger) {
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
@@ -726,7 +726,7 @@ impl ScrapePhase {
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
-    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext, run_log: &mut RunLog) {
+    pub async fn run_social(&self, social_sources: &[&SourceNode], ctx: &mut RunContext, run_log: &RunLogger) {
         type SocialResult = Option<(
             String,
             String,
@@ -1103,7 +1103,7 @@ impl ScrapePhase {
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
     /// across Instagram, X/Twitter, TikTok, and GoFundMe.
-    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext, run_log: &mut RunLog) {
+    pub async fn discover_from_topics(&self, topics: &[String], ctx: &mut RunContext, run_log: &RunLogger) {
         const MAX_SOCIAL_SEARCHES: usize = 10;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
@@ -1423,7 +1423,7 @@ impl ScrapePhase {
         signal_tags: Vec<(Uuid, Vec<String>)>,
         ctx: &mut RunContext,
         known_urls: &HashSet<String>,
-        run_log: &mut RunLog,
+        run_log: &RunLogger,
         source_id: Option<Uuid>,
     ) -> Result<()> {
         let url = sanitize_url(url);

@@ -1501,9 +1501,9 @@ pub fn archived_page(url: &str, markdown: &str) -> ArchivedPage {
     }
 }
 
-/// Create a RunLog for tests (encapsulates "test-run" and "Minneapolis").
-pub fn run_log() -> crate::infra::run_log::RunLog {
-    crate::infra::run_log::RunLog::new("test-run".to_string(), "Minneapolis".to_string())
+/// Create a RunLogger for tests (encapsulates "test-run" and "Minneapolis").
+pub fn run_log() -> crate::infra::run_log::RunLogger {
+    crate::infra::run_log::RunLogger::noop()
 }
 
 /// Create a minimal ArchivedSearchResults for testing.

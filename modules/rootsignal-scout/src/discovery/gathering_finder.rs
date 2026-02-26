@@ -293,10 +293,16 @@ impl<'a> GatheringFinder<'a> {
         let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
             .tool(WebSearchTool {
                 archive: archive.clone(),
+                run_log: None,
+                agent_name: String::new(),
+                tension_title: String::new(),
             })
             .tool(ReadPageTool {
                 archive: archive.clone(),
                 visited_urls: None,
+                run_log: None,
+                agent_name: String::new(),
+                tension_title: String::new(),
             });
 
         let lat_delta = region.radius_km / 111.0;

@@ -11,7 +11,7 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::run_log::{EventKind, RunLog};
+use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::pipeline::scrape_phase::RunContext;
 
 // --- Constants ---
@@ -48,7 +48,7 @@ impl<'a> Expansion<'a> {
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
     /// 3. Create new WebQuery sources for surviving queries
-    pub async fn run(&self, ctx: &mut RunContext, run_log: &mut RunLog) {
+    pub async fn run(&self, ctx: &mut RunContext, run_log: &RunLogger) {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         match self
