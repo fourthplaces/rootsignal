@@ -9,24 +9,32 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
+
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::traits::SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::traits::SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
-            store,
+            engine,
+            deps,
             _region_slug: region_slug,
         }
     }
@@ -44,15 +52,17 @@ impl<'a> Metrics<'a> {
         now: DateTime<Utc>,
     ) {
         // Record per-source scrape metrics. Skip queries where the search API errored.
+        let mut state = PipelineState::new(HashMap::new());
         for (canonical_key, signals_produced) in source_signal_counts {
             if query_api_errors.contains(canonical_key) {
                 continue;
             }
-            if let Err(e) = self
-                .store
-                .record_source_scrape(canonical_key, *signals_produced, now)
-                .await
-            {
+            let event = ScoutEvent::System(SystemEvent::SourceScraped {
+                canonical_key: canonical_key.clone(),
+                signals_produced: *signals_produced,
+                scraped_at: now,
+            });
+            if let Err(e) = self.engine.dispatch(event, &mut state, self.deps).await {
                 warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
             }
         }

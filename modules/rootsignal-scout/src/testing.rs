@@ -359,6 +359,81 @@ impl MockSignalStore {
         self.inner.lock().unwrap().actors.len()
     }
 
+    // --- Setup helpers (for actor tests) ---
+
+    /// Create or update an actor in the mock store (test setup only).
+    pub async fn upsert_actor(&self, actor: &ActorNode) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .actor_by_name
+            .insert(actor.name.to_lowercase(), actor.id);
+        if !actor.canonical_key.is_empty() {
+            inner
+                .actor_by_canonical_key
+                .insert(actor.canonical_key.clone(), actor.id);
+        }
+        inner.actors.insert(actor.id, actor.clone());
+        Ok(())
+    }
+
+    /// Link an actor to a signal in the mock store (test setup only).
+    pub async fn link_actor_to_signal(
+        &self,
+        actor_id: Uuid,
+        signal_id: Uuid,
+        role: &str,
+    ) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.actor_links.push(ActorLink {
+            actor_id,
+            signal_id,
+            role: role.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Insert a signal node into the mock store (test setup only).
+    pub async fn create_node(
+        &self,
+        node: &Node,
+        embedding: &[f32],
+        _created_by: &str,
+        _run_id: &str,
+    ) -> Result<Uuid> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.fail_on_create {
+            bail!("MockSignalStore: create_node forced failure");
+        }
+        let id = node.id();
+        let title = node.title().to_string();
+        let node_type = node.node_type();
+        let source_url = node
+            .meta()
+            .map(|m| m.source_url.clone())
+            .unwrap_or_default();
+        let normalized = title.trim().to_lowercase();
+
+        let meta = node.meta();
+        let stored = StoredSignal {
+            id,
+            title: title.clone(),
+            node_type,
+            source_url: source_url.clone(),
+            corroboration_count: 0,
+            embedding: embedding.to_vec(),
+            about_location: meta.and_then(|m| m.about_location),
+            from_location: meta.and_then(|m| m.from_location),
+            published_at: meta.and_then(|m| m.published_at),
+            about_location_name: meta.and_then(|m| m.about_location_name.clone()),
+            confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
+            extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
+        };
+        inner.signals.insert(id, stored);
+        inner.title_index.insert((normalized, node_type), id);
+        inner.url_titles.entry(source_url).or_default().push(title);
+        Ok(id)
+    }
+
     // --- Setup helpers (for dedup tests) ---
 
     /// Pre-populate URL→titles mapping for URL-based title dedup (Layer 2).
@@ -581,68 +656,8 @@ impl SignalStore for MockSignalStore {
             .contains(&(hash.to_string(), url.to_string())))
     }
 
-    async fn create_node(
-        &self,
-        node: &Node,
-        embedding: &[f32],
-        _created_by: &str,
-        _run_id: &str,
-    ) -> Result<Uuid> {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.fail_on_create {
-            bail!("MockSignalStore: create_node forced failure");
-        }
-        let id = node.id();
-        let title = node.title().to_string();
-        let node_type = node.node_type();
-        let source_url = node
-            .meta()
-            .map(|m| m.source_url.clone())
-            .unwrap_or_default();
-        let normalized = title.trim().to_lowercase();
-
-        let meta = node.meta();
-        let stored = StoredSignal {
-            id,
-            title: title.clone(),
-            node_type,
-            source_url: source_url.clone(),
-            corroboration_count: 0,
-            embedding: embedding.to_vec(),
-            about_location: meta.and_then(|m| m.about_location),
-            from_location: meta.and_then(|m| m.from_location),
-            published_at: meta.and_then(|m| m.published_at),
-            about_location_name: meta.and_then(|m| m.about_location_name.clone()),
-            confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
-            extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
-        };
-        inner.signals.insert(id, stored);
-        inner.title_index.insert((normalized, node_type), id);
-        inner.url_titles.entry(source_url).or_default().push(title);
-        Ok(id)
-    }
-
-    async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.evidence.push((signal_id, evidence.clone()));
-        // Track hash+url as processed
-        inner
-            .processed_hashes
-            .insert((evidence.content_hash.clone(), evidence.source_url.clone()));
-        Ok(())
-    }
-
-    async fn refresh_signal(
-        &self,
-        _id: Uuid,
-        _node_type: NodeType,
-        _now: DateTime<Utc>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn refresh_url_signals(&self, _url: &str, _now: DateTime<Utc>) -> Result<u64> {
-        Ok(0)
+    async fn signal_ids_for_url(&self, _url: &str) -> Result<Vec<(Uuid, NodeType)>> {
+        Ok(Vec::new())
     }
 
     async fn read_corroboration_count(&self, id: Uuid, _node_type: NodeType) -> Result<u32> {
@@ -697,137 +712,14 @@ impl SignalStore for MockSignalStore {
         Ok(inner.actor_by_name.get(&name.to_lowercase()).copied())
     }
 
-    async fn upsert_actor(&self, actor: &ActorNode) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .actor_by_name
-            .insert(actor.name.to_lowercase(), actor.id);
-        if !actor.canonical_key.is_empty() {
-            inner
-                .actor_by_canonical_key
-                .insert(actor.canonical_key.clone(), actor.id);
-        }
-        inner.actors.insert(actor.id, actor.clone());
-        Ok(())
-    }
-
-    async fn link_actor_to_signal(
-        &self,
-        actor_id: Uuid,
-        signal_id: Uuid,
-        role: &str,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.actor_links.push(ActorLink {
-            actor_id,
-            signal_id,
-            role: role.to_string(),
-        });
-        Ok(())
-    }
-
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.actor_by_canonical_key.get(canonical_key).copied())
     }
 
-    async fn find_or_create_resource(
-        &self,
-        _name: &str,
-        slug: &str,
-        _description: &str,
-        _embedding: &[f32],
-    ) -> Result<Uuid> {
-        let mut inner = self.inner.lock().unwrap();
-        let id = inner
-            .resources
-            .entry(slug.to_string())
-            .or_insert_with(Uuid::new_v4);
-        Ok(*id)
-    }
-
-    async fn create_requires_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        _confidence: f32,
-        _quantity: Option<&str>,
-        _notes: Option<&str>,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .resource_edges
-            .push((signal_id, resource_slug.to_string(), "requires".to_string()));
-        Ok(())
-    }
-
-    async fn create_prefers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        _confidence: f32,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .resource_edges
-            .push((signal_id, resource_slug.to_string(), "prefers".to_string()));
-        Ok(())
-    }
-
-    async fn create_offers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        _confidence: f32,
-        _capacity: Option<&str>,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .resource_edges
-            .push((signal_id, resource_slug.to_string(), "offers".to_string()));
-        Ok(())
-    }
-
-    async fn create_response_edge(
-        &self,
-        _signal_id: Uuid,
-        _tension_id: Uuid,
-        _strength: f64,
-        _explanation: &str,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn create_drawn_to_edge(
-        &self,
-        _signal_id: Uuid,
-        _tension_id: Uuid,
-        _strength: f64,
-        _explanation: &str,
-    ) -> Result<()> {
-        Ok(())
-    }
-
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.sources.values().cloned().collect())
-    }
-
-    async fn upsert_source(&self, source: &SourceNode) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .sources
-            .insert(source.canonical_value.clone(), source.clone());
-        Ok(())
-    }
-
-    async fn record_source_scrape(
-        &self,
-        _canonical_key: &str,
-        _signals_produced: u32,
-        _now: DateTime<Utc>,
-    ) -> Result<()> {
-        Ok(())
     }
 
     async fn delete_pins(&self, _pin_ids: &[Uuid]) -> Result<()> {
@@ -855,22 +747,6 @@ impl SignalStore for MockSignalStore {
             }
         }
         Ok(results)
-    }
-
-    async fn update_actor_location(
-        &self,
-        actor_id: Uuid,
-        lat: f64,
-        lng: f64,
-        name: &str,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(actor) = inner.actors.get_mut(&actor_id) {
-            actor.location_lat = Some(lat);
-            actor.location_lng = Some(lng);
-            actor.location_name = Some(name.to_string());
-        }
-        Ok(())
     }
 
     async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
@@ -1549,6 +1425,29 @@ pub fn run_log() -> crate::infra::run_log::RunLogger {
     crate::infra::run_log::RunLogger::noop()
 }
 
+/// Create a test engine with MemoryEventSink and no projector.
+pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+    std::sync::Arc::new(rootsignal_engine::Engine::new(
+        crate::pipeline::reducer::ScoutReducer,
+        crate::pipeline::router::ScoutRouter::new(None),
+        std::sync::Arc::new(rootsignal_engine::MemoryEventSink::new())
+            as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
+        "test-run".to_string(),
+    ))
+}
+
+/// Create test PipelineDeps with a given store.
+pub fn test_pipeline_deps(store: std::sync::Arc<dyn crate::traits::SignalStore>) -> crate::pipeline::state::PipelineDeps {
+    crate::pipeline::state::PipelineDeps {
+        store,
+        embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        region: None,
+        run_id: "test-run".to_string(),
+        fetcher: None,
+        anthropic_api_key: None,
+    }
+}
+
 /// Create a minimal ArchivedSearchResults for testing.
 pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
     ArchivedSearchResults {
@@ -1616,16 +1515,6 @@ mod tests {
             .await
             .unwrap();
         assert!(results.is_empty());
-    }
-
-    #[tokio::test]
-    async fn upsert_source_and_check() {
-        let store = MockSignalStore::new();
-        let source = page_source("https://localorg.org/events");
-        store.upsert_source(&source).await.unwrap();
-
-        assert!(store.has_source_url("https://localorg.org/events"));
-        assert_eq!(store.sources_promoted(), 1);
     }
 
     #[tokio::test]

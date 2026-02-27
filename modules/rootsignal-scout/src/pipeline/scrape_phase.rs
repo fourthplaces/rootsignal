@@ -22,8 +22,6 @@ use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
-use crate::pipeline::reducer::ScoutReducer;
-use crate::pipeline::router::ScoutRouter;
 use crate::pipeline::state::{ExtractedBatch, PipelineDeps, PipelineState};
 use crate::pipeline::stats::ScoutStats;
 use rootsignal_common::{
@@ -31,7 +29,7 @@ use rootsignal_common::{
     ActorType, CitationNode, DiscoveryMethod, Node, NodeType, Post, ReviewStatus, ScoutScope,
     ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
 };
-use rootsignal_engine::Engine;
+
 
 // RunContext retired — use PipelineState from crate::pipeline::state instead.
 pub(crate) use crate::pipeline::state::PipelineState as RunContext;
@@ -275,9 +273,7 @@ pub(crate) fn dedup_verdict(
 // ScrapePhase — the core scrape-extract-store-dedup pipeline
 // ---------------------------------------------------------------------------
 
-/// Type alias for the scout engine — persister is trait-erased so both
-/// EventStore (production) and MemoryEventSink (tests) work.
-type ScoutEngine = Engine<ScoutEvent, PipelineState, PipelineDeps, ScoutReducer, ScoutRouter, Arc<dyn rootsignal_engine::EventPersister>>;
+use crate::pipeline::ScoutEngine;
 
 pub(crate) struct ScrapePhase {
     store: Arc<dyn crate::traits::SignalStore>,
@@ -286,7 +282,7 @@ pub(crate) struct ScrapePhase {
     fetcher: Arc<dyn crate::traits::ContentFetcher>,
     region: ScoutScope,
     run_id: String,
-    engine: ScoutEngine,
+    engine: Arc<ScoutEngine>,
 }
 
 impl ScrapePhase {
@@ -297,15 +293,8 @@ impl ScrapePhase {
         fetcher: Arc<dyn crate::traits::ContentFetcher>,
         region: ScoutScope,
         run_id: String,
-        persister: Arc<dyn rootsignal_engine::EventPersister>,
-        projector: Option<rootsignal_graph::GraphProjector>,
+        engine: Arc<ScoutEngine>,
     ) -> Self {
-        let engine = Engine::new(
-            ScoutReducer,
-            ScoutRouter::new(projector),
-            persister,
-            run_id.clone(),
-        );
         Self {
             store,
             extractor,
@@ -327,8 +316,10 @@ impl ScrapePhase {
         let deps = PipelineDeps {
             store: self.store.clone(),
             embedder: self.embedder.clone(),
-            region: self.region.clone(),
+            region: Some(self.region.clone()),
             run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
         };
         for source in sources {
             self.engine
@@ -705,7 +696,7 @@ impl ScrapePhase {
                     }
                 }
                 ScrapeOutcome::Unchanged => {
-                    match self.store.refresh_url_signals(&url, now).await {
+                    match self.refresh_url_signals_via_engine(&url, now, ctx).await {
                         Ok(n) if n > 0 => {
                             info!(url, refreshed = n, "Refreshed unchanged signals")
                         }
@@ -1157,6 +1148,7 @@ impl ScrapePhase {
             .collect();
 
         let mut new_accounts = 0u32;
+        let mut new_sources: Vec<SourceNode> = Vec::new();
         let topic_strs: Vec<&str> = topics
             .iter()
             .take(MAX_SOCIAL_SEARCHES)
@@ -1341,20 +1333,14 @@ impl ScrapePhase {
 
                 *ctx.source_signal_counts.entry(ck).or_default() += produced;
 
-                match self.store.upsert_source(&source).await {
-                    Ok(()) => {
-                        new_accounts += 1;
-                        info!(
-                            username,
-                            platform = platform_name,
-                            signals = produced,
-                            "Discovered new account via topic search"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(username, error = %e, "Failed to create Source node for discovered account");
-                    }
-                }
+                new_sources.push(source);
+                new_accounts += 1;
+                info!(
+                    username,
+                    platform = platform_name,
+                    signals = produced,
+                    "Discovered new account via topic search"
+                );
             }
         }
 
@@ -1441,6 +1427,16 @@ impl ScrapePhase {
             }
         }
 
+        // Register all discovered sources through the engine
+        if !new_sources.is_empty() {
+            if let Err(e) = self
+                .register_sources(new_sources, "topic_discovery", ctx)
+                .await
+            {
+                warn!(error = %e, "Failed to register topic discovery sources");
+            }
+        }
+
         ctx.stats.discovery_accounts_found = new_accounts;
         info!(
             topics = topics.len(),
@@ -1507,8 +1503,10 @@ impl ScrapePhase {
         let deps = PipelineDeps {
             store: self.store.clone(),
             embedder: self.embedder.clone(),
-            region: self.region.clone(),
+            region: Some(self.region.clone()),
             run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
         };
 
         self.engine
@@ -1528,10 +1526,65 @@ impl ScrapePhase {
     ///
     /// Finds all actors active in this phase's region, then calls
     /// `enrich_actor_locations` to update each actor's location from signal mode.
+    /// Query signal IDs for a URL, then dispatch FreshnessConfirmed through the engine.
+    async fn refresh_url_signals_via_engine(
+        &self,
+        url: &str,
+        now: DateTime<Utc>,
+        ctx: &mut RunContext,
+    ) -> Result<u64> {
+        use rootsignal_common::events::SystemEvent;
+        use std::collections::HashMap as StdHashMap;
+
+        let all_ids = self.store.signal_ids_for_url(url).await?;
+        if all_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Group by NodeType for batch FreshnessConfirmed events
+        let mut by_type: StdHashMap<NodeType, Vec<Uuid>> = StdHashMap::new();
+        for (id, nt) in &all_ids {
+            by_type.entry(*nt).or_default().push(*id);
+        }
+
+        let deps = PipelineDeps {
+            store: self.store.clone(),
+            embedder: self.embedder.clone(),
+            region: Some(self.region.clone()),
+            run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
+        };
+
+        let total = all_ids.len() as u64;
+        for (node_type, ids) in by_type {
+            let event = ScoutEvent::System(SystemEvent::FreshnessConfirmed {
+                signal_ids: ids,
+                node_type,
+                confirmed_at: now,
+            });
+            self.engine.dispatch(event, ctx, &deps).await?;
+        }
+        Ok(total)
+    }
+
     pub async fn enrich_actors(&self) {
         let actors = self.store.list_all_actors().await.unwrap_or_default();
-        let updated =
-            crate::enrichment::actor_location::enrich_actor_locations(&*self.store, &actors).await;
+        let deps = PipelineDeps {
+            store: self.store.clone(),
+            embedder: self.embedder.clone(),
+            region: Some(self.region.clone()),
+            run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
+        };
+        let updated = crate::enrichment::actor_location::enrich_actor_locations(
+            &*self.store,
+            &self.engine,
+            &deps,
+            &actors,
+        )
+        .await;
         if updated > 0 {
             info!(updated, "Enriched actor locations");
         }

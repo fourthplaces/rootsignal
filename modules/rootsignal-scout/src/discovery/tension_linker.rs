@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, TensionNode,
@@ -20,7 +21,9 @@ use rootsignal_archive::Archive;
 
 use super::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::traits::SignalStore;
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
@@ -174,7 +177,8 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 
 pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -189,7 +193,8 @@ pub struct TensionLinker<'a> {
 impl<'a> TensionLinker<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -217,7 +222,8 @@ impl<'a> TensionLinker<'a> {
 
         Self {
             writer,
-            store,
+            engine,
+            deps,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -449,14 +455,15 @@ impl<'a> TensionLinker<'a> {
             }
         };
 
-        self.store
-            .create_response_edge(
-                target.signal_id,
-                tension_id,
-                tension.match_strength.clamp(0.0, 1.0),
-                &tension.explanation,
-            )
-            .await?;
+        let event = ScoutEvent::World(WorldEvent::ResponseLinked {
+            signal_id: target.signal_id,
+            tension_id,
+            strength: tension.match_strength.clamp(0.0, 1.0),
+            explanation: tension.explanation.clone(),
+            source_url: None,
+        });
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine.dispatch(event, &mut state, self.deps).await?;
         stats.edges_created += 1;
 
         Ok(())
@@ -511,18 +518,22 @@ impl<'a> TensionLinker<'a> {
             what_would_help: Some(tension.what_would_help.clone()),
         };
 
-        let embed_text = format!("{} {}", tension.title, tension.summary);
-        let embedding = self.embedder.embed(&embed_text).await?;
+        let tension_id = tension_node.meta.id;
+        let node = Node::Tension(tension_node);
 
-        let tension_id = self
-            .store
-            .create_node(
-                &Node::Tension(tension_node),
-                &embedding,
-                "tension_linker",
-                &self.run_id,
-            )
+        // Dispatch world event + system events through engine
+        let world_event = crate::store::event_sourced::node_to_world_event(&node);
+        let system_events = crate::store::event_sourced::node_system_events(&node);
+
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine
+            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
             .await?;
+        for se in system_events {
+            self.engine
+                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
+                .await?;
+        }
 
         info!(
             tension_id = %tension_id,

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use chrono::Utc;
 use rootsignal_common::types::ActorContext;
 use rootsignal_common::{canonical_value, ScheduleNode};
-use rootsignal_engine::MemoryEventSink;
 use uuid::Uuid;
 
 use crate::pipeline::extractor::ExtractionResult;
@@ -91,8 +90,7 @@ async fn linktree_page_discovers_outbound_links() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = web_query_source(query);
@@ -185,8 +183,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);
@@ -239,8 +236,7 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);
@@ -303,8 +299,7 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source_nodes: Vec<_> = urls.iter().map(|u| page_source(u)).collect();
@@ -374,8 +369,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -453,8 +447,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -522,8 +515,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -609,8 +601,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -694,8 +685,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);
@@ -794,8 +784,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         fetcher.clone(),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let linktree_source = page_source("https://linktr.ee/mplsmutualaid");
@@ -832,8 +821,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         fetcher,
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let org_source = page_source("https://localorg.org/resources");
@@ -910,8 +898,7 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);
@@ -965,8 +952,7 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);
@@ -1029,8 +1015,7 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(url);

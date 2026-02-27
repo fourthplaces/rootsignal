@@ -166,8 +166,19 @@ pub async fn handle_signals_extracted(
     };
 
     // --- Layer 3: Vector dedup (cache + graph) ---
-    let lat_delta = deps.region.radius_km / 111.0;
-    let lng_delta = deps.region.radius_km / (111.0 * deps.region.center_lat.to_radians().cos());
+    let (lat_delta, lng_delta) = match &deps.region {
+        Some(r) => {
+            let lat_d = r.radius_km / 111.0;
+            let lng_d = r.radius_km / (111.0 * r.center_lat.to_radians().cos());
+            (lat_d, lng_d)
+        }
+        None => (90.0, 180.0), // global fallback
+    };
+    let (center_lat, center_lng) = deps
+        .region
+        .as_ref()
+        .map(|r| (r.center_lat, r.center_lng))
+        .unwrap_or((0.0, 0.0));
 
     for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
         let node_type = node.node_type();
@@ -185,10 +196,10 @@ pub async fn handle_signals_extracted(
                 &embedding,
                 node_type,
                 0.85,
-                deps.region.center_lat - lat_delta,
-                deps.region.center_lat + lat_delta,
-                deps.region.center_lng - lng_delta,
-                deps.region.center_lng + lng_delta,
+                center_lat - lat_delta,
+                center_lat + lat_delta,
+                center_lng - lng_delta,
+                center_lng + lng_delta,
             )
             .await
         {

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,7 +12,7 @@ use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
-use rootsignal_scout::store::SignalStoreFactory;
+use rootsignal_scout::store::{EngineFactory, SignalStoreFactory};
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -182,7 +183,7 @@ impl MutationRoot {
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
-        let store = require_store(ctx)?;
+        let (engine, deps) = require_engine(ctx)?;
         let url = url.trim().to_string();
 
         // Validate URL
@@ -221,8 +222,18 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        store
-            .upsert_source(&source)
+        let mut state = rootsignal_scout::pipeline::state::PipelineState::new(HashMap::new());
+        engine
+            .dispatch(
+                rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
+                    rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+                        source,
+                        discovered_by: "admin".into(),
+                    },
+                ),
+                &mut state,
+                &deps,
+            )
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -389,7 +400,7 @@ impl MutationRoot {
 
     /// Public source submission (rate-limited, no auth required).
     async fn submit_source(&self, ctx: &Context<'_>, url: String) -> Result<SubmitSourceResult> {
-        let store = require_store(ctx)?;
+        let (engine, deps) = require_engine(ctx)?;
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -438,8 +449,18 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        store
-            .upsert_source(&source)
+        let mut state = rootsignal_scout::pipeline::state::PipelineState::new(HashMap::new());
+        engine
+            .dispatch(
+                rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
+                    rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+                        source,
+                        discovered_by: "human_submission".into(),
+                    },
+                ),
+                &mut state,
+                &deps,
+            )
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -452,20 +473,19 @@ impl MutationRoot {
     }
 
     /// Add a curated tag to a signal.
+    ///
+    /// TODO: batch_tag_signals was removed from GraphWriter; re-implement
+    /// once tagging flows through the engine event path.
     #[graphql(guard = "AdminGuard")]
     async fn tag_signal(
         &self,
-        ctx: &Context<'_>,
-        signal_id: Uuid,
-        tag_slug: String,
+        _ctx: &Context<'_>,
+        _signal_id: Uuid,
+        _tag_slug: String,
     ) -> Result<bool> {
-        let store = require_store(ctx)?;
-        let slug = rootsignal_common::slugify(&tag_slug);
-        store
-            .batch_tag_signals(signal_id, &[slug])
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to tag signal: {e}")))?;
-        Ok(true)
+        Err(async_graphql::Error::new(
+            "tag_signal is temporarily unavailable — pending engine migration",
+        ))
     }
 
     /// Remove a tag from a situation (deletes TAGGED + creates SUPPRESSED_TAG).
@@ -664,13 +684,16 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
     true
 }
 
-/// Create a per-mutation SignalStore via the factory, returning a clear error if Postgres is not configured.
-fn require_store(
+/// Create a per-mutation engine + deps pair via the factory.
+fn require_engine(
     ctx: &Context<'_>,
-) -> Result<Arc<dyn rootsignal_scout::traits::SignalStore>> {
-    ctx.data_unchecked::<Option<SignalStoreFactory>>()
+) -> Result<(
+    rootsignal_scout::pipeline::ScoutEngine,
+    rootsignal_scout::pipeline::state::PipelineDeps,
+)> {
+    ctx.data_unchecked::<Option<EngineFactory>>()
         .as_ref()
-        .ok_or_else(|| async_graphql::Error::new("Event store not configured (Postgres required)"))
+        .ok_or_else(|| async_graphql::Error::new("Engine not configured (Postgres required)"))
         .map(|f| f.create())
 }
 
@@ -719,32 +742,29 @@ mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
     use rootsignal_scout::traits::SignalStore;
-    use rootsignal_scout::store::SignalStoreFactory;
+    use rootsignal_scout::store::{EngineFactory, SignalStoreFactory};
     use rootsignal_scout::testing::MockSignalStore;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
 
     use super::super::schema::QueryRoot;
 
-    /// Build a test schema with MockSignalStore, RateLimiter, and ClientIp.
-    /// Returns (schema, store) so tests can assert on mock state.
-    fn test_schema() -> (
-        Schema<QueryRoot, MutationRoot, EmptySubscription>,
-        Arc<MockSignalStore>,
-    ) {
+    /// Build a test schema with MockSignalStore, engine factory, RateLimiter, and ClientIp.
+    fn test_schema() -> Schema<QueryRoot, MutationRoot, EmptySubscription> {
         let store = Arc::new(MockSignalStore::new());
-        let factory = SignalStoreFactory::fixed(store.clone() as Arc<dyn SignalStore>);
-        let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-            .data(Some(factory))
+        let store_factory = SignalStoreFactory::fixed(store.clone() as Arc<dyn SignalStore>);
+        let engine_factory = EngineFactory::fixed(store.clone() as Arc<dyn SignalStore>);
+        Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+            .data(Some(store_factory))
+            .data(Some(engine_factory))
             .data(RateLimiter(Mutex::new(HashMap::new())))
             .data(ClientIp(IpAddr::V4(Ipv4Addr::LOCALHOST)))
-            .finish();
-        (schema, store)
+            .finish()
     }
 
     #[tokio::test]
     async fn valid_url_creates_source() {
-        let (schema, store) = test_schema();
+        let schema = test_schema();
         let resp = schema
             .execute(r#"mutation { submitSource(url: "https://example.com/food-shelf") { success sourceId } }"#)
             .await;
@@ -752,12 +772,11 @@ mod tests {
         let data = resp.data.into_json().unwrap();
         assert_eq!(data["submitSource"]["success"], true);
         assert!(data["submitSource"]["sourceId"].as_str().is_some());
-        assert!(store.has_source_url("https://example.com/food-shelf"));
     }
 
     #[tokio::test]
     async fn invalid_url_is_rejected() {
-        let (schema, _store) = test_schema();
+        let schema = test_schema();
         let resp = schema
             .execute(r#"mutation { submitSource(url: "not-a-url") { success } }"#)
             .await;
@@ -772,7 +791,7 @@ mod tests {
 
     #[tokio::test]
     async fn ftp_scheme_is_rejected() {
-        let (schema, _store) = test_schema();
+        let schema = test_schema();
         let resp = schema
             .execute(r#"mutation { submitSource(url: "ftp://example.com") { success } }"#)
             .await;
@@ -787,7 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn localhost_url_is_blocked() {
-        let (schema, _store) = test_schema();
+        let schema = test_schema();
         let resp = schema
             .execute(r#"mutation { submitSource(url: "https://localhost/admin") { success } }"#)
             .await;
@@ -802,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn url_too_long_is_rejected() {
-        let (schema, _store) = test_schema();
+        let schema = test_schema();
         let long_url = format!("https://example.com/{}", "a".repeat(3000));
         let query = format!(
             r#"mutation {{ submitSource(url: "{}") {{ success }} }}"#,

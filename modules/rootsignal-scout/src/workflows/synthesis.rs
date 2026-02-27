@@ -120,7 +120,16 @@ pub async fn run_synthesis_from_deps(
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
-    let store = deps.build_store(run_id.clone());
+    let store: Arc<dyn crate::traits::SignalStore> =
+        Arc::new(deps.build_store(run_id.clone()));
+    let engine = deps.build_engine(&run_id);
+    let pipe_deps = deps.build_pipeline_deps(
+        store.clone(),
+        embedder.clone(),
+        None,
+        scope.clone(),
+        &run_id,
+    );
 
     // Parallel synthesis — similarity edges + finders run concurrently.
     // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
@@ -160,7 +169,8 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting response mapping...");
                 let response_mapper = crate::discovery::response_mapper::ResponseMapper::new(
                     &writer,
-                    &store as &dyn crate::traits::SignalStore,
+                    &engine,
+                    &pipe_deps,
                     &deps.anthropic_api_key,
                     scope.center_lat,
                     scope.center_lng,
@@ -179,7 +189,8 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting tension linker...");
                 let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
                     &writer,
-                    &store as &dyn crate::traits::SignalStore,
+                    &engine,
+                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -198,7 +209,8 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting response finder...");
                 let response_finder = crate::discovery::response_finder::ResponseFinder::new(
                     &writer,
-                    &store as &dyn crate::traits::SignalStore,
+                    &engine,
+                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -206,10 +218,14 @@ pub async fn run_synthesis_from_deps(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let rf_stats = response_finder.run().await;
+                let (rf_stats, rf_sources) = response_finder.run().await;
                 info!("{rf_stats}");
-            } else if budget.is_active() {
-                info!("Skipping response finder (budget exhausted)");
+                rf_sources
+            } else {
+                if budget.is_active() {
+                    info!("Skipping response finder (budget exhausted)");
+                }
+                Vec::new()
             }
         },
         async {
@@ -217,7 +233,8 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting gathering finder...");
                 let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
                     &writer,
-                    &store as &dyn crate::traits::SignalStore,
+                    &engine,
+                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -225,10 +242,14 @@ pub async fn run_synthesis_from_deps(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let gf_stats = gathering_finder.run().await;
+                let (gf_stats, gf_sources) = gathering_finder.run().await;
                 info!("{gf_stats}");
-            } else if budget.is_active() {
-                info!("Skipping gathering finder (budget exhausted)");
+                gf_sources
+            } else {
+                if budget.is_active() {
+                    info!("Skipping gathering finder (budget exhausted)");
+                }
+                Vec::new()
             }
         },
         async {
@@ -236,7 +257,8 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting investigation phase...");
                 let investigator = crate::discovery::investigator::Investigator::new(
                     &writer,
-                    &store as &dyn crate::traits::SignalStore,
+                    &engine,
+                    &pipe_deps,
                     archive.clone(),
                     &deps.anthropic_api_key,
                     scope,
@@ -250,11 +272,34 @@ pub async fn run_synthesis_from_deps(
         },
     );
 
-    let _ = (
-        sim_result, rm_result, tl_result, rf_result, gf_result, inv_result,
-    );
+    let _ = (sim_result, rm_result, tl_result, inv_result);
 
     info!("Parallel synthesis complete");
+
+    // Register discovered sources through the engine
+    let finder_sources: Vec<rootsignal_common::SourceNode> =
+        rf_result.into_iter().chain(gf_result).collect();
+    if !finder_sources.is_empty() {
+        info!(count = finder_sources.len(), "Registering finder-discovered sources through engine");
+        let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+        for source in finder_sources {
+            if let Err(e) = engine
+                .dispatch(
+                    crate::pipeline::events::ScoutEvent::Pipeline(
+                        crate::pipeline::events::PipelineEvent::SourceDiscovered {
+                            source,
+                            discovered_by: "synthesis".into(),
+                        },
+                    ),
+                    &mut state,
+                    &pipe_deps,
+                )
+                .await
+            {
+                warn!(error = %e, "Failed to register synthesis source (non-fatal)");
+            }
+        }
+    }
 
     // Severity inference — re-evaluate Notice severity after tension linking
     // creates EVIDENCE_OF edges. Cheap: graph reads + pure computation, no LLM calls.

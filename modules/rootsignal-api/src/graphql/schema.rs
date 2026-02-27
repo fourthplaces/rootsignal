@@ -1305,6 +1305,7 @@ pub fn build_schema(
     reader: Arc<CachedReader>,
     writer: Arc<GraphWriter>,
     store_factory: Option<rootsignal_scout::store::SignalStoreFactory>,
+    engine_factory: Option<rootsignal_scout::store::EngineFactory>,
     jwt_service: JwtService,
     config: Arc<Config>,
     twilio: Option<Arc<twilio::TwilioService>>,
@@ -1357,6 +1358,7 @@ pub fn build_schema(
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(reader)
         .data(store_factory)
+        .data(engine_factory)
         .data(writer)
         .data(jwt_service)
         .data(config)

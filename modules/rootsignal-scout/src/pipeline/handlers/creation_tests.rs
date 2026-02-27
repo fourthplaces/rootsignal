@@ -17,8 +17,10 @@ fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
     PipelineDeps {
         store,
         embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        region: mpls_region(),
+        region: Some(mpls_region()),
         run_id: "test-run".to_string(),
+        fetcher: None,
+        anthropic_api_key: None,
     }
 }
 

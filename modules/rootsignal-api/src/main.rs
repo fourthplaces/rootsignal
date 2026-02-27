@@ -201,6 +201,9 @@ async fn main() -> Result<()> {
     let store_factory = pg_pool
         .clone()
         .map(|pool| rootsignal_scout::store::SignalStoreFactory::new(client.clone(), pool));
+    let engine_factory = pg_pool
+        .clone()
+        .map(|pool| rootsignal_scout::store::EngineFactory::new(client.clone(), pool));
 
     if store_factory.is_none() {
         tracing::warn!("SignalStoreFactory not available — mutations that write signals will fail");
@@ -210,6 +213,7 @@ async fn main() -> Result<()> {
         reader.clone(),
         writer.clone(),
         store_factory,
+        engine_factory,
         jwt_service.clone(),
         Arc::new(config.clone()),
         twilio.clone(),

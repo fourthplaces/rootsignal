@@ -121,10 +121,11 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
                 state.extracted_batches.remove(url);
             }
 
-            // Phase lifecycle — no state changes
+            // Phase lifecycle / engine lifecycle — no state changes
             PipelineEvent::PhaseStarted { .. }
             | PipelineEvent::PhaseCompleted { .. }
-            | PipelineEvent::ExtractionFailed { .. } => {}
+            | PipelineEvent::ExtractionFailed { .. }
+            | PipelineEvent::EngineStarted { .. } => {}
 
             PipelineEvent::SourceDiscovered { .. } => {
                 state.stats.sources_discovered += 1;

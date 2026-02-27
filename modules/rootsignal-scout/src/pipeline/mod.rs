@@ -15,3 +15,21 @@ mod boundary_tests;
 mod chain_tests;
 #[cfg(test)]
 pub mod simweb_adapter;
+
+use std::sync::Arc;
+
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::reducer::ScoutReducer;
+use crate::pipeline::router::ScoutRouter;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+
+/// Type alias for the scout engine — persister is trait-erased so both
+/// EventStore (production) and MemoryEventSink (tests) work.
+pub type ScoutEngine = rootsignal_engine::Engine<
+    ScoutEvent,
+    PipelineState,
+    PipelineDeps,
+    ScoutReducer,
+    ScoutRouter,
+    Arc<dyn rootsignal_engine::EventPersister>,
+>;

@@ -40,3 +40,17 @@ impl TextEmbedder for Embedder {
         self.client.embed_batch(texts).await
     }
 }
+
+/// No-op embedder for contexts that don't need embeddings (e.g. API source creation).
+pub struct NoOpEmbedder;
+
+#[async_trait::async_trait]
+impl TextEmbedder for NoOpEmbedder {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+        Ok(vec![])
+    }
+
+    async fn embed_batch(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        Ok(vec![])
+    }
+}

@@ -57,6 +57,37 @@ impl ScoutDeps {
         crate::store::build_signal_store(self.graph_client.clone(), self.pg_pool.clone(), run_id)
     }
 
+    /// Build a ScoutEngine wired to the event store and graph projector.
+    pub fn build_engine(&self, run_id: &str) -> crate::pipeline::ScoutEngine {
+        let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
+        let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
+        rootsignal_engine::Engine::new(
+            crate::pipeline::reducer::ScoutReducer,
+            crate::pipeline::router::ScoutRouter::new(Some(projector)),
+            std::sync::Arc::new(event_store) as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
+            run_id.into(),
+        )
+    }
+
+    /// Build PipelineDeps from the shared deps, wired to the given store/embedder.
+    pub fn build_pipeline_deps(
+        &self,
+        store: std::sync::Arc<dyn crate::traits::SignalStore>,
+        embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
+        fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
+        region: rootsignal_common::ScoutScope,
+        run_id: &str,
+    ) -> crate::pipeline::state::PipelineDeps {
+        crate::pipeline::state::PipelineDeps {
+            store,
+            embedder,
+            region: Some(region),
+            run_id: run_id.into(),
+            fetcher,
+            anthropic_api_key: Some(self.anthropic_api_key.clone()),
+        }
+    }
+
     /// Convenience constructor from Config — keeps API-side construction clean.
     pub fn from_config(
         graph_client: GraphClient,

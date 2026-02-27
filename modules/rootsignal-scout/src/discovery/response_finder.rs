@@ -11,6 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
@@ -22,7 +23,10 @@ use rootsignal_archive::Archive;
 
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::events::ScoutEvent;
 use crate::pipeline::extractor::ResourceTag;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -274,7 +278,8 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::traits::SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -291,7 +296,8 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::traits::SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -304,7 +310,8 @@ impl<'a> ResponseFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
-            store,
+            engine,
+            deps,
             anthropic_api_key: anthropic_api_key.to_string(),
             archive,
             embedder,
@@ -339,8 +346,9 @@ impl<'a> ResponseFinder<'a> {
         (claude, visited)
     }
 
-    pub async fn run(&self) -> ResponseFinderStats {
+    pub async fn run(&self) -> (ResponseFinderStats, Vec<SourceNode>) {
         let mut stats = ResponseFinderStats::default();
+        let mut discovered_sources = Vec::new();
 
         let targets = match self
             .writer
@@ -356,14 +364,14 @@ impl<'a> ResponseFinder<'a> {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to find response finder targets");
-                return stats;
+                return (stats, discovered_sources);
             }
         };
 
         stats.targets_found = targets.len() as u32;
         if targets.is_empty() {
             info!("No response finder targets found");
-            return stats;
+            return (stats, discovered_sources);
         }
 
         info!(count = targets.len(), "Response scout targets selected");
@@ -384,7 +392,7 @@ impl<'a> ResponseFinder<'a> {
             }
 
             match self
-                .investigate_tension(target, &situation_context, &mut stats)
+                .investigate_tension(target, &situation_context, &mut stats, &mut discovered_sources)
                 .await
             {
                 Ok(()) => {
@@ -410,7 +418,7 @@ impl<'a> ResponseFinder<'a> {
             }
         }
 
-        stats
+        (stats, discovered_sources)
     }
 
     async fn investigate_tension(
@@ -418,6 +426,7 @@ impl<'a> ResponseFinder<'a> {
         target: &ResponseFinderTarget,
         situation_context: &str,
         stats: &mut ResponseFinderStats,
+        discovered_sources: &mut Vec<SourceNode>,
     ) -> Result<()> {
         // Fetch existing response heuristics
         let existing = self
@@ -510,13 +519,8 @@ impl<'a> ResponseFinder<'a> {
             .iter()
             .take(MAX_FUTURE_QUERIES_PER_TENSION)
         {
-            if let Err(e) = self.create_future_query(query, target, stats).await {
-                warn!(
-                    query = query.as_str(),
-                    error = %e,
-                    "Failed to create future query source"
-                );
-            }
+            discovered_sources.push(self.build_future_query_source(query, target));
+            stats.future_sources_created += 1;
         }
 
         info!(
@@ -554,7 +558,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .store
+            .deps.store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -589,14 +593,15 @@ impl<'a> ResponseFinder<'a> {
         };
 
         // Wire RESPONDS_TO edge to the target tension
-        self.store
-            .create_response_edge(
-                signal_id,
-                target.tension_id,
-                response.match_strength.clamp(0.0, 1.0),
-                &response.explanation,
-            )
-            .await?;
+        let resp_event = ScoutEvent::World(WorldEvent::ResponseLinked {
+            signal_id,
+            tension_id: target.tension_id,
+            strength: response.match_strength.clamp(0.0, 1.0),
+            explanation: response.explanation.clone(),
+            source_url: None,
+        });
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine.dispatch(resp_event, &mut state, self.deps).await?;
         stats.edges_created += 1;
 
         // Wire additional edges for also_addresses
@@ -635,57 +640,43 @@ impl<'a> ResponseFinder<'a> {
     ) -> Result<()> {
         for tag in resources.iter().filter(|t| t.confidence >= 0.3) {
             let slug = rootsignal_common::slugify(&tag.slug);
-            let embed_text = format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
-            let embedding = self.embedder.embed(&embed_text).await?;
+            let description = tag.context.as_deref().unwrap_or("");
 
-            // find_or_create_resource handles the GraphWriter MERGE (with embedding).
-            // Edge methods use slug to match the resource — no UUID needed.
-            let _resource_id = self
-                .store
-                .find_or_create_resource(
-                    &tag.slug,
-                    &slug,
-                    tag.context.as_deref().unwrap_or(""),
-                    &embedding,
-                )
-                .await?;
+            // Dispatch ResourceIdentified event (find_or_create via engine)
+            let resource_event = ScoutEvent::World(WorldEvent::ResourceIdentified {
+                resource_id: Uuid::new_v4(),
+                name: tag.slug.clone(),
+                slug: slug.clone(),
+                description: description.to_string(),
+            });
+            let mut state = PipelineState::new(std::collections::HashMap::new());
+            self.engine.dispatch(resource_event, &mut state, self.deps).await?;
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-            match tag.role.as_str() {
-                "requires" => {
-                    self.store
-                        .create_requires_edge(
-                            signal_id,
-                            &slug,
-                            confidence,
-                            tag.context.as_deref(),
-                            None,
-                        )
-                        .await?;
-                }
-                "prefers" => {
-                    self.store
-                        .create_prefers_edge(signal_id, &slug, confidence)
-                        .await?;
-                }
-                "offers" => {
-                    self.store
-                        .create_offers_edge(
-                            signal_id,
-                            &slug,
-                            confidence,
-                            tag.context.as_deref(),
-                        )
-                        .await?;
-                }
+            let (role, quantity, notes, capacity): (&str, Option<&str>, Option<&str>, Option<&str>) = match tag.role.as_str() {
+                "requires" => ("requires", tag.context.as_deref(), None, None),
+                "prefers" => ("prefers", None, None, None),
+                "offers" => ("offers", None, None, tag.context.as_deref()),
                 other => {
                     warn!(
                         role = other,
                         slug = tag.slug.as_str(),
                         "Unknown resource role, skipping"
                     );
+                    continue;
                 }
-            }
+            };
+
+            let edge_event = ScoutEvent::World(WorldEvent::ResourceEdgeCreated {
+                signal_id,
+                resource_slug: slug.clone(),
+                role: role.to_string(),
+                confidence,
+                quantity: quantity.map(|s| s.to_string()),
+                notes: notes.map(|s| s.to_string()),
+                capacity: capacity.map(|s| s.to_string()),
+            });
+            self.engine.dispatch(edge_event, &mut state, self.deps).await?;
 
             info!(
                 signal_id = %signal_id,
@@ -761,13 +752,21 @@ impl<'a> ResponseFinder<'a> {
             }),
         };
 
-        let embed_text = format!("{} {}", response.title, response.summary);
-        let embedding = self.embedder.embed(&embed_text).await?;
+        let node_id = node.meta().unwrap().id;
 
-        let node_id = self
-            .store
-            .create_node(&node, &embedding, "response_finder", &self.run_id)
+        // Dispatch world event + system events through engine
+        let world_event = crate::store::event_sourced::node_to_world_event(&node);
+        let system_events = crate::store::event_sourced::node_system_events(&node);
+
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine
+            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
             .await?;
+        for se in system_events {
+            self.engine
+                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
+                .await?;
+        }
 
         info!(
             node_id = %node_id,
@@ -825,9 +824,15 @@ impl<'a> ResponseFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring also_addresses edge"
                 );
-                self.store
-                    .create_response_edge(signal_id, tension_id, sim.clamp(0.0, 1.0), explanation)
-                    .await?;
+                let also_event = ScoutEvent::World(WorldEvent::ResponseLinked {
+                    signal_id,
+                    tension_id,
+                    strength: sim.clamp(0.0, 1.0),
+                    explanation: explanation.to_string(),
+                    source_url: None,
+                });
+                let mut state = PipelineState::new(std::collections::HashMap::new());
+                self.engine.dispatch(also_event, &mut state, self.deps).await?;
             }
         }
 
@@ -844,7 +849,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Dedup check (region-scoped)
         let existing = self
-            .store
+            .deps.store
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,
@@ -918,15 +923,22 @@ impl<'a> ResponseFinder<'a> {
             what_would_help: Some(tension.what_would_help.clone()),
         };
 
-        let tension_id = self
-            .store
-            .create_node(
-                &Node::Tension(tension_node),
-                &embedding,
-                "response_finder",
-                &self.run_id,
-            )
+        let node = Node::Tension(tension_node);
+        let tension_id = node.meta().unwrap().id;
+
+        // Dispatch world event + system events through engine
+        let world_event = crate::store::event_sourced::node_to_world_event(&node);
+        let system_events = crate::store::event_sourced::node_system_events(&node);
+
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine
+            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
             .await?;
+        for se in system_events {
+            self.engine
+                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
+                .await?;
+        }
 
         info!(
             tension_id = %tension_id,
@@ -939,12 +951,11 @@ impl<'a> ResponseFinder<'a> {
         Ok(())
     }
 
-    async fn create_future_query(
+    fn build_future_query_source(
         &self,
         query: &str,
         target: &ResponseFinderTarget,
-        stats: &mut ResponseFinderStats,
-    ) -> Result<()> {
+    ) -> SourceNode {
         let cv = query.to_string();
         let ck = canonical_value(&cv);
         let gap_context = format!(
@@ -952,7 +963,13 @@ impl<'a> ResponseFinder<'a> {
             target.title,
         );
 
-        let source = SourceNode {
+        info!(
+            query = query,
+            tension = target.title.as_str(),
+            "Future query source built by response finder"
+        );
+
+        SourceNode {
             id: Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
@@ -975,18 +992,7 @@ impl<'a> ResponseFinder<'a> {
             quality_penalty: 1.0,
             source_role: SourceRole::Response,
             scrape_count: 0,
-        };
-
-        self.store.upsert_source(&source).await?;
-        stats.future_sources_created += 1;
-
-        info!(
-            query = query,
-            tension = target.title.as_str(),
-            "Future query source created by response finder"
-        );
-
-        Ok(())
+        }
     }
 }
 

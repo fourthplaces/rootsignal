@@ -3,6 +3,7 @@
 //! Each handler receives a pipeline event, performs I/O via deps,
 //! and returns child events that re-enter the dispatch loop.
 
+pub(crate) mod bootstrap;
 pub(crate) mod creation;
 pub(crate) mod dedup;
 
@@ -68,6 +69,11 @@ pub async fn route_pipeline(
                 deps,
             )
             .await
+        }
+
+        // Engine lifecycle — seed sources when region is empty
+        PipelineEvent::EngineStarted { .. } => {
+            bootstrap::handle_engine_started(state, deps).await
         }
 
         // Phase lifecycle and other informational events — no handler needed.

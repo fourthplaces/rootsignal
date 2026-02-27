@@ -13,6 +13,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
+use crate::pipeline::ScoutEngine;
 use crate::traits::SignalStore;
 
 use rootsignal_common::{
@@ -60,6 +61,7 @@ pub struct ScrapePipeline<'a> {
     cancelled: Arc<AtomicBool>,
     run_id: String,
     pg_pool: PgPool,
+    engine: Arc<ScoutEngine>,
 }
 
 /// Phase 2 outputs that flow into subsequent phases.
@@ -88,11 +90,18 @@ impl<'a> ScrapePipeline<'a> {
         run_id: String,
         pg_pool: PgPool,
     ) -> Self {
-        let projector = GraphProjector::new(graph_client.clone());
+        let store_projector = GraphProjector::new(graph_client.clone());
         let store = Arc::new(EventSourcedStore::new(
             writer.clone(),
-            projector,
-            event_store,
+            store_projector,
+            event_store.clone(),
+            run_id.clone(),
+        ));
+        let engine_projector = GraphProjector::new(graph_client.clone());
+        let engine = Arc::new(rootsignal_engine::Engine::new(
+            crate::pipeline::reducer::ScoutReducer,
+            crate::pipeline::router::ScoutRouter::new(Some(engine_projector)),
+            Arc::new(event_store) as Arc<dyn rootsignal_engine::EventPersister>,
             run_id.clone(),
         ));
         Self {
@@ -108,6 +117,7 @@ impl<'a> ScrapePipeline<'a> {
             cancelled,
             run_id,
             pg_pool,
+            engine,
         }
     }
 
@@ -167,34 +177,49 @@ impl<'a> ScrapePipeline<'a> {
             }
         };
 
-        // Self-heal: if region has zero sources, re-run the cold-start bootstrapper.
-        if all_sources.is_empty() {
-            info!("No sources found — running cold-start bootstrap");
-            let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
-                &self.writer,
-                self.store.as_ref() as &dyn crate::traits::SignalStore,
-                self.archive.clone(),
-                &self.anthropic_api_key,
-                self.region.clone(),
-            );
-            match bootstrapper.run().await {
-                Ok(n) => {
-                    run_log.log(EventKind::Bootstrap {
-                        sources_created: n as u64,
-                    });
-                    info!(sources = n, "Bootstrap created seed sources");
+        // Ensure sources exist — EngineStarted handler seeds if empty.
+        {
+            let pipe_deps = crate::pipeline::state::PipelineDeps {
+                store: self.store.clone() as Arc<dyn SignalStore>,
+                embedder: self.embedder.clone(),
+                region: Some(self.region.clone()),
+                run_id: self.run_id.clone(),
+                fetcher: Some(self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>),
+                anthropic_api_key: Some(self.anthropic_api_key.clone()),
+            };
+            let mut boot_state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+            match self.engine.dispatch(
+                crate::pipeline::events::ScoutEvent::Pipeline(
+                    crate::pipeline::events::PipelineEvent::EngineStarted {
+                        run_id: self.run_id.clone(),
+                    },
+                ),
+                &mut boot_state,
+                &pipe_deps,
+            ).await {
+                Ok(()) => {
+                    let n = boot_state.stats.sources_discovered;
+                    if n > 0 {
+                        run_log.log(EventKind::Bootstrap {
+                            sources_created: n as u64,
+                        });
+                        info!(sources = n, "EngineStarted seeded sources");
+                    }
                 }
-                Err(e) => warn!(error = %e, "Bootstrap failed"),
+                Err(e) => warn!(error = %e, "EngineStarted dispatch failed"),
             }
-            all_sources = self
-                .writer
-                .get_sources_for_region(
-                    self.region.center_lat,
-                    self.region.center_lng,
-                    self.region.radius_km,
-                )
-                .await
-                .unwrap_or_default();
+            // Reload sources if seeding occurred
+            if all_sources.is_empty() {
+                all_sources = self
+                    .writer
+                    .get_sources_for_region(
+                        self.region.center_lat,
+                        self.region.center_lng,
+                        self.region.radius_km,
+                    )
+                    .await
+                    .unwrap_or_default();
+            }
         }
 
         // Actor discovery — if no actors in region, discover from web pages
@@ -339,8 +364,6 @@ impl<'a> ScrapePipeline<'a> {
             }
         }
 
-        let projector = GraphProjector::new(self.graph_client.clone());
-        let event_store = EventStore::new(self.pg_pool.clone());
         let phase = ScrapePhase::new(
             self.store.clone() as Arc<dyn crate::traits::SignalStore>,
             self.extractor.clone(),
@@ -348,8 +371,7 @@ impl<'a> ScrapePipeline<'a> {
             self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>,
             self.region.clone(),
             self.run_id.clone(),
-            Arc::new(event_store),
-            Some(projector),
+            self.engine.clone(),
         );
 
         let run = ScheduledRun {
@@ -522,9 +544,18 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Record source metrics, update weights/cadence, deactivate dead sources.
     pub(crate) async fn update_source_metrics(&self, run: &ScheduledRun, ctx: &RunContext) {
+        let pipe_deps = crate::pipeline::state::PipelineDeps {
+            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalStore>,
+            embedder: self.embedder.clone(),
+            region: Some(self.region.clone()),
+            run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
+        };
         let metrics = Metrics::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
+            &self.engine,
+            &pipe_deps,
             &self.region.name,
         );
         metrics
@@ -645,11 +676,20 @@ impl<'a> ScrapePipeline<'a> {
 
         // Actor extraction — extract actors from signals that have none
         info!("=== Actor Extraction ===");
+        let actor_deps = crate::pipeline::state::PipelineDeps {
+            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalStore>,
+            embedder: self.embedder.clone(),
+            region: Some(self.region.clone()),
+            run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: Some(self.anthropic_api_key.clone()),
+        };
         let actor_stats = crate::enrichment::actor_extractor::run_actor_extraction(
             self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.graph_client,
             &self.anthropic_api_key,
-            &self.region.name,
+            &*self.engine,
+            &actor_deps,
             min_lat,
             max_lat,
             min_lng,

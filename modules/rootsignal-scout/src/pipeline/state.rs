@@ -21,7 +21,7 @@ use crate::infra::util::sanitize_url;
 use crate::pipeline::extractor::ResourceTag;
 use crate::pipeline::scrape_phase::EmbeddingCache;
 use crate::pipeline::stats::ScoutStats;
-use crate::traits::SignalStore;
+use crate::traits::{ContentFetcher, SignalStore};
 
 /// Mutable state for a scout run, updated by the reducer.
 pub struct PipelineState {
@@ -115,8 +115,10 @@ pub struct WiringContext {
 pub struct PipelineDeps {
     pub store: Arc<dyn SignalStore>,
     pub embedder: Arc<dyn TextEmbedder>,
-    pub region: ScoutScope,
+    pub region: Option<ScoutScope>,
     pub run_id: String,
+    pub fetcher: Option<Arc<dyn ContentFetcher>>,
+    pub anthropic_api_key: Option<String>,
 }
 
 impl PipelineState {

@@ -14,8 +14,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
-    Post, SourceNode,
+    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, SourceNode,
 };
 use rootsignal_graph::{DuplicateMatch, ReapStats};
 
@@ -99,26 +98,10 @@ pub trait SignalStore: Send + Sync {
     /// Check if content with this hash has already been processed for this URL.
     async fn content_already_processed(&self, hash: &str, url: &str) -> Result<bool>;
 
-    // --- Signal lifecycle ---
+    // --- Signal queries ---
 
-    /// Create a new signal node with embedding. Returns the node ID.
-    async fn create_node(
-        &self,
-        node: &Node,
-        embedding: &[f32],
-        created_by: &str,
-        run_id: &str,
-    ) -> Result<Uuid>;
-
-    /// Attach an evidence node to a signal.
-    async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()>;
-
-    /// Refresh a signal's last_confirmed_active timestamp (same-source re-encounter).
-    async fn refresh_signal(&self, id: Uuid, node_type: NodeType, now: DateTime<Utc>)
-        -> Result<()>;
-
-    /// Refresh all signals from a given source URL. Returns count refreshed.
-    async fn refresh_url_signals(&self, url: &str, now: DateTime<Utc>) -> Result<u64>;
+    /// Return signal IDs grouped by type for a given source URL.
+    async fn signal_ids_for_url(&self, url: &str) -> Result<Vec<(Uuid, NodeType)>>;
 
     /// Read the current corroboration count for a signal.
     async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32>;
@@ -152,91 +135,13 @@ pub trait SignalStore: Send + Sync {
     /// Find an actor by name (case-insensitive). Returns actor UUID if found.
     async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>>;
 
-    /// Create or update an actor node.
-    async fn upsert_actor(&self, actor: &ActorNode) -> Result<()>;
-
-    /// Link an actor to a signal with a role (e.g. "mentioned", "authored").
-    async fn link_actor_to_signal(&self, actor_id: Uuid, signal_id: Uuid, role: &str)
-        -> Result<()>;
-
     /// Find an actor by canonical_key (URL-based identity).
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>>;
-
-    // --- Resource graph ---
-
-    /// Find or create a Resource node by slug. Returns the resource UUID.
-    async fn find_or_create_resource(
-        &self,
-        name: &str,
-        slug: &str,
-        description: &str,
-        embedding: &[f32],
-    ) -> Result<Uuid>;
-
-    /// Create a REQUIRES edge from a signal to a resource (by slug).
-    async fn create_requires_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-        quantity: Option<&str>,
-        notes: Option<&str>,
-    ) -> Result<()>;
-
-    /// Create a PREFERS edge from a signal to a resource (by slug).
-    async fn create_prefers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-    ) -> Result<()>;
-
-    /// Create an OFFERS edge from a signal to a resource (by slug).
-    async fn create_offers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-        capacity: Option<&str>,
-    ) -> Result<()>;
-
-    // --- Relationship edges ---
-
-    /// Create a RESPONDS_TO edge from a signal to a tension.
-    async fn create_response_edge(
-        &self,
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: &str,
-    ) -> Result<()>;
-
-    /// Create a DRAWN_TO edge from a signal to a tension.
-    async fn create_drawn_to_edge(
-        &self,
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: &str,
-    ) -> Result<()>;
 
     // --- Source management ---
 
     /// Get all active source nodes.
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>>;
-
-    /// Create or update a source node (MERGE by canonical_key).
-    async fn upsert_source(&self, source: &SourceNode) -> Result<()>;
-
-    // --- Source scrape metrics ---
-
-    /// Record that a source was scraped, updating scrape_count and consecutive_empty_runs.
-    async fn record_source_scrape(
-        &self,
-        canonical_key: &str,
-        signals_produced: u32,
-        now: DateTime<Utc>,
-    ) -> Result<()>;
 
     // --- Pin lifecycle ---
 
@@ -256,15 +161,6 @@ pub trait SignalStore: Send + Sync {
         &self,
         actor_id: Uuid,
     ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>>;
-
-    /// Update an actor's triangulated location.
-    async fn update_actor_location(
-        &self,
-        actor_id: Uuid,
-        lat: f64,
-        lng: f64,
-        name: &str,
-    ) -> Result<()>;
 
     /// List all actors with their linked sources.
     async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>>;

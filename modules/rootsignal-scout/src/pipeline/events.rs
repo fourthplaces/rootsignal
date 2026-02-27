@@ -180,6 +180,11 @@ pub enum PipelineEvent {
         published_at: Option<DateTime<Utc>>,
         bucket: FreshnessBucket,
     },
+
+    // Engine lifecycle
+    EngineStarted {
+        run_id: String,
+    },
 }
 
 impl PipelineEvent {
@@ -209,6 +214,7 @@ impl PipelineEvent {
             PipelineEvent::SourceDiscovered { .. } => "source_discovered",
             PipelineEvent::SocialPostsFetched { .. } => "social_posts_fetched",
             PipelineEvent::FreshnessRecorded { .. } => "freshness_recorded",
+            PipelineEvent::EngineStarted { .. } => "engine_started",
         }
     }
 }

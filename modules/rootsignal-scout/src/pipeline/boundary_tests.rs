@@ -10,7 +10,6 @@ use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;
-use rootsignal_engine::MemoryEventSink;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,8 +66,7 @@ async fn page_with_content_produces_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -109,8 +107,7 @@ async fn empty_page_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://empty.org");
@@ -139,8 +136,7 @@ async fn unreachable_page_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://doesnt-exist.org");
@@ -197,8 +193,7 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/article");
@@ -251,8 +246,7 @@ async fn same_title_extracted_twice_produces_one_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/dupe");
@@ -314,8 +308,7 @@ async fn all_signals_stored_regardless_of_region() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/far-away");
@@ -363,8 +356,7 @@ async fn blocked_url_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://blocked.org/page");
@@ -409,8 +401,7 @@ async fn unchanged_content_is_not_re_extracted() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/same");
@@ -467,8 +458,7 @@ async fn outbound_links_on_page_are_collected() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://linktree.org");
@@ -593,8 +583,7 @@ async fn scrape_then_promote_creates_new_sources() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://hub.org");
@@ -642,8 +631,7 @@ async fn unreachable_page_produces_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://unreachable.org/page");
@@ -687,8 +675,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/empty-extract");
@@ -738,8 +725,7 @@ async fn database_write_failure_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/store-fail");
@@ -790,8 +776,7 @@ async fn blocked_url_produces_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://spam-site.org/page");
@@ -843,8 +828,7 @@ async fn all_signal_types_are_stored() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/mixed-types");
@@ -899,8 +883,7 @@ async fn unicode_and_emoji_titles_are_preserved() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/unicode");
@@ -945,8 +928,7 @@ async fn signal_at_zero_zero_is_still_stored() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/null-island");
@@ -984,8 +966,7 @@ async fn broken_extraction_skips_page_gracefully() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/extract-fail");
@@ -1036,8 +1017,7 @@ async fn blank_author_name_does_not_create_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/ws-author");
@@ -1095,8 +1075,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/resources");
@@ -1124,8 +1103,7 @@ async fn zero_sources_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let sources: Vec<&SourceNode> = vec![];
@@ -1162,8 +1140,7 @@ async fn outbound_links_collected_despite_extraction_failure() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/links-but-error");
@@ -1209,8 +1186,7 @@ async fn empty_social_account_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1245,8 +1221,7 @@ async fn image_only_posts_produce_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1288,8 +1263,7 @@ async fn empty_markdown_page_still_collects_outbound_links() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/empty-md");
@@ -1347,8 +1321,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let s1 = page_source("https://good.org/events");
@@ -1387,8 +1360,7 @@ async fn social_scrape_failure_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1442,8 +1414,7 @@ async fn batch_title_dedup_is_case_insensitive() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/case-dedup");
@@ -1496,8 +1467,7 @@ async fn web_source_without_actor_stores_content_location_only() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -1542,8 +1512,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1599,8 +1568,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1666,8 +1634,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1725,8 +1692,7 @@ async fn bootstrap_actor_gets_depth_zero() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1797,8 +1763,7 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(feed_url);
@@ -1865,8 +1830,7 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source(feed_url);
@@ -1916,8 +1880,7 @@ async fn social_published_at_becomes_published_at_fallback() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1973,8 +1936,7 @@ async fn ocean_coordinates_store_ecological_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/oil-spill");
@@ -2029,8 +1991,7 @@ async fn antarctic_coordinates_store_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://science.org/antarctic");
@@ -2087,8 +2048,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/hallucinated-geo");
@@ -2154,8 +2114,7 @@ async fn environmental_disaster_produces_all_signal_types() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://news.org/hurricane-response");
@@ -2222,8 +2181,7 @@ async fn hallucinated_future_date_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/future-date");
@@ -2277,8 +2235,7 @@ async fn epoch_zero_date_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/epoch-date");
@@ -2334,8 +2291,7 @@ async fn extremely_long_title_survives_pipeline() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/long-title");
@@ -2408,8 +2364,7 @@ async fn same_signal_from_two_sources_corroborates() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     // Process source A first
@@ -2500,8 +2455,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2557,8 +2511,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/bare-signal");
@@ -2615,8 +2568,7 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2661,8 +2613,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://aggregator.com/news");
@@ -2710,8 +2661,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/mentions");
@@ -2762,8 +2712,7 @@ async fn signal_has_produced_by_edge_to_its_source() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -2806,8 +2755,7 @@ async fn social_signal_has_produced_by_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2832,6 +2780,80 @@ use crate::traits::SignalStore;
 use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
+
+/// Wrapper that creates test engine+deps and calls enrich_actor_locations,
+/// returning the event sink so tests can inspect dispatched events.
+async fn enrich_with_sink(
+    store: &dyn SignalStore,
+    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+) -> (u32, std::sync::Arc<rootsignal_engine::MemoryEventSink>) {
+    let dummy_store: std::sync::Arc<dyn SignalStore> =
+        std::sync::Arc::new(crate::testing::MockSignalStore::new());
+    let sink = std::sync::Arc::new(rootsignal_engine::MemoryEventSink::new());
+    let engine = std::sync::Arc::new(rootsignal_engine::Engine::new(
+        crate::pipeline::reducer::ScoutReducer,
+        crate::pipeline::router::ScoutRouter::new(None),
+        sink.clone() as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
+        "test-run".to_string(),
+    ));
+    let deps = crate::testing::test_pipeline_deps(dummy_store);
+    let updated = enrich_actor_locations(store, &engine, &deps, actors).await;
+    (updated, sink)
+}
+
+/// Wrapper for tests that only need the updated count.
+async fn enrich_with_engine(
+    store: &dyn SignalStore,
+    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+) -> u32 {
+    let (updated, _) = enrich_with_sink(store, actors).await;
+    updated
+}
+
+/// Extract the location name dispatched for an actor from the event sink.
+fn dispatched_location_name(
+    sink: &rootsignal_engine::MemoryEventSink,
+    actor_id: uuid::Uuid,
+) -> Option<String> {
+    let actor_str = actor_id.to_string();
+    sink.events()
+        .iter()
+        .filter(|e| e.event_type == "actor_location_identified")
+        .find(|e| {
+            e.payload
+                .get("actor_id")
+                .and_then(|v| v.as_str())
+                .map_or(false, |id| id == actor_str)
+        })
+        .and_then(|e| {
+            e.payload
+                .get("location_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+}
+
+/// Extract the location coordinates dispatched for an actor from the event sink.
+fn dispatched_location_coords(
+    sink: &rootsignal_engine::MemoryEventSink,
+    actor_id: uuid::Uuid,
+) -> Option<(f64, f64)> {
+    let actor_str = actor_id.to_string();
+    sink.events()
+        .iter()
+        .filter(|e| e.event_type == "actor_location_identified")
+        .find(|e| {
+            e.payload
+                .get("actor_id")
+                .and_then(|v| v.as_str())
+                .map_or(false, |id| id == actor_str)
+        })
+        .and_then(|e| {
+            let lat = e.payload.get("location_lat").and_then(|v| v.as_f64())?;
+            let lng = e.payload.get("location_lng").and_then(|v| v.as_f64())?;
+            Some((lat, lng))
+        })
+}
 
 /// Phillips neighborhood coordinates.
 const PHILLIPS: (f64, f64) = (44.9489, -93.2601);
@@ -2928,12 +2950,13 @@ async fn enrichment_updates_actor_to_signal_mode_location() {
     )
     .await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "one actor should have been updated");
     assert_eq!(
-        store.actor_location_name("Northside Collective"),
+        dispatched_location_name(&sink, actor_id),
         Some("Phillips".to_string()),
         "actor should be placed in Phillips (mode of signals)"
     );
@@ -2960,7 +2983,7 @@ async fn enrichment_single_signal_insufficient_to_set_location() {
     .await;
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(
         updated, 0,
@@ -2985,7 +3008,7 @@ async fn enrichment_no_signals_leaves_actor_unchanged() {
 
     // No signals linked — actor should keep its current location
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(updated, 0, "no signals means no change");
     assert_eq!(
@@ -3003,7 +3026,7 @@ async fn enrichment_no_signals_leaves_actor_unchanged() {
 async fn enrichment_empty_actor_list_returns_zero() {
     let store = Arc::new(MockSignalStore::new());
 
-    let updated = enrich_actor_locations(&*store, &[]).await;
+    let updated = enrich_with_engine(&*store, &[]).await;
 
     assert_eq!(updated, 0);
 }
@@ -3041,7 +3064,7 @@ async fn enrichment_tie_preserves_current_location() {
     .await;
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(updated, 0, "tie should not change location");
     assert_eq!(
@@ -3067,7 +3090,7 @@ async fn enrichment_does_not_update_when_location_already_matches() {
     seed_signal(&store, actor.id, "S3", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(updated, 0, "location already correct — no update needed");
 }
@@ -3118,16 +3141,18 @@ async fn enrichment_processes_each_actor_independently() {
     )
     .await;
 
+    let actor_a_id = actor_a.id;
+    let actor_b_id = actor_b.id;
     let actors = vec![(actor_a, vec![]), (actor_b, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 2, "both actors should be updated");
     assert_eq!(
-        store.actor_location_name("Actor Alpha"),
+        dispatched_location_name(&sink, actor_a_id),
         Some("Phillips".to_string())
     );
     assert_eq!(
-        store.actor_location_name("Actor Beta"),
+        dispatched_location_name(&sink, actor_b_id),
         Some("Powderhorn".to_string())
     );
 }
@@ -3172,7 +3197,7 @@ async fn enrichment_counts_only_actors_whose_location_changed() {
     .await;
 
     let actors = vec![(actor_1, vec![]), (actor_2, vec![]), (actor_3, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(
         updated, 1,
@@ -3195,12 +3220,13 @@ async fn enrichment_overwrites_wrong_location_with_signal_mode() {
     seed_signal(&store, actor.id, "M2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
     seed_signal(&store, actor.id, "M3", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "wrong location should be corrected");
     assert_eq!(
-        store.actor_location_name("Mislocated Org"),
+        dispatched_location_name(&sink, actor_id),
         Some("Phillips".to_string()),
         "should move from Powderhorn to Phillips"
     );
@@ -3240,12 +3266,13 @@ async fn enrichment_three_neighborhoods_plurality_wins() {
     .await;
     seed_signal(&store, actor.id, "W1", WHITTIER.0, WHITTIER.1, "Whittier").await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1);
     assert_eq!(
-        store.actor_location_name("Spread Org"),
+        dispatched_location_name(&sink, actor_id),
         Some("Phillips".to_string()),
         "Phillips has plurality (3 of 6)"
     );
@@ -3264,10 +3291,11 @@ async fn enrichment_sets_coordinates_not_just_name() {
     seed_signal(&store, actor.id, "C1", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
     seed_signal(&store, actor.id, "C2", PHILLIPS.0, PHILLIPS.1, "Phillips").await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    enrich_actor_locations(&*store, &actors).await;
+    let (_updated, sink) = enrich_with_sink(&*store, &actors).await;
 
-    let coords = store.actor_location_coords("Coord Org");
+    let coords = dispatched_location_coords(&sink, actor_id);
     assert!(coords.is_some(), "coordinates should be set");
     let (lat, lng) = coords.unwrap();
     assert!(
@@ -3291,7 +3319,7 @@ async fn enrichment_blank_actor_with_no_signals_stays_blank() {
     store.upsert_actor(&actor).await.unwrap();
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(updated, 0);
     assert_eq!(store.actor_location_name("Ghost Org"), None);
@@ -3330,7 +3358,7 @@ async fn enrichment_ignores_mentioned_signals() {
         .unwrap();
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(
         updated, 0,
@@ -3373,7 +3401,7 @@ async fn enrichment_only_authored_signals_count_for_location() {
     }
 
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let updated = enrich_with_engine(&*store, &actors).await;
 
     assert_eq!(updated, 0, "only 1 authored signal — not enough evidence");
 }
@@ -3407,12 +3435,13 @@ async fn enrichment_exactly_two_signals_is_sufficient() {
     )
     .await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "2 signals should be enough");
     assert_eq!(
-        store.actor_location_name("Bare Minimum Org"),
+        dispatched_location_name(&sink, actor_id),
         Some("Powderhorn".to_string())
     );
 }
@@ -3465,8 +3494,7 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/low-conf");
@@ -3534,8 +3562,7 @@ async fn resource_roles_wire_to_correct_edge_types() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/multi-role");
@@ -3605,8 +3632,7 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source = page_source("https://example.com/multi-res");
@@ -3701,8 +3727,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source_a = page_source("https://source-a.org/page");
@@ -3791,8 +3816,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let source_a = page_source("https://alpha.org/page");
@@ -3872,8 +3896,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        Arc::new(MemoryEventSink::new()),
-        None,
+        test_engine(),
     );
 
     let mut ctx = RunContext::from_sources(&[]);
@@ -3926,15 +3949,16 @@ async fn actor_bio_location_corroborated_by_signal_wins() {
     )
     .await;
 
+    let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let updated = enrich_actor_locations(&*store, &actors).await;
+    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(
         updated, 1,
         "bio corroborated by one signal should update location"
     );
     assert_eq!(
-        store.actor_location_name("Phillips Pantry"),
+        dispatched_location_name(&sink, actor_id),
         Some("Phillips".to_string()),
         "bio location corroborated by signal should win"
     );

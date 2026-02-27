@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
@@ -21,6 +22,9 @@ use rootsignal_archive::Archive;
 
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -267,7 +271,8 @@ Return valid JSON matching the GravityFinding schema.";
 
 pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::traits::SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -283,7 +288,8 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::traits::SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -311,7 +317,8 @@ impl<'a> GatheringFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
-            store,
+            engine,
+            deps,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -325,8 +332,9 @@ impl<'a> GatheringFinder<'a> {
         }
     }
 
-    pub async fn run(&self) -> GatheringFinderStats {
+    pub async fn run(&self) -> (GatheringFinderStats, Vec<SourceNode>) {
         let mut stats = GatheringFinderStats::default();
+        let mut discovered_sources = Vec::new();
 
         let targets = match self
             .writer
@@ -342,14 +350,14 @@ impl<'a> GatheringFinder<'a> {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to find gathering finder targets");
-                return stats;
+                return (stats, discovered_sources);
             }
         };
 
         stats.targets_found = targets.len() as u32;
         if targets.is_empty() {
             info!("No gathering finder targets found");
-            return stats;
+            return (stats, discovered_sources);
         }
 
         info!(count = targets.len(), "Gathering finder targets selected");
@@ -360,7 +368,7 @@ impl<'a> GatheringFinder<'a> {
                 break;
             }
 
-            let found_gatherings = match self.investigate_tension(target, &mut stats).await {
+            let found_gatherings = match self.investigate_tension(target, &mut stats, &mut discovered_sources).await {
                 Ok(found) => {
                     stats.targets_investigated += 1;
                     found
@@ -390,7 +398,7 @@ impl<'a> GatheringFinder<'a> {
             }
         }
 
-        stats
+        (stats, discovered_sources)
     }
 
     /// Investigate a single tension for gatherings. Returns true if gatherings were found.
@@ -398,6 +406,7 @@ impl<'a> GatheringFinder<'a> {
         &self,
         target: &GatheringFinderTarget,
         stats: &mut GatheringFinderStats,
+        discovered_sources: &mut Vec<SourceNode>,
     ) -> Result<bool> {
         // Fetch existing gravity signals for context
         let existing = self
@@ -451,9 +460,8 @@ impl<'a> GatheringFinder<'a> {
                 .iter()
                 .take(MAX_FUTURE_QUERIES_PER_TENSION)
             {
-                if let Err(e) = self.create_future_query(query, target, stats).await {
-                    warn!(query = query.as_str(), error = %e, "Failed to create future query source");
-                }
+                discovered_sources.push(self.build_future_query_source(query, target));
+                stats.future_sources_created += 1;
             }
 
             return Ok(false);
@@ -477,7 +485,7 @@ impl<'a> GatheringFinder<'a> {
             .into_iter()
             .take(MAX_GATHERINGS_PER_TENSION)
         {
-            if let Err(e) = self.process_gathering(target, &gathering, stats).await {
+            if let Err(e) = self.process_gathering(target, &gathering, stats, discovered_sources).await {
                 warn!(
                     tension_id = %target.tension_id,
                     gathering_title = gathering.title.as_str(),
@@ -493,13 +501,8 @@ impl<'a> GatheringFinder<'a> {
             .iter()
             .take(MAX_FUTURE_QUERIES_PER_TENSION)
         {
-            if let Err(e) = self.create_future_query(query, target, stats).await {
-                warn!(
-                    query = query.as_str(),
-                    error = %e,
-                    "Failed to create future query source"
-                );
-            }
+            discovered_sources.push(self.build_future_query_source(query, target));
+            stats.future_sources_created += 1;
         }
 
         info!(
@@ -517,6 +520,7 @@ impl<'a> GatheringFinder<'a> {
         target: &GatheringFinderTarget,
         gathering: &DiscoveredGathering,
         stats: &mut GatheringFinderStats,
+        discovered_sources: &mut Vec<SourceNode>,
     ) -> Result<()> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -529,7 +533,7 @@ impl<'a> GatheringFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .store
+            .deps.store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -554,11 +558,13 @@ impl<'a> GatheringFinder<'a> {
                 was_new = false;
 
                 // Touch the existing signal so it doesn't age out
-                if let Err(e) = self
-                    .store
-                    .refresh_signal(dup.id, NodeType::Gathering, Utc::now())
-                    .await
-                {
+                let refresh_event = ScoutEvent::System(SystemEvent::FreshnessConfirmed {
+                    signal_ids: vec![dup.id],
+                    node_type: NodeType::Gathering,
+                    confirmed_at: Utc::now(),
+                });
+                let mut state = PipelineState::new(std::collections::HashMap::new());
+                if let Err(e) = self.engine.dispatch(refresh_event, &mut state, self.deps).await {
                     warn!(error = %e, "Failed to refresh signal freshness (non-fatal)");
                 }
 
@@ -574,14 +580,15 @@ impl<'a> GatheringFinder<'a> {
         };
 
         // Wire DRAWN_TO edge to the target tension
-        self.store
-            .create_drawn_to_edge(
-                signal_id,
-                target.tension_id,
-                gathering.match_strength.clamp(0.0, 1.0),
-                &gathering.explanation,
-            )
-            .await?;
+        let drawn_event = ScoutEvent::World(WorldEvent::TensionLinked {
+            signal_id,
+            tension_id: target.tension_id,
+            strength: gathering.match_strength.clamp(0.0, 1.0),
+            explanation: gathering.explanation.clone(),
+            source_url: None,
+        });
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine.dispatch(drawn_event, &mut state, self.deps).await?;
         stats.edges_created += 1;
 
         // Wire additional DRAWN_TO edges for also_addresses
@@ -622,9 +629,8 @@ impl<'a> GatheringFinder<'a> {
 
                 // Venue seeding: create future source for the venue
                 let venue_query = format!("{} {} community events", venue, self.region.name);
-                if let Err(e) = self.create_future_query(&venue_query, target, stats).await {
-                    warn!(venue, error = %e, "Failed to create venue-seeded future source");
-                }
+                discovered_sources.push(self.build_future_query_source(&venue_query, target));
+                stats.future_sources_created += 1;
             }
         }
 
@@ -699,13 +705,21 @@ impl<'a> GatheringFinder<'a> {
             }),
         };
 
-        let embed_text = format!("{} {}", gathering.title, gathering.summary);
-        let embedding = self.embedder.embed(&embed_text).await?;
+        let node_id = node.meta().unwrap().id;
 
-        let node_id = self
-            .store
-            .create_node(&node, &embedding, "gathering_finder", &self.run_id)
+        // Dispatch world event + system events through engine
+        let world_event = crate::store::event_sourced::node_to_world_event(&node);
+        let system_events = crate::store::event_sourced::node_system_events(&node);
+
+        let mut state = PipelineState::new(std::collections::HashMap::new());
+        self.engine
+            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
             .await?;
+        for se in system_events {
+            self.engine
+                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
+                .await?;
+        }
 
         info!(
             node_id = %node_id,
@@ -764,26 +778,26 @@ impl<'a> GatheringFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring gravity also_addresses edge"
                 );
-                self.store
-                    .create_drawn_to_edge(
-                        signal_id,
-                        tension_id,
-                        sim.clamp(0.0, 1.0),
-                        explanation,
-                    )
-                    .await?;
+                let also_event = ScoutEvent::World(WorldEvent::TensionLinked {
+                    signal_id,
+                    tension_id,
+                    strength: sim.clamp(0.0, 1.0),
+                    explanation: explanation.to_string(),
+                    source_url: None,
+                });
+                let mut state = PipelineState::new(std::collections::HashMap::new());
+                self.engine.dispatch(also_event, &mut state, self.deps).await?;
             }
         }
 
         Ok(())
     }
 
-    async fn create_future_query(
+    fn build_future_query_source(
         &self,
         query: &str,
         target: &GatheringFinderTarget,
-        stats: &mut GatheringFinderStats,
-    ) -> Result<()> {
+    ) -> SourceNode {
         let cv = query.to_string();
         let ck = canonical_value(&cv);
         let gap_context = format!(
@@ -791,7 +805,13 @@ impl<'a> GatheringFinder<'a> {
             target.title,
         );
 
-        let source = SourceNode {
+        info!(
+            query = query,
+            tension = target.title.as_str(),
+            "Future query source built by gathering finder"
+        );
+
+        SourceNode {
             id: Uuid::new_v4(),
             canonical_key: ck,
             canonical_value: cv,
@@ -814,18 +834,7 @@ impl<'a> GatheringFinder<'a> {
             quality_penalty: 1.0,
             source_role: SourceRole::Response,
             scrape_count: 0,
-        };
-
-        self.store.upsert_source(&source).await?;
-        stats.future_sources_created += 1;
-
-        info!(
-            query = query,
-            tension = target.title.as_str(),
-            "Future query source created by gathering finder"
-        );
-
-        Ok(())
+        }
     }
 }
 

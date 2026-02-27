@@ -1,14 +1,18 @@
 //! Restate durable workflow for cold-start bootstrapping.
 //!
-//! Wraps `Bootstrapper::run()` — generates seed queries, platform sources,
-//! and discovers actor pages for a new region.
+//! Dispatches `EngineStarted` — the handler checks whether the region has
+//! sources and seeds them if empty.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
 use tracing::info;
 
 use rootsignal_graph::GraphWriter;
+
+use crate::pipeline::events::{PipelineEvent, ScoutEvent};
+use crate::pipeline::state::PipelineState;
 
 use super::types::{BootstrapResult, EmptyRequest, TaskRequest};
 use super::{create_archive, ScoutDeps};
@@ -71,25 +75,37 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
 
         ctx.set("status", "Starting bootstrap...".to_string());
         let archive = create_archive(&self.deps);
-        let api_key = self.deps.anthropic_api_key.clone();
         let scope = req.scope.clone();
 
         let deps = self.deps.clone();
         let sources_created = match ctx
             .run(|| async {
-                let writer = GraphWriter::new(deps.graph_client.clone());
-                let store = deps.build_store(uuid::Uuid::new_v4().to_string());
-                let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
-                    &writer,
-                    &store as &dyn crate::traits::SignalStore,
-                    archive,
-                    &api_key,
+                let run_id = uuid::Uuid::new_v4().to_string();
+                let engine = deps.build_engine(&run_id);
+                let store = deps.build_store(run_id.clone());
+                let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
+                    Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
+                let pipe_deps = deps.build_pipeline_deps(
+                    Arc::new(store) as Arc<dyn crate::traits::SignalStore>,
+                    embedder,
+                    Some(archive as Arc<dyn crate::traits::ContentFetcher>),
                     scope,
+                    &run_id,
                 );
-                bootstrapper
-                    .run()
+                let mut state = PipelineState::new(HashMap::new());
+
+                engine
+                    .dispatch(
+                        ScoutEvent::Pipeline(PipelineEvent::EngineStarted {
+                            run_id: run_id.clone(),
+                        }),
+                        &mut state,
+                        &pipe_deps,
+                    )
                     .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
+
+                Ok(state.stats.sources_discovered)
             })
             .await
         {

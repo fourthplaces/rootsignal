@@ -19,7 +19,7 @@ use uuid::Uuid;
 use rootsignal_common::events::{
     Event, Location, Schedule, SystemEvent, TelemetryEvent, WorldEvent,
 };
-use rootsignal_common::types::{ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode};
+use rootsignal_common::types::{ActorNode, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
     FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
     NOTICE_EXPIRE_DAYS,
@@ -206,19 +206,6 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
     })
 }
 
-fn evidence_to_event(evidence: &CitationNode, signal_id: Uuid) -> Event {
-    Event::World(WorldEvent::CitationRecorded {
-        citation_id: evidence.id,
-        signal_id: signal_id,
-        url: evidence.source_url.clone(),
-        content_hash: evidence.content_hash.clone(),
-        snippet: evidence.snippet.clone(),
-        relevance: evidence.relevance.clone(),
-        channel_type: evidence.channel_type,
-        evidence_confidence: evidence.confidence,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -282,58 +269,8 @@ impl SignalStore for EventSourcedStore {
         Ok(self.writer.content_already_processed(hash, url).await?)
     }
 
-    // --- Signal lifecycle (append event → project to graph) ---
-
-    async fn create_node(
-        &self,
-        node: &Node,
-        _embedding: &[f32],
-        created_by: &str,
-        run_id: &str,
-    ) -> Result<Uuid> {
-        // 1. World fact — the discovery itself
-        let world = node_to_world_event(node);
-        let world_event = Event::World(world);
-        let append = AppendEvent::new(world_event.event_type(), world_event.to_payload())
-            .with_run_id(run_id)
-            .with_actor(created_by);
-        let stored = self.event_store.append_and_read(append).await?;
-        self.projector.project(&stored).await?;
-
-        // 2. System classifications — sensitivity + implied queries
-        for sys in node_system_events(node) {
-            let sys_event = Event::System(sys);
-            let append = AppendEvent::new(sys_event.event_type(), sys_event.to_payload())
-                .with_run_id(run_id)
-                .with_actor(created_by);
-            let stored = self.event_store.append_and_read(append).await?;
-            self.projector.project(&stored).await?;
-        }
-
-        Ok(node.id())
-    }
-
-    async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()> {
-        let event = evidence_to_event(evidence, signal_id);
-        self.append_and_project(&event, None).await
-    }
-
-    async fn refresh_signal(
-        &self,
-        id: Uuid,
-        node_type: NodeType,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        let event = Event::System(SystemEvent::FreshnessConfirmed {
-            signal_ids: vec![id],
-            node_type,
-            confirmed_at: now,
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn refresh_url_signals(&self, url: &str, now: DateTime<Utc>) -> Result<u64> {
-        let mut total = 0u64;
+    async fn signal_ids_for_url(&self, url: &str) -> Result<Vec<(Uuid, NodeType)>> {
+        let mut results = Vec::new();
         for (label, node_type) in &[
             ("Gathering", NodeType::Gathering),
             ("Aid", NodeType::Aid),
@@ -347,26 +284,15 @@ impl SignalStore for EventSourcedStore {
             .param("url", url);
 
             let graph = self.writer.client().inner();
-            let mut ids = Vec::new();
             let mut stream = graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 if let Ok(id) = Uuid::parse_str(&id_str) {
-                    ids.push(id);
+                    results.push((id, *node_type));
                 }
             }
-
-            if !ids.is_empty() {
-                total += ids.len() as u64;
-                let event = Event::System(SystemEvent::FreshnessConfirmed {
-                    signal_ids: ids,
-                    node_type: *node_type,
-                    confirmed_at: now,
-                });
-                self.append_and_project(&event, None).await?;
-            }
         }
-        Ok(total)
+        Ok(results)
     }
 
     // --- Dedup queries (read-only, delegate to writer) ---
@@ -412,195 +338,14 @@ impl SignalStore for EventSourcedStore {
         Ok(self.writer.find_actor_by_name(name).await?)
     }
 
-    async fn upsert_actor(&self, actor: &ActorNode) -> Result<()> {
-        let event = Event::World(WorldEvent::ActorIdentified {
-            actor_id: actor.id,
-            name: actor.name.clone(),
-            actor_type: actor.actor_type,
-            canonical_key: actor.canonical_key.clone(),
-            domains: actor.domains.clone(),
-            social_urls: actor.social_urls.clone(),
-            description: actor.description.clone(),
-            bio: actor.bio.clone(),
-            location_lat: actor.location_lat,
-            location_lng: actor.location_lng,
-            location_name: actor.location_name.clone(),
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn link_actor_to_signal(
-        &self,
-        actor_id: Uuid,
-        signal_id: Uuid,
-        role: &str,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ActorLinkedToSignal {
-            actor_id,
-            signal_id: signal_id,
-            role: role.to_string(),
-        });
-        self.append_and_project(&event, None).await
-    }
-
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         Ok(self.writer.find_actor_by_canonical_key(canonical_key).await?)
-    }
-
-    // --- Resource graph (pass through for find_or_create, events for edges) ---
-
-    async fn find_or_create_resource(
-        &self,
-        name: &str,
-        slug: &str,
-        description: &str,
-        embedding: &[f32],
-    ) -> Result<Uuid> {
-        // GraphWriter does the MERGE (with embedding) and returns the real ID.
-        let resource_id = self
-            .writer
-            .find_or_create_resource(name, slug, description, embedding)
-            .await?;
-
-        // Emit ResourceIdentified so the event log contains the resource creation
-        // fact — needed for replay. The handler path doesn't call this method
-        // (it emits ResourceIdentified directly), so no double-emit.
-        let event = Event::World(WorldEvent::ResourceIdentified {
-            resource_id,
-            name: name.to_string(),
-            slug: slug.to_string(),
-            description: description.to_string(),
-        });
-        self.append_and_project(&event, None).await?;
-
-        Ok(resource_id)
-    }
-
-    async fn create_requires_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-        quantity: Option<&str>,
-        notes: Option<&str>,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ResourceEdgeCreated {
-            signal_id,
-            resource_slug: resource_slug.to_string(),
-            role: "requires".to_string(),
-            confidence,
-            quantity: quantity.map(|s| s.to_string()),
-            notes: notes.map(|s| s.to_string()),
-            capacity: None,
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn create_prefers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ResourceEdgeCreated {
-            signal_id,
-            resource_slug: resource_slug.to_string(),
-            role: "prefers".to_string(),
-            confidence,
-            quantity: None,
-            notes: None,
-            capacity: None,
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn create_offers_edge(
-        &self,
-        signal_id: Uuid,
-        resource_slug: &str,
-        confidence: f32,
-        capacity: Option<&str>,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ResourceEdgeCreated {
-            signal_id,
-            resource_slug: resource_slug.to_string(),
-            role: "offers".to_string(),
-            confidence,
-            quantity: None,
-            notes: None,
-            capacity: capacity.map(|s| s.to_string()),
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    // --- Relationship edges (append event → project to graph) ---
-
-    async fn create_response_edge(
-        &self,
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: &str,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ResponseLinked {
-            signal_id,
-            tension_id,
-            strength,
-            explanation: explanation.to_string(),
-            source_url: None,
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn create_drawn_to_edge(
-        &self,
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: &str,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::TensionLinked {
-            signal_id,
-            tension_id,
-            strength,
-            explanation: explanation.to_string(),
-            source_url: None,
-        });
-        self.append_and_project(&event, None).await
     }
 
     // --- Source management (append event → project to graph) ---
 
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
         Ok(self.writer.get_active_sources().await?)
-    }
-
-    async fn upsert_source(&self, source: &SourceNode) -> Result<()> {
-        let event = Event::System(SystemEvent::SourceRegistered {
-            source_id: source.id,
-            canonical_key: source.canonical_key.clone(),
-            canonical_value: source.canonical_value.clone(),
-            url: source.url.clone(),
-            discovery_method: source.discovery_method,
-            weight: source.weight,
-            source_role: source.source_role,
-            gap_context: source.gap_context.clone(),
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn record_source_scrape(
-        &self,
-        canonical_key: &str,
-        signals_produced: u32,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        let event = Event::System(SystemEvent::SourceScraped {
-            canonical_key: canonical_key.to_string(),
-            signals_produced,
-            scraped_at: now,
-        });
-        self.append_and_project(&event, None).await
     }
 
     async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {
@@ -736,26 +481,6 @@ impl SignalStore for EventSourcedStore {
         actor_id: Uuid,
     ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> {
         Ok(self.writer.get_signals_for_actor(actor_id).await?)
-    }
-
-    async fn update_actor_location(
-        &self,
-        actor_id: Uuid,
-        lat: f64,
-        lng: f64,
-        name: &str,
-    ) -> Result<()> {
-        let event = Event::World(WorldEvent::ActorLocationIdentified {
-            actor_id,
-            location_lat: lat,
-            location_lng: lng,
-            location_name: if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            },
-        });
-        self.append_and_project(&event, None).await
     }
 
     async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
@@ -975,7 +700,16 @@ mod tests {
             channel_type: Some(ChannelType::Press),
         };
 
-        let event = evidence_to_event(&evidence, signal_id);
+        let event = Event::World(WorldEvent::CitationRecorded {
+            citation_id: evidence.id,
+            signal_id,
+            url: evidence.source_url.clone(),
+            content_hash: evidence.content_hash.clone(),
+            snippet: evidence.snippet.clone(),
+            relevance: evidence.relevance.clone(),
+            channel_type: evidence.channel_type,
+            evidence_confidence: evidence.confidence,
+        });
         match event {
             Event::World(WorldEvent::CitationRecorded {
                 citation_id,

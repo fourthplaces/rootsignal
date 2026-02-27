@@ -1,16 +1,20 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use ai_client::claude::Claude;
 use anyhow::Result;
-use chrono::Utc;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ActorNode, ActorType};
+use rootsignal_common::events::WorldEvent;
+use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 use crate::traits::SignalStore;
 
 /// Response schema for actor extraction LLM call.
@@ -71,7 +75,8 @@ pub async fn run_actor_extraction(
     store: &dyn SignalStore,
     client: &GraphClient,
     anthropic_api_key: &str,
-    region_slug: &str,
+    engine: &ScoutEngine,
+    deps: &PipelineDeps,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -81,7 +86,8 @@ pub async fn run_actor_extraction(
         store,
         client,
         anthropic_api_key,
-        region_slug,
+        engine,
+        deps,
         min_lat,
         max_lat,
         min_lng,
@@ -101,7 +107,8 @@ async fn run_actor_extraction_inner(
     store: &dyn SignalStore,
     client: &GraphClient,
     anthropic_api_key: &str,
-    _region_slug: &str,
+    engine: &ScoutEngine,
+    deps: &PipelineDeps,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -198,30 +205,33 @@ async fn run_actor_extraction_inner(
             let actor_id = match store.find_actor_by_name(&extracted.name).await {
                 Ok(Some(id)) => id,
                 Ok(None) => {
-                    let actor = ActorNode {
-                        id: Uuid::new_v4(),
-                        name: extracted.name.clone(),
-                        actor_type,
-                        canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
-                        domains: vec![],
-                        social_urls: vec![],
-                        description: String::new(),
-                        signal_count: 0,
-                        first_seen: Utc::now(),
-                        last_active: Utc::now(),
-                        typical_roles: vec![],
-                        bio: None,
-                        location_lat: Some((min_lat + max_lat) / 2.0),
-                        location_lng: Some((min_lng + max_lng) / 2.0),
-                        location_name: None,
-                        discovery_depth: 0,
-                    };
-                    if let Err(e) = store.upsert_actor(&actor).await {
+                    let new_id = Uuid::new_v4();
+                    let mut state = PipelineState::new(HashMap::new());
+                    if let Err(e) = engine
+                        .dispatch(
+                            ScoutEvent::World(WorldEvent::ActorIdentified {
+                                actor_id: new_id,
+                                name: extracted.name.clone(),
+                                actor_type,
+                                canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
+                                domains: vec![],
+                                social_urls: vec![],
+                                description: String::new(),
+                                bio: None,
+                                location_lat: Some((min_lat + max_lat) / 2.0),
+                                location_lng: Some((min_lng + max_lng) / 2.0),
+                                location_name: None,
+                            }),
+                            &mut state,
+                            deps,
+                        )
+                        .await
+                    {
                         warn!(error = %e, actor = extracted.name, "Failed to create actor");
                         continue;
                     }
                     stats.actors_created += 1;
-                    actor.id
+                    new_id
                 }
                 Err(e) => {
                     warn!(error = %e, actor = extracted.name, "Actor lookup failed");
@@ -229,8 +239,17 @@ async fn run_actor_extraction_inner(
                 }
             };
 
-            if let Err(e) = store
-                .link_actor_to_signal(actor_id, signal.id, "mentioned")
+            let mut state = PipelineState::new(HashMap::new());
+            if let Err(e) = engine
+                .dispatch(
+                    ScoutEvent::World(WorldEvent::ActorLinkedToSignal {
+                        actor_id,
+                        signal_id: signal.id,
+                        role: "mentioned".into(),
+                    }),
+                    &mut state,
+                    deps,
+                )
                 .await
             {
                 warn!(error = %e, actor = extracted.name, "Failed to link actor to signal");

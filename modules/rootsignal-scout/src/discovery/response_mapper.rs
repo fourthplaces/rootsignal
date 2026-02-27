@@ -3,20 +3,25 @@
 //!
 //! Moved from `rootsignal-graph::response` — this is discovery logic (query → LLM
 //! verify → write), not a graph primitive. Follows the same pattern as the other
-//! finders: `&GraphWriter` for reads, `&dyn SignalStore` for writes.
+//! finders: `&GraphWriter` for reads, engine dispatch for writes.
+
+use std::collections::HashMap;
 
 use ai_client::claude::Claude;
 use tracing::{info, warn};
-use uuid::Uuid;
 
+use rootsignal_common::events::WorldEvent;
 use rootsignal_graph::GraphWriter;
 
-use crate::traits::SignalStore;
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     anthropic_api_key: String,
     min_lat: f64,
     max_lat: f64,
@@ -27,7 +32,8 @@ pub struct ResponseMapper<'a> {
 impl<'a> ResponseMapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         anthropic_api_key: &str,
         center_lat: f64,
         center_lng: f64,
@@ -37,7 +43,8 @@ impl<'a> ResponseMapper<'a> {
         let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         Self {
             writer,
-            store,
+            engine,
+            deps,
             anthropic_api_key: anthropic_api_key.to_string(),
             min_lat: center_lat - lat_delta,
             max_lat: center_lat + lat_delta,
@@ -102,16 +109,15 @@ impl<'a> ResponseMapper<'a> {
                     .await
                 {
                     Ok(Some(explanation)) => {
-                        if let Err(e) = self
-                            .store
-                            .create_response_edge(
-                                *candidate_id,
-                                *tension_id,
-                                *candidate_similarity,
-                                &explanation,
-                            )
-                            .await
-                        {
+                        let event = ScoutEvent::World(WorldEvent::ResponseLinked {
+                            signal_id: *candidate_id,
+                            tension_id: *tension_id,
+                            strength: *candidate_similarity,
+                            explanation: explanation.clone(),
+                            source_url: None,
+                        });
+                        let mut state = PipelineState::new(HashMap::new());
+                        if let Err(e) = self.engine.dispatch(event, &mut state, self.deps).await {
                             warn!(error = %e, "Failed to create RESPONDS_TO edge");
                         } else {
                             stats.edges_created += 1;

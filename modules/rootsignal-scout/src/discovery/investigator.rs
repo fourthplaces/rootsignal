@@ -9,10 +9,13 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
-use crate::traits::SignalStore;
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::pipeline::ScoutEngine;
 
 use rootsignal_archive::Archive;
 
@@ -22,7 +25,8 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn SignalStore,
+    engine: &'a ScoutEngine,
+    deps: &'a PipelineDeps,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -117,7 +121,8 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn SignalStore,
+        engine: &'a ScoutEngine,
+        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
@@ -127,7 +132,8 @@ impl<'a> Investigator<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
             writer,
-            store,
+            engine,
+            deps,
             archive,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             region: region.name.clone(),
@@ -341,12 +347,19 @@ impl<'a> Investigator<'a> {
                 channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 
-            match self
-                .store
-                .create_evidence(&evidence, target.signal_id)
-                .await
-            {
-                Ok(()) => {
+            let event = ScoutEvent::World(WorldEvent::CitationRecorded {
+                citation_id: evidence.id,
+                signal_id: target.signal_id,
+                url: evidence.source_url.clone(),
+                content_hash: evidence.content_hash.clone(),
+                snippet: evidence.snippet.clone(),
+                relevance: evidence.relevance.clone(),
+                channel_type: evidence.channel_type,
+                evidence_confidence: evidence.confidence,
+            });
+            let mut state = PipelineState::new(std::collections::HashMap::new());
+            match self.engine.dispatch(event, &mut state, self.deps).await {
+                Ok(_) => {
                     evidence_count += 1;
                     info!(
                         signal_id = %target.signal_id,
