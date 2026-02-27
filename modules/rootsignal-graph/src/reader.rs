@@ -1967,6 +1967,57 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Total situation count.
+    pub async fn situation_count(&self) -> Result<u64, neo4rs::Error> {
+        let g = &self.client.graph;
+        let q = query("MATCH (s:Situation) RETURN count(s) AS cnt");
+        let mut stream = g.execute(q).await?;
+        match stream.next().await? {
+            Some(row) => {
+                let cnt: i64 = row.get("cnt").unwrap_or(0);
+                Ok(cnt as u64)
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Situation count grouped by arc.
+    pub async fn situation_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let q = query(
+            "MATCH (s:Situation)
+             RETURN s.arc AS arc, count(s) AS cnt
+             ORDER BY cnt DESC",
+        );
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let arc: String = row.get("arc").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((arc, cnt as u64));
+        }
+        Ok(results)
+    }
+
+    /// Situation count grouped by category.
+    pub async fn situation_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let q = query(
+            "MATCH (s:Situation)
+             WHERE s.category IS NOT NULL
+             RETURN s.category AS cat, count(s) AS cnt
+             ORDER BY cnt DESC",
+        );
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let cat: String = row.get("cat").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((cat, cnt as u64));
+        }
+        Ok(results)
+    }
+
     /// Fetch situations that a signal evidences (many-to-many via PART_OF).
     pub async fn situations_for_signal(
         &self,

@@ -5,13 +5,13 @@ use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleOb
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{Node, NodeType};
+use rootsignal_common::NodeType;
 use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
-    ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
-    TagsBySituationLoader, TagsByStoryLoader,
+    ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader,
+    SituationsBySignalLoader, TagsBySituationLoader,
 };
 use super::mutations::MutationRoot;
 use super::types::*;
@@ -96,33 +96,6 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// Find stories within a bounding box (by centroid), sorted by energy.
-    /// Optionally filter by tag slug.
-    async fn stories_in_bounds(
-        &self,
-        ctx: &Context<'_>,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        tag: Option<String>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .stories_in_bounds_filtered(
-                min_lat,
-                max_lat,
-                min_lng,
-                max_lng,
-                tag.as_deref(),
-                limit,
-            )
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
     /// Semantic search for signals within a bounding box. Embeds the query via Voyage AI,
     /// then finds nearest signals via vector KNN, post-filtered by bbox.
     async fn search_signals_in_bounds(
@@ -158,95 +131,7 @@ impl QueryRoot {
             .collect())
     }
 
-    /// Semantic search for stories within a bounding box. Searches signals via KNN,
-    /// then aggregates to parent stories.
-    async fn search_stories_in_bounds(
-        &self,
-        ctx: &Context<'_>,
-        query: String,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStorySearchResult>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
-        let limit = limit.unwrap_or(20).min(100);
-
-        let embedding = embedder.embed(&query).await.map_err(|e| {
-            async_graphql::Error::new(format!("Embedding failed: {e}"))
-        })?;
-
-        let results = reader
-            .semantic_search_stories_in_bounds(
-                &embedding, min_lat, max_lat, min_lng, max_lng, limit,
-            )
-            .await?;
-
-        Ok(results
-            .into_iter()
-            .map(|(story, score, top_title)| GqlStorySearchResult {
-                story: GqlStory(story),
-                score,
-                top_matching_signal_title: if top_title.is_empty() {
-                    None
-                } else {
-                    Some(top_title)
-                },
-            })
-            .collect())
-    }
-
-    /// List stories ordered by energy.
-    async fn stories(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-        status: Option<String>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .top_stories_by_energy(limit, status.as_deref())
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// Get a single story by ID.
-    async fn story(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let story = reader.get_story_by_id(id).await?;
-        Ok(story.map(GqlStory))
-    }
-
-    /// List stories by category.
-    async fn stories_by_category(
-        &self,
-        ctx: &Context<'_>,
-        category: String,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader.stories_by_category(&category, limit).await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// List stories by arc.
-    async fn stories_by_arc(
-        &self,
-        ctx: &Context<'_>,
-        arc: String,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader.stories_by_arc(&arc, limit).await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// List available tags, sorted by story count.
+    /// List available tags, sorted by usage count.
     async fn tags(
         &self,
         ctx: &Context<'_>,
@@ -256,26 +141,6 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50).min(200) as usize;
         let tags = reader.top_tags(limit).await?;
         Ok(tags.into_iter().map(GqlTag).collect())
-    }
-
-    /// Stories that have a specific tag, optionally bounded geographically.
-    async fn stories_by_tag(
-        &self,
-        ctx: &Context<'_>,
-        tag: String,
-        min_lat: Option<f64>,
-        max_lat: Option<f64>,
-        min_lng: Option<f64>,
-        max_lng: Option<f64>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .stories_by_tag(&tag, min_lat, max_lat, min_lng, max_lng, limit)
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-
     }
 
     // ========== Situation queries ==========
@@ -383,17 +248,19 @@ impl QueryRoot {
     async fn admin_dashboard(&self, ctx: &Context<'_>, region: String) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
 
         let (
             total_signals,
-            story_count,
+            situation_count,
             actor_count,
             by_type,
             freshness,
             confidence,
             signal_volume,
-            story_arcs,
-            story_categories,
+            situation_arcs,
+            situation_categories,
             tensions,
             discovery,
             yield_data,
@@ -403,14 +270,14 @@ impl QueryRoot {
             region_running,
         ) = tokio::join!(
             reader.total_count(),
-            reader.story_count(),
+            pub_reader.situation_count(),
             reader.actor_count(),
             reader.count_by_type(),
             reader.freshness_distribution(),
             reader.confidence_distribution(),
             reader.signal_volume_by_day(),
-            reader.story_count_by_arc(),
-            reader.story_count_by_category(),
+            pub_reader.situation_count_by_arc(),
+            pub_reader.situation_count_by_category(),
             writer.get_unmet_tensions(20),
             writer.get_discovery_performance(),
             writer.get_extraction_yield(),
@@ -436,7 +303,7 @@ impl QueryRoot {
 
         Ok(AdminDashboardData {
             total_signals: total_signals.unwrap_or(0),
-            total_stories: story_count.unwrap_or(0),
+            total_situations: situation_count.unwrap_or(0),
             total_actors: actor_count.unwrap_or(0),
             total_sources: sources.len() as u64,
             active_sources: sources.iter().filter(|s| s.active).count() as u64,
@@ -460,7 +327,7 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            story_count_by_arc: story_arcs
+            situation_count_by_arc: situation_arcs
                 .unwrap_or_default()
                 .iter()
                 .map(|(arc, c)| LabelCount {
@@ -468,7 +335,7 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            story_count_by_category: story_categories
+            situation_count_by_category: situation_categories
                 .unwrap_or_default()
                 .iter()
                 .map(|(cat, c)| LabelCount {
@@ -1034,7 +901,7 @@ pub struct MeResult {
 #[derive(SimpleObject)]
 pub struct AdminDashboardData {
     pub total_signals: u64,
-    pub total_stories: u64,
+    pub total_situations: u64,
     pub total_actors: u64,
     pub total_sources: u64,
     pub active_sources: u64,
@@ -1042,8 +909,8 @@ pub struct AdminDashboardData {
     pub scout_statuses: Vec<RegionScoutStatus>,
     pub signal_volume_by_day: Vec<DayVolume>,
     pub count_by_type: Vec<TypeCount>,
-    pub story_count_by_arc: Vec<LabelCount>,
-    pub story_count_by_category: Vec<LabelCount>,
+    pub situation_count_by_arc: Vec<LabelCount>,
+    pub situation_count_by_category: Vec<LabelCount>,
     pub freshness_distribution: Vec<LabelCount>,
     pub confidence_distribution: Vec<LabelCount>,
     pub unmet_tensions: Vec<AdminTensionRow>,
@@ -1242,17 +1109,32 @@ struct GqlArchiveFile {
 
 // ========== Scout Run Types ==========
 
-use crate::db::scout_run::{ScoutRunRow, StatsJson, EventJson};
+use crate::db::scout_run::{ScoutRunRow, StatsJson, EventRow};
 
 /// GraphQL output type for a scout run.
-#[derive(SimpleObject)]
+/// Events are loaded lazily — only queried when the client requests the `events` field.
 struct ScoutRun {
-    run_id: String,
-    region: String,
-    started_at: DateTime<Utc>,
-    finished_at: DateTime<Utc>,
-    stats: ScoutRunStats,
-    events: Vec<ScoutRunEvent>,
+    row: ScoutRunRow,
+}
+
+#[Object]
+impl ScoutRun {
+    async fn run_id(&self) -> &str { &self.row.run_id }
+    async fn region(&self) -> &str { &self.row.region }
+    async fn started_at(&self) -> DateTime<Utc> { self.row.started_at }
+    async fn finished_at(&self) -> DateTime<Utc> { self.row.finished_at }
+    async fn stats(&self) -> ScoutRunStats { ScoutRunStats::from(&self.row.stats) }
+
+    async fn events(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool.as_ref().ok_or_else(|| {
+            async_graphql::Error::new("Postgres not configured")
+        })?;
+        let rows = crate::db::scout_run::list_events_by_run_id(pool, &self.row.run_id, None)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
 }
 
 #[derive(SimpleObject)]
@@ -1306,23 +1188,23 @@ struct ScoutRunEvent {
     remaining_cents: Option<u64>,
     topics: Option<Vec<String>>,
     posts_found: Option<u32>,
+    reason: Option<String>,
+    strategy: Option<String>,
+    field: Option<String>,
+    old_value: Option<String>,
+    new_value: Option<String>,
+    signal_count: Option<u32>,
+    summary: Option<String>,
 }
 
 impl From<ScoutRunRow> for ScoutRun {
     fn from(r: ScoutRunRow) -> Self {
-        Self {
-            run_id: r.run_id,
-            region: r.region,
-            started_at: r.started_at,
-            finished_at: r.finished_at,
-            stats: ScoutRunStats::from(r.stats),
-            events: r.events.into_iter().map(ScoutRunEvent::from).collect(),
-        }
+        Self { row: r }
     }
 }
 
-impl From<StatsJson> for ScoutRunStats {
-    fn from(s: StatsJson) -> Self {
+impl From<&StatsJson> for ScoutRunStats {
+    fn from(s: &StatsJson) -> Self {
         Self {
             urls_scraped: s.urls_scraped.unwrap_or(0),
             urls_unchanged: s.urls_unchanged.unwrap_or(0),
@@ -1337,10 +1219,10 @@ impl From<StatsJson> for ScoutRunStats {
     }
 }
 
-impl From<EventJson> for ScoutRunEvent {
-    fn from(j: EventJson) -> Self {
+impl From<EventRow> for ScoutRunEvent {
+    fn from(j: EventRow) -> Self {
         Self {
-            seq: j.seq,
+            seq: j.seq as u32,
             ts: j.ts,
             event_type: j.event_type,
             query: j.query,
@@ -1350,13 +1232,13 @@ impl From<EventJson> for ScoutRunEvent {
             identifier: j.identifier,
             signal_type: j.signal_type,
             title: j.title,
-            result_count: j.result_count,
-            post_count: j.post_count,
-            items: j.items,
-            content_bytes: j.content_bytes,
-            content_chars: j.content_chars,
-            signals_extracted: j.signals_extracted,
-            implied_queries: j.implied_queries,
+            result_count: j.result_count.map(|v| v as u32),
+            post_count: j.post_count.map(|v| v as u32),
+            items: j.items.map(|v| v as u32),
+            content_bytes: j.content_bytes.map(|v| v as u64),
+            content_chars: j.content_chars.map(|v| v as u64),
+            signals_extracted: j.signals_extracted.map(|v| v as u32),
+            implied_queries: j.implied_queries.map(|v| v as u32),
             similarity: j.similarity,
             confidence: j.confidence,
             success: j.success,
@@ -1367,14 +1249,21 @@ impl From<EventJson> for ScoutRunEvent {
             source_url: j.source_url,
             new_source_url: j.new_source_url,
             canonical_key: j.canonical_key,
-            gatherings: j.gatherings,
-            needs: j.needs,
-            stale: j.stale,
-            sources_created: j.sources_created,
-            spent_cents: j.spent_cents,
-            remaining_cents: j.remaining_cents,
+            gatherings: j.gatherings.map(|v| v as u64),
+            needs: j.needs.map(|v| v as u64),
+            stale: j.stale.map(|v| v as u64),
+            sources_created: j.sources_created.map(|v| v as u64),
+            spent_cents: j.spent_cents.map(|v| v as u64),
+            remaining_cents: j.remaining_cents.map(|v| v as u64),
             topics: j.topics,
-            posts_found: j.posts_found,
+            posts_found: j.posts_found.map(|v| v as u32),
+            reason: j.reason,
+            strategy: j.strategy,
+            field: j.field,
+            old_value: j.old_value,
+            new_value: j.new_value,
+            signal_count: j.signal_count.map(|v| v as u32),
+            summary: j.summary,
         }
     }
 }
@@ -1407,8 +1296,8 @@ pub fn build_schema(
     restate_client: Option<RestateClient>,
     pg_pool: Option<sqlx::PgPool>,
 ) -> ApiSchema {
-    let evidence_loader = DataLoader::new(
-        EvidenceBySignalLoader {
+    let citation_loader = DataLoader::new(
+        CitationBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
@@ -1419,20 +1308,14 @@ pub fn build_schema(
         },
         tokio::spawn,
     );
-    let story_loader = DataLoader::new(
-        StoryBySignalLoader {
-            reader: reader.clone(),
-        },
-        tokio::spawn,
-    );
     let situations_loader = DataLoader::new(
         SituationsBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
     );
-    let tags_loader = DataLoader::new(
-        TagsByStoryLoader {
+    let schedule_loader = DataLoader::new(
+        ScheduleBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
@@ -1463,11 +1346,10 @@ pub fn build_schema(
         .data(rate_limiter)
         .data(graph_client)
         .data(cache_store)
-        .data(evidence_loader)
+        .data(citation_loader)
         .data(actors_loader)
-        .data(story_loader)
         .data(situations_loader)
-        .data(tags_loader)
+        .data(schedule_loader)
         .data(situation_tags_loader)
         .data(embedder)
         .data(restate_client)

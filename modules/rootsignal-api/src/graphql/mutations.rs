@@ -347,7 +347,7 @@ impl MutationRoot {
     async fn stop_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let restate = require_restate(ctx)?;
 
-        match restate.cancel_scout(&task_id).await {
+        match restate.cancel_workflow("FullScoutRunWorkflow", &task_id).await {
             Ok(()) => Ok(ScoutResult {
                 success: true,
                 message: Some(format!("Cancel signal sent for task {task_id}")),
@@ -446,36 +446,20 @@ impl MutationRoot {
         })
     }
 
-    /// Add a curated tag to a story.
+    /// Add a curated tag to a signal.
     #[graphql(guard = "AdminGuard")]
-    async fn tag_story(
+    async fn tag_signal(
         &self,
         ctx: &Context<'_>,
-        story_id: Uuid,
+        signal_id: Uuid,
         tag_slug: String,
     ) -> Result<bool> {
         let store = require_store(ctx)?;
         let slug = rootsignal_common::slugify(&tag_slug);
         store
-            .batch_tag_signals(story_id, &[slug])
+            .batch_tag_signals(signal_id, &[slug])
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to tag story: {e}")))?;
-        Ok(true)
-    }
-
-    /// Remove a tag from a story (deletes TAGGED + creates SUPPRESSED_TAG).
-    #[graphql(guard = "AdminGuard")]
-    async fn untag_story(
-        &self,
-        ctx: &Context<'_>,
-        story_id: Uuid,
-        tag_slug: String,
-    ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        writer
-            .suppress_story_tag(story_id, &tag_slug)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to untag story: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to tag signal: {e}")))?;
         Ok(true)
     }
 
