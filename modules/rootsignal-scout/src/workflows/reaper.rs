@@ -10,10 +10,9 @@ use std::time::Duration;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphWriter;
-
 use super::ScoutDeps;
 use crate::impl_restate_serde;
+use crate::traits::SignalReader;
 
 const REAP_INTERVAL: Duration = Duration::from_secs(6 * 3600); // 6 hours
 
@@ -45,19 +44,60 @@ impl SignalReaperImpl {
 
 impl SignalReaper for SignalReaperImpl {
     async fn run(&self, ctx: ObjectContext<'_>) -> Result<ReapResult, HandlerError> {
-        let gc = self.deps.graph_client.clone();
+        let deps = self.deps.clone();
 
         let result = ctx
             .run(|| async move {
-                let writer = GraphWriter::new(gc);
-                let stats = writer
-                    .reap_expired()
+                let run_id = format!("reaper-{}", uuid::Uuid::new_v4());
+                let store = deps.build_store();
+                let engine = deps.build_engine(&run_id);
+
+                let expired = store
+                    .find_expired_signals()
                     .await
                     .map_err(|e| -> HandlerError { e.into() })?;
+
+                let mut gatherings = 0u64;
+                let mut needs = 0u64;
+                let mut stale = 0u64;
+
+                let dummy_store: Arc<dyn SignalReader> =
+                    Arc::new(crate::store::build_signal_reader(deps.graph_client.clone()));
+                let pipe_deps = crate::pipeline::state::PipelineDeps {
+                    store: dummy_store,
+                    embedder: Arc::new(crate::infra::embedder::NoOpEmbedder)
+                        as Arc<dyn crate::infra::embedder::TextEmbedder>,
+                    region: None,
+                    run_id,
+                    fetcher: None,
+                    anthropic_api_key: None,
+                };
+                let mut state =
+                    crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+
+                for (signal_id, node_type, reason) in &expired {
+                    let event = crate::pipeline::events::ScoutEvent::System(
+                        rootsignal_common::events::SystemEvent::EntityExpired {
+                            signal_id: *signal_id,
+                            node_type: *node_type,
+                            reason: reason.clone(),
+                        },
+                    );
+                    if let Err(e) = engine.dispatch(event, &mut state, &pipe_deps).await {
+                        tracing::warn!(error = %e, signal_id = %signal_id, "Failed to expire signal");
+                        continue;
+                    }
+                    match node_type {
+                        rootsignal_common::types::NodeType::Gathering => gatherings += 1,
+                        rootsignal_common::types::NodeType::Need => needs += 1,
+                        _ => stale += 1,
+                    }
+                }
+
                 Ok(ReapResult {
-                    gatherings: stats.gatherings,
-                    needs: stats.needs,
-                    stale: stats.stale,
+                    gatherings,
+                    needs,
+                    stale,
                 })
             })
             .await?;

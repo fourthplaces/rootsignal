@@ -706,8 +706,18 @@ impl<'a> ScrapePipeline<'a> {
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
-            match self.writer.delete_pins(&run.consumed_pin_ids).await {
-                Ok(_) => info!(count = run.consumed_pin_ids.len(), "Deleted consumed pins"),
+            let event = ScoutEvent::System(
+                rootsignal_common::events::SystemEvent::PinsConsumed {
+                    pin_ids: run.consumed_pin_ids.clone(),
+                },
+            );
+            let mut pin_state = PipelineState::new(Default::default());
+            match self
+                .engine
+                .dispatch(event, &mut pin_state, &self.reap_deps())
+                .await
+            {
+                Ok(()) => info!(count = run.consumed_pin_ids.len(), "Deleted consumed pins"),
                 Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
             }
         }

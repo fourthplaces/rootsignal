@@ -283,6 +283,10 @@ pub enum SystemEvent {
         created_by: String,
     },
 
+    PinsConsumed {
+        pin_ids: Vec<Uuid>,
+    },
+
     DemandReceived {
         demand_id: Uuid,
         query: String,
@@ -356,6 +360,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
             SystemEvent::SignalLinkedToSource { .. } => "signal_linked_to_source",
             SystemEvent::PinCreated { .. } => "pin_created",
+            SystemEvent::PinsConsumed { .. } => "pins_consumed",
             SystemEvent::DemandReceived { .. } => "demand_received",
             SystemEvent::SubmissionReceived { .. } => "submission_received",
             SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",

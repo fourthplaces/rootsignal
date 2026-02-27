@@ -1586,6 +1586,21 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            SystemEvent::PinsConsumed { pin_ids } => {
+                if pin_ids.is_empty() {
+                    return Ok(ApplyResult::NoOp);
+                }
+                let ids: Vec<String> = pin_ids.iter().map(|id| id.to_string()).collect();
+                let q = query(
+                    "UNWIND $ids AS pid
+                     MATCH (p:Pin {id: pid})
+                     DETACH DELETE p",
+                )
+                .param("ids", ids);
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
             SystemEvent::DemandReceived {
                 demand_id,
                 query: demand_query,
