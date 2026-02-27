@@ -449,7 +449,7 @@ impl<'a> TensionLinker<'a> {
             }
         };
 
-        self.writer
+        self.store
             .create_response_edge(
                 target.signal_id,
                 tension_id,
@@ -504,6 +504,7 @@ impl<'a> TensionLinker<'a> {
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
+                mentioned_actors: Vec::new(),
             },
             severity,
             category: Some(tension.category.clone()),
@@ -644,6 +645,7 @@ mod tests {
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
+                mentioned_actors: Vec::new(),
             },
             severity,
             category: Some(tension.category.clone()),

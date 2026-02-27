@@ -726,6 +726,7 @@ impl<'a> ResponseFinder<'a> {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
@@ -909,6 +910,7 @@ impl<'a> ResponseFinder<'a> {
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
+                mentioned_actors: Vec::new(),
             },
             severity,
             category: Some(tension.category.clone()),
@@ -1139,6 +1141,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
 
         let node = Node::Aid(AidNode {

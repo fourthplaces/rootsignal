@@ -1561,6 +1561,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 Some(r)
             }
         },
+        mentioned_actors: Vec::new(),
     };
 
     match node_type {

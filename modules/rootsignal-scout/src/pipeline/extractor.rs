@@ -364,6 +364,7 @@ impl Extractor {
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
+                mentioned_actors: signal.mentioned_actors.clone().unwrap_or_default(),
             };
 
             let node = match signal.signal_type.as_str() {
@@ -913,6 +914,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
         let aid = AidNode {
             meta,
@@ -948,6 +950,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
         let need = NeedNode {
             meta,

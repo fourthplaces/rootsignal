@@ -188,6 +188,11 @@ pub enum SystemEvent {
     // -----------------------------------------------------------------------
     // Tag decisions
     // -----------------------------------------------------------------------
+    SignalTagged {
+        signal_id: Uuid,
+        tag_slugs: Vec<String>,
+    },
+
     TagSuppressed {
         situation_id: Uuid,
         tag_slug: String,
@@ -262,6 +267,11 @@ pub enum SystemEvent {
         source_id: Uuid,
     },
 
+    SignalLinkedToSource {
+        signal_id: Uuid,
+        source_id: Uuid,
+    },
+
     // -----------------------------------------------------------------------
     // App user actions
     // -----------------------------------------------------------------------
@@ -323,6 +333,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SituationChanged { .. } => "situation_changed",
             SystemEvent::SituationPromoted { .. } => "situation_promoted",
             SystemEvent::DispatchCreated { .. } => "dispatch_created",
+            SystemEvent::SignalTagged { .. } => "signal_tagged",
             SystemEvent::TagSuppressed { .. } => "tag_suppressed",
             SystemEvent::TagsMerged { .. } => "tags_merged",
             SystemEvent::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
@@ -334,6 +345,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourceDeactivated { .. } => "source_deactivated",
             SystemEvent::SourceLinkDiscovered { .. } => "source_link_discovered",
             SystemEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
+            SystemEvent::SignalLinkedToSource { .. } => "signal_linked_to_source",
             SystemEvent::PinCreated { .. } => "pin_created",
             SystemEvent::DemandReceived { .. } => "demand_received",
             SystemEvent::SubmissionReceived { .. } => "submission_received",

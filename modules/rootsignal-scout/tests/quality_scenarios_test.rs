@@ -42,6 +42,7 @@ fn test_meta() -> NodeMeta {
         was_corrected: false,
         corrections: None,
         rejection_reason: None,
+        mentioned_actors: Vec::new(),
     }
 }
 

@@ -94,7 +94,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: vec![],
+            mentioned_actors: n.meta.mentioned_actors.clone(),
             author_actor: None,
             schedule: schedule_from_gathering(n),
             action_url: if n.action_url.is_empty() {
@@ -114,7 +114,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: vec![],
+            mentioned_actors: n.meta.mentioned_actors.clone(),
             author_actor: None,
             action_url: if n.action_url.is_empty() {
                 None
@@ -134,7 +134,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: vec![],
+            mentioned_actors: n.meta.mentioned_actors.clone(),
             author_actor: None,
             urgency: Some(n.urgency),
             what_needed: n.what_needed.clone(),
@@ -150,7 +150,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: vec![],
+            mentioned_actors: n.meta.mentioned_actors.clone(),
             author_actor: None,
             severity: Some(n.severity),
             category: n.category.clone(),
@@ -167,7 +167,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: vec![],
+            mentioned_actors: n.meta.mentioned_actors.clone(),
             author_actor: None,
             severity: Some(n.severity),
             what_would_help: n.what_would_help.clone(),
@@ -484,16 +484,11 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
-        let q = rootsignal_graph::query(
-            "MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-             MATCH (s:Source {id: $source_id})
-             MERGE (n)-[:PRODUCED_BY]->(s)"
-        )
-        .param("signal_id", signal_id.to_string())
-        .param("source_id", source_id.to_string());
-
-        self.writer.client().inner().run(q).await?;
-        Ok(())
+        let event = Event::System(SystemEvent::SignalLinkedToSource {
+            signal_id,
+            source_id,
+        });
+        self.append_and_project(&event, None).await
     }
 
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
@@ -770,26 +765,11 @@ impl SignalStore for EventSourcedStore {
         if tag_slugs.is_empty() {
             return Ok(());
         }
-        let graph = self.writer.client().inner();
-        for slug in tag_slugs {
-            let name = slug.replace('-', " ");
-            let q = rootsignal_graph::query(
-                "MATCH (s)
-                 WHERE s.id = $signal_id
-                   AND (s:Story OR s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
-                 MERGE (t:Tag {slug: $slug})
-                 ON CREATE SET t.name = $name
-                 MERGE (s)-[r:TAGGED]->(t)
-                 SET r.weight = $weight",
-            )
-            .param("signal_id", signal_id.to_string())
-            .param("slug", slug.as_str())
-            .param("name", name.as_str())
-            .param("weight", 1.0_f64);
-
-            graph.run(q).await?;
-        }
-        Ok(())
+        let event = Event::System(SystemEvent::SignalTagged {
+            signal_id,
+            tag_slugs: tag_slugs.to_vec(),
+        });
+        self.append_and_project(&event, None).await
     }
 
     // --- Actor location enrichment (pass through) ---
@@ -864,6 +844,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         }
     }
 
@@ -1118,6 +1099,103 @@ mod tests {
                 assert!(schedule.is_none());
             }
             _ => panic!("Expected GatheringDiscovered"),
+        }
+    }
+
+    #[test]
+    fn all_three_event_layers_roundtrip_through_payload() {
+        let world_event = Event::World(WorldEvent::NeedDiscovered {
+            id: Uuid::new_v4(),
+            title: "Warming Center Needed".to_string(),
+            summary: "Residents need warming center".to_string(),
+            confidence: 0.8,
+            source_url: "https://example.com".to_string(),
+            extracted_at: Utc::now(),
+            published_at: None,
+            location: None,
+            from_location: None,
+            mentioned_actors: vec!["Red Cross".to_string()],
+            author_actor: None,
+            urgency: Some(rootsignal_common::Urgency::High),
+            what_needed: Some("Warming center".to_string()),
+            goal: None,
+        });
+
+        let system_event = Event::System(SystemEvent::SignalTagged {
+            signal_id: Uuid::new_v4(),
+            tag_slugs: vec!["housing".to_string(), "crisis".to_string()],
+        });
+
+        let telemetry_event = Event::Telemetry(TelemetryEvent::UrlScraped {
+            url: "https://example.com".to_string(),
+            strategy: "direct".to_string(),
+            success: true,
+            content_bytes: 1024,
+        });
+
+        for (label, event) in [
+            ("world", world_event),
+            ("system", system_event),
+            ("telemetry", telemetry_event),
+        ] {
+            let payload = event.to_payload();
+            let roundtripped = Event::from_payload(&payload)
+                .unwrap_or_else(|e| panic!("{label} event failed roundtrip: {e}"));
+
+            // Verify layer identity is preserved
+            match (&event, &roundtripped) {
+                (Event::World(_), Event::World(_)) => {}
+                (Event::System(_), Event::System(_)) => {}
+                (Event::Telemetry(_), Event::Telemetry(_)) => {}
+                _ => panic!("{label} event deserialized into wrong layer"),
+            }
+        }
+    }
+
+    #[test]
+    fn signal_linked_to_source_roundtrips() {
+        let signal_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let event = Event::System(SystemEvent::SignalLinkedToSource {
+            signal_id,
+            source_id,
+        });
+        let payload = event.to_payload();
+        let roundtripped = Event::from_payload(&payload).unwrap();
+
+        match roundtripped {
+            Event::System(SystemEvent::SignalLinkedToSource {
+                signal_id: sid,
+                source_id: src,
+            }) => {
+                assert_eq!(sid, signal_id);
+                assert_eq!(src, source_id);
+            }
+            _ => panic!("Expected SignalLinkedToSource after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn mentioned_actors_flow_into_world_event() {
+        let mut meta = test_meta("Community Workshop");
+        meta.mentioned_actors = vec!["YMCA".to_string(), "Habitat for Humanity".to_string()];
+
+        let node = Node::Need(NeedNode {
+            meta,
+            urgency: rootsignal_common::Urgency::Medium,
+            what_needed: Some("Volunteers".to_string()),
+            action_url: None,
+            goal: None,
+        });
+
+        let world = node_to_world_event(&node);
+        match world {
+            WorldEvent::NeedDiscovered {
+                mentioned_actors, ..
+            } => {
+                assert_eq!(mentioned_actors, vec!["YMCA", "Habitat for Humanity"]);
+            }
+            _ => panic!("Expected NeedDiscovered"),
         }
     }
 }

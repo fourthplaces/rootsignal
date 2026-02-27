@@ -1174,6 +1174,30 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Tags
             // ---------------------------------------------------------
+            SystemEvent::SignalTagged {
+                signal_id,
+                tag_slugs,
+            } => {
+                for slug in &tag_slugs {
+                    let name = slug.replace('-', " ");
+                    let q = query(
+                        "MATCH (s)
+                         WHERE s.id = $signal_id
+                           AND (s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
+                         MERGE (t:Tag {slug: $slug})
+                         ON CREATE SET t.name = $name
+                         MERGE (s)-[r:TAGGED]->(t)
+                         SET r.weight = 1.0",
+                    )
+                    .param("signal_id", signal_id.to_string())
+                    .param("slug", slug.as_str())
+                    .param("name", name.as_str());
+
+                    self.client.graph.run(q).await?;
+                }
+                Ok(ApplyResult::Applied)
+            }
+
             SystemEvent::TagSuppressed {
                 situation_id,
                 tag_slug,
@@ -1413,6 +1437,24 @@ impl GraphProjector {
                      MERGE (a)-[:HAS_SOURCE]->(s)",
                 )
                 .param("actor_id", actor_id.to_string())
+                .param("source_id", source_id.to_string());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::SignalLinkedToSource {
+                signal_id,
+                source_id,
+            } => {
+                let q = query(
+                    "MATCH (n)
+                     WHERE n.id = $signal_id
+                       AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                     MATCH (s:Source {id: $source_id})
+                     MERGE (n)-[:PRODUCED_BY]->(s)",
+                )
+                .param("signal_id", signal_id.to_string())
                 .param("source_id", source_id.to_string());
 
                 self.client.graph.run(q).await?;

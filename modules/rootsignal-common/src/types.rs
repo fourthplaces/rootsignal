@@ -220,6 +220,9 @@ pub struct NodeMeta {
     pub corrections: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejection_reason: Option<String>,
+    /// Actor names mentioned in the extracted signal content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentioned_actors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

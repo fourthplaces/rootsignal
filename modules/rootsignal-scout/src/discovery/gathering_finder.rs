@@ -665,6 +665,7 @@ impl<'a> GatheringFinder<'a> {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
 
         let node = match gathering.signal_type.to_lowercase().as_str() {
@@ -996,6 +997,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: Vec::new(),
         };
 
         let node = Node::Gathering(GatheringNode {
