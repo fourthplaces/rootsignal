@@ -187,7 +187,9 @@ async fn main() -> Result<()> {
         info!("Postgres migrations applied");
     }
 
-    let restate_admin_url = std::env::var("RESTATE_ADMIN_URL").ok().filter(|s| !s.is_empty());
+    let restate_admin_url = std::env::var("RESTATE_ADMIN_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
     let restate_client = std::env::var("RESTATE_INGRESS_URL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -244,14 +246,20 @@ async fn main() -> Result<()> {
                 .expect("Invalid Restate identity key");
         }
 
+        use rootsignal_archive::workflows::enrichment::{
+            EnrichmentWorkflow, EnrichmentWorkflowImpl,
+        };
         use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
-        use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
-        use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
-        use rootsignal_scout::workflows::situation_weaver::{SituationWeaverWorkflow, SituationWeaverWorkflowImpl};
-        use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
-        use rootsignal_scout::workflows::full_run::{FullScoutRunWorkflow, FullScoutRunWorkflowImpl};
+        use rootsignal_scout::workflows::full_run::{
+            FullScoutRunWorkflow, FullScoutRunWorkflowImpl,
+        };
         use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
-        use rootsignal_archive::workflows::enrichment::{EnrichmentWorkflow, EnrichmentWorkflowImpl};
+        use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
+        use rootsignal_scout::workflows::situation_weaver::{
+            SituationWeaverWorkflow, SituationWeaverWorkflowImpl,
+        };
+        use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
+        use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
 
         let archive_deps = Arc::new(rootsignal_archive::workflows::ArchiveDeps {
             pg_pool: scout_deps.pg_pool.clone(),

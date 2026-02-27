@@ -24,7 +24,11 @@ impl<'a> Metrics<'a> {
         store: &'a dyn crate::pipeline::traits::SignalStore,
         region_slug: &'a str,
     ) -> Self {
-        Self { writer, store, _region_slug: region_slug }
+        Self {
+            writer,
+            store,
+            _region_slug: region_slug,
+        }
     }
 
     /// Update source metrics, weights, cadences, and deactivate dead sources.
@@ -65,14 +69,12 @@ impl<'a> Metrics<'a> {
                 .copied()
                 .unwrap_or(0);
             let total_signals = source.signals_produced + fresh_signals;
-            let scrape_count = if fresh_signals > 0
-                || source_signal_counts
-                    .contains_key(&source.canonical_key)
-            {
-                (source.scrape_count + 1).max(1)
-            } else {
-                source.scrape_count.max(1)
-            };
+            let scrape_count =
+                if fresh_signals > 0 || source_signal_counts.contains_key(&source.canonical_key) {
+                    (source.scrape_count + 1).max(1)
+                } else {
+                    source.scrape_count.max(1)
+                };
             let base_weight = crate::scheduling::scheduler::compute_weight(
                 total_signals,
                 source.signals_corroborated,
@@ -86,16 +88,18 @@ impl<'a> Metrics<'a> {
                 now,
             );
             let new_weight = (base_weight * source.quality_penalty).clamp(0.1, 1.0);
-            let empty_runs = if source_signal_counts
-                .contains_key(&source.canonical_key)
-                && fresh_signals == 0
-            {
-                source.consecutive_empty_runs + 1
-            } else {
-                source.consecutive_empty_runs
-            };
+            let empty_runs =
+                if source_signal_counts.contains_key(&source.canonical_key) && fresh_signals == 0 {
+                    source.consecutive_empty_runs + 1
+                } else {
+                    source.consecutive_empty_runs
+                };
             let cadence = if is_web_query(&source.canonical_value) {
-                crate::scheduling::scheduler::cadence_hours_with_backoff(new_weight, empty_runs, &source.discovery_method)
+                crate::scheduling::scheduler::cadence_hours_with_backoff(
+                    new_weight,
+                    empty_runs,
+                    &source.discovery_method,
+                )
             } else {
                 crate::scheduling::scheduler::cadence_hours_for_weight(new_weight)
             };
@@ -109,22 +113,14 @@ impl<'a> Metrics<'a> {
         }
 
         // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
-        match self
-            .writer
-            .deactivate_dead_sources(10)
-            .await
-        {
+        match self.writer.deactivate_dead_sources(10).await {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
         }
 
         // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
-        match self
-            .writer
-            .deactivate_dead_web_queries()
-            .await
-        {
+        match self.writer.deactivate_dead_web_queries().await {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),

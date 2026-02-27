@@ -260,36 +260,61 @@ impl GqlSchedule {
 
         // Cap window at 365 days
         let max_window = chrono::Duration::days(365);
-        let to = if to - from > max_window { from + max_window } else { to };
+        let to = if to - from > max_window {
+            from + max_window
+        } else {
+            to
+        };
 
         if let Some(ref rule) = self.0.rrule {
-            let dtstart_str = self.0.dtstart
+            let dtstart_str = self
+                .0
+                .dtstart
                 .map(|dt| dt.format("%Y%m%dT%H%M%SZ").to_string())
                 .unwrap_or_else(|| "20260101T000000Z".to_string());
             let rrule_str = format!("DTSTART:{dtstart_str}\nRRULE:{rule}");
 
-            let rrule_set: rrule::RRuleSet = rrule_str.parse()
+            let rrule_set: rrule::RRuleSet = rrule_str
+                .parse()
                 .map_err(|e| async_graphql::Error::new(format!("Invalid RRULE: {e}")))?;
 
-            let tz_from = rrule::Tz::UTC.with_ymd_and_hms(
-                from.year(), from.month(), from.day(),
-                from.hour(), from.minute(), from.second(),
-            ).single().ok_or_else(|| async_graphql::Error::new("Invalid from date"))?;
+            let tz_from = rrule::Tz::UTC
+                .with_ymd_and_hms(
+                    from.year(),
+                    from.month(),
+                    from.day(),
+                    from.hour(),
+                    from.minute(),
+                    from.second(),
+                )
+                .single()
+                .ok_or_else(|| async_graphql::Error::new("Invalid from date"))?;
 
-            let tz_to = rrule::Tz::UTC.with_ymd_and_hms(
-                to.year(), to.month(), to.day(),
-                to.hour(), to.minute(), to.second(),
-            ).single().ok_or_else(|| async_graphql::Error::new("Invalid to date"))?;
+            let tz_to = rrule::Tz::UTC
+                .with_ymd_and_hms(
+                    to.year(),
+                    to.month(),
+                    to.day(),
+                    to.hour(),
+                    to.minute(),
+                    to.second(),
+                )
+                .single()
+                .ok_or_else(|| async_graphql::Error::new("Invalid to date"))?;
 
             let result = rrule_set.after(tz_from).before(tz_to).all(1000);
-            let dates: Vec<DateTime<Utc>> = result.dates
+            let dates: Vec<DateTime<Utc>> = result
+                .dates
                 .into_iter()
                 .map(|dt| Utc.timestamp_opt(dt.timestamp(), 0).unwrap())
                 .collect();
             Ok(dates)
         } else if !self.0.rdates.is_empty() {
             // No RRULE — return rdates within the window, minus exdates
-            let dates: Vec<DateTime<Utc>> = self.0.rdates.iter()
+            let dates: Vec<DateTime<Utc>> = self
+                .0
+                .rdates
+                .iter()
                 .filter(|d| **d >= from && **d <= to)
                 .filter(|d| !self.0.exdates.contains(d))
                 .copied()
@@ -338,19 +363,45 @@ impl GqlGatheringSignal {
 
 #[Object]
 impl GqlGatheringSignal {
-    async fn id(&self) -> Uuid { self.meta().id }
-    async fn title(&self) -> &str { &self.meta().title }
-    async fn summary(&self) -> &str { &self.meta().summary }
-    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
-    async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
-    async fn source_url(&self) -> &str { &self.meta().source_url }
-    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
-    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
-    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
-    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
-    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().content_date
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
     async fn review_status(&self) -> &'static str {
         match self.meta().review_status {
             rootsignal_common::ReviewStatus::Staged => "staged",
@@ -359,16 +410,34 @@ impl GqlGatheringSignal {
             rootsignal_common::ReviewStatus::Corrected => "corrected",
         }
     }
-    async fn was_corrected(&self) -> bool { self.meta().was_corrected }
-    async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
-    async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlCitation).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
     }
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
         let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
     }
 
     async fn starts_at(&self) -> Option<DateTime<Utc>> {
@@ -404,19 +473,45 @@ impl GqlAidSignal {
 
 #[Object]
 impl GqlAidSignal {
-    async fn id(&self) -> Uuid { self.meta().id }
-    async fn title(&self) -> &str { &self.meta().title }
-    async fn summary(&self) -> &str { &self.meta().summary }
-    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
-    async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
-    async fn source_url(&self) -> &str { &self.meta().source_url }
-    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
-    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
-    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
-    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
-    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().content_date
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
     async fn review_status(&self) -> &'static str {
         match self.meta().review_status {
             rootsignal_common::ReviewStatus::Staged => "staged",
@@ -425,16 +520,34 @@ impl GqlAidSignal {
             rootsignal_common::ReviewStatus::Corrected => "corrected",
         }
     }
-    async fn was_corrected(&self) -> bool { self.meta().was_corrected }
-    async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
-    async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlCitation).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
     }
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
         let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
     }
 
     async fn action_url(&self) -> &str {
@@ -464,19 +577,45 @@ impl GqlNeedSignal {
 
 #[Object]
 impl GqlNeedSignal {
-    async fn id(&self) -> Uuid { self.meta().id }
-    async fn title(&self) -> &str { &self.meta().title }
-    async fn summary(&self) -> &str { &self.meta().summary }
-    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
-    async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
-    async fn source_url(&self) -> &str { &self.meta().source_url }
-    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
-    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
-    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
-    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
-    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().content_date
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
     async fn review_status(&self) -> &'static str {
         match self.meta().review_status {
             rootsignal_common::ReviewStatus::Staged => "staged",
@@ -485,16 +624,34 @@ impl GqlNeedSignal {
             rootsignal_common::ReviewStatus::Corrected => "corrected",
         }
     }
-    async fn was_corrected(&self) -> bool { self.meta().was_corrected }
-    async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
-    async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlCitation).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
     }
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
         let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
     }
 
     async fn urgency(&self) -> GqlUrgency {
@@ -523,19 +680,45 @@ impl GqlNoticeSignal {
 
 #[Object]
 impl GqlNoticeSignal {
-    async fn id(&self) -> Uuid { self.meta().id }
-    async fn title(&self) -> &str { &self.meta().title }
-    async fn summary(&self) -> &str { &self.meta().summary }
-    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
-    async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
-    async fn source_url(&self) -> &str { &self.meta().source_url }
-    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
-    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
-    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
-    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
-    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().content_date
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
     async fn review_status(&self) -> &'static str {
         match self.meta().review_status {
             rootsignal_common::ReviewStatus::Staged => "staged",
@@ -544,16 +727,34 @@ impl GqlNoticeSignal {
             rootsignal_common::ReviewStatus::Corrected => "corrected",
         }
     }
-    async fn was_corrected(&self) -> bool { self.meta().was_corrected }
-    async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
-    async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlCitation).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
     }
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
         let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
     }
 
     async fn severity(&self) -> GqlSeverity {
@@ -582,19 +783,45 @@ impl GqlTensionSignal {
 
 #[Object]
 impl GqlTensionSignal {
-    async fn id(&self) -> Uuid { self.meta().id }
-    async fn title(&self) -> &str { &self.meta().title }
-    async fn summary(&self) -> &str { &self.meta().summary }
-    async fn sensitivity(&self) -> GqlSensitivityLevel { self.meta().sensitivity.into() }
-    async fn confidence(&self) -> f32 { self.meta().confidence }
-    async fn location(&self) -> Option<GqlGeoPoint> { self.meta().about_location.map(GqlGeoPoint) }
-    async fn location_name(&self) -> Option<&str> { self.meta().about_location_name.as_deref() }
-    async fn source_url(&self) -> &str { &self.meta().source_url }
-    async fn extracted_at(&self) -> DateTime<Utc> { self.meta().extracted_at }
-    async fn content_date(&self) -> Option<DateTime<Utc>> { self.meta().content_date }
-    async fn source_diversity(&self) -> u32 { self.meta().source_diversity }
-    async fn cause_heat(&self) -> f64 { self.meta().cause_heat }
-    async fn channel_diversity(&self) -> u32 { self.meta().channel_diversity }
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().content_date
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
     async fn review_status(&self) -> &'static str {
         match self.meta().review_status {
             rootsignal_common::ReviewStatus::Staged => "staged",
@@ -603,16 +830,34 @@ impl GqlTensionSignal {
             rootsignal_common::ReviewStatus::Corrected => "corrected",
         }
     }
-    async fn was_corrected(&self) -> bool { self.meta().was_corrected }
-    async fn corrections(&self) -> Option<&str> { self.meta().corrections.as_deref() }
-    async fn rejection_reason(&self) -> Option<&str> { self.meta().rejection_reason.as_deref() }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlCitation).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
     }
     async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
         let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
-        Ok(loader.load_one(self.meta().id).await?.unwrap_or_default().into_iter().map(GqlActor).collect())
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
     }
 
     async fn severity(&self) -> GqlSeverity {

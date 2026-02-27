@@ -87,7 +87,16 @@ pub struct ScoutRunRow {
 pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<Vec<ScoutRunRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>, serde_json::Value)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            DateTime<Utc>,
+            DateTime<Utc>,
+            serde_json::Value,
+        ),
+    >(
         r#"
         SELECT run_id, region, started_at, finished_at, stats
         FROM scout_runs
@@ -105,7 +114,16 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
 }
 
 pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRow>> {
-    let row = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>, serde_json::Value)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            DateTime<Utc>,
+            DateTime<Utc>,
+            serde_json::Value,
+        ),
+    >(
         r#"
         SELECT run_id, region, started_at, finished_at, stats
         FROM scout_runs
@@ -210,7 +228,13 @@ pub async fn list_events_by_node_id(
 // ---------------------------------------------------------------------------
 
 fn row_to_scout_run(
-    r: (String, String, DateTime<Utc>, DateTime<Utc>, serde_json::Value),
+    r: (
+        String,
+        String,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        serde_json::Value,
+    ),
 ) -> ScoutRunRow {
     ScoutRunRow {
         run_id: r.0,

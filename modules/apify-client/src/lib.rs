@@ -4,9 +4,8 @@ pub mod types;
 pub use error::{ApifyError, Result};
 pub use types::{
     DiscoveredPost, FacebookPost, FacebookScraperInput, InstagramHashtagInput, InstagramPost,
-    InstagramScraperInput, RedditPost, RedditScraperInput,
-    RunData, StartUrl, TikTokPost, TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor,
-    TweetScraperInput, TweetSearchInput,
+    InstagramScraperInput, RedditPost, RedditScraperInput, RunData, StartUrl, TikTokPost,
+    TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor, TweetScraperInput, TweetSearchInput,
 };
 
 use serde::de::DeserializeOwned;
@@ -229,9 +228,7 @@ impl ApifyClient {
         };
 
         let input = FacebookScraperInput {
-            start_urls: vec![StartUrl {
-                url: full_url,
-            }],
+            start_urls: vec![StartUrl { url: full_url }],
             results_limit: limit,
         };
 
@@ -369,7 +366,10 @@ impl ApifyClient {
         let posts: Vec<RedditPost> = self
             .get_dataset_items(&completed.default_dataset_id)
             .await?;
-        tracing::info!(count = posts.len(), "Fetched Reddit posts from keyword search");
+        tracing::info!(
+            count = posts.len(),
+            "Fetched Reddit posts from keyword search"
+        );
 
         Ok(posts)
     }
@@ -390,9 +390,7 @@ impl ApifyClient {
         };
 
         let input = RedditScraperInput {
-            start_urls: vec![StartUrl {
-                url: full_url,
-            }],
+            start_urls: vec![StartUrl { url: full_url }],
             max_items: limit,
             sort: "new".to_string(),
         };

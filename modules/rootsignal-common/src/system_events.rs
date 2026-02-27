@@ -12,10 +12,10 @@ use rootsignal_world::Eventlike;
 
 use crate::events::{
     AidCorrection, GatheringCorrection, NeedCorrection, NoticeCorrection, SituationChange,
-    SystemSourceChange, TensionCorrection,
+    SourceChange, SystemSourceChange, TensionCorrection,
 };
 use crate::safety::SensitivityLevel;
-use crate::types::{DispatchType, NodeType, SituationArc};
+use crate::types::{DiscoveryMethod, DispatchType, NodeType, SituationArc, SourceRole};
 
 /// A system decision — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +222,79 @@ pub enum SystemDecision {
         canonical_key: String,
         change: SystemSourceChange,
     },
+
+    // -----------------------------------------------------------------------
+    // Source registry — Root Signal's source management
+    // -----------------------------------------------------------------------
+    SourceRegistered {
+        source_id: Uuid,
+        canonical_key: String,
+        canonical_value: String,
+        url: Option<String>,
+        discovery_method: DiscoveryMethod,
+        weight: f64,
+        source_role: SourceRole,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gap_context: Option<String>,
+    },
+
+    SourceChanged {
+        source_id: Uuid,
+        canonical_key: String,
+        change: SourceChange,
+    },
+
+    SourceDeactivated {
+        source_ids: Vec<Uuid>,
+        reason: String,
+    },
+
+    SourceLinkDiscovered {
+        child_id: Uuid,
+        parent_canonical_key: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Actor-source links (links actor to a system entity)
+    // -----------------------------------------------------------------------
+    ActorLinkedToSource {
+        actor_id: Uuid,
+        source_id: Uuid,
+    },
+
+    // -----------------------------------------------------------------------
+    // App user actions
+    // -----------------------------------------------------------------------
+    PinCreated {
+        pin_id: Uuid,
+        location_lat: f64,
+        location_lng: f64,
+        source_id: Uuid,
+        created_by: String,
+    },
+
+    DemandReceived {
+        demand_id: Uuid,
+        query: String,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+    },
+
+    SubmissionReceived {
+        submission_id: Uuid,
+        url: String,
+        reason: Option<String>,
+        source_canonical_key: Option<String>,
+    },
+
+    // -----------------------------------------------------------------------
+    // System curiosity
+    // -----------------------------------------------------------------------
+    ExpansionQueryCollected {
+        query: String,
+        source_url: String,
+    },
 }
 
 impl Eventlike for SystemDecision {
@@ -256,6 +329,15 @@ impl Eventlike for SystemDecision {
             SystemDecision::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
             SystemDecision::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
             SystemDecision::SourceSystemChanged { .. } => "source_system_changed",
+            SystemDecision::SourceRegistered { .. } => "source_registered",
+            SystemDecision::SourceChanged { .. } => "source_changed",
+            SystemDecision::SourceDeactivated { .. } => "source_deactivated",
+            SystemDecision::SourceLinkDiscovered { .. } => "source_link_discovered",
+            SystemDecision::ActorLinkedToSource { .. } => "actor_linked_to_source",
+            SystemDecision::PinCreated { .. } => "pin_created",
+            SystemDecision::DemandReceived { .. } => "demand_received",
+            SystemDecision::SubmissionReceived { .. } => "submission_received",
+            SystemDecision::ExpansionQueryCollected { .. } => "expansion_query_collected",
         }
     }
 

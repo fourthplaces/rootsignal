@@ -6,9 +6,9 @@
 
 use std::collections::HashSet;
 
-use tracing::{info, warn};
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphWriter;
+use tracing::{info, warn};
 
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
@@ -51,11 +51,7 @@ impl<'a> Expansion<'a> {
     pub async fn run(&self, ctx: &mut RunContext, run_log: &RunLogger) {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
-        match self
-            .writer
-            .get_recently_linked_signals_with_queries()
-            .await
-        {
+        match self.writer.get_recently_linked_signals_with_queries().await {
             Ok(deferred) => {
                 let deferred_count = deferred.len();
                 ctx.expansion_queries.extend(deferred);
@@ -98,11 +94,7 @@ impl<'a> Expansion<'a> {
         for query_text in &deduped {
             // Embedding-based dedup for expansion queries
             if let Ok(embedding) = self.embedder.embed(query_text).await {
-                match self
-                    .writer
-                    .find_similar_query(&embedding, 0.90)
-                    .await
-                {
+                match self.writer.find_similar_query(&embedding, 0.90).await {
                     Ok(Some((existing_ck, sim))) => {
                         info!(
                             query = query_text.as_str(),

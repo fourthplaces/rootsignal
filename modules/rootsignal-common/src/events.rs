@@ -12,15 +12,15 @@ use rootsignal_world::Eventlike;
 // Re-exports — value types from rootsignal-world
 // ---------------------------------------------------------------------------
 
-pub use rootsignal_world::values::{Location, Schedule, TagFact};
+pub use rootsignal_world::values::{Location, Schedule};
 
 // ---------------------------------------------------------------------------
 // Re-exports — the three event layers
 // ---------------------------------------------------------------------------
 
-pub use rootsignal_world::events::WorldEvent;
 pub use crate::system_events::SystemDecision;
 pub use crate::telemetry_events::TelemetryEvent;
+pub use rootsignal_world::events::WorldEvent;
 
 // ---------------------------------------------------------------------------
 // Nested change enums — typed field mutations
@@ -29,30 +29,88 @@ pub use crate::telemetry_events::TelemetryEvent;
 use chrono::{DateTime, Utc};
 
 use crate::safety::SensitivityLevel;
-use crate::types::{
-    Severity, SituationArc, Urgency,
-};
+use crate::types::{Severity, SituationArc, Urgency};
 
 /// System-layer source changes — editorial decisions about a source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum SystemSourceChange {
-    QualityPenalty { old: f64, new: f64 },
-    GapContext { old: Option<String>, new: Option<String> },
+    QualityPenalty {
+        old: f64,
+        new: f64,
+    },
+    GapContext {
+        old: Option<String>,
+        new: Option<String>,
+    },
+}
+
+/// Source changes — observable facts about a source (moved from rootsignal-world).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "field", content = "value", rename_all = "snake_case")]
+pub enum SourceChange {
+    Weight {
+        old: f64,
+        new: f64,
+    },
+    Url {
+        old: String,
+        new: String,
+    },
+    Role {
+        old: crate::types::SourceRole,
+        new: crate::types::SourceRole,
+    },
+    Active {
+        old: bool,
+        new: bool,
+    },
+}
+
+/// A tag with its computed weight.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagFact {
+    pub slug: String,
+    pub name: String,
+    pub weight: f64,
 }
 
 /// A typed change to a Situation entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum SituationChange {
-    Headline { old: String, new: String },
-    Lede { old: String, new: String },
-    Arc { old: SituationArc, new: SituationArc },
-    Temperature { old: f64, new: f64 },
-    Location { old: Option<Location>, new: Option<Location> },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Category { old: Option<String>, new: Option<String> },
-    StructuredState { old: String, new: String },
+    Headline {
+        old: String,
+        new: String,
+    },
+    Lede {
+        old: String,
+        new: String,
+    },
+    Arc {
+        old: SituationArc,
+        new: SituationArc,
+    },
+    Temperature {
+        old: f64,
+        new: f64,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Category {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    StructuredState {
+        old: String,
+        new: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -62,66 +120,186 @@ pub enum SituationChange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum GatheringCorrection {
-    Title { old: String, new: String },
-    Summary { old: String, new: String },
-    Confidence { old: f32, new: f32 },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Location { old: Option<Location>, new: Option<Location> },
-    Schedule { old: Option<Schedule>, new: Option<Schedule> },
-    Organizer { old: Option<String>, new: Option<String> },
-    ActionUrl { old: Option<String>, new: Option<String> },
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Confidence {
+        old: f32,
+        new: f32,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Schedule {
+        old: Option<Schedule>,
+        new: Option<Schedule>,
+    },
+    Organizer {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    ActionUrl {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum AidCorrection {
-    Title { old: String, new: String },
-    Summary { old: String, new: String },
-    Confidence { old: f32, new: f32 },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Location { old: Option<Location>, new: Option<Location> },
-    ActionUrl { old: Option<String>, new: Option<String> },
-    Availability { old: Option<String>, new: Option<String> },
-    IsOngoing { old: Option<bool>, new: Option<bool> },
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Confidence {
+        old: f32,
+        new: f32,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    ActionUrl {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    Availability {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    IsOngoing {
+        old: Option<bool>,
+        new: Option<bool>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum NeedCorrection {
-    Title { old: String, new: String },
-    Summary { old: String, new: String },
-    Confidence { old: f32, new: f32 },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Location { old: Option<Location>, new: Option<Location> },
-    Urgency { old: Option<Urgency>, new: Option<Urgency> },
-    WhatNeeded { old: Option<String>, new: Option<String> },
-    Goal { old: Option<String>, new: Option<String> },
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Confidence {
+        old: f32,
+        new: f32,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Urgency {
+        old: Option<Urgency>,
+        new: Option<Urgency>,
+    },
+    WhatNeeded {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    Goal {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum NoticeCorrection {
-    Title { old: String, new: String },
-    Summary { old: String, new: String },
-    Confidence { old: f32, new: f32 },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Location { old: Option<Location>, new: Option<Location> },
-    Severity { old: Option<Severity>, new: Option<Severity> },
-    Category { old: Option<String>, new: Option<String> },
-    EffectiveDate { old: Option<DateTime<Utc>>, new: Option<DateTime<Utc>> },
-    SourceAuthority { old: Option<String>, new: Option<String> },
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Confidence {
+        old: f32,
+        new: f32,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Severity {
+        old: Option<Severity>,
+        new: Option<Severity>,
+    },
+    Category {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    EffectiveDate {
+        old: Option<DateTime<Utc>>,
+        new: Option<DateTime<Utc>>,
+    },
+    SourceAuthority {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
 pub enum TensionCorrection {
-    Title { old: String, new: String },
-    Summary { old: String, new: String },
-    Confidence { old: f32, new: f32 },
-    Sensitivity { old: SensitivityLevel, new: SensitivityLevel },
-    Location { old: Option<Location>, new: Option<Location> },
-    Severity { old: Option<Severity>, new: Option<Severity> },
-    WhatWouldHelp { old: Option<String>, new: Option<String> },
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Confidence {
+        old: f32,
+        new: f32,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Severity {
+        old: Option<Severity>,
+        new: Option<Severity>,
+    },
+    WhatWouldHelp {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -193,9 +371,9 @@ impl From<TelemetryEvent> for Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use chrono::Utc;
     use crate::safety::SensitivityLevel;
+    use chrono::Utc;
+    use uuid::Uuid;
 
     #[test]
     fn world_event_roundtrips_through_wrapper() {
@@ -238,7 +416,12 @@ mod tests {
         assert_eq!(roundtripped.event_type(), "gathering_discovered");
 
         match roundtripped {
-            Event::World(WorldEvent::GatheringDiscovered { title, confidence, schedule, .. }) => {
+            Event::World(WorldEvent::GatheringDiscovered {
+                title,
+                confidence,
+                schedule,
+                ..
+            }) => {
                 assert_eq!(title, "Community Cleanup");
                 assert!((confidence - 0.85).abs() < f32::EPSILON);
                 assert!(schedule.is_some());
@@ -306,30 +489,27 @@ mod tests {
 
     #[test]
     fn source_change_nested_enum_roundtrip() {
-        // Legacy SourceChange still roundtrips via WorldEvent::SourceChanged (WorldSourceChange)
-        let world = WorldEvent::SourceChanged {
+        let system = SystemDecision::SourceChanged {
             source_id: Uuid::new_v4(),
             canonical_key: "web:example.com".into(),
-            change: rootsignal_world::values::WorldSourceChange::Weight { old: 0.5, new: 0.8 },
+            change: SourceChange::Weight { old: 0.5, new: 0.8 },
         };
 
-        let event = Event::World(world);
+        let event = Event::System(system);
         let payload = event.to_payload();
         let json_change = &payload["change"];
         assert_eq!(json_change["field"].as_str().unwrap(), "weight");
 
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::World(WorldEvent::SourceChanged { change, .. }) => {
-                match change {
-                    rootsignal_world::values::WorldSourceChange::Weight { old, new } => {
-                        assert!((old - 0.5).abs() < f64::EPSILON);
-                        assert!((new - 0.8).abs() < f64::EPSILON);
-                    }
-                    _ => panic!("Expected WorldSourceChange::Weight"),
+            Event::System(SystemDecision::SourceChanged { change, .. }) => match change {
+                SourceChange::Weight { old, new } => {
+                    assert!((old - 0.5).abs() < f64::EPSILON);
+                    assert!((new - 0.8).abs() < f64::EPSILON);
                 }
-            }
-            _ => panic!("Expected Event::World(WorldEvent::SourceChanged)"),
+                _ => panic!("Expected SourceChange::Weight"),
+            },
+            _ => panic!("Expected Event::System(SystemDecision::SourceChanged)"),
         }
     }
 
@@ -347,7 +527,10 @@ mod tests {
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::SituationChanged { change: SituationChange::Arc { old, new }, .. }) => {
+            Event::System(SystemDecision::SituationChanged {
+                change: SituationChange::Arc { old, new },
+                ..
+            }) => {
                 assert_eq!(old, crate::types::SituationArc::Emerging);
                 assert_eq!(new, crate::types::SituationArc::Developing);
             }
@@ -370,7 +553,11 @@ mod tests {
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::GatheringCorrected { correction: GatheringCorrection::Title { old, new }, reason, .. }) => {
+            Event::System(SystemDecision::GatheringCorrected {
+                correction: GatheringCorrection::Title { old, new },
+                reason,
+                ..
+            }) => {
                 assert_eq!(old, "Commuinty Cleanup");
                 assert_eq!(new, "Community Cleanup");
                 assert_eq!(reason, "Typo in title");
@@ -381,23 +568,28 @@ mod tests {
 
     #[test]
     fn from_impls_work() {
-        let w: Event = WorldEvent::SourceDeactivated {
-            source_ids: vec![],
-            reason: "test".into(),
-        }.into();
-        assert_eq!(w.event_type(), "source_deactivated");
+        let w: Event = WorldEvent::ObservationCorroborated {
+            entity_id: Uuid::new_v4(),
+            node_type: crate::types::NodeType::Gathering,
+            new_source_url: "test".into(),
+            summary: None,
+        }
+        .into();
+        assert_eq!(w.event_type(), "observation_corroborated");
 
         let s: Event = SystemDecision::EntityExpired {
             entity_id: Uuid::new_v4(),
             node_type: crate::types::NodeType::Gathering,
             reason: "test".into(),
-        }.into();
+        }
+        .into();
         assert_eq!(s.event_type(), "entity_expired");
 
         let t: Event = TelemetryEvent::BudgetCheckpoint {
             spent_cents: 100,
             remaining_cents: 900,
-        }.into();
+        }
+        .into();
         assert_eq!(t.event_type(), "budget_checkpoint");
     }
 

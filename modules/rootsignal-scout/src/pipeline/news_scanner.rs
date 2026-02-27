@@ -59,12 +59,7 @@ impl NewsScanner {
         daily_budget_cents: u64,
     ) -> Self {
         // Use a generic "Global" scope for extraction — no region bias
-        let extractor = Box::new(Extractor::new(
-            anthropic_api_key,
-            "Global",
-            0.0,
-            0.0,
-        ));
+        let extractor = Box::new(Extractor::new(anthropic_api_key, "Global", 0.0, 0.0));
 
         Self {
             archive,
@@ -83,7 +78,11 @@ impl NewsScanner {
         let mut all_urls: Vec<(String, Option<String>)> = Vec::new();
         for feed_url in NEWS_FEEDS {
             let feed_result = async {
-                let feed = self.archive.feed(feed_url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let feed = self
+                    .archive
+                    .feed(feed_url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(
                     feed.items
                         .into_iter()
@@ -112,11 +111,7 @@ impl NewsScanner {
         for (url, title) in all_urls {
             if seen.insert(url.clone()) {
                 // Check if source already exists in graph
-                let exists = self
-                    .writer
-                    .source_exists(&url)
-                    .await
-                    .unwrap_or(false);
+                let exists = self.writer.source_exists(&url).await.unwrap_or(false);
                 if !exists {
                     new_urls.push((url, title));
                 }
@@ -137,7 +132,11 @@ impl NewsScanner {
 
             // Scrape
             let content = match async {
-                let page = self.archive.page(url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let page = self
+                    .archive
+                    .page(url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(page.markdown)
             }
             .await
@@ -185,17 +184,11 @@ impl NewsScanner {
         }
 
         // 4. Create beacon tasks from clustered candidates
-        let beacons_created = rootsignal_graph::beacon::create_beacons_from_news(
-            &self.writer,
-            beacon_candidates,
-        )
-        .await?;
+        let beacons_created =
+            rootsignal_graph::beacon::create_beacons_from_news(&self.writer, beacon_candidates)
+                .await?;
 
-        info!(
-            articles_scanned,
-            beacons_created,
-            "News scan complete"
-        );
+        info!(articles_scanned, beacons_created, "News scan complete");
         Ok((articles_scanned, beacons_created))
     }
 }

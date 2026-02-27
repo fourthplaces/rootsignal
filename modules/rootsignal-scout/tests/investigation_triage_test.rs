@@ -92,7 +92,11 @@ fn load_env() {
 }
 
 /// Generate investigation queries for a signal, using snapshot replay.
-async fn generate_queries(name: &str, signal_type: &str, description: &str) -> InvestigationQueries {
+async fn generate_queries(
+    name: &str,
+    signal_type: &str,
+    description: &str,
+) -> InvestigationQueries {
     load_env();
 
     let snap_path = snapshots_dir().join(format!("{name}.json"));

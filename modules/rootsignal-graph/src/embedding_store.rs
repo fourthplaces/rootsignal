@@ -34,12 +34,11 @@ impl EmbeddingStore {
         let mut missing: Vec<(String, String)> = Vec::new(); // (hash, text)
         for &text in texts {
             let hash = self.hash_key(text);
-            let cached: Option<(String,)> = sqlx::query_as(
-                "SELECT input_hash FROM embedding_cache WHERE input_hash = $1",
-            )
-            .bind(&hash)
-            .fetch_optional(&self.pool)
-            .await?;
+            let cached: Option<(String,)> =
+                sqlx::query_as("SELECT input_hash FROM embedding_cache WHERE input_hash = $1")
+                    .bind(&hash)
+                    .fetch_optional(&self.pool)
+                    .await?;
 
             if cached.is_none() {
                 missing.push((hash, text.to_string()));
@@ -86,12 +85,11 @@ impl EmbeddingLookup for EmbeddingStore {
         let hash = self.hash_key(text);
 
         // Check cache
-        let cached: Option<(Vec<f32>,)> = sqlx::query_as(
-            "SELECT embedding FROM embedding_cache WHERE input_hash = $1",
-        )
-        .bind(&hash)
-        .fetch_optional(&self.pool)
-        .await?;
+        let cached: Option<(Vec<f32>,)> =
+            sqlx::query_as("SELECT embedding FROM embedding_cache WHERE input_hash = $1")
+                .bind(&hash)
+                .fetch_optional(&self.pool)
+                .await?;
 
         if let Some((embedding,)) = cached {
             return Ok(embedding);

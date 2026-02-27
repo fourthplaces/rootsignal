@@ -117,11 +117,24 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
-            region_name: env::var("REGION_NAME").or_else(|_| env::var("CITY_NAME")).ok(),
-            region_lat: env::var("REGION_LAT").or_else(|_| env::var("CITY_LAT")).ok().and_then(|v| v.parse().ok()),
-            region_lng: env::var("REGION_LNG").or_else(|_| env::var("CITY_LNG")).ok().and_then(|v| v.parse().ok()),
-            region_radius_km: env::var("REGION_RADIUS_KM").or_else(|_| env::var("CITY_RADIUS_KM")).ok().and_then(|v| v.parse().ok()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
+            region_name: env::var("REGION_NAME")
+                .or_else(|_| env::var("CITY_NAME"))
+                .ok(),
+            region_lat: env::var("REGION_LAT")
+                .or_else(|_| env::var("CITY_LAT"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            region_lng: env::var("REGION_LNG")
+                .or_else(|_| env::var("CITY_LNG"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            region_radius_km: env::var("REGION_RADIUS_KM")
+                .or_else(|_| env::var("CITY_RADIUS_KM"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
             daily_budget_cents: env::var("DAILY_BUDGET_CENTS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -157,7 +170,9 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
             region_name: None,
             region_lat: None,
             region_lng: None,
@@ -203,7 +218,9 @@ impl Config {
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
             session_secret: env::var("SESSION_SECRET").unwrap_or_default(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
             region_name: None,
             region_lat: None,
             region_lng: None,

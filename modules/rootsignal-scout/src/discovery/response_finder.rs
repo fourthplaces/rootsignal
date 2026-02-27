@@ -12,17 +12,17 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode, SourceRole,
-    TensionNode, Urgency,
+    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
+    Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
+    SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 
 use rootsignal_archive::Archive;
 
+use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::extractor::ResourceTag;
-use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -383,7 +383,10 @@ impl<'a> ResponseFinder<'a> {
                 break;
             }
 
-            match self.investigate_tension(target, &situation_context, &mut stats).await {
+            match self
+                .investigate_tension(target, &situation_context, &mut stats)
+                .await
+            {
                 Ok(()) => {
                     stats.targets_investigated += 1;
                 }
@@ -759,7 +762,10 @@ impl<'a> ResponseFinder<'a> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.store.create_node(&node, &embedding, "response_finder", &self.run_id).await?;
+        let node_id = self
+            .store
+            .create_node(&node, &embedding, "response_finder", &self.run_id)
+            .await?;
 
         info!(
             node_id = %node_id,
@@ -781,8 +787,7 @@ impl<'a> ResponseFinder<'a> {
         explanation: &str,
     ) -> Result<()> {
         let lat_delta = self.region.radius_km / 111.0;
-        let lng_delta =
-            self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
+        let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
         let active_tensions = self
             .writer
             .get_active_tensions(
@@ -882,7 +887,7 @@ impl<'a> ResponseFinder<'a> {
                 summary: tension.summary.clone(),
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.4, // Capped at 0.4 — below 0.5 target selection threshold
-    
+
                 corroboration_count: 0,
                 about_location: Some(GeoPoint {
                     lat: self.region.center_lat,
@@ -890,13 +895,13 @@ impl<'a> ResponseFinder<'a> {
                     precision: GeoPrecision::Approximate,
                 }),
                 from_location: None,
-            about_location_name: Some(self.region.name.clone()),
+                about_location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
                 content_date: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
-    
+
                 cause_heat: 0.0,
                 channel_diversity: 1,
                 implied_queries: vec![],
@@ -912,7 +917,12 @@ impl<'a> ResponseFinder<'a> {
 
         let tension_id = self
             .store
-            .create_node(&Node::Tension(tension_node), &embedding, "response_finder", &self.run_id)
+            .create_node(
+                &Node::Tension(tension_node),
+                &embedding,
+                "response_finder",
+                &self.run_id,
+            )
             .await?;
 
         info!(

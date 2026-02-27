@@ -212,11 +212,9 @@ impl EventStore {
 
     /// The latest committed sequence number, or 0 if the table is empty.
     pub async fn latest_seq(&self) -> Result<i64> {
-        let row = sqlx::query_as::<_, (Option<i64>,)>(
-            "SELECT MAX(seq) FROM events",
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let row = sqlx::query_as::<_, (Option<i64>,)>("SELECT MAX(seq) FROM events")
+            .fetch_one(&self.pool)
+            .await?;
 
         Ok(row.0.unwrap_or(0))
     }
@@ -226,9 +224,7 @@ impl EventStore {
     /// Each NOTIFY carries just the seq number. The subscriber fetches the full
     /// record from the store. If a notification is missed, the consumer can
     /// catch up by reading from its last known seq.
-    pub async fn subscribe(
-        &self,
-    ) -> Result<Pin<Box<dyn Stream<Item = StoredEvent> + Send>>> {
+    pub async fn subscribe(&self) -> Result<Pin<Box<dyn Stream<Item = StoredEvent> + Send>>> {
         let pool = self.pool.clone();
         let store = self.clone();
 
@@ -373,9 +369,7 @@ fn async_stream(
         (pool, store, type_filter, false),
         move |(pool, _store, _type_filter, _listening)| async move {
             // Set up LISTEN on first iteration
-            let _ = sqlx::query("LISTEN events")
-                .execute(&pool)
-                .await;
+            let _ = sqlx::query("LISTEN events").execute(&pool).await;
 
             // Placeholder: polling with short sleep.
             // The real implementation will use sqlx::postgres::PgListener

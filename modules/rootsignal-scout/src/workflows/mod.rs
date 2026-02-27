@@ -50,12 +50,11 @@ pub struct ScoutDeps {
 
 impl ScoutDeps {
     /// Build the production SignalStore from these deps.
-    pub fn build_store(&self, run_id: String) -> crate::pipeline::event_sourced_store::EventSourcedStore {
-        crate::pipeline::build_signal_store(
-            self.graph_client.clone(),
-            self.pg_pool.clone(),
-            run_id,
-        )
+    pub fn build_store(
+        &self,
+        run_id: String,
+    ) -> crate::pipeline::event_sourced_store::EventSourcedStore {
+        crate::pipeline::build_signal_store(self.graph_client.clone(), self.pg_pool.clone(), run_id)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.
@@ -75,7 +74,11 @@ impl ScoutDeps {
             .browserless_url(config.browserless_url.clone())
             .browserless_token(config.browserless_token.clone())
             .max_web_queries_per_run(config.max_web_queries_per_run)
-            .restate_ingress_url(std::env::var("RESTATE_INGRESS_URL").ok().filter(|s| !s.is_empty()))
+            .restate_ingress_url(
+                std::env::var("RESTATE_INGRESS_URL")
+                    .ok()
+                    .filter(|s| !s.is_empty()),
+            )
             .build()
     }
 }
@@ -101,10 +104,15 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
     };
 
     let dispatcher = deps.restate_ingress_url.as_ref().map(|url| {
-        Arc::new(RestateDispatcher::new(url.clone())) as Arc<dyn rootsignal_archive::WorkflowDispatcher>
+        Arc::new(RestateDispatcher::new(url.clone()))
+            as Arc<dyn rootsignal_archive::WorkflowDispatcher>
     });
 
-    Arc::new(Archive::new(deps.pg_pool.clone(), archive_config, dispatcher))
+    Arc::new(Archive::new(
+        deps.pg_pool.clone(),
+        archive_config,
+        dispatcher,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +168,6 @@ pub async fn read_workflow_status(ctx: &SharedWorkflowContext<'_>) -> Result<Str
         .unwrap_or_else(|| "pending".to_string()))
 }
 
-
 // ---------------------------------------------------------------------------
 // Restate serde bridge macros (from mntogether)
 // ---------------------------------------------------------------------------
@@ -195,4 +202,3 @@ macro_rules! impl_restate_serde {
         }
     };
 }
-

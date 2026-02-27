@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{GeoPoint, SourceRole};
+use crate::types::GeoPoint;
 
 /// When something happens. Enough to put it on a calendar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,22 +35,4 @@ pub struct Location {
     /// Street address if known
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-}
-
-/// A tag with its computed weight.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagFact {
-    pub slug: String,
-    pub name: String,
-    pub weight: f64,
-}
-
-/// World-layer source changes — observable facts about a source.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum WorldSourceChange {
-    Weight { old: f64, new: f64 },
-    Url { old: String, new: String },
-    Role { old: SourceRole, new: SourceRole },
-    Active { old: bool, new: bool },
 }

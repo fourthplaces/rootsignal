@@ -113,17 +113,16 @@ pub struct ArchiveFileRow {
 
 /// Get total row counts for all 8 content types in parallel.
 pub async fn count_all(pool: &PgPool) -> Result<ArchiveCounts> {
-    let (posts, short_videos, stories, long_videos, pages, feeds, search_results, files) =
-        tokio::try_join!(
-            count_table(pool, "posts"),
-            count_table(pool, "short_videos"),
-            count_table(pool, "stories"),
-            count_table(pool, "long_videos"),
-            count_table(pool, "pages"),
-            count_table(pool, "feeds"),
-            count_table(pool, "search_results"),
-            count_table(pool, "files"),
-        )?;
+    let (posts, short_videos, stories, long_videos, pages, feeds, search_results, files) = tokio::try_join!(
+        count_table(pool, "posts"),
+        count_table(pool, "short_videos"),
+        count_table(pool, "stories"),
+        count_table(pool, "long_videos"),
+        count_table(pool, "pages"),
+        count_table(pool, "feeds"),
+        count_table(pool, "search_results"),
+        count_table(pool, "files"),
+    )?;
 
     Ok(ArchiveCounts {
         posts,
@@ -247,7 +246,18 @@ pub async fn recent_posts(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePostRo
 pub async fn recent_short_videos(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveShortVideoRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, i64)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
+            Option<DateTime<Utc>>,
+            i64,
+        ),
+    >(
         r#"
         SELECT sv.id, s.url, sv.permalink, sv.text, sv.engagement, sv.published_at, s.fetch_count
         FROM short_videos sv
@@ -308,7 +318,18 @@ pub async fn recent_stories(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveStor
 pub async fn recent_long_videos(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveLongVideoRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, i64)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
+            Option<DateTime<Utc>>,
+            i64,
+        ),
+    >(
         r#"
         SELECT lv.id, s.url, lv.permalink, lv.text, lv.engagement, lv.published_at, s.fetch_count
         FROM long_videos lv
@@ -424,7 +445,18 @@ pub async fn recent_search_results(
 pub async fn recent_files(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveFileRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, String, Option<f64>, Option<i32>, DateTime<Utc>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            String,
+            Option<f64>,
+            Option<i32>,
+            DateTime<Utc>,
+        ),
+    >(
         r#"
         SELECT id, url, title, mime_type, duration, page_count, fetched_at
         FROM files

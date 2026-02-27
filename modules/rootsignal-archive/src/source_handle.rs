@@ -17,8 +17,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::enrichment::{files_needing_enrichment, EnrichmentJob, WorkflowDispatcher};
-use crate::fetch_request::FetchRequest;
 use crate::error::{ArchiveError, Result};
+use crate::fetch_request::FetchRequest;
 use crate::router::Platform;
 use crate::store::Store;
 
@@ -187,8 +187,9 @@ impl PostsRequest {
 
         let fetched = match self.platform {
             Platform::Instagram => {
-                let svc = self.inner.instagram.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Instagram service not configured".into()))?;
+                let svc = self.inner.instagram.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Instagram service not configured".into())
+                })?;
                 svc.fetch_posts(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -197,8 +198,9 @@ impl PostsRequest {
                     .collect::<Vec<_>>()
             }
             Platform::Twitter => {
-                let svc = self.inner.twitter.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Twitter service not configured".into()))?;
+                let svc = self.inner.twitter.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Twitter service not configured".into())
+                })?;
                 svc.fetch_posts(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -207,8 +209,9 @@ impl PostsRequest {
                     .collect()
             }
             Platform::Reddit => {
-                let svc = self.inner.reddit.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Reddit service not configured".into()))?;
+                let svc = self.inner.reddit.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Reddit service not configured".into())
+                })?;
                 svc.fetch_posts(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -217,8 +220,9 @@ impl PostsRequest {
                     .collect()
             }
             Platform::Facebook => {
-                let svc = self.inner.facebook.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Facebook service not configured".into()))?;
+                let svc = self.inner.facebook.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Facebook service not configured".into())
+                })?;
                 svc.fetch_posts(&self.source.url, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -227,8 +231,9 @@ impl PostsRequest {
                     .collect()
             }
             Platform::TikTok => {
-                let svc = self.inner.tiktok.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("TikTok service not configured".into()))?;
+                let svc = self.inner.tiktok.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("TikTok service not configured".into())
+                })?;
                 svc.fetch_posts(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -237,8 +242,9 @@ impl PostsRequest {
                     .collect()
             }
             Platform::Bluesky => {
-                let svc = self.inner.bluesky.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Bluesky service not configured".into()))?;
+                let svc = self.inner.bluesky.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Bluesky service not configured".into())
+                })?;
                 svc.fetch_posts(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -247,7 +253,9 @@ impl PostsRequest {
                     .collect()
             }
             Platform::Web => {
-                return Err(ArchiveError::Unsupported("Web sources don't have posts".into()));
+                return Err(ArchiveError::Unsupported(
+                    "Web sources don't have posts".into(),
+                ));
             }
         };
 
@@ -262,9 +270,16 @@ impl PostsRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            let file_positions: Vec<(Uuid, i32)> = attachments
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.id, i as i32))
+                .collect();
             if !file_positions.is_empty() {
-                self.inner.store.insert_attachments("posts", post_id, &file_positions).await?;
+                self.inner
+                    .store
+                    .insert_attachments("posts", post_id, &file_positions)
+                    .await?;
             }
 
             posts.push(Post {
@@ -290,7 +305,10 @@ impl PostsRequest {
         let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
-        self.inner.store.update_last_scraped(source_id, "posts").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "posts")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
         Ok(posts)
     }
@@ -318,16 +336,18 @@ impl StoriesRequest {
 
         let fetched = match self.platform {
             Platform::Instagram => {
-                let svc = self.inner.instagram.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Instagram service not configured".into()))?;
+                let svc = self.inner.instagram.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Instagram service not configured".into())
+                })?;
                 svc.fetch_stories(&self.identifier, source_id)
                     .await
                     .map_err(ArchiveError::Other)?
             }
             _ => {
-                return Err(ArchiveError::Unsupported(
-                    format!("{:?} doesn't support stories", self.platform),
-                ));
+                return Err(ArchiveError::Unsupported(format!(
+                    "{:?} doesn't support stories",
+                    self.platform
+                )));
             }
         };
 
@@ -339,9 +359,16 @@ impl StoriesRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            let file_positions: Vec<(Uuid, i32)> = attachments
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.id, i as i32))
+                .collect();
             if !file_positions.is_empty() {
-                self.inner.store.insert_attachments("stories", story_id, &file_positions).await?;
+                self.inner
+                    .store
+                    .insert_attachments("stories", story_id, &file_positions)
+                    .await?;
             }
             stories.push(Story {
                 id: story_id,
@@ -357,10 +384,17 @@ impl StoriesRequest {
         }
 
         // Dispatch enrichment for media files with text = NULL (fire-and-forget)
-        let all_attachments: Vec<_> = stories.iter().flat_map(|s| &s.attachments).cloned().collect();
+        let all_attachments: Vec<_> = stories
+            .iter()
+            .flat_map(|s| &s.attachments)
+            .cloned()
+            .collect();
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
-        self.inner.store.update_last_scraped(source_id, "stories").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "stories")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
         Ok(stories)
     }
@@ -389,8 +423,9 @@ impl ShortVideoRequest {
 
         let fetched = match self.platform {
             Platform::Instagram => {
-                let svc = self.inner.instagram.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Instagram service not configured".into()))?;
+                let svc = self.inner.instagram.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Instagram service not configured".into())
+                })?;
                 svc.fetch_short_videos(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -399,8 +434,9 @@ impl ShortVideoRequest {
                     .collect::<Vec<_>>()
             }
             Platform::TikTok => {
-                let svc = self.inner.tiktok.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("TikTok service not configured".into()))?;
+                let svc = self.inner.tiktok.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("TikTok service not configured".into())
+                })?;
                 svc.fetch_short_videos(&self.identifier, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -409,9 +445,10 @@ impl ShortVideoRequest {
                     .collect()
             }
             _ => {
-                return Err(ArchiveError::Unsupported(
-                    format!("{:?} doesn't support short videos", self.platform),
-                ));
+                return Err(ArchiveError::Unsupported(format!(
+                    "{:?} doesn't support short videos",
+                    self.platform
+                )));
             }
         };
 
@@ -423,9 +460,16 @@ impl ShortVideoRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            let file_positions: Vec<(Uuid, i32)> = attachments
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.id, i as i32))
+                .collect();
             if !file_positions.is_empty() {
-                self.inner.store.insert_attachments("short_videos", video_id, &file_positions).await?;
+                self.inner
+                    .store
+                    .insert_attachments("short_videos", video_id, &file_positions)
+                    .await?;
             }
             videos.push(ShortVideo {
                 id: video_id,
@@ -442,10 +486,17 @@ impl ShortVideoRequest {
         }
 
         // Dispatch enrichment for media files with text = NULL (fire-and-forget)
-        let all_attachments: Vec<_> = videos.iter().flat_map(|v| &v.attachments).cloned().collect();
+        let all_attachments: Vec<_> = videos
+            .iter()
+            .flat_map(|v| &v.attachments)
+            .cloned()
+            .collect();
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
-        self.inner.store.update_last_scraped(source_id, "short_videos").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "short_videos")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
         Ok(videos)
     }
@@ -470,9 +521,10 @@ pub struct VideoRequest {
 
 impl VideoRequest {
     pub async fn send(self) -> Result<Vec<LongVideo>> {
-        Err(ArchiveError::Unsupported(
-            format!("{:?} long video fetching not yet implemented", self.platform),
-        ))
+        Err(ArchiveError::Unsupported(format!(
+            "{:?} long video fetching not yet implemented",
+            self.platform
+        )))
     }
 }
 
@@ -508,7 +560,9 @@ impl PageRequest {
                 .await
                 .map_err(ArchiveError::Other)?
         } else {
-            return Err(ArchiveError::Unsupported("No page fetcher configured".into()));
+            return Err(ArchiveError::Unsupported(
+                "No page fetcher configured".into(),
+            ));
         };
 
         let links = crate::links::extract_all_links(&fetched.raw_html, &self.source.url);
@@ -521,7 +575,10 @@ impl PageRequest {
             links: links.clone(),
         };
         let page_id = self.inner.store.insert_page(&page).await?;
-        self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "pages")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
@@ -572,7 +629,10 @@ impl PageRequest {
             links: links.clone(),
         };
         let page_id = self.inner.store.insert_page(&page).await?;
-        self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "pages")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
@@ -607,13 +667,18 @@ impl FeedRequest {
     pub async fn send(self) -> Result<ArchivedFeed> {
         let source_id = self.source.id;
 
-        let fetched = self.inner.feed
+        let fetched = self
+            .inner
+            .feed
             .fetch(&self.source.url, source_id)
             .await
             .map_err(ArchiveError::Other)?;
 
         let feed_id = self.inner.store.insert_feed(&fetched.feed).await?;
-        self.inner.store.update_last_scraped(source_id, "feeds").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "feeds")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
 
         let items: Vec<FeedItem> = serde_json::from_value(fetched.feed.items).unwrap_or_default();
@@ -653,7 +718,10 @@ impl SearchRequest {
     pub async fn send(self) -> Result<ArchivedSearchResults> {
         let source_id = self.source.id;
 
-        let svc = self.inner.search.as_ref()
+        let svc = self
+            .inner
+            .search
+            .as_ref()
             .ok_or_else(|| ArchiveError::Unsupported("Search service not configured".into()))?;
 
         let fetched = svc
@@ -661,8 +729,15 @@ impl SearchRequest {
             .await
             .map_err(ArchiveError::Other)?;
 
-        let results_id = self.inner.store.insert_search_results(&fetched.results).await?;
-        self.inner.store.update_last_scraped(source_id, "search_results").await?;
+        let results_id = self
+            .inner
+            .store
+            .insert_search_results(&fetched.results)
+            .await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "search_results")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
 
         let results: Vec<SearchResult> =
@@ -702,8 +777,9 @@ impl TopicSearchRequest {
 
         let fetched = match self.platform {
             Platform::Instagram => {
-                let svc = self.inner.instagram.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Instagram service not configured".into()))?;
+                let svc = self.inner.instagram.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Instagram service not configured".into())
+                })?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -712,8 +788,9 @@ impl TopicSearchRequest {
                     .collect::<Vec<_>>()
             }
             Platform::Twitter => {
-                let svc = self.inner.twitter.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Twitter service not configured".into()))?;
+                let svc = self.inner.twitter.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Twitter service not configured".into())
+                })?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -722,8 +799,9 @@ impl TopicSearchRequest {
                     .collect()
             }
             Platform::Reddit => {
-                let svc = self.inner.reddit.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Reddit service not configured".into()))?;
+                let svc = self.inner.reddit.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Reddit service not configured".into())
+                })?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -732,8 +810,9 @@ impl TopicSearchRequest {
                     .collect()
             }
             Platform::TikTok => {
-                let svc = self.inner.tiktok.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("TikTok service not configured".into()))?;
+                let svc = self.inner.tiktok.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("TikTok service not configured".into())
+                })?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -742,8 +821,9 @@ impl TopicSearchRequest {
                     .collect()
             }
             Platform::Bluesky => {
-                let svc = self.inner.bluesky.as_ref()
-                    .ok_or_else(|| ArchiveError::Unsupported("Bluesky service not configured".into()))?;
+                let svc = self.inner.bluesky.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Bluesky service not configured".into())
+                })?;
                 svc.search_topics(&topic_refs, source_id, self.limit)
                     .await
                     .map_err(ArchiveError::Other)?
@@ -752,9 +832,10 @@ impl TopicSearchRequest {
                     .collect()
             }
             _ => {
-                return Err(ArchiveError::Unsupported(
-                    format!("{:?} doesn't support topic search", self.platform),
-                ));
+                return Err(ArchiveError::Unsupported(format!(
+                    "{:?} doesn't support topic search",
+                    self.platform
+                )));
             }
         };
 
@@ -766,9 +847,16 @@ impl TopicSearchRequest {
                 let file = self.inner.store.upsert_file(insert_file).await?;
                 attachments.push(file);
             }
-            let file_positions: Vec<(Uuid, i32)> = attachments.iter().enumerate().map(|(i, f)| (f.id, i as i32)).collect();
+            let file_positions: Vec<(Uuid, i32)> = attachments
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.id, i as i32))
+                .collect();
             if !file_positions.is_empty() {
-                self.inner.store.insert_attachments("posts", post_id, &file_positions).await?;
+                self.inner
+                    .store
+                    .insert_attachments("posts", post_id, &file_positions)
+                    .await?;
             }
             posts.push(Post {
                 id: post_id,
@@ -793,7 +881,10 @@ impl TopicSearchRequest {
         let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
         dispatch_enrichment(&self.inner, &all_attachments).await;
 
-        self.inner.store.update_last_scraped(source_id, "posts").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "posts")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
         Ok(posts)
     }
@@ -920,7 +1011,9 @@ impl CrawlRequest {
                 .await
                 .map_err(ArchiveError::Other)?
         } else {
-            return Err(ArchiveError::Unsupported("No page fetcher configured".into()));
+            return Err(ArchiveError::Unsupported(
+                "No page fetcher configured".into(),
+            ));
         };
 
         let links = crate::links::extract_all_links(&fetched.raw_html, url);
@@ -933,7 +1026,10 @@ impl CrawlRequest {
             links: links.clone(),
         };
         let page_id = self.inner.store.insert_page(&page).await?;
-        self.inner.store.update_last_scraped(source_id, "pages").await?;
+        self.inner
+            .store
+            .update_last_scraped(source_id, "pages")
+            .await?;
         self.inner.store.increment_fetch_count(source_id).await?;
 
         Ok(ArchivedPage {
@@ -965,7 +1061,10 @@ impl IntoFuture for CrawlRequest {
 
 /// Download media bytes and dispatch enrichment jobs for files needing it.
 /// Fire-and-forget: errors are logged but never propagated to the caller.
-async fn dispatch_enrichment(inner: &Arc<ArchiveInner>, files: &[rootsignal_common::types::ArchiveFile]) {
+async fn dispatch_enrichment(
+    inner: &Arc<ArchiveInner>,
+    files: &[rootsignal_common::types::ArchiveFile],
+) {
     let dispatcher = match &inner.dispatcher {
         Some(d) => d,
         None => return,
@@ -1180,14 +1279,22 @@ mod crawl_tests {
     fn patterns_include_filters() {
         let include = vec!["/about".to_string(), "/contact".to_string()];
         assert!(matches_patterns("https://example.com/about", &include, &[]));
-        assert!(matches_patterns("https://example.com/contact", &include, &[]));
+        assert!(matches_patterns(
+            "https://example.com/contact",
+            &include,
+            &[]
+        ));
         assert!(!matches_patterns("https://example.com/blog", &include, &[]));
     }
 
     #[test]
     fn patterns_exclude_rejects() {
         let exclude = vec!["/login".to_string()];
-        assert!(!matches_patterns("https://example.com/login", &[], &exclude));
+        assert!(!matches_patterns(
+            "https://example.com/login",
+            &[],
+            &exclude
+        ));
         assert!(matches_patterns("https://example.com/about", &[], &exclude));
     }
 
@@ -1195,19 +1302,34 @@ mod crawl_tests {
     fn patterns_exclude_takes_priority() {
         let include = vec!["/admin".to_string()];
         let exclude = vec!["/admin".to_string()];
-        assert!(!matches_patterns("https://example.com/admin", &include, &exclude));
+        assert!(!matches_patterns(
+            "https://example.com/admin",
+            &include,
+            &exclude
+        ));
     }
 
     #[test]
     fn patterns_substring_match() {
         let include = vec!["/about".to_string()];
-        assert!(matches_patterns("https://example.com/about-us", &include, &[]));
-        assert!(matches_patterns("https://example.com/info/about/team", &include, &[]));
+        assert!(matches_patterns(
+            "https://example.com/about-us",
+            &include,
+            &[]
+        ));
+        assert!(matches_patterns(
+            "https://example.com/info/about/team",
+            &include,
+            &[]
+        ));
     }
 
     #[test]
     fn ensure_scheme_adds_https() {
-        assert_eq!(ensure_scheme("example.com/page"), "https://example.com/page");
+        assert_eq!(
+            ensure_scheme("example.com/page"),
+            "https://example.com/page"
+        );
         assert_eq!(ensure_scheme("https://example.com"), "https://example.com");
         assert_eq!(ensure_scheme("http://example.com"), "http://example.com");
     }

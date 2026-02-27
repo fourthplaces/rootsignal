@@ -24,8 +24,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    Clarity, DispatchNode, DispatchType, SensitivityLevel, SituationArc, SituationNode,
-    ScoutScope, TextEmbedder,
+    Clarity, DispatchNode, DispatchType, ScoutScope, SensitivityLevel, SituationArc, SituationNode,
+    TextEmbedder,
 };
 
 use crate::writer::GraphWriter;
@@ -207,7 +207,10 @@ impl SituationWeaver {
             info!("SituationWeaver: no unassigned signals, skipping");
             return Ok(stats);
         }
-        info!(count = signals.len(), "SituationWeaver: discovered unassigned signals");
+        info!(
+            count = signals.len(),
+            "SituationWeaver: discovered unassigned signals"
+        );
 
         if !has_budget {
             warn!("SituationWeaver: no LLM budget, marking signals as pending");
@@ -217,12 +220,16 @@ impl SituationWeaver {
 
         // Phase 2: Load all candidate situations
         let candidates = self.load_candidate_situations().await?;
-        info!(count = candidates.len(), "SituationWeaver: loaded candidate situations");
+        info!(
+            count = candidates.len(),
+            "SituationWeaver: loaded candidate situations"
+        );
 
         // Phase 3-4: Batch signals, weave via LLM, write graph updates
         // Process sequentially to prevent duplicate situation creation
         let batch_size = 5;
-        let mut temp_id_map: std::collections::HashMap<String, Uuid> = std::collections::HashMap::new();
+        let mut temp_id_map: std::collections::HashMap<String, Uuid> =
+            std::collections::HashMap::new();
         for chunk in signals.chunks(batch_size) {
             match self.weave_batch(chunk, &candidates, &mut temp_id_map).await {
                 Ok(batch_stats) => {
@@ -373,8 +380,7 @@ impl SituationWeaver {
             .iter()
             .filter(|c| !c.narrative_embedding.is_empty())
             .map(|c| {
-                let narrative_sim =
-                    cosine_similarity(&signal.embedding, &c.narrative_embedding);
+                let narrative_sim = cosine_similarity(&signal.embedding, &c.narrative_embedding);
                 let causal_sim = cosine_similarity(&signal.embedding, &c.causal_embedding);
                 (c.id, narrative_sim, causal_sim)
             })
@@ -384,7 +390,9 @@ impl SituationWeaver {
         scored.sort_by(|a, b| {
             let max_a = a.1.max(a.2);
             let max_b = b.1.max(b.2);
-            max_b.partial_cmp(&max_a).unwrap_or(std::cmp::Ordering::Equal)
+            max_b
+                .partial_cmp(&max_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Cold reactivation check: if top match is cold, use higher thresholds
@@ -422,7 +430,9 @@ impl SituationWeaver {
                         .find(|c| c.id == *id)
                         .map(|c| c.arc == "developing")
                         .unwrap_or(false);
-                    is_developing && (*narrative_sim >= WIDE_NET_THRESHOLD || *causal_sim >= WIDE_NET_THRESHOLD)
+                    is_developing
+                        && (*narrative_sim >= WIDE_NET_THRESHOLD
+                            || *causal_sim >= WIDE_NET_THRESHOLD)
                 })
                 .take(TOP_K_CANDIDATES)
                 .copied()
@@ -447,7 +457,8 @@ impl SituationWeaver {
 
         // Build per-signal candidate lists
         let mut signal_candidates: Vec<serde_json::Value> = Vec::new();
-        let mut all_candidate_ids: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        let mut all_candidate_ids: std::collections::HashSet<Uuid> =
+            std::collections::HashSet::new();
 
         // Sort signals chronologically before building JSON
         let mut sorted_signals: Vec<&DiscoveredSignal> = signals.iter().collect();
@@ -460,13 +471,16 @@ impl SituationWeaver {
                 for (id, _, _) in &cands {
                     all_candidate_ids.insert(*id);
                 }
-                signal_candidates.push(serde_json::json!(cands.iter().map(|(id, n, c)| {
-                    serde_json::json!({
-                        "situation_id": id.to_string(),
-                        "narrative_similarity": format!("{:.2}", n),
-                        "causal_similarity": format!("{:.2}", c),
+                signal_candidates.push(serde_json::json!(cands
+                    .iter()
+                    .map(|(id, n, c)| {
+                        serde_json::json!({
+                            "situation_id": id.to_string(),
+                            "narrative_similarity": format!("{:.2}", n),
+                            "causal_similarity": format!("{:.2}", c),
+                        })
                     })
-                }).collect::<Vec<_>>()));
+                    .collect::<Vec<_>>()));
 
                 signal_to_json(s)
             })
@@ -486,15 +500,15 @@ impl SituationWeaver {
             })
             .collect();
 
-        let prompt = build_weaving_prompt(&signals_json, &signal_candidates, &candidate_context, &self.scope);
+        let prompt = build_weaving_prompt(
+            &signals_json,
+            &signal_candidates,
+            &candidate_context,
+            &self.scope,
+        );
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
-        let response: WeavingResponse = claude
-            .extract(
-                SYSTEM_PROMPT,
-                &prompt,
-            )
-            .await?;
+        let response: WeavingResponse = claude.extract(SYSTEM_PROMPT, &prompt).await?;
 
         // Process new situations first (so assignments can reference them)
         for new_sit in &response.new_situations {
@@ -517,7 +531,10 @@ impl SituationWeaver {
                     .get("root_cause_thesis")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&new_sit.headline);
-                self.embedder.embed(thesis).await.unwrap_or(narrative_emb.clone())
+                self.embedder
+                    .embed(thesis)
+                    .await
+                    .unwrap_or(narrative_emb.clone())
             } else {
                 narrative_emb.clone()
             };
@@ -537,12 +554,9 @@ impl SituationWeaver {
                 clarity: Clarity::Fuzzy,
                 centroid_lat,
                 centroid_lng,
-                location_name: Some(new_sit.location_name.clone())
-                    .filter(|s| !s.is_empty()),
-                structured_state: serde_json::to_string(
-                    &new_sit.initial_structured_state,
-                )
-                .unwrap_or_else(|_| "{}".to_string()),
+                location_name: Some(new_sit.location_name.clone()).filter(|s| !s.is_empty()),
+                structured_state: serde_json::to_string(&new_sit.initial_structured_state)
+                    .unwrap_or_else(|_| "{}".to_string()),
                 signal_count: 0,
                 tension_count: 0,
                 dispatch_count: 0,
@@ -718,9 +732,7 @@ impl SituationWeaver {
     }
 
     /// Phase 6: Post-hoc verification of recent dispatches.
-    async fn verify_dispatches(
-        &self,
-    ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+    async fn verify_dispatches(&self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
         let g = &self.client.graph;
         let mut flagged = 0u32;
 
@@ -809,10 +821,7 @@ impl SituationWeaver {
     }
 
     /// Mark signals as pending for next weaving run (when no LLM budget).
-    async fn mark_signals_pending(
-        &self,
-        scout_run_id: &str,
-    ) -> Result<(), neo4rs::Error> {
+    async fn mark_signals_pending(&self, scout_run_id: &str) -> Result<(), neo4rs::Error> {
         let g = &self.client.graph;
         for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
             let q = query(&format!(
@@ -917,7 +926,12 @@ fn truncate(s: &str, max_len: usize) -> &str {
     if s.len() <= max_len {
         s
     } else {
-        &s[..s.char_indices().take(max_len).last().map(|(i, _)| i).unwrap_or(max_len)]
+        &s[..s
+            .char_indices()
+            .take(max_len)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(max_len)]
     }
 }
 
@@ -1016,7 +1030,8 @@ mod tests {
         let mut sorted: Vec<&DiscoveredSignal> = signals.iter().collect();
         sorted.sort_by(|a, b| a.content_date.cmp(&b.content_date));
 
-        let json_values: Vec<serde_json::Value> = sorted.iter().map(|s| signal_to_json(s)).collect();
+        let json_values: Vec<serde_json::Value> =
+            sorted.iter().map(|s| signal_to_json(s)).collect();
 
         // First element should be the tension (Jan 5), second the resolution (Jan 15)
         assert_eq!(json_values[0]["title"], "Tension identified");
@@ -1043,6 +1058,9 @@ mod tests {
         };
 
         let json = signal_to_json(&signal);
-        assert!(json.get("published").is_none(), "Should not have published field when content_date is None");
+        assert!(
+            json.get("published").is_none(),
+            "Should not have published field when content_date is None"
+        );
     }
 }

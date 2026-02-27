@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
-use super::types::{EmptyRequest, TaskRequest, SupervisorResult};
+use super::types::{EmptyRequest, SupervisorResult, TaskRequest};
 use super::ScoutDeps;
 
 #[restate_sdk::workflow]
@@ -53,7 +53,10 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
                 .await
                 .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
             if !transitioned {
-                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+                return Err(TerminalError::new(
+                    "Prerequisites not met or another phase is running",
+                )
+                .into());
             }
             Ok(())
         })
@@ -75,7 +78,9 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                let _ = super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle").await;
+                let _ =
+                    super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle")
+                        .await;
                 return Err(e.into());
             }
         };
@@ -86,7 +91,10 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
             "status",
             format!("Supervisor complete: {} issues", result.issues_found),
         );
-        info!(issues_found = result.issues_found, "SupervisorWorkflow complete");
+        info!(
+            issues_found = result.issues_found,
+            "SupervisorWorkflow complete"
+        );
 
         Ok(result)
     }

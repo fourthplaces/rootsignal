@@ -69,7 +69,8 @@ impl TikTokService {
                 });
 
                 let mentions = text_extract::extract_mentions(&text);
-                let hashtags = p.hashtags
+                let hashtags = p
+                    .hashtags
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|h| h.name.map(|n| n.to_lowercase()))
@@ -89,7 +90,9 @@ impl TikTokService {
                         author: p.author_meta.and_then(|a| a.name),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: p.create_time_iso.as_deref()
+                        published_at: p
+                            .create_time_iso
+                            .as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
                         permalink,
@@ -157,7 +160,9 @@ impl TikTokService {
                         text,
                         location: None,
                         engagement: Some(engagement),
-                        published_at: p.create_time_iso.as_deref()
+                        published_at: p
+                            .create_time_iso
+                            .as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
                         permalink,
@@ -195,7 +200,8 @@ impl TikTokService {
                 });
 
                 let mentions = text_extract::extract_mentions(&text);
-                let hashtags = p.hashtags
+                let hashtags = p
+                    .hashtags
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|h| h.name.map(|n| n.to_lowercase()))
@@ -215,7 +221,9 @@ impl TikTokService {
                         author: p.author_meta.and_then(|a| a.name),
                         location: None,
                         engagement: Some(engagement),
-                        published_at: p.create_time_iso.as_deref()
+                        published_at: p
+                            .create_time_iso
+                            .as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
                         permalink,

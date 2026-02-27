@@ -39,13 +39,13 @@ async fn main() -> Result<()> {
         center_lat: config.region_lat.unwrap_or(44.9778),
         center_lng: config.region_lng.unwrap_or(-93.2650),
         radius_km: config.region_radius_km.unwrap_or(30.0),
-        name: config.region_name.clone().unwrap_or_else(|| config.region.clone()),
+        name: config
+            .region_name
+            .clone()
+            .unwrap_or_else(|| config.region.clone()),
     };
 
-    info!(
-        name = region.name.as_str(),
-        "Loaded region"
-    );
+    info!(name = region.name.as_str(), "Loaded region");
 
     // Build notification backend: Slack if configured, otherwise Noop
     let notifier: Box<dyn NotifyBackend> = match NotifyRouter::from_env() {
@@ -69,7 +69,13 @@ async fn main() -> Result<()> {
         .context("Failed to connect to Postgres")?;
 
     // Create and run supervisor
-    let supervisor = Supervisor::new(client, pg_pool, region, config.anthropic_api_key.clone(), notifier);
+    let supervisor = Supervisor::new(
+        client,
+        pg_pool,
+        region,
+        config.anthropic_api_key.clone(),
+        notifier,
+    );
     let stats = supervisor.run().await?;
 
     info!("Supervisor complete. {stats}");

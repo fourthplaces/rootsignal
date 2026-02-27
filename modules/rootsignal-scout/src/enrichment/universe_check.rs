@@ -18,7 +18,6 @@ struct UniverseVerdict {
     needs_content: bool,
 }
 
-
 const UNIVERSE_CHECK_SYSTEM: &str = "\
 You evaluate whether a URL belongs in our universe of local civic content.\n\n\
 IN-UNIVERSE sources contain:\n\
@@ -53,10 +52,7 @@ pub async fn check_in_universe(
         url = url,
     );
 
-    let verdict: UniverseVerdict = match claude
-        .extract(UNIVERSE_CHECK_SYSTEM, &prompt)
-        .await
-    {
+    let verdict: UniverseVerdict = match claude.extract(UNIVERSE_CHECK_SYSTEM, &prompt).await {
         Ok(v) => v,
         Err(e) => {
             warn!(url, error = %e, "Universe check failed, defaulting to pass");
@@ -65,7 +61,11 @@ pub async fn check_in_universe(
     };
 
     if !verdict.needs_content {
-        info!(url, in_universe = verdict.in_universe, "Universe check (URL-only)");
+        info!(
+            url,
+            in_universe = verdict.in_universe,
+            "Universe check (URL-only)"
+        );
         return verdict.in_universe;
     }
 
@@ -73,7 +73,10 @@ pub async fn check_in_universe(
     let content = match fetcher.page(url).await {
         Ok(p) if !p.markdown.is_empty() => p.markdown,
         _ => {
-            info!(url, "Universe check: content fetch failed, defaulting to pass");
+            info!(
+                url,
+                "Universe check: content fetch failed, defaulting to pass"
+            );
             return true;
         }
     };
@@ -86,14 +89,15 @@ pub async fn check_in_universe(
     );
 
     match claude
-        .extract::<UniverseVerdict>(
-            UNIVERSE_CHECK_SYSTEM,
-            &content_prompt,
-        )
+        .extract::<UniverseVerdict>(UNIVERSE_CHECK_SYSTEM, &content_prompt)
         .await
     {
         Ok(v) => {
-            info!(url, in_universe = v.in_universe, "Universe check (with content)");
+            info!(
+                url,
+                in_universe = v.in_universe,
+                "Universe check (with content)"
+            );
             v.in_universe
         }
         Err(e) => {

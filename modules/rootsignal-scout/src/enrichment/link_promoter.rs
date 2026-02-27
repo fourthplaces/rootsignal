@@ -38,8 +38,8 @@ impl Default for PromotionConfig {
 const SKIP_PREFIXES: &[&str] = &["mailto:", "tel:", "javascript:", "#", "data:"];
 
 const SKIP_EXTENSIONS: &[&str] = &[
-    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif",
-    ".svg", ".woff", ".woff2", ".ico", ".webp", ".mp3", ".mp4",
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff", ".woff2", ".ico", ".webp",
+    ".mp3", ".mp4",
 ];
 
 use crate::infra::util::sanitize_url;
@@ -81,7 +81,6 @@ pub fn extract_links(page_links: &[String]) -> Vec<String> {
     results
 }
 
-
 /// Promote discovered links to SourceNodes in the graph.
 ///
 /// Each `CollectedLink` carries the discovering source's coordinates. The promoted
@@ -121,14 +120,22 @@ pub async fn promote_links(
         match writer.upsert_source(&source).await {
             Ok(_) => {
                 created += 1;
-                info!(canonical_key = cv, discovered_on = link.discovered_on, "Promoted linked URL");
+                info!(
+                    canonical_key = cv,
+                    discovered_on = link.discovered_on,
+                    "Promoted linked URL"
+                );
             }
             Err(e) => warn!(canonical_key = cv, error = %e, "Failed to promote linked URL"),
         }
     }
 
     if created > 0 {
-        info!(created, total_links = links.len(), "Link promotion complete");
+        info!(
+            created,
+            total_links = links.len(),
+            "Link promotion complete"
+        );
     }
 
     Ok(created)
@@ -158,16 +165,13 @@ fn parse_social_link(url: &str) -> Option<(SocialPlatform, String)> {
             .map(|h| (SocialPlatform::Instagram, h));
     }
     if url_lower.contains("twitter.com/") {
-        return extract_handle_from_path(url, "twitter.com/")
-            .map(|h| (SocialPlatform::Twitter, h));
+        return extract_handle_from_path(url, "twitter.com/").map(|h| (SocialPlatform::Twitter, h));
     }
     if url_lower.contains("x.com/") {
-        return extract_handle_from_path(url, "x.com/")
-            .map(|h| (SocialPlatform::Twitter, h));
+        return extract_handle_from_path(url, "x.com/").map(|h| (SocialPlatform::Twitter, h));
     }
     if url_lower.contains("tiktok.com/@") {
-        return extract_handle_from_path(url, "tiktok.com/@")
-            .map(|h| (SocialPlatform::TikTok, h));
+        return extract_handle_from_path(url, "tiktok.com/@").map(|h| (SocialPlatform::TikTok, h));
     }
     if url_lower.contains("facebook.com/") {
         return extract_handle_from_path(url, "facebook.com/")
@@ -200,9 +204,8 @@ fn extract_handle_from_path(url: &str, after: &str) -> Option<String> {
     }
 
     let non_profile = [
-        "p", "explore", "about", "help", "settings", "accounts",
-        "stories", "reels", "reel", "tv", "hashtag", "search",
-        "intent", "i", "share", "login", "signup",
+        "p", "explore", "about", "help", "settings", "accounts", "stories", "reels", "reel", "tv",
+        "hashtag", "search", "intent", "i", "share", "login", "signup",
     ];
     if non_profile.contains(&handle.to_lowercase().as_str()) {
         return None;
@@ -252,12 +255,24 @@ mod tests {
         ];
         let results = extract_social_handles_from_links(&links);
         assert_eq!(results.len(), 6);
-        assert_eq!(results[0], (SocialPlatform::Instagram, "jane_doe".to_string()));
+        assert_eq!(
+            results[0],
+            (SocialPlatform::Instagram, "jane_doe".to_string())
+        );
         assert_eq!(results[1], (SocialPlatform::Twitter, "johndoe".to_string()));
         assert_eq!(results[2], (SocialPlatform::Twitter, "johndoe".to_string()));
-        assert_eq!(results[3], (SocialPlatform::TikTok, "dancer123".to_string()));
-        assert_eq!(results[4], (SocialPlatform::Facebook, "local_org".to_string()));
-        assert_eq!(results[5], (SocialPlatform::Bluesky, "user.bsky.social".to_string()));
+        assert_eq!(
+            results[3],
+            (SocialPlatform::TikTok, "dancer123".to_string())
+        );
+        assert_eq!(
+            results[4],
+            (SocialPlatform::Facebook, "local_org".to_string())
+        );
+        assert_eq!(
+            results[5],
+            (SocialPlatform::Bluesky, "user.bsky.social".to_string())
+        );
     }
 
     #[test]
@@ -271,7 +286,10 @@ mod tests {
         ];
         let results = extract_social_handles_from_links(&links);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], (SocialPlatform::Instagram, "real_account".to_string()));
+        assert_eq!(
+            results[0],
+            (SocialPlatform::Instagram, "real_account".to_string())
+        );
     }
 
     #[test]
@@ -326,7 +344,8 @@ mod tests {
     fn test_tracking_param_stripping_via_sanitize_url() {
         // extract_links delegates to sanitize_url for tracking param removal
         let links = vec![
-            "https://example.com/page?utm_source=ig&utm_medium=social&fbclid=abc123&important=yes".to_string(),
+            "https://example.com/page?utm_source=ig&utm_medium=social&fbclid=abc123&important=yes"
+                .to_string(),
         ];
         let results = extract_links(&links);
         assert_eq!(results.len(), 1);
@@ -337,9 +356,7 @@ mod tests {
 
     #[test]
     fn test_tracking_params_all_removed() {
-        let links = vec![
-            "https://example.com/page?utm_source=ig&fbclid=abc".to_string(),
-        ];
+        let links = vec!["https://example.com/page?utm_source=ig&fbclid=abc".to_string()];
         let results = extract_links(&links);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "https://example.com/page");
@@ -405,12 +422,21 @@ mod tests {
         let sanitized = sanitize_url(url);
 
         // canonical_value: identity key — preserves everything
-        assert!(cv.contains("utm_source"), "canonical_value preserves tracking params");
+        assert!(
+            cv.contains("utm_source"),
+            "canonical_value preserves tracking params"
+        );
         assert!(cv.contains("si="), "canonical_value preserves si param");
 
         // sanitize_url: strips tracking params, keeps the rest
-        assert!(!sanitized.contains("utm_source"), "sanitize_url strips utm params");
+        assert!(
+            !sanitized.contains("utm_source"),
+            "sanitize_url strips utm params"
+        );
         assert!(!sanitized.contains("si="), "sanitize_url strips si param");
-        assert!(sanitized.contains("important=yes"), "sanitize_url keeps non-tracking params");
+        assert!(
+            sanitized.contains("important=yes"),
+            "sanitize_url keeps non-tracking params"
+        );
     }
 }

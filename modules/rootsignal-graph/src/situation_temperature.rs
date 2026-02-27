@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use rootsignal_common::{Clarity, SituationArc};
 
-use crate::GraphClient;
 use crate::writer::GraphWriter;
+use crate::GraphClient;
 
 /// All computed temperature components for a situation.
 #[derive(Debug, Clone)]
@@ -242,10 +242,7 @@ async fn execute_velocity_query(
 }
 
 /// Ratio of unmet tensions (no RESPONDS_TO) to total tensions, 90-day window.
-async fn compute_response_gap(
-    g: &neo4rs::Graph,
-    situation_id: &str,
-) -> Result<f64, neo4rs::Error> {
+async fn compute_response_gap(g: &neo4rs::Graph, situation_id: &str) -> Result<f64, neo4rs::Error> {
     let cutoff = (Utc::now() - Duration::days(90)).to_rfc3339();
 
     let q = query(
@@ -323,8 +320,7 @@ async fn compute_clarity_need(
         (0, 0)
     };
 
-    let clarity_score =
-        (support as f64 / 3.0).min(1.0) * (diversity as f64 / 2.0).min(1.0);
+    let clarity_score = (support as f64 / 3.0).min(1.0) * (diversity as f64 / 2.0).min(1.0);
     let mut clarity_need = 1.0 - clarity_score;
 
     // Staleness decay: after 30 days of no new signals, decay to 0 over next 60 days
@@ -338,11 +334,7 @@ async fn compute_clarity_need(
 }
 
 /// Derive arc from temperature + age, evaluated top-to-bottom (first match wins).
-pub fn derive_arc(
-    temperature: f64,
-    first_seen: DateTime<Utc>,
-    previous_arc: &str,
-) -> SituationArc {
+pub fn derive_arc(temperature: f64, first_seen: DateTime<Utc>, previous_arc: &str) -> SituationArc {
     let age_hours = (Utc::now() - first_seen).num_hours();
 
     // Priority 1: Reactivation (was Cold, now warm enough)
@@ -375,10 +367,7 @@ pub fn derive_arc(
 }
 
 /// Derive clarity label from graph evidence.
-async fn derive_clarity(
-    g: &neo4rs::Graph,
-    situation_id: &str,
-) -> Result<Clarity, neo4rs::Error> {
+async fn derive_clarity(g: &neo4rs::Graph, situation_id: &str) -> Result<Clarity, neo4rs::Error> {
     let q = query(
         "MATCH (t:Tension)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
@@ -496,7 +485,10 @@ async fn compute_dampened_centroid(
     }
 
     let embedding: Vec<f32> = if total_weight > 0.0 {
-        centroid.iter().map(|v| (*v / total_weight) as f32).collect()
+        centroid
+            .iter()
+            .map(|v| (*v / total_weight) as f32)
+            .collect()
     } else {
         vec![0.0; dim]
     };
@@ -541,10 +533,7 @@ mod tests {
     fn test_derive_arc_emerging_young_warm() {
         // 12 hours old, high temp → still Emerging
         let first_seen = Utc::now() - Duration::hours(12);
-        assert_eq!(
-            derive_arc(0.93, first_seen, "").to_string(),
-            "emerging"
-        );
+        assert_eq!(derive_arc(0.93, first_seen, "").to_string(), "emerging");
     }
 
     #[test]
@@ -579,10 +568,7 @@ mod tests {
     fn test_derive_arc_dead_cat_bounce() {
         let first_seen = Utc::now() - Duration::days(60);
         // Was cold, weak bounce at 0.2 → Cooling (not reactivation)
-        assert_eq!(
-            derive_arc(0.20, first_seen, "cold").to_string(),
-            "cooling"
-        );
+        assert_eq!(derive_arc(0.20, first_seen, "cold").to_string(), "cooling");
     }
 
     #[test]
@@ -609,19 +595,13 @@ mod tests {
     fn test_derive_arc_exactly_72h_is_not_emerging() {
         // At exactly 72h, first_seen >= 72h is true → not Emerging
         let first_seen = Utc::now() - Duration::hours(72);
-        assert_eq!(
-            derive_arc(0.5, first_seen, "").to_string(),
-            "developing"
-        );
+        assert_eq!(derive_arc(0.5, first_seen, "").to_string(), "developing");
     }
 
     #[test]
     fn test_derive_arc_71h_is_emerging() {
         let first_seen = Utc::now() - Duration::hours(71);
-        assert_eq!(
-            derive_arc(0.5, first_seen, "").to_string(),
-            "emerging"
-        );
+        assert_eq!(derive_arc(0.5, first_seen, "").to_string(), "emerging");
     }
 
     #[test]

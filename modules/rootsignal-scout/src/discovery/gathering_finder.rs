@@ -11,15 +11,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
-    NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole, Urgency,
+    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
+    Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
+    Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 
 use rootsignal_archive::Archive;
 
-use crate::infra::embedder::TextEmbedder;
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
+use crate::infra::embedder::TextEmbedder;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -553,7 +554,11 @@ impl<'a> GatheringFinder<'a> {
                 was_new = false;
 
                 // Touch the existing signal so it doesn't age out
-                if let Err(e) = self.store.refresh_signal(dup.id, NodeType::Gathering, Utc::now()).await {
+                if let Err(e) = self
+                    .store
+                    .refresh_signal(dup.id, NodeType::Gathering, Utc::now())
+                    .await
+                {
                     warn!(error = %e, "Failed to refresh signal freshness (non-fatal)");
                 }
 
@@ -600,11 +605,7 @@ impl<'a> GatheringFinder<'a> {
             if !venue.is_empty() {
                 match self
                     .writer
-                    .find_or_create_place(
-                        venue,
-                        self.region.center_lat,
-                        self.region.center_lng,
-                    )
+                    .find_or_create_place(venue, self.region.center_lat, self.region.center_lng)
                     .await
                 {
                     Ok(place_id) => {
@@ -702,7 +703,10 @@ impl<'a> GatheringFinder<'a> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
-        let node_id = self.store.create_node(&node, &embedding, "gathering_finder", &self.run_id).await?;
+        let node_id = self
+            .store
+            .create_node(&node, &embedding, "gathering_finder", &self.run_id)
+            .await?;
 
         info!(
             node_id = %node_id,
@@ -727,8 +731,7 @@ impl<'a> GatheringFinder<'a> {
         gathering_type: &str,
     ) -> Result<()> {
         let lat_delta = self.region.radius_km / 111.0;
-        let lng_delta =
-            self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
+        let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
         let active_tensions = self
             .writer
             .get_active_tensions(

@@ -95,10 +95,7 @@ pub fn create_github_issue(
 
     let mut table_rows = String::new();
     for v in &rejections {
-        let signal = output
-            .reviewed_signals
-            .iter()
-            .find(|s| s.id == v.signal_id);
+        let signal = output.reviewed_signals.iter().find(|s| s.id == v.signal_id);
         let title_col = signal.map(|s| s.title.as_str()).unwrap_or("?");
         let type_col = signal.map(|s| s.signal_type.as_str()).unwrap_or("?");
         let module_col = signal.map(|s| s.created_by.as_str()).unwrap_or("?");
@@ -154,7 +151,16 @@ Full signal data dump: `{report_path}`
 
     // Shell out to gh CLI
     match std::process::Command::new("gh")
-        .args(["issue", "create", "--title", &title, "--body", &body, "--label", "supervisor"])
+        .args([
+            "issue",
+            "create",
+            "--title",
+            &title,
+            "--body",
+            &body,
+            "--label",
+            "supervisor",
+        ])
         .output()
     {
         Ok(result) => {

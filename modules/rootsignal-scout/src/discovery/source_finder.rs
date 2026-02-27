@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
-use schemars::JsonSchema;
-use serde::{de, Deserialize};
-use tracing::{info, warn};
 use ai_client::claude::Claude;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SituationBrief, SourceBrief,
     TensionResponseShape, UnmetTension,
 };
+use schemars::JsonSchema;
+use serde::{de, Deserialize};
+use tracing::{info, warn};
 
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
 
@@ -500,7 +500,11 @@ impl<'a> SourceFinder<'a> {
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
     async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
-        let actors = match self.writer.get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH)).await {
+        let actors = match self
+            .writer
+            .get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH))
+            .await
+        {
             Ok(a) => a,
             Err(e) => {
                 warn!(error = %e, "Failed to get actors for discovery");
@@ -616,7 +620,8 @@ impl<'a> SourceFinder<'a> {
         let claude = match &self.claude {
             Some(c) => c,
             None => {
-                self.discover_from_gaps_mechanical(stats, social_topics).await;
+                self.discover_from_gaps_mechanical(stats, social_topics)
+                    .await;
                 return;
             }
         };
@@ -628,7 +633,8 @@ impl<'a> SourceFinder<'a> {
                 .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
         {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
-            self.discover_from_gaps_mechanical(stats, social_topics).await;
+            self.discover_from_gaps_mechanical(stats, social_topics)
+                .await;
             return;
         }
 
@@ -637,7 +643,8 @@ impl<'a> SourceFinder<'a> {
             Ok(b) => b,
             Err(e) => {
                 warn!(error = %e, "Failed to build discovery briefing, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats, social_topics).await;
+                self.discover_from_gaps_mechanical(stats, social_topics)
+                    .await;
                 return;
             }
         };
@@ -645,7 +652,8 @@ impl<'a> SourceFinder<'a> {
         // Cold-start check
         if briefing.is_cold_start() {
             info!("Cold start detected (< 3 tensions, 0 situations), using mechanical discovery");
-            self.discover_from_gaps_mechanical(stats, social_topics).await;
+            self.discover_from_gaps_mechanical(stats, social_topics)
+                .await;
             return;
         }
 
@@ -658,7 +666,8 @@ impl<'a> SourceFinder<'a> {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats, social_topics).await;
+                self.discover_from_gaps_mechanical(stats, social_topics)
+                    .await;
                 return;
             }
         };
@@ -702,10 +711,7 @@ impl<'a> SourceFinder<'a> {
                     Ok(embedding) => {
                         match self
                             .writer
-                            .find_similar_query(
-                                &embedding,
-                                QUERY_DEDUP_SIMILARITY_THRESHOLD,
-                            )
+                            .find_similar_query(&embedding, QUERY_DEDUP_SIMILARITY_THRESHOLD)
                             .await
                         {
                             Ok(Some((existing_ck, sim))) => {
@@ -1080,7 +1086,17 @@ mod tests {
             region_name: "Minneapolis".to_string(),
             gap_type_stats: vec![],
             extraction_yield: vec![],
-            situations: vec![],
+            situations: vec![SituationBrief {
+                headline: "Northside food access crisis".to_string(),
+                arc: "emerging".to_string(),
+                temperature: 0.72,
+                clarity: "fuzzy".to_string(),
+                signal_count: 8,
+                tension_count: 3,
+                dispatch_count: 0,
+                location_name: Some("North Minneapolis".to_string()),
+                sensitivity: "GENERAL".to_string(),
+            }],
             response_shapes: vec![],
         }
     }
@@ -1101,8 +1117,8 @@ mod tests {
             "Missing TENSIONS WITH RESPONSES section"
         );
         assert!(
-            prompt.contains("## STORY LANDSCAPE"),
-            "Missing STORY LANDSCAPE section"
+            prompt.contains("## SITUATION LANDSCAPE"),
+            "Missing SITUATION LANDSCAPE section"
         );
         assert!(
             prompt.contains("## SIGNAL BALANCE"),
@@ -1521,7 +1537,10 @@ mod tests {
                 related_tension: None,
             })
             .collect();
-        assert_eq!(queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(), MAX_CURIOSITY_QUERIES);
+        assert_eq!(
+            queries.into_iter().take(MAX_CURIOSITY_QUERIES).count(),
+            MAX_CURIOSITY_QUERIES
+        );
     }
 
     #[test]

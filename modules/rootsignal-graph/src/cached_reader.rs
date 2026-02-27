@@ -4,9 +4,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{
-    ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse,
-};
+use rootsignal_common::{ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse};
 
 use crate::cache::CacheStore;
 use crate::reader::passes_display_filter;
@@ -48,7 +46,10 @@ pub struct CachedReader {
 
 impl CachedReader {
     pub fn new(cache: Arc<CacheStore>, neo4j_reader: PublicGraphReader) -> Self {
-        Self { cache, neo4j_reader }
+        Self {
+            cache,
+            neo4j_reader,
+        }
     }
 
     // ========== Cached public queries ==========
@@ -304,10 +305,7 @@ impl CachedReader {
         Ok(results)
     }
 
-    pub async fn actor_detail(
-        &self,
-        actor_id: Uuid,
-    ) -> Result<Option<ActorNode>, neo4rs::Error> {
+    pub async fn actor_detail(&self, actor_id: Uuid) -> Result<Option<ActorNode>, neo4rs::Error> {
         let snap = self.cache.load_full();
         Ok(snap
             .actor_by_id
@@ -361,10 +359,8 @@ impl CachedReader {
         limit: u32,
     ) -> Result<GraphNeighborhoodResult, neo4rs::Error> {
         let snap = self.cache.load_full();
-        let has_bounds = min_lat.is_some()
-            && max_lat.is_some()
-            && min_lng.is_some()
-            && max_lng.is_some();
+        let has_bounds =
+            min_lat.is_some() && max_lat.is_some() && min_lng.is_some() && max_lng.is_some();
         let type_set: HashSet<&str> = node_types.iter().map(|s| s.as_str()).collect();
 
         let mut nodes: Vec<GraphNodeItem> = Vec::new();
@@ -619,9 +615,7 @@ impl CachedReader {
         &self,
         ids: &[Uuid],
     ) -> Result<HashMap<Uuid, rootsignal_common::ScheduleNode>, neo4rs::Error> {
-        self.neo4j_reader
-            .batch_schedules_by_signal_ids(ids)
-            .await
+        self.neo4j_reader.batch_schedules_by_signal_ids(ids).await
     }
 
     // ========== Delegated to Neo4j ==========
@@ -736,17 +730,15 @@ impl CachedReader {
     }
 
     /// Tags for a single situation, served from cache.
-    pub async fn tags_for_situation(&self, situation_id: Uuid) -> Result<Vec<TagNode>, neo4rs::Error> {
+    pub async fn tags_for_situation(
+        &self,
+        situation_id: Uuid,
+    ) -> Result<Vec<TagNode>, neo4rs::Error> {
         let snap = self.cache.load_full();
         let tags = snap
             .tags_by_situation
             .get(&situation_id)
-            .map(|indices| {
-                indices
-                    .iter()
-                    .map(|&idx| snap.tags[idx].clone())
-                    .collect()
-            })
+            .map(|indices| indices.iter().map(|&idx| snap.tags[idx].clone()).collect())
             .unwrap_or_default();
         Ok(tags)
     }
@@ -762,12 +754,7 @@ impl CachedReader {
             let tags = snap
                 .tags_by_situation
                 .get(&situation_id)
-                .map(|indices| {
-                    indices
-                        .iter()
-                        .map(|&idx| snap.tags[idx].clone())
-                        .collect()
-                })
+                .map(|indices| indices.iter().map(|&idx| snap.tags[idx].clone()).collect())
                 .unwrap_or_default();
             result.insert(situation_id, tags);
         }
@@ -813,8 +800,6 @@ impl CachedReader {
         &self,
         region: &str,
     ) -> Result<crate::reader::ValidationIssueSummary, neo4rs::Error> {
-        self.neo4j_reader
-            .validation_issue_summary(region)
-            .await
+        self.neo4j_reader.validation_issue_summary(region).await
     }
 }

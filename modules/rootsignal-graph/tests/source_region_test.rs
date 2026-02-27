@@ -57,7 +57,11 @@ async fn create_source(
         .param("value", canonical_value)
         .param("active", active)
         .param("signals", signals_produced as i64);
-    client.inner().run(q).await.expect("Failed to create source");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create source");
 }
 
 /// Create a signal node at a given lat/lng with a source_url linking it to a source.
@@ -80,7 +84,11 @@ async fn create_signal_at(client: &GraphClient, source_url: &str, lat: f64, lng:
     .param("source_url", source_url)
     .param("lat", lat)
     .param("lng", lng);
-    client.inner().run(q).await.expect("Failed to create signal");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create signal");
 }
 
 // Minneapolis center
@@ -93,9 +101,20 @@ async fn never_scraped_source_included() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
-    create_source(&client, "src:virgin", "https://virgin.example.com", true, 0, false).await;
+    create_source(
+        &client,
+        "src:virgin",
+        "https://virgin.example.com",
+        true,
+        0,
+        false,
+    )
+    .await;
 
-    let sources = writer.get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM).await.unwrap();
+    let sources = writer
+        .get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM)
+        .await
+        .unwrap();
     assert_eq!(sources.len(), 1, "Never-scraped source should be returned");
     assert_eq!(sources[0].canonical_key, "src:virgin");
 }
@@ -105,11 +124,32 @@ async fn scraped_source_with_signal_in_region_included() {
     let (_container, client) = setup().await;
     let writer = GraphWriter::new(client.clone());
 
-    create_source(&client, "src:productive", "https://productive.example.com", true, 3, true).await;
-    create_signal_at(&client, "https://productive.example.com", MPLS_LAT, MPLS_LNG).await;
+    create_source(
+        &client,
+        "src:productive",
+        "https://productive.example.com",
+        true,
+        3,
+        true,
+    )
+    .await;
+    create_signal_at(
+        &client,
+        "https://productive.example.com",
+        MPLS_LAT,
+        MPLS_LNG,
+    )
+    .await;
 
-    let sources = writer.get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM).await.unwrap();
-    assert_eq!(sources.len(), 1, "Source with signal in region should be returned");
+    let sources = writer
+        .get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM)
+        .await
+        .unwrap();
+    assert_eq!(
+        sources.len(),
+        1,
+        "Source with signal in region should be returned"
+    );
     assert_eq!(sources[0].canonical_key, "src:productive");
 }
 
@@ -121,7 +161,10 @@ async fn scraped_unproductive_source_excluded() {
     // Scraped but produced zero signals — should NOT appear
     create_source(&client, "src:dud", "https://dud.example.com", true, 0, true).await;
 
-    let sources = writer.get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM).await.unwrap();
+    let sources = writer
+        .get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM)
+        .await
+        .unwrap();
     assert!(
         sources.is_empty(),
         "Scraped-but-unproductive source should not be returned, got {} sources",
@@ -135,13 +178,21 @@ async fn inactive_source_excluded() {
     let writer = GraphWriter::new(client.clone());
 
     // Inactive, never scraped — should NOT appear (active: false)
-    create_source(&client, "src:dead", "https://dead.example.com", false, 0, false).await;
+    create_source(
+        &client,
+        "src:dead",
+        "https://dead.example.com",
+        false,
+        0,
+        false,
+    )
+    .await;
 
-    let sources = writer.get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM).await.unwrap();
-    assert!(
-        sources.is_empty(),
-        "Inactive source should not be returned"
-    );
+    let sources = writer
+        .get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM)
+        .await
+        .unwrap();
+    assert!(sources.is_empty(), "Inactive source should not be returned");
 }
 
 #[tokio::test]
@@ -150,10 +201,21 @@ async fn source_with_signal_outside_region_excluded() {
     let writer = GraphWriter::new(client.clone());
 
     // Scraped, produced signals, but signals are in Miami — not in Minneapolis region
-    create_source(&client, "src:miami", "https://miami.example.com", true, 2, true).await;
+    create_source(
+        &client,
+        "src:miami",
+        "https://miami.example.com",
+        true,
+        2,
+        true,
+    )
+    .await;
     create_signal_at(&client, "https://miami.example.com", 25.76, -80.19).await;
 
-    let sources = writer.get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM).await.unwrap();
+    let sources = writer
+        .get_sources_for_region(MPLS_LAT, MPLS_LNG, RADIUS_KM)
+        .await
+        .unwrap();
     assert!(
         sources.is_empty(),
         "Source with signals only in Miami should not appear in Minneapolis region"

@@ -12,7 +12,7 @@ use tracing::info;
 
 use rootsignal_graph::GraphWriter;
 
-use super::types::{EmptyRequest, TaskRequest, ScrapeResult};
+use super::types::{EmptyRequest, ScrapeResult, TaskRequest};
 use super::{create_archive, ScoutDeps};
 
 #[restate_sdk::workflow]
@@ -50,15 +50,21 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
                 .transition_task_phase_status(
                     &tid,
                     &[
-                        "bootstrap_complete", "scrape_complete", "synthesis_complete",
-                        "situation_weaver_complete", "complete",
+                        "bootstrap_complete",
+                        "scrape_complete",
+                        "synthesis_complete",
+                        "situation_weaver_complete",
+                        "complete",
                     ],
                     "running_scrape",
                 )
                 .await
                 .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
             if !transitioned {
-                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+                return Err(TerminalError::new(
+                    "Prerequisites not met or another phase is running",
+                )
+                .into());
             }
             Ok(())
         })
@@ -145,15 +151,23 @@ async fn run_scrape_from_deps(
         deps.pg_pool.clone(),
     );
 
-    let run_log = crate::infra::run_log::RunLogger::new(run_id, scope.name.clone(), deps.pg_pool.clone()).await;
+    let run_log =
+        crate::infra::run_log::RunLogger::new(run_id, scope.name.clone(), deps.pg_pool.clone())
+            .await;
 
     pipeline.reap_expired_signals(&run_log).await;
     let (run, mut ctx) = pipeline.load_and_schedule_sources(&run_log).await?;
-    pipeline.scrape_tension_sources(&run, &mut ctx, &run_log).await;
+    pipeline
+        .scrape_tension_sources(&run, &mut ctx, &run_log)
+        .await;
     let (_, social_topics) = pipeline.discover_mid_run_sources().await;
-    pipeline.scrape_response_sources(&run, social_topics, &mut ctx, &run_log).await?;
+    pipeline
+        .scrape_response_sources(&run, social_topics, &mut ctx, &run_log)
+        .await?;
     pipeline.update_source_metrics(&run, &ctx).await;
-    pipeline.expand_and_discover(&run, &mut ctx, &run_log).await?;
+    pipeline
+        .expand_and_discover(&run, &mut ctx, &run_log)
+        .await?;
 
     let stats = pipeline.finalize(ctx, run_log).await;
 

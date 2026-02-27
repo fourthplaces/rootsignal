@@ -31,7 +31,10 @@ async fn existing_task_hashes(writer: &GraphWriter) -> Result<HashSet<String>, n
         .iter()
         .filter_map(|t| {
             geohash::encode(
-                geohash::Coord { x: t.center_lng, y: t.center_lat },
+                geohash::Coord {
+                    x: t.center_lng,
+                    y: t.center_lat,
+                },
                 5,
             )
             .ok()
@@ -101,10 +104,7 @@ pub async fn detect_beacons(
     // Bucket into geohash-5 cells
     let mut cells: HashMap<String, Vec<&(f64, f64, String, Option<String>)>> = HashMap::new();
     for sig in &signals {
-        if let Ok(hash) = geohash::encode(
-            geohash::Coord { x: sig.1, y: sig.0 },
-            5,
-        ) {
+        if let Ok(hash) = geohash::encode(geohash::Coord { x: sig.1, y: sig.0 }, 5) {
             cells.entry(hash).or_default().push(sig);
         }
     }
@@ -130,7 +130,9 @@ pub async fn detect_beacons(
             Some(name) => format!("{} — {} signals detected", name, cell_signals.len()),
             None => format!(
                 "({:.3}, {:.3}) — {} signals detected",
-                avg_lat, avg_lng, cell_signals.len()
+                avg_lat,
+                avg_lng,
+                cell_signals.len()
             ),
         };
 
@@ -183,7 +185,10 @@ pub async fn create_beacons_from_news(
     let mut cells: HashMap<String, Vec<&BeaconCandidate>> = HashMap::new();
     for candidate in &candidates {
         if let Ok(hash) = geohash::encode(
-            geohash::Coord { x: candidate.lng, y: candidate.lat },
+            geohash::Coord {
+                x: candidate.lng,
+                y: candidate.lat,
+            },
             5,
         ) {
             cells.entry(hash).or_default().push(candidate);
@@ -207,9 +212,7 @@ pub async fn create_beacons_from_news(
         let avg_lng: f64 = cell_candidates.iter().map(|c| c.lng).sum::<f64>() / n;
         let priority = (cell_candidates.len() as f64 / 5.0).min(1.0);
 
-        let area_name = most_common_location_name(
-            cell_candidates.iter().map(|c| &c.location_name),
-        );
+        let area_name = most_common_location_name(cell_candidates.iter().map(|c| &c.location_name));
 
         // Collect geo_terms from location names in this cell
         let geo_terms: Vec<String> = cell_candidates
@@ -223,7 +226,9 @@ pub async fn create_beacons_from_news(
             Some(name) => format!("{} — {} news articles", name, cell_candidates.len()),
             None => format!(
                 "({:.3}, {:.3}) — {} news articles",
-                avg_lat, avg_lng, cell_candidates.len()
+                avg_lat,
+                avg_lng,
+                cell_candidates.len()
             ),
         };
 

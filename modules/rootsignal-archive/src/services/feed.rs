@@ -31,11 +31,7 @@ impl FeedService {
     }
 
     /// Fetch and parse an RSS/Atom/JSON feed, returning an InsertFeed.
-    pub(crate) async fn fetch(
-        &self,
-        feed_url: &str,
-        source_id: Uuid,
-    ) -> Result<FetchedFeed> {
+    pub(crate) async fn fetch(&self, feed_url: &str, source_id: Uuid) -> Result<FetchedFeed> {
         let resp = self
             .client
             .get(feed_url)
@@ -84,9 +80,10 @@ impl FeedService {
         let title = feed.title.map(|t| t.content);
 
         let items_json = serde_json::to_value(&items).unwrap_or(serde_json::Value::Array(vec![]));
-        let content_hash =
-            rootsignal_common::content_hash(&serde_json::to_string(&items_json).unwrap_or_default())
-                .to_string();
+        let content_hash = rootsignal_common::content_hash(
+            &serde_json::to_string(&items_json).unwrap_or_default(),
+        )
+        .to_string();
 
         info!(feed_url, items = items.len(), "feed: parsed successfully");
 

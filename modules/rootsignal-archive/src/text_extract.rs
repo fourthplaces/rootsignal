@@ -1,8 +1,10 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
-static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w.]+)").expect("valid regex"));
-static HASHTAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w]+)").expect("valid regex"));
+static MENTION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@([\w.]+)").expect("valid regex"));
+static HASHTAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"#([\w]+)").expect("valid regex"));
 
 /// Extract @mentions from text. Returns deduplicated, lowercased usernames without the @ prefix.
 pub fn extract_mentions(text: &str) -> Vec<String> {

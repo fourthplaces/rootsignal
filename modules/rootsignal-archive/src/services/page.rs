@@ -37,11 +37,7 @@ impl ChromePageService {
     }
 
     /// Fetch a web page via headless Chrome, returning an InsertPage.
-    pub(crate) async fn fetch(
-        &self,
-        url: &str,
-        source_id: Uuid,
-    ) -> Result<FetchedPage> {
+    pub(crate) async fn fetch(&self, url: &str, source_id: Uuid) -> Result<FetchedPage> {
         let _permit = self
             .semaphore
             .acquire()
@@ -120,9 +116,12 @@ impl ChromePageService {
                     if output.status.success() {
                         if output.stdout.is_empty() && attempt + 1 < CHROME_MAX_ATTEMPTS {
                             let backoff = CHROME_RETRY_BASE * 3u32.pow(attempt);
-                            let jitter =
-                                Duration::from_millis(rand::rng().random_range(0..1000));
-                            warn!(url, attempt = attempt + 1, "Chrome returned empty DOM, retrying");
+                            let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+                            warn!(
+                                url,
+                                attempt = attempt + 1,
+                                "Chrome returned empty DOM, retrying"
+                            );
                             tokio::time::sleep(backoff + jitter).await;
                             continue;
                         }
@@ -173,11 +172,7 @@ impl BrowserlessPageService {
     }
 
     /// Fetch a page via Browserless.
-    pub(crate) async fn fetch(
-        &self,
-        url: &str,
-        source_id: Uuid,
-    ) -> Result<FetchedPage> {
+    pub(crate) async fn fetch(&self, url: &str, source_id: Uuid) -> Result<FetchedPage> {
         info!(url, "page: fetching via browserless");
 
         let html = self
@@ -299,7 +294,13 @@ pub fn extract_published_date(html: &str) -> Option<DateTime<Utc>> {
     }
 
     // 3. Generic meta name tags
-    for name in &["date", "publish_date", "pubdate", "publish-date", "DC.date.issued"] {
+    for name in &[
+        "date",
+        "publish_date",
+        "pubdate",
+        "publish-date",
+        "DC.date.issued",
+    ] {
         if let Some(date) = extract_meta_name(html, name) {
             return Some(date);
         }
@@ -393,17 +394,15 @@ fn extract_meta_property(html: &str, property: &str) -> Option<DateTime<Utc>> {
 }
 
 fn extract_meta_name(html: &str, name: &str) -> Option<DateTime<Utc>> {
-    let pattern = format!(
-        r#"(?i)<meta[^>]*name\s*=\s*["']{name}["'][^>]*content\s*=\s*["']([^"']+)["']"#
-    );
+    let pattern =
+        format!(r#"(?i)<meta[^>]*name\s*=\s*["']{name}["'][^>]*content\s*=\s*["']([^"']+)["']"#);
     let re = regex::Regex::new(&pattern).ok()?;
     if let Some(cap) = re.captures(html) {
         return parse_date(&cap[1]);
     }
     // Also try content before name
-    let pattern2 = format!(
-        r#"(?i)<meta[^>]*content\s*=\s*["']([^"']+)["'][^>]*name\s*=\s*["']{name}["']"#
-    );
+    let pattern2 =
+        format!(r#"(?i)<meta[^>]*content\s*=\s*["']([^"']+)["'][^>]*name\s*=\s*["']{name}["']"#);
     let re2 = regex::Regex::new(&pattern2).ok()?;
     if let Some(cap) = re2.captures(html) {
         return parse_date(&cap[1]);

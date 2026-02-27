@@ -171,7 +171,10 @@ async fn triage_incoherent_stories(
     }
 
     if !suspects.is_empty() {
-        info!(count = suspects.len(), "Incoherent situation suspects found");
+        info!(
+            count = suspects.len(),
+            "Incoherent situation suspects found"
+        );
     }
     Ok(suspects)
 }
@@ -325,7 +328,8 @@ async fn triage_low_confidence_high_visibility(
         let confidence: f64 = row.get("confidence").unwrap_or(0.0);
         let situation_headline: String = row.get("situation_headline").unwrap_or_default();
 
-        let context = format!("Confidence: {confidence:.2}\nIn active situation: {situation_headline}");
+        let context =
+            format!("Confidence: {confidence:.2}\nIn active situation: {situation_headline}");
 
         suspects.push(Suspect {
             id,

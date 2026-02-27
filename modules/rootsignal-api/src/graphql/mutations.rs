@@ -24,7 +24,6 @@ pub struct RateLimiter(pub Mutex<std::collections::HashMap<IpAddr, Vec<Instant>>
 /// The client IP, extracted from the HTTP request and passed into GraphQL context.
 pub struct ClientIp(pub IpAddr);
 
-
 /// HTTP response headers that mutations can set (e.g., Set-Cookie).
 /// Wrapped in a Mutex so mutations can append headers.
 pub struct ResponseHeaders(pub Mutex<Vec<(String, String)>>);
@@ -265,7 +264,9 @@ impl MutationRoot {
         let running = writer
             .is_region_task_running(&task.context)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to check running status: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to check running status: {e}"))
+            })?;
         if running {
             return Ok(ScoutResult {
                 success: false,
@@ -321,7 +322,9 @@ impl MutationRoot {
         let running = writer
             .is_region_task_running(&task.context)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to check running status: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to check running status: {e}"))
+            })?;
         if running {
             return Ok(ScoutResult {
                 success: false,
@@ -338,7 +341,10 @@ impl MutationRoot {
 
         Ok(ScoutResult {
             success: true,
-            message: Some(format!("{:?} started via Restate for {}", phase, task.context)),
+            message: Some(format!(
+                "{:?} started via Restate for {}",
+                phase, task.context
+            )),
         })
     }
 
@@ -347,7 +353,10 @@ impl MutationRoot {
     async fn stop_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let restate = require_restate(ctx)?;
 
-        match restate.cancel_workflow("FullScoutRunWorkflow", &task_id).await {
+        match restate
+            .cancel_workflow("FullScoutRunWorkflow", &task_id)
+            .await
+        {
             Ok(()) => Ok(ScoutResult {
                 success: true,
                 message: Some(format!("Cancel signal sent for task {task_id}")),
@@ -379,11 +388,7 @@ impl MutationRoot {
     }
 
     /// Public source submission (rate-limited, no auth required).
-    async fn submit_source(
-        &self,
-        ctx: &Context<'_>,
-        url: String,
-    ) -> Result<SubmitSourceResult> {
+    async fn submit_source(&self, ctx: &Context<'_>, url: String) -> Result<SubmitSourceResult> {
         let store = require_store(ctx)?;
 
         // Rate limit
@@ -628,7 +633,6 @@ impl MutationRoot {
             message: Some("News scan dispatched via Restate".into()),
         })
     }
-
 }
 
 fn rate_limit_check(ctx: &Context<'_>, max_per_hour: usize) -> Result<()> {
@@ -661,12 +665,12 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 }
 
 /// Create a per-mutation SignalStore via the factory, returning a clear error if Postgres is not configured.
-fn require_store(ctx: &Context<'_>) -> Result<Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>> {
+fn require_store(
+    ctx: &Context<'_>,
+) -> Result<Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>> {
     ctx.data_unchecked::<Option<SignalStoreFactory>>()
         .as_ref()
-        .ok_or_else(|| {
-            async_graphql::Error::new("Event store not configured (Postgres required)")
-        })
+        .ok_or_else(|| async_graphql::Error::new("Event store not configured (Postgres required)"))
         .map(|f| f.create())
 }
 
@@ -714,8 +718,8 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
-    use rootsignal_scout::pipeline::SignalStoreFactory;
     use rootsignal_scout::pipeline::traits::SignalStore;
+    use rootsignal_scout::pipeline::SignalStoreFactory;
     use rootsignal_scout::testing::MockSignalStore;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
@@ -760,7 +764,10 @@ mod tests {
 
         assert!(!resp.errors.is_empty());
         let msg = resp.errors[0].message.to_lowercase();
-        assert!(msg.contains("invalid url"), "expected 'Invalid URL', got: {msg}");
+        assert!(
+            msg.contains("invalid url"),
+            "expected 'Invalid URL', got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -772,7 +779,10 @@ mod tests {
 
         assert!(!resp.errors.is_empty());
         let msg = resp.errors[0].message.to_lowercase();
-        assert!(msg.contains("http or https"), "expected scheme error, got: {msg}");
+        assert!(
+            msg.contains("http or https"),
+            "expected scheme error, got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -784,7 +794,10 @@ mod tests {
 
         assert!(!resp.errors.is_empty());
         let msg = resp.errors[0].message.to_lowercase();
-        assert!(msg.contains("internal hosts"), "expected internal hosts error, got: {msg}");
+        assert!(
+            msg.contains("internal hosts"),
+            "expected internal hosts error, got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -799,7 +812,9 @@ mod tests {
 
         assert!(!resp.errors.is_empty());
         let msg = resp.errors[0].message.to_lowercase();
-        assert!(msg.contains("too long"), "expected 'too long' error, got: {msg}");
+        assert!(
+            msg.contains("too long"),
+            "expected 'too long' error, got: {msg}"
+        );
     }
 }
-

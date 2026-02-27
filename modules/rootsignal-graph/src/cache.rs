@@ -9,8 +9,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse,
-    CONFIDENCE_DISPLAY_LIMITED,
+    ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse, CONFIDENCE_DISPLAY_LIMITED,
 };
 
 use crate::reader::{
@@ -44,10 +43,8 @@ impl SignalCache {
         let start = std::time::Instant::now();
 
         // Load signals and actors concurrently
-        let (signals_result, actors_result) = tokio::join!(
-            load_all_signals(client),
-            load_all_actors(client),
-        );
+        let (signals_result, actors_result) =
+            tokio::join!(load_all_signals(client), load_all_actors(client),);
 
         let mut signals = signals_result?;
         let actors = actors_result?;
@@ -64,28 +61,21 @@ impl SignalCache {
             .filter_map(|(i, n)| n.meta().map(|m| (m.id, i)))
             .collect();
 
-        let actor_by_id: HashMap<Uuid, usize> = actors
-            .iter()
-            .enumerate()
-            .map(|(i, a)| (a.id, i))
-            .collect();
+        let actor_by_id: HashMap<Uuid, usize> =
+            actors.iter().enumerate().map(|(i, a)| (a.id, i)).collect();
 
         // Load tags
         let tags = load_all_tags(client).await?;
-        let tag_by_id: HashMap<Uuid, usize> = tags
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i))
-            .collect();
+        let tag_by_id: HashMap<Uuid, usize> =
+            tags.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
 
         // Load relationships concurrently
-        let (citation_result, actor_signal_result, tension_resp_result, situation_tag_result) =
-            tokio::join!(
-                load_citations(client),
-                load_actor_signal_edges(client),
-                load_tension_responses(client),
-                load_situation_tag_edges(client),
-            );
+        let (citation_result, actor_signal_result, tension_resp_result, situation_tag_result) = tokio::join!(
+            load_citations(client),
+            load_actor_signal_edges(client),
+            load_tension_responses(client),
+            load_situation_tag_edges(client),
+        );
 
         let citation_by_signal = citation_result?;
 
@@ -280,9 +270,7 @@ async fn load_citations(
 }
 
 /// Returns (signal_id, actor_id) pairs.
-async fn load_actor_signal_edges(
-    client: &GraphClient,
-) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+async fn load_actor_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
     let cypher = "MATCH (a:Actor)-[:ACTED_IN]->(n)
          WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
          RETURN n.id AS signal_id, a.id AS actor_id";
@@ -344,8 +332,8 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
         };
         let slug: String = row.get("slug").unwrap_or_default();
         let name: String = row.get("name").unwrap_or_default();
-        let created_at = crate::writer::row_datetime_opt_pub(&row, "created_at")
-            .unwrap_or_else(Utc::now);
+        let created_at =
+            crate::writer::row_datetime_opt_pub(&row, "created_at").unwrap_or_else(Utc::now);
 
         tags.push(TagNode {
             id,
@@ -375,4 +363,3 @@ async fn load_situation_tag_edges(
     }
     Ok(edges)
 }
-

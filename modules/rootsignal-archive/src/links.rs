@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Matches `href` attributes — the only semantic "link" in HTML.
 /// Covers `<a href>`, `<link href>`, `<area href>`.
@@ -85,7 +85,10 @@ mod tests {
         let html = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>
             <div about="http://purl.org/dc/terms/">RDF</div>"#;
         let links = extract_all_links(html, "https://example.com");
-        assert!(links.is_empty(), "namespace/RDF URIs should not be extracted");
+        assert!(
+            links.is_empty(),
+            "namespace/RDF URIs should not be extracted"
+        );
     }
 
     #[test]
@@ -100,7 +103,10 @@ mod tests {
         let html = r#"<script src="https://cdn.example.com/app.js"></script>
             <script>var u = "https://api.example.com/v1";</script>"#;
         let links = extract_all_links(html, "https://example.com");
-        assert!(links.is_empty(), "script src and inline JS URLs should not be extracted");
+        assert!(
+            links.is_empty(),
+            "script src and inline JS URLs should not be extracted"
+        );
     }
 
     #[test]
@@ -114,7 +120,10 @@ mod tests {
     fn data_attribute_urls_are_not_extracted() {
         let html = r#"<div data-url="https://cdn.example.com/img.png">content</div>"#;
         let links = extract_all_links(html, "https://base.com");
-        assert!(links.is_empty(), "data attribute URLs should not be extracted");
+        assert!(
+            links.is_empty(),
+            "data attribute URLs should not be extracted"
+        );
     }
 
     // --- Relative URL resolution ---
@@ -142,7 +151,10 @@ mod tests {
             <a href="https://example.com/page">link2</a>
         "#;
         let links = extract_all_links(html, "https://base.com");
-        let count = links.iter().filter(|u| *u == "https://example.com/page").count();
+        let count = links
+            .iter()
+            .filter(|u| *u == "https://example.com/page")
+            .count();
         assert_eq!(count, 1, "Same URL should appear exactly once");
     }
 
@@ -223,7 +235,9 @@ mod tests {
         "#;
         let links = extract_all_links(html, "https://linktr.ee/mplsmutualaid");
         assert!(links.contains(&"https://instagram.com/mplsmutualaid".to_string()));
-        assert!(links.contains(&"https://gofundme.com/f/help-families?utm_source=linktree".to_string()));
+        assert!(
+            links.contains(&"https://gofundme.com/f/help-families?utm_source=linktree".to_string())
+        );
         assert!(links.contains(&"https://docs.google.com/document/d/ABC123/edit".to_string()));
         assert!(links.contains(&"https://linktr.ee/terms".to_string()));
         assert_eq!(links.len(), 4);

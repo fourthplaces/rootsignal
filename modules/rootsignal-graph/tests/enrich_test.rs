@@ -40,7 +40,11 @@ async fn create_signal(client: &GraphClient, label: &str, id: Uuid, source_url: 
         .param("id", id.to_string())
         .param("source_url", source_url)
         .param("now", now);
-    client.inner().run(q).await.expect("Failed to create signal");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create signal");
 }
 
 /// Create an Evidence node and link it to a signal via SOURCED_FROM.
@@ -66,7 +70,11 @@ async fn create_evidence(
         .param("ev_id", ev_id.to_string())
         .param("url", evidence_url)
         .param("channel", channel_type);
-    client.inner().run(q).await.expect("Failed to create evidence");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create evidence");
 }
 
 /// Create an Actor node and ACTED_IN edge to a signal.
@@ -90,7 +98,11 @@ async fn create_actor_with_edge(
         .param("name", actor_name)
         .param("signal_id", signal_id.to_string())
         .param("now", now);
-    client.inner().run(q).await.expect("Failed to create actor edge");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create actor edge");
 }
 
 /// Read a property from a signal node.
@@ -138,8 +150,22 @@ async fn same_domain_evidence_has_one_entity_zero_external() {
     let (_c, client) = setup().await;
     let id = Uuid::new_v4();
     create_signal(&client, "Gathering", id, "https://example.com/original").await;
-    create_evidence(&client, "Gathering", id, "https://example.com/page1", "press").await;
-    create_evidence(&client, "Gathering", id, "https://example.com/page2", "press").await;
+    create_evidence(
+        &client,
+        "Gathering",
+        id,
+        "https://example.com/page1",
+        "press",
+    )
+    .await;
+    create_evidence(
+        &client,
+        "Gathering",
+        id,
+        "https://example.com/page2",
+        "press",
+    )
+    .await;
 
     enrich(&client, &[], 0.3, 40.0, 50.0, -100.0, -80.0)
         .await
@@ -184,7 +210,14 @@ async fn channel_diversity_only_counts_channels_with_external_sources() {
     // Same domain, social — internal (channel doesn't count)
     create_evidence(&client, "Need", id, "https://example.com/c", "social").await;
     // Different domain, government — external
-    create_evidence(&client, "Need", id, "https://gov.state.mn.us/d", "government").await;
+    create_evidence(
+        &client,
+        "Need",
+        id,
+        "https://gov.state.mn.us/d",
+        "government",
+    )
+    .await;
 
     enrich(&client, &[], 0.3, 40.0, 50.0, -100.0, -80.0)
         .await
@@ -342,5 +375,8 @@ async fn cause_heat_not_written_for_signals_outside_bbox() {
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream failed").expect("no row");
     let heat: Option<f64> = row.get("val").ok();
-    assert!(heat.is_none(), "signal outside bbox should have no cause_heat, got {heat:?}");
+    assert!(
+        heat.is_none(),
+        "signal outside bbox should have no cause_heat, got {heat:?}"
+    );
 }

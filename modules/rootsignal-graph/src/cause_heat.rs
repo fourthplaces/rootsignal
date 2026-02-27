@@ -103,7 +103,7 @@ pub async fn compute_cause_heat(
              MATCH (sig)-[r:EVIDENCE_OF]->(t:Tension {id: tid})
              WHERE sig.severity IS NOT NULL
              RETURN t.id AS tension_id,
-                    collect(sig.severity) AS severities"
+                    collect(sig.severity) AS severities",
         )
         .param("ids", tension_ids);
 
@@ -114,7 +114,10 @@ pub async fn compute_cause_heat(
             let score: f64 = sevs.iter().map(|s| severity_weight(s)).sum();
             let boost = (1.0 + (score).ln_1p() * 0.5).min(3.0);
 
-            if let Some(sig) = signals.iter_mut().find(|s| s.id == tid && s.label == "Tension") {
+            if let Some(sig) = signals
+                .iter_mut()
+                .find(|s| s.id == tid && s.label == "Tension")
+            {
                 sig.evidence_boost = boost;
             }
         }
@@ -177,7 +180,10 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
                 norms[j],
             );
             if sim > threshold {
-                heat += sim * signals[j].source_diversity as f64 * (signals[j].channel_diversity as f64).sqrt() * signals[j].evidence_boost;
+                heat += sim
+                    * signals[j].source_diversity as f64
+                    * (signals[j].channel_diversity as f64).sqrt()
+                    * signals[j].evidence_boost;
             }
         }
         heats[i] = heat;
@@ -244,7 +250,12 @@ mod tests {
         }
     }
 
-    fn tension_with_evidence(id: &str, embedding: Vec<f64>, diversity: u32, evidence_boost: f64) -> SignalEmbed {
+    fn tension_with_evidence(
+        id: &str,
+        embedding: Vec<f64>,
+        diversity: u32,
+        evidence_boost: f64,
+    ) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
             label: "Tension".to_string(),
@@ -738,8 +749,14 @@ mod tests {
         assert_eq!(extreme_boost, 3.0, "Extreme evidence should cap at 3.0");
 
         let moderate_boost = (1.0 + (9.0_f64).ln_1p() * 0.5).min(3.0);
-        assert!(moderate_boost < 3.0, "Moderate evidence should be below cap");
-        assert!(moderate_boost > 1.0, "Moderate evidence should boost above baseline");
+        assert!(
+            moderate_boost < 3.0,
+            "Moderate evidence should be below cap"
+        );
+        assert!(
+            moderate_boost > 1.0,
+            "Moderate evidence should boost above baseline"
+        );
     }
 
     #[test]

@@ -8,10 +8,117 @@ use crate::safety::SensitivityLevel;
 
 // --- Re-exports from rootsignal-world ---
 pub use rootsignal_world::types::{
-    ActorType, ChannelType, Clarity, DiscoveryMethod, DispatchType, EdgeType, GeoPrecision,
-    GeoPoint, NodeType, Severity, SituationArc, SocialPlatform, SourceRole, Urgency, haversine_km,
+    haversine_km, ActorType, ChannelType, DiscoveryMethod, EdgeType, GeoPoint, GeoPrecision,
+    NodeType, Severity, SocialPlatform, SourceRole, Urgency,
 };
-pub use rootsignal_world::values::{Location, Schedule, TagFact, WorldSourceChange};
+pub use rootsignal_world::values::{Location, Schedule};
+
+// --- Situation Types (system clustering model, not world facts) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SituationArc {
+    Emerging,
+    Developing,
+    Active,
+    Cooling,
+    Cold,
+}
+
+impl std::fmt::Display for SituationArc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SituationArc::Emerging => write!(f, "emerging"),
+            SituationArc::Developing => write!(f, "developing"),
+            SituationArc::Active => write!(f, "active"),
+            SituationArc::Cooling => write!(f, "cooling"),
+            SituationArc::Cold => write!(f, "cold"),
+        }
+    }
+}
+
+impl std::str::FromStr for SituationArc {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "emerging" => Ok(Self::Emerging),
+            "developing" => Ok(Self::Developing),
+            "active" => Ok(Self::Active),
+            "cooling" => Ok(Self::Cooling),
+            "cold" => Ok(Self::Cold),
+            other => Err(format!("unknown SituationArc: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Clarity {
+    Fuzzy,
+    Sharpening,
+    Sharp,
+}
+
+impl std::fmt::Display for Clarity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Clarity::Fuzzy => write!(f, "fuzzy"),
+            Clarity::Sharpening => write!(f, "sharpening"),
+            Clarity::Sharp => write!(f, "sharp"),
+        }
+    }
+}
+
+impl std::str::FromStr for Clarity {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "fuzzy" => Ok(Self::Fuzzy),
+            "sharpening" => Ok(Self::Sharpening),
+            "sharp" => Ok(Self::Sharp),
+            other => Err(format!("unknown Clarity: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchType {
+    Update,
+    Emergence,
+    Split,
+    Merge,
+    Reactivation,
+    Correction,
+}
+
+impl std::fmt::Display for DispatchType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DispatchType::Update => write!(f, "update"),
+            DispatchType::Emergence => write!(f, "emergence"),
+            DispatchType::Split => write!(f, "split"),
+            DispatchType::Merge => write!(f, "merge"),
+            DispatchType::Reactivation => write!(f, "reactivation"),
+            DispatchType::Correction => write!(f, "correction"),
+        }
+    }
+}
+
+impl std::str::FromStr for DispatchType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "update" => Ok(Self::Update),
+            "emergence" => Ok(Self::Emergence),
+            "split" => Ok(Self::Split),
+            "merge" => Ok(Self::Merge),
+            "reactivation" => Ok(Self::Reactivation),
+            "correction" => Ok(Self::Correction),
+            other => Err(format!("unknown DispatchType: {other}")),
+        }
+    }
+}
 
 // --- Actor Types ---
 
@@ -295,7 +402,6 @@ impl ScoutScope {
         )
     }
 }
-
 
 // --- Scout Task (ephemeral unit of work for the scout swarm) ---
 
@@ -607,17 +713,26 @@ impl Channels {
 
     /// Only the page channel.
     pub fn page() -> Self {
-        Self { page: true, ..Default::default() }
+        Self {
+            page: true,
+            ..Default::default()
+        }
     }
 
     /// Only the feed channel.
     pub fn feed() -> Self {
-        Self { feed: true, ..Default::default() }
+        Self {
+            feed: true,
+            ..Default::default()
+        }
     }
 
     /// Only the media channel.
     pub fn media() -> Self {
-        Self { media: true, ..Default::default() }
+        Self {
+            media: true,
+            ..Default::default()
+        }
     }
 
     pub fn with_page(mut self) -> Self {
@@ -905,10 +1020,28 @@ fn is_valid_fb_slug(slug: &str) -> bool {
         return false;
     }
     let reserved = [
-        "photo", "photos", "video", "videos", "events", "posts", "story",
-        "stories", "watch", "marketplace", "gaming", "login", "help",
-        "settings", "messages", "notifications", "bookmarks", "pages",
-        "groups", "profile.php", "permalink.php", "share",
+        "photo",
+        "photos",
+        "video",
+        "videos",
+        "events",
+        "posts",
+        "story",
+        "stories",
+        "watch",
+        "marketplace",
+        "gaming",
+        "login",
+        "help",
+        "settings",
+        "messages",
+        "notifications",
+        "bookmarks",
+        "pages",
+        "groups",
+        "profile.php",
+        "permalink.php",
+        "share",
     ];
     if reserved.contains(&slug.to_lowercase().as_str()) {
         return false;
@@ -1393,34 +1526,82 @@ mod tests {
 
     #[test]
     fn channel_type_social_platforms() {
-        assert_eq!(channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"), ChannelType::Social);
-        assert_eq!(channel_type("https://facebook.com/lakestreetstories"), ChannelType::Social);
-        assert_eq!(channel_type("https://www.instagram.com/p/abc123"), ChannelType::Social);
-        assert_eq!(channel_type("https://x.com/user/status/123"), ChannelType::Social);
-        assert_eq!(channel_type("https://nextdoor.com/post/123"), ChannelType::Social);
+        assert_eq!(
+            channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://facebook.com/lakestreetstories"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://www.instagram.com/p/abc123"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://x.com/user/status/123"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://nextdoor.com/post/123"),
+            ChannelType::Social
+        );
     }
 
     #[test]
     fn channel_type_direct_action() {
-        assert_eq!(channel_type("https://www.gofundme.com/f/help-family"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.eventbrite.com/e/community-event-123"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.volunteermatch.org/search/opp123"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.change.org/p/petition-name"), ChannelType::DirectAction);
+        assert_eq!(
+            channel_type("https://www.gofundme.com/f/help-family"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.eventbrite.com/e/community-event-123"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.volunteermatch.org/search/opp123"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.change.org/p/petition-name"),
+            ChannelType::DirectAction
+        );
     }
 
     #[test]
     fn channel_type_community_media() {
-        assert_eq!(channel_type("https://example.com/feed"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://example.com/rss"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://patch.com/minnesota/minneapolis/story"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://swnewsmedia.com/article/123"), ChannelType::CommunityMedia);
+        assert_eq!(
+            channel_type("https://example.com/feed"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://example.com/rss"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://patch.com/minnesota/minneapolis/story"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://swnewsmedia.com/article/123"),
+            ChannelType::CommunityMedia
+        );
     }
 
     #[test]
     fn channel_type_press_default() {
-        assert_eq!(channel_type("https://startribune.com/article/123"), ChannelType::Press);
-        assert_eq!(channel_type("https://www.mprnews.org/story/abc"), ChannelType::Press);
-        assert_eq!(channel_type("https://citycouncil.gov/minutes"), ChannelType::Press);
+        assert_eq!(
+            channel_type("https://startribune.com/article/123"),
+            ChannelType::Press
+        );
+        assert_eq!(
+            channel_type("https://www.mprnews.org/story/abc"),
+            ChannelType::Press
+        );
+        assert_eq!(
+            channel_type("https://citycouncil.gov/minutes"),
+            ChannelType::Press
+        );
     }
 
     #[test]
@@ -1491,10 +1672,7 @@ mod tests {
 
     #[test]
     fn canonical_value_x_com() {
-        assert_eq!(
-            canonical_value("https://x.com/johndoe"),
-            "x.com/johndoe"
-        );
+        assert_eq!(canonical_value("https://x.com/johndoe"), "x.com/johndoe");
     }
 
     #[test]
@@ -1515,10 +1693,7 @@ mod tests {
     #[test]
     fn canonical_value_twitter_strips_at() {
         // @ prefix should be stripped
-        assert_eq!(
-            canonical_value("https://x.com/@handle"),
-            "x.com/handle"
-        );
+        assert_eq!(canonical_value("https://x.com/@handle"), "x.com/handle");
     }
 
     // --- TikTok ---
@@ -1753,7 +1928,13 @@ mod tests {
 
     #[test]
     fn channels_serde_roundtrip() {
-        let ch = Channels { page: true, feed: false, media: true, discussion: false, events: true };
+        let ch = Channels {
+            page: true,
+            feed: false,
+            media: true,
+            discussion: false,
+            events: true,
+        };
         let json = serde_json::to_string(&ch).unwrap();
         let deserialized: Channels = serde_json::from_str(&json).unwrap();
         assert_eq!(ch, deserialized);
@@ -1761,7 +1942,11 @@ mod tests {
 
     #[test]
     fn channels_literal_construction() {
-        let ch = Channels { feed: true, media: true, ..Default::default() };
+        let ch = Channels {
+            feed: true,
+            media: true,
+            ..Default::default()
+        };
         assert!(!ch.page);
         assert!(ch.feed);
         assert!(ch.media);

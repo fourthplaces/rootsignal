@@ -72,8 +72,8 @@ impl SignalStoreFactory {
     }
 }
 #[cfg(test)]
-pub mod simweb_adapter;
-#[cfg(test)]
 mod boundary_tests;
 #[cfg(test)]
 mod chain_tests;
+#[cfg(test)]
+pub mod simweb_adapter;

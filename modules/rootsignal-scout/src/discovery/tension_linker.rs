@@ -11,16 +11,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ScoutScope, GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, SensitivityLevel,
+    GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, TensionNode,
 };
 use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 
 use rootsignal_archive::Archive;
 
+use super::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::traits::SignalStore;
-use super::agent_tools::{ReadPageTool, WebSearchTool};
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
@@ -89,7 +89,11 @@ impl std::fmt::Display for TensionLinkerStats {
 // Prompts
 // =============================================================================
 
-fn investigation_system_prompt(region: &str, tension_landscape: &str, situation_landscape: &str) -> String {
+fn investigation_system_prompt(
+    region: &str,
+    tension_landscape: &str,
+    situation_landscape: &str,
+) -> String {
     let mut prompt = format!(
         "You are investigating a signal to understand WHY it exists in {region}. \
 Your goal is to find the underlying tensions — the problems, needs, conflicts, or fears — \
@@ -294,7 +298,10 @@ impl<'a> TensionLinker<'a> {
                 break;
             }
 
-            let outcome = match self.investigate_signal(target, &tension_landscape, &situation_landscape).await {
+            let outcome = match self
+                .investigate_signal(target, &tension_landscape, &situation_landscape)
+                .await
+            {
                 Ok(finding) => {
                     if !finding.curious {
                         stats.targets_skipped += 1;
@@ -367,7 +374,8 @@ impl<'a> TensionLinker<'a> {
         tension_landscape: &str,
         situation_landscape: &str,
     ) -> Result<SignalFinding> {
-        let system = investigation_system_prompt(&self.region.name, tension_landscape, situation_landscape);
+        let system =
+            investigation_system_prompt(&self.region.name, tension_landscape, situation_landscape);
 
         let user = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}",
@@ -507,7 +515,12 @@ impl<'a> TensionLinker<'a> {
 
         let tension_id = self
             .store
-            .create_node(&Node::Tension(tension_node), &embedding, "tension_linker", &self.run_id)
+            .create_node(
+                &Node::Tension(tension_node),
+                &embedding,
+                "tension_linker",
+                &self.run_id,
+            )
             .await?;
 
         info!(
@@ -523,8 +536,8 @@ impl<'a> TensionLinker<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::agent_tools::{WebSearchOutput, WebSearchResultItem};
+    use super::*;
 
     #[test]
     fn web_search_output_serializes() {

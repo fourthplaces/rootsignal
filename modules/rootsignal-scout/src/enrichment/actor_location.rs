@@ -44,10 +44,7 @@ pub fn triangulate_actor_location(
     let cutoff = Utc::now() - chrono::Duration::days(max_age_days as i64);
 
     // Filter to recent signals only
-    let recent: Vec<&SignalLocation> = signals
-        .iter()
-        .filter(|s| s.observed_at >= cutoff)
-        .collect();
+    let recent: Vec<&SignalLocation> = signals.iter().filter(|s| s.observed_at >= cutoff).collect();
 
     // No recent signals and no bio — preserve current location
     if recent.is_empty() && bio_location.is_none() {
@@ -69,7 +66,9 @@ pub fn triangulate_actor_location(
             return Some(bio.clone());
         }
         // Uncorroborated bio = one vote
-        let entry = votes.entry(bio.name.as_str()).or_insert((0, bio.lat, bio.lng));
+        let entry = votes
+            .entry(bio.name.as_str())
+            .or_insert((0, bio.lat, bio.lng));
         entry.0 += 1;
     }
 
@@ -89,7 +88,10 @@ pub fn triangulate_actor_location(
         // Tie → preserve current location (inertia)
         if let Some(cur) = current {
             // If current location is one of the tied leaders, keep it
-            if sorted.iter().any(|(name, (count, _, _))| *count == *top_count && *name == cur.name.as_str()) {
+            if sorted
+                .iter()
+                .any(|(name, (count, _, _))| *count == *top_count && *name == cur.name.as_str())
+            {
                 return Some(cur.clone());
             }
         }
@@ -115,7 +117,10 @@ const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 /// Returns the count of actors whose location was updated.
 pub async fn enrich_actor_locations(
     store: &dyn crate::pipeline::traits::SignalStore,
-    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+    actors: &[(
+        rootsignal_common::ActorNode,
+        Vec<rootsignal_common::SourceNode>,
+    )],
 ) -> u32 {
     let mut updated = 0;
     for (actor, _sources) in actors {
@@ -134,7 +139,11 @@ pub async fn enrich_actor_locations(
             })
             .collect();
 
-        let current = match (&actor.location_lat, &actor.location_lng, &actor.location_name) {
+        let current = match (
+            &actor.location_lat,
+            &actor.location_lng,
+            &actor.location_name,
+        ) {
             (Some(lat), Some(lng), Some(name)) => Some(ActorLocation {
                 lat: *lat,
                 lng: *lng,
@@ -168,9 +177,7 @@ pub async fn enrich_actor_locations(
         );
 
         if let Some(new_loc) = result {
-            let changed = current
-                .as_ref()
-                .map_or(true, |c| c.name != new_loc.name);
+            let changed = current.as_ref().map_or(true, |c| c.name != new_loc.name);
             if changed {
                 if store
                     .update_actor_location(actor.id, new_loc.lat, new_loc.lng, &new_loc.name)

@@ -86,9 +86,8 @@ async fn load_or_record(
         content
     };
 
-    let user_prompt = format!(
-        "Extract all signals from this web page.\n\nSource URL: {url}\n\n---\n\n{content}"
-    );
+    let user_prompt =
+        format!("Extract all signals from this web page.\n\nSource URL: {url}\n\n---\n\n{content}");
 
     let response: ExtractionResponse = claude
         .extract(&system_prompt, &user_prompt)
@@ -154,13 +153,17 @@ async fn community_garden_post_yields_gathering_signal() {
     }
 
     // Location should be near Powderhorn (44.9486, -93.2636)
-    assert!(meta.about_location.is_some(), "Should have location coordinates");
+    assert!(
+        meta.about_location.is_some(),
+        "Should have location coordinates"
+    );
     if let Some(loc) = &meta.about_location {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9486, -93.2636);
         assert!(
             dist < 2.0,
             "Location should be near Powderhorn, got ({}, {}), distance {dist}km",
-            loc.lat, loc.lng
+            loc.lat,
+            loc.lng
         );
     }
 
@@ -254,13 +257,17 @@ async fn food_shelf_post_yields_aid_signal() {
     }
 
     // Location near 420 15th Ave S (44.9696, -93.2466)
-    assert!(meta.about_location.is_some(), "Should have location coordinates");
+    assert!(
+        meta.about_location.is_some(),
+        "Should have location coordinates"
+    );
     if let Some(loc) = &meta.about_location {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9696, -93.2466);
         assert!(
             dist < 2.0,
             "Location should be near 420 15th Ave S, got ({}, {}), distance {dist}km",
-            loc.lat, loc.lng
+            loc.lat,
+            loc.lng
         );
     }
 
@@ -319,13 +326,18 @@ async fn urgent_community_issue_yields_tension_signal() {
 
     let has_ice_tension = tensions.iter().any(|n| {
         if let rootsignal_common::Node::Tension(t) = n {
-            let severity_ok = matches!(t.severity, rootsignal_common::Severity::High | rootsignal_common::Severity::Critical);
+            let severity_ok = matches!(
+                t.severity,
+                rootsignal_common::Severity::High | rootsignal_common::Severity::Critical
+            );
             let category_ok = t
                 .category
                 .as_deref()
                 .map(|c| {
                     let cl = c.to_lowercase();
-                    cl.contains("enforcement") || cl.contains("immigration") || cl.contains("civil_rights")
+                    cl.contains("enforcement")
+                        || cl.contains("immigration")
+                        || cl.contains("civil_rights")
                 })
                 .unwrap_or(false);
             severity_ok && category_ok
@@ -529,7 +541,8 @@ async fn vague_dates_handled_gracefully() {
         if let Some(ref dt_str) = s.starts_at {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt_str) {
                 assert_eq!(
-                    dt.month(), 6,
+                    dt.month(),
+                    6,
                     "Block party 'mid-June' should be in June if date is guessed, got month {}",
                     dt.month()
                 );
@@ -553,9 +566,7 @@ async fn vague_dates_handled_gracefully() {
         .any(|s| s.is_recurring == Some(true));
     // Soft check — recurring might be hard to detect from "every other Wednesday"
     if !has_recurring && !food_dist_signals.is_empty() {
-        eprintln!(
-            "NOTE: Food distribution 'every other Wednesday' not marked as recurring"
-        );
+        eprintln!("NOTE: Food distribution 'every other Wednesday' not marked as recurring");
     }
 }
 
@@ -664,7 +675,8 @@ async fn phone_only_resource_extracts_aid_signals() {
     let all_lower = all_text.to_lowercase();
 
     // At least some phone numbers should appear in summaries or availability
-    let has_phone = all_lower.contains("612") || all_lower.contains("763") || all_lower.contains("651");
+    let has_phone =
+        all_lower.contains("612") || all_lower.contains("763") || all_lower.contains("651");
     assert!(
         has_phone,
         "Phone numbers should be preserved in signal text"
@@ -710,10 +722,7 @@ async fn spanish_content_yields_signals_in_english() {
         let lower = format!("{} {}", s.title, s.summary).to_lowercase();
         lower.contains("food") || lower.contains("alimento") || lower.contains("distribu")
     });
-    assert!(
-        has_food,
-        "Should extract the food distribution event"
-    );
+    assert!(has_food, "Should extract the food distribution event");
 
     // Should extract the legal clinic
     let has_legal = response.signals.iter().any(|s| {

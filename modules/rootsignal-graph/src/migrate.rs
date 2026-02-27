@@ -59,9 +59,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     // Relabel existing Event nodes to Gathering
     match g
-        .run(query(
-            "MATCH (n:Event) SET n:Gathering REMOVE n:Event",
-        ))
+        .run(query("MATCH (n:Event) SET n:Gathering REMOVE n:Event"))
         .await
     {
         Ok(_) => {}
@@ -90,10 +88,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
 
     // Relabel existing Give nodes to Aid
-    match g
-        .run(query("MATCH (n:Give) SET n:Aid REMOVE n:Give"))
-        .await
-    {
+    match g.run(query("MATCH (n:Give) SET n:Aid REMOVE n:Give")).await {
         Ok(_) => {}
         Err(e) => warn!("Give→Aid relabel failed (non-fatal): {e}"),
     }
@@ -255,9 +250,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
         g.run(query(c)).await?;
     }
 
-    let actor_indexes = [
-        "CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)",
-    ];
+    let actor_indexes = ["CREATE INDEX actor_name IF NOT EXISTS FOR (a:Actor) ON (a.name)"];
 
     for idx in &actor_indexes {
         g.run(query(idx)).await?;
@@ -537,18 +530,24 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
             // 1. Create PART_OF edges from existing CONTAINS edges (reversed direction)
             // Story-[:CONTAINS]->Signal  becomes  Signal-[:PART_OF]->Situation (via matching headline)
             // For now, create a placeholder PART_OF edge back to the LegacyStory for traceability
-            match g.run(query(
-                "MATCH (s:Story)-[:CONTAINS]->(sig)
+            match g
+                .run(query(
+                    "MATCH (s:Story)-[:CONTAINS]->(sig)
                  WHERE NOT (sig)-[:PART_OF]->(s)
                  WITH s, sig
                  MERGE (sig)-[:PART_OF {match_confidence: 1.0, migrated: true}]->(s)",
-            )).await {
+                ))
+                .await
+            {
                 Ok(_) => info!("Created PART_OF edges from existing CONTAINS"),
                 Err(e) => warn!("PART_OF migration failed (non-fatal): {e}"),
             }
 
             // 2. Relabel Story → LegacyStory (keeps all properties and edges)
-            match g.run(query("MATCH (n:Story) SET n:LegacyStory REMOVE n:Story")).await {
+            match g
+                .run(query("MATCH (n:Story) SET n:LegacyStory REMOVE n:Story"))
+                .await
+            {
                 Ok(_) => info!("Relabeled Story→LegacyStory"),
                 Err(e) => warn!("Story→LegacyStory relabel failed (non-fatal): {e}"),
             }
@@ -562,10 +561,13 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     }
 
     // --- Backfill phase_status on existing ScoutTask nodes ---
-    match g.run(query(
-        "MATCH (t:ScoutTask) WHERE t.phase_status IS NULL \
-         SET t.phase_status = 'idle'"
-    )).await {
+    match g
+        .run(query(
+            "MATCH (t:ScoutTask) WHERE t.phase_status IS NULL \
+         SET t.phase_status = 'idle'",
+        ))
+        .await
+    {
         Ok(_) => info!("Backfilled phase_status on ScoutTask nodes"),
         Err(e) => warn!("ScoutTask phase_status backfill failed (non-fatal): {e}"),
     }
@@ -592,11 +594,14 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // Notices now expire based on last_confirmed_active instead of extracted_at.
     // Set last_confirmed_active = now for existing Notices that haven't been refreshed,
     // giving them a fresh 7-day window from migration date instead of mass-expiring.
-    match g.run(query(
-        "MATCH (n:Notice) \
+    match g
+        .run(query(
+            "MATCH (n:Notice) \
          WHERE n.last_confirmed_active IS NULL OR n.last_confirmed_active = n.extracted_at \
-         SET n.last_confirmed_active = datetime()"
-    )).await {
+         SET n.last_confirmed_active = datetime()",
+        ))
+        .await
+    {
         Ok(_) => info!("Backfilled last_confirmed_active on Notice nodes"),
         Err(e) => warn!("Notice last_confirmed_active backfill failed (non-fatal): {e}"),
     }
@@ -648,7 +653,6 @@ async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::
     info!("Channel diversity backfill complete");
     Ok(())
 }
-
 
 /// Reclassify Source nodes that were stored as "web" but are actually query sources
 /// (Eventbrite, VolunteerMatch, GoFundMe listing pages). Updates both source_type
@@ -1165,9 +1169,6 @@ pub async fn deactivate_orphaned_web_queries(client: &GraphClient) -> Result<(),
     Ok(())
 }
 
-
-
-
 /// Backfill existing signals with review_status = 'live'.
 /// Only sets the field on nodes where it is not already set (idempotent).
 async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Error> {
@@ -1303,7 +1304,10 @@ async fn migrate_canonical_keys_remove_source_type(
     while let Some(row) = stream.next().await? {
         let new_key: String = row.get("new_key").unwrap_or_default();
         let cnt: i64 = row.get("cnt").unwrap_or(0);
-        warn!(new_key, cnt, "COLLISION detected in canonical_key migration — aborting");
+        warn!(
+            new_key,
+            cnt, "COLLISION detected in canonical_key migration — aborting"
+        );
         has_collisions = true;
     }
 
@@ -1337,7 +1341,10 @@ async fn migrate_canonical_keys_remove_source_type(
                 if let Some(row) = stream.next().await? {
                     let updated: i64 = row.get("updated").unwrap_or(0);
                     if updated > 0 {
-                        info!(source_type, updated, "Rewrote canonical_value with domain prefix");
+                        info!(
+                            source_type,
+                            updated, "Rewrote canonical_value with domain prefix"
+                        );
                     }
                 }
             }
@@ -1452,7 +1459,9 @@ async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> 
         Ok(mut s) => {
             if let Some(row) = s.next().await? {
                 let u: i64 = row.get("updated").unwrap_or(0);
-                if u > 0 { info!(u, "Renamed ScoutLock.city → region"); }
+                if u > 0 {
+                    info!(u, "Renamed ScoutLock.city → region");
+                }
             }
         }
         Err(e) => warn!("ScoutLock rename failed (non-fatal): {e}"),
@@ -1468,7 +1477,9 @@ async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> 
             Ok(mut s) => {
                 if let Some(row) = s.next().await? {
                     let u: i64 = row.get("updated").unwrap_or(0);
-                    if u > 0 { info!(u, label, "Backfilled region from city"); }
+                    if u > 0 {
+                        info!(u, label, "Backfilled region from city");
+                    }
                 }
             }
             Err(e) => warn!("Region backfill for {label} failed (non-fatal): {e}"),
@@ -1476,7 +1487,15 @@ async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> 
     }
 
     // Step 5: Remove city property from all node types
-    for label in &["Source", "Place", "ScoutLock", "ValidationIssue", "ExtractionRule", "SupervisorState", "Submission"] {
+    for label in &[
+        "Source",
+        "Place",
+        "ScoutLock",
+        "ValidationIssue",
+        "ExtractionRule",
+        "SupervisorState",
+        "Submission",
+    ] {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.city IS NOT NULL REMOVE n.city RETURN count(n) AS updated"
         );
@@ -1484,7 +1503,9 @@ async fn remove_city_concept(client: &GraphClient) -> Result<(), neo4rs::Error> 
             Ok(mut s) => {
                 if let Some(row) = s.next().await? {
                     let u: i64 = row.get("updated").unwrap_or(0);
-                    if u > 0 { info!(u, label, "Removed city property"); }
+                    if u > 0 {
+                        info!(u, label, "Removed city property");
+                    }
                 }
             }
             Err(e) => warn!("Remove city from {label} failed (non-fatal): {e}"),
@@ -1532,9 +1553,7 @@ pub async fn rename_evidences_to_part_of(client: &GraphClient) -> Result<(), neo
 
     // Drop old index (may not exist on fresh deploys)
     match g
-        .run(query(
-            "DROP INDEX evidences_match_confidence IF EXISTS",
-        ))
+        .run(query("DROP INDEX evidences_match_confidence IF EXISTS"))
         .await
     {
         Ok(_) => {}
@@ -1553,9 +1572,7 @@ pub async fn relabel_evidence_to_citation(client: &GraphClient) -> Result<(), ne
     info!("Relabeling Evidence → Citation...");
 
     match g
-        .run(query(
-            "MATCH (n:Evidence) SET n:Citation REMOVE n:Evidence",
-        ))
+        .run(query("MATCH (n:Evidence) SET n:Citation REMOVE n:Evidence"))
         .await
     {
         Ok(_) => info!("Relabeled :Evidence → :Citation"),

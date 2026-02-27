@@ -48,15 +48,22 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 .transition_task_phase_status(
                     &tid,
                     &[
-                        "idle", "bootstrap_complete",
-                        "scrape_complete", "synthesis_complete", "situation_weaver_complete", "complete",
+                        "idle",
+                        "bootstrap_complete",
+                        "scrape_complete",
+                        "synthesis_complete",
+                        "situation_weaver_complete",
+                        "complete",
                     ],
                     "running_bootstrap",
                 )
                 .await
                 .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
             if !transitioned {
-                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+                return Err(TerminalError::new(
+                    "Prerequisites not met or another phase is running",
+                )
+                .into());
             }
             Ok(())
         })

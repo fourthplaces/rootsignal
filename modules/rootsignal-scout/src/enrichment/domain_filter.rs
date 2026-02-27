@@ -98,7 +98,10 @@ pub async fn filter_domains_batch(
     let mut verdicts: HashMap<String, bool> = cached;
 
     if !unchecked.is_empty() {
-        info!(count = unchecked.len(), "Evaluating unchecked domains via LLM");
+        info!(
+            count = unchecked.len(),
+            "Evaluating unchecked domains via LLM"
+        );
 
         let domain_list = unchecked
             .iter()
@@ -106,9 +109,7 @@ pub async fn filter_domains_batch(
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!(
-            "Region: {region_name}\n\nDomains to evaluate:\n{domain_list}"
-        );
+        let prompt = format!("Region: {region_name}\n\nDomains to evaluate:\n{domain_list}");
 
         let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
 

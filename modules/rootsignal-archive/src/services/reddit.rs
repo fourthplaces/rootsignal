@@ -65,7 +65,9 @@ impl RedditService {
                         author: None,
                         location: None,
                         engagement: Some(engagement),
-                        published_at: p.created_at.as_deref()
+                        published_at: p
+                            .created_at
+                            .as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
                         permalink: p.url,
@@ -122,7 +124,9 @@ impl RedditService {
                         author: None,
                         location: None,
                         engagement: Some(engagement),
-                        published_at: p.created_at.as_deref()
+                        published_at: p
+                            .created_at
+                            .as_deref()
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc)),
                         permalink: p.url,

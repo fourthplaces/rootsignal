@@ -16,9 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rootsignal_scout::pipeline::extractor::{
-    build_system_prompt, ExtractionResponse,
-};
+use rootsignal_scout::pipeline::extractor::{build_system_prompt, ExtractionResponse};
 
 // ---------------------------------------------------------------------------
 // The first-hand filter prompt — copied from scrape_phase.rs web search path.

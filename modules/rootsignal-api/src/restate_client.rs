@@ -174,7 +174,11 @@ impl RestateClient {
     pub async fn scrape_url(&self, url: &str) -> Result<(), RestateError> {
         let key = format!("url-{}", chrono::Utc::now().timestamp_millis());
         let ingress_url = format!("{}/ScrapeUrlWorkflow/{key}/run", self.ingress_url);
-        info!(url = url, ingress_url = ingress_url.as_str(), "Dispatching single URL scrape via Restate");
+        info!(
+            url = url,
+            ingress_url = ingress_url.as_str(),
+            "Dispatching single URL scrape via Restate"
+        );
 
         let body = serde_json::json!({ "url": url });
         let resp = self.http.post(&ingress_url).json(&body).send().await?;
@@ -198,7 +202,10 @@ impl RestateClient {
             "{}/restate/workflow/{workflow_name}/{key}/cancel",
             self.ingress_url
         );
-        info!(url = url.as_str(), workflow_name, key, "Cancelling workflow via Restate");
+        info!(
+            url = url.as_str(),
+            workflow_name, key, "Cancelling workflow via Restate"
+        );
 
         let resp = self.http.delete(&url).send().await?;
 
@@ -220,7 +227,12 @@ impl RestateClient {
         let url = format!("{}/SignalReaper/global/run/send", self.ingress_url);
         info!(url = url.as_str(), "Seeding signal reaper via Restate");
 
-        let resp = self.http.post(&url).json(&serde_json::json!({})).send().await?;
+        let resp = self
+            .http
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
 
         if resp.status().is_success() {
             info!("Signal reaper seeded successfully");

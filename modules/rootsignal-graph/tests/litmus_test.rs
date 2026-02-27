@@ -12,8 +12,10 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::{DiscoveryMethod, EvidenceNode, SourceNode, SourceRole};
-use rootsignal_graph::{query, GraphClient, GraphWriter};
+use rootsignal_common::events::{Event, Location, SystemDecision, WorldEvent};
+use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
+use rootsignal_events::StoredEvent;
+use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
 
 /// Spin up a fresh Neo4j container and run migrations.
 async fn setup() -> (impl std::any::Any, GraphClient) {
@@ -22,6 +24,41 @@ async fn setup() -> (impl std::any::Any, GraphClient) {
         .await
         .expect("migration failed");
     (container, client)
+}
+
+fn stored(seq: i64, event: &Event) -> StoredEvent {
+    StoredEvent {
+        seq,
+        ts: Utc::now(),
+        event_type: event.event_type().to_string(),
+        parent_seq: None,
+        caused_by_seq: None,
+        run_id: Some("test".to_string()),
+        actor: None,
+        payload: serde_json::to_value(event).expect("serialize event"),
+        schema_v: 1,
+    }
+}
+
+fn tc_bbox() -> BBox {
+    BBox {
+        min_lat: 44.0,
+        max_lat: 46.0,
+        min_lng: -94.0,
+        max_lng: -92.0,
+    }
+}
+
+fn mpls() -> Option<Location> {
+    Some(Location {
+        point: Some(GeoPoint {
+            lat: 44.9778,
+            lng: -93.2650,
+            precision: GeoPrecision::Exact,
+        }),
+        name: Some("Minneapolis".into()),
+        address: None,
+    })
 }
 
 fn neo4j_dt(dt: &chrono::DateTime<Utc>) -> String {
@@ -130,7 +167,11 @@ async fn create_gathering_with_date(
         .param("starts_at", starts_at)
         .param("now", now);
 
-    client.inner().run(q).await.expect("Failed to create gathering");
+    client
+        .inner()
+        .run(q)
+        .await
+        .expect("Failed to create gathering");
 }
 
 /// Helper: create an Actor and link it to a signal via ACTED_IN.
@@ -589,68 +630,81 @@ async fn cross_type_topic_search() {
 #[tokio::test]
 async fn same_source_no_duplicate_evidence() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let pipeline = Pipeline::new(client.clone(), 0.3);
 
-    // Create a signal
     let signal_id = Uuid::new_v4();
-    create_signal(
-        &client,
-        "Gathering",
-        signal_id,
-        "Cleanup day",
-        "https://source-a.org",
-    )
-    .await;
+    let ev1_id = Uuid::new_v4();
+    let ev2_id = Uuid::new_v4();
+    let ev3_id = Uuid::new_v4();
 
-    // Create evidence from URL A — first time
-    let ev1 = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-a.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_v1".to_string(),
-        snippet: Some("First scrape".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev1, signal_id)
+    let events = vec![
+        stored(
+            1,
+            &Event::World(WorldEvent::GatheringDiscovered {
+                id: signal_id,
+                title: "Cleanup day".into(),
+                summary: "Community cleanup".into(),
+                confidence: 0.8,
+                source_url: "https://source-a.org".into(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                location: mpls(),
+                from_location: None,
+                mentioned_actors: vec![],
+                author_actor: None,
+                schedule: None,
+                action_url: None,
+                organizer: None,
+            }),
+        ),
+        // Three citations from same URL — simulates re-scrapes
+        stored(
+            2,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: ev1_id,
+                entity_id: signal_id,
+                url: "https://source-a.org".into(),
+                content_hash: "hash_v1".into(),
+                snippet: Some("First scrape".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+        stored(
+            3,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: ev2_id,
+                entity_id: signal_id,
+                url: "https://source-a.org".into(),
+                content_hash: "hash_v2".into(),
+                snippet: Some("Second scrape".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+        stored(
+            4,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: ev3_id,
+                entity_id: signal_id,
+                url: "https://source-a.org".into(),
+                content_hash: "hash_v3".into(),
+                snippet: Some("Third scrape".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+    ];
+
+    pipeline
+        .process(&events, &tc_bbox(), &[])
         .await
-        .expect("create evidence 1");
+        .expect("pipeline failed");
 
-    // Create evidence from URL A again — simulates re-scrape with changed content
-    let ev2 = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-a.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_v2".to_string(),
-        snippet: Some("Second scrape".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev2, signal_id)
-        .await
-        .expect("create evidence 2");
-
-    // Call it a third time for good measure
-    let ev3 = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-a.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_v3".to_string(),
-        snippet: Some("Third scrape".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev3, signal_id)
-        .await
-        .expect("create evidence 3");
-
-    // Should have exactly 1 evidence node, not 3
+    // Should have exactly 1 evidence node, not 3 (MERGE on source_url)
     let q = query(
         "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
          RETURN count(ev) AS cnt, ev.content_hash AS hash",
@@ -680,65 +734,75 @@ async fn same_source_no_duplicate_evidence() {
 #[tokio::test]
 async fn cross_source_creates_new_evidence() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let pipeline = Pipeline::new(client.clone(), 0.3);
 
     let signal_id = Uuid::new_v4();
-    create_signal(
-        &client,
-        "Gathering",
-        signal_id,
-        "Community meeting",
-        "https://source-a.org",
-    )
-    .await;
 
-    // Evidence from URL A
-    let ev_a = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-a.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_a".to_string(),
-        snippet: Some("Source A".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev_a, signal_id)
-        .await
-        .expect("create evidence A");
+    let events = vec![
+        stored(
+            1,
+            &Event::World(WorldEvent::GatheringDiscovered {
+                id: signal_id,
+                title: "Community meeting".into(),
+                summary: "Neighborhood meeting".into(),
+                confidence: 0.8,
+                source_url: "https://source-a.org".into(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                location: mpls(),
+                from_location: None,
+                mentioned_actors: vec![],
+                author_actor: None,
+                schedule: None,
+                action_url: None,
+                organizer: None,
+            }),
+        ),
+        stored(
+            2,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://source-a.org".into(),
+                content_hash: "hash_a".into(),
+                snippet: Some("Source A".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+        stored(
+            3,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://source-b.org".into(),
+                content_hash: "hash_b".into(),
+                snippet: Some("Source B".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+        stored(
+            4,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://source-c.org".into(),
+                content_hash: "hash_c".into(),
+                snippet: Some("Source C".into()),
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+    ];
 
-    // Evidence from URL B — different source, should create a new evidence node
-    let ev_b = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-b.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_b".to_string(),
-        snippet: Some("Source B".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev_b, signal_id)
+    pipeline
+        .process(&events, &tc_bbox(), &[])
         .await
-        .expect("create evidence B");
-
-    // Evidence from URL C — third independent source
-    let ev_c = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://source-c.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_c".to_string(),
-        snippet: Some("Source C".to_string()),
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev_c, signal_id)
-        .await
-        .expect("create evidence C");
+        .expect("pipeline failed");
 
     // Should have 3 evidence nodes (one per source)
     let q = query(
@@ -764,56 +828,78 @@ async fn cross_source_creates_new_evidence() {
 #[tokio::test]
 async fn same_source_does_not_inflate_corroboration() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let pipeline = Pipeline::new(client.clone(), 0.3);
 
     let signal_id = Uuid::new_v4();
-    create_signal(
-        &client,
-        "Gathering",
-        signal_id,
-        "Annual parade",
-        "https://parade.org",
-    )
-    .await;
 
-    // Initial evidence
-    let ev = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://parade.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "hash_v1".to_string(),
-        snippet: None,
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev, signal_id)
-        .await
-        .expect("create evidence");
+    // Create signal + initial evidence from same source
+    let mut events = vec![
+        stored(
+            1,
+            &Event::World(WorldEvent::GatheringDiscovered {
+                id: signal_id,
+                title: "Annual parade".into(),
+                summary: "City parade".into(),
+                confidence: 0.8,
+                source_url: "https://parade.org".into(),
+                extracted_at: Utc::now(),
+                content_date: None,
+                location: mpls(),
+                from_location: None,
+                mentioned_actors: vec![],
+                author_actor: None,
+                schedule: None,
+                action_url: None,
+                organizer: None,
+            }),
+        ),
+        stored(
+            2,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://parade.org".into(),
+                content_hash: "hash_v1".into(),
+                snippet: None,
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+    ];
 
-    // Simulate 5 same-source re-scrapes: refresh_signal (not corroborate) + create_evidence (MERGE)
-    for i in 0..5 {
-        writer
-            .refresh_signal(signal_id, rootsignal_common::NodeType::Gathering, Utc::now())
-            .await
-            .expect("refresh failed");
-
-        let ev = EvidenceNode {
-            id: Uuid::new_v4(),
-            source_url: "https://parade.org".to_string(),
-            retrieved_at: Utc::now(),
-            content_hash: format!("hash_v{}", i + 2),
-            snippet: None,
-            relevance: None,
-            evidence_confidence: None,
-            channel_type: None,
-        };
-        writer
-            .create_evidence(&ev, signal_id)
-            .await
-            .expect("create evidence");
+    // Simulate 5 same-source re-scrapes: FreshnessConfirmed + CitationRecorded (MERGE)
+    for i in 0..5u32 {
+        let seq = (i as i64) * 2 + 3;
+        events.push(stored(
+            seq,
+            &Event::System(
+                rootsignal_common::system_events::SystemDecision::FreshnessConfirmed {
+                    entity_ids: vec![signal_id],
+                    node_type: rootsignal_common::NodeType::Gathering,
+                    confirmed_at: Utc::now(),
+                },
+            ),
+        ));
+        events.push(stored(
+            seq + 1,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://parade.org".into(),
+                content_hash: format!("hash_v{}", i + 2),
+                snippet: None,
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ));
     }
+
+    pipeline
+        .process(&events, &tc_bbox(), &[])
+        .await
+        .expect("pipeline failed");
 
     // corroboration_count should still be 0 (initial value, never incremented)
     let q = query(
@@ -845,32 +931,36 @@ async fn same_source_does_not_inflate_corroboration() {
         "should have exactly 1 evidence node after 5 same-source refreshes, got {cnt}"
     );
 
-    // Now simulate a REAL cross-source corroboration
-    let entity_mappings = vec![];
-    writer
-        .corroborate(
-            signal_id,
-            rootsignal_common::NodeType::Gathering,
-            Utc::now(),
-            &entity_mappings,
-        )
-        .await
-        .expect("corroborate failed");
+    // Now simulate a REAL cross-source corroboration via ObservationCorroborated + CitationRecorded
+    let corr_events = vec![
+        stored(
+            13,
+            &Event::World(WorldEvent::ObservationCorroborated {
+                entity_id: signal_id,
+                node_type: rootsignal_common::NodeType::Gathering,
+                new_source_url: "https://independent-news.org".into(),
+                summary: None,
+            }),
+        ),
+        stored(
+            14,
+            &Event::World(WorldEvent::CitationRecorded {
+                citation_id: Uuid::new_v4(),
+                entity_id: signal_id,
+                url: "https://independent-news.org".into(),
+                content_hash: "cross_hash".into(),
+                snippet: None,
+                relevance: None,
+                channel_type: None,
+                evidence_confidence: None,
+            }),
+        ),
+    ];
 
-    let ev_cross = EvidenceNode {
-        id: Uuid::new_v4(),
-        source_url: "https://independent-news.org".to_string(),
-        retrieved_at: Utc::now(),
-        content_hash: "cross_hash".to_string(),
-        snippet: None,
-        relevance: None,
-        evidence_confidence: None,
-        channel_type: None,
-    };
-    writer
-        .create_evidence(&ev_cross, signal_id)
+    pipeline
+        .process(&corr_events, &tc_bbox(), &[])
         .await
-        .expect("cross-source evidence");
+        .expect("corroboration pipeline failed");
 
     // Now corroboration_count should be 1, evidence count should be 2
     let q = query(
@@ -1184,134 +1274,39 @@ async fn bbox_proximity_signal_lookup() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Bbox proximity story lookup (top_stories_in_bbox)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn bbox_proximity_story_lookup() {
-    let (_container, client) = setup().await;
-
-    let now = neo4j_dt(&Utc::now());
-
-    // Story with centroid in Minneapolis
-    let mpls_story_id = Uuid::new_v4();
-    let q = query(
-        "CREATE (s:Story {
-            id: $id, headline: 'Minneapolis housing crisis', summary: 'Rents rising',
-            signal_count: 3, first_seen: datetime($now), last_updated: datetime($now),
-            velocity: 0.5, energy: 8.0,
-            centroid_lat: 44.975, centroid_lng: -93.265,
-            dominant_type: 'Tension', sensitivity: 'general',
-            source_count: 2, entity_count: 1, type_diversity: 2,
-            source_domains: ['reddit.com'], corroboration_depth: 1,
-            status: 'active'
-        })",
-    )
-    .param("id", mpls_story_id.to_string())
-    .param("now", now.clone());
-    client.inner().run(q).await.expect("create mpls story");
-
-    // Story with centroid in Duluth
-    let duluth_story_id = Uuid::new_v4();
-    let q = query(
-        "CREATE (s:Story {
-            id: $id, headline: 'Duluth port expansion', summary: 'New docks',
-            signal_count: 1, first_seen: datetime($now), last_updated: datetime($now),
-            velocity: 0.1, energy: 3.0,
-            centroid_lat: 46.786, centroid_lng: -92.100,
-            dominant_type: 'Notice', sensitivity: 'general',
-            source_count: 1, entity_count: 1, type_diversity: 1,
-            source_domains: ['duluthnewstribune.com'], corroboration_depth: 0,
-            status: 'emerging'
-        })",
-    )
-    .param("id", duluth_story_id.to_string())
-    .param("now", now.clone());
-    client.inner().run(q).await.expect("create duluth story");
-
-    // Story with no centroid
-    let no_geo_story_id = Uuid::new_v4();
-    let q = query(
-        "CREATE (s:Story {
-            id: $id, headline: 'Online-only discussion', summary: 'No location',
-            signal_count: 2, first_seen: datetime($now), last_updated: datetime($now),
-            velocity: 0.2, energy: 5.0,
-            dominant_type: 'Need', sensitivity: 'general',
-            source_count: 1, entity_count: 0, type_diversity: 1,
-            source_domains: ['reddit.com'], corroboration_depth: 0,
-            status: 'emerging'
-        })",
-    )
-    .param("id", no_geo_story_id.to_string())
-    .param("now", now);
-    client.inner().run(q).await.expect("create no-geo story");
-
-    // Query stories near Minneapolis center, 50km radius
-    let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
-    let results = reader
-        .top_stories_in_bbox(44.9778, -93.2650, 50.0, 100)
-        .await
-        .expect("top_stories_in_bbox failed");
-
-    let headlines: Vec<&str> = results.iter().map(|s| s.headline.as_str()).collect();
-
-    assert!(
-        headlines.contains(&"Minneapolis housing crisis"),
-        "Missing Minneapolis story; got: {:?}",
-        headlines
-    );
-    assert!(
-        !headlines.contains(&"Duluth port expansion"),
-        "Duluth story should be outside radius; got: {:?}",
-        headlines
-    );
-    assert!(
-        !headlines.contains(&"Online-only discussion"),
-        "No-centroid story should be excluded; got: {:?}",
-        headlines
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Test: Source last_scraped survives datetime() round-trip
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn source_last_scraped_round_trip() {
     let (_container, client) = setup().await;
+    let pipeline = Pipeline::new(client.clone(), 0.3);
     let writer = GraphWriter::new(client.clone());
 
-    let source = SourceNode {
-        id: Uuid::new_v4(),
-        canonical_key: "https://example.org".to_string(),
-        canonical_value: "https://example.org".to_string(),
-        url: Some("https://example.org".to_string()),
-        discovery_method: DiscoveryMethod::Curated,
-        created_at: Utc::now(),
-        last_scraped: None,
-        last_produced_signal: None,
-        signals_produced: 0,
-        signals_corroborated: 0,
-        consecutive_empty_runs: 0,
-        active: true,
-        gap_context: None,
-        weight: 0.5,
-        cadence_hours: None,
-        avg_signals_per_scrape: 0.0,
-        quality_penalty: 1.0,
-        source_role: SourceRole::Mixed,
-        scrape_count: 0,
-    };
+    let source_id = Uuid::new_v4();
+    let events = vec![stored(
+        1,
+        &Event::System(SystemDecision::SourceRegistered {
+            source_id,
+            canonical_key: "https://example.org".into(),
+            canonical_value: "https://example.org".into(),
+            url: Some("https://example.org".into()),
+            discovery_method: DiscoveryMethod::Curated,
+            weight: 0.5,
+            source_role: SourceRole::Mixed,
+            gap_context: None,
+        }),
+    )];
 
-    writer
-        .upsert_source(&source)
+    pipeline
+        .process(&events, &tc_bbox(), &[])
         .await
-        .expect("upsert_source failed");
+        .expect("pipeline failed");
 
-    // Record a scrape (stores last_scraped via Cypher datetime())
+    // Record a scrape (stores last_scraped via Cypher datetime()) — still uses writer
     let scrape_time = Utc::now();
     writer
-        .record_source_scrape(&source.canonical_key, 3, scrape_time)
+        .record_source_scrape("https://example.org", 3, scrape_time)
         .await
         .expect("record_source_scrape failed");
 
@@ -2401,7 +2396,12 @@ async fn create_aid_with_implied_queries(
 }
 
 /// Helper: create a WebQuery source node.
-async fn create_web_query_source(client: &GraphClient, _region: &str, query_text: &str, active: bool) {
+async fn create_web_query_source(
+    client: &GraphClient,
+    _region: &str,
+    query_text: &str,
+    active: bool,
+) {
     let now = neo4j_dt(&Utc::now());
     let id = Uuid::new_v4();
     let q = query(
@@ -2505,7 +2505,10 @@ async fn tension_response_shape_correct_breakdown() {
     let shape = &shapes[0];
     assert_eq!(shape.title, "Immigration Enforcement Fear");
     assert_eq!(shape.aid_count, 2, "Should have 2 Aid responses");
-    assert_eq!(shape.gathering_count, 0, "Should have 0 Gathering responses");
+    assert_eq!(
+        shape.gathering_count, 0,
+        "Should have 0 Gathering responses"
+    );
     assert_eq!(shape.need_count, 1, "Should have 1 Need response");
     assert!(
         shape.cause_heat >= 0.1,
@@ -2851,25 +2854,23 @@ async fn active_web_queries_filters_inactive() {
     create_web_query_source(&client, "twincities", "deactivated old query", false).await;
     create_web_query_source(&client, "nyc", "immigration services NYC", true).await;
 
-    let queries = writer
-        .get_active_web_queries("twincities")
-        .await
-        .expect("query failed");
+    let queries = writer.get_active_web_queries().await.expect("query failed");
     assert_eq!(
         queries.len(),
-        2,
-        "Should find 2 active twincities queries, got {}",
+        3,
+        "Should find 3 active queries (2 twincities + 1 nyc), got {}",
         queries.len()
     );
     assert!(queries.contains(&"immigration services Minneapolis".to_string()));
     assert!(queries.contains(&"food shelf volunteer Minneapolis".to_string()));
+    assert!(queries.contains(&"immigration services NYC".to_string()));
     assert!(
         !queries.iter().any(|q| q.contains("deactivated")),
         "Should not include inactive queries"
     );
     assert!(
-        !queries.iter().any(|q| q.contains("NYC")),
-        "Should not include other region queries"
+        !queries.iter().any(|q| q.contains("deactivated")),
+        "Should not include inactive queries from any region"
     );
 }
 
@@ -2959,41 +2960,36 @@ async fn empty_implied_queries_stored_as_null() {
 #[tokio::test]
 async fn signal_expansion_source_created_with_correct_method() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let pipeline = Pipeline::new(client.clone(), 0.3);
 
-    let source = SourceNode {
-        id: Uuid::new_v4(),
-        canonical_key: "emergency housing Minneapolis".to_string(),
-        canonical_value: "emergency housing Minneapolis".to_string(),
-        url: None,
-        discovery_method: DiscoveryMethod::SignalExpansion,
-        created_at: Utc::now(),
-        last_scraped: None,
-        last_produced_signal: None,
-        signals_produced: 0,
-        signals_corroborated: 0,
-        consecutive_empty_runs: 0,
-        active: true,
-        gap_context: Some("Expanded from: Emergency bail fund for detained immigrants".to_string()),
-        weight: 0.5,
-        cadence_hours: None,
-        avg_signals_per_scrape: 0.0,
-        quality_penalty: 1.0,
-        source_role: SourceRole::Mixed,
-        scrape_count: 0,
-    };
+    let source_id = Uuid::new_v4();
+    let canonical_key = "twincities:web_query:emergency housing Minneapolis";
 
-    writer
-        .upsert_source(&source, "twincities")
+    let events = vec![stored(
+        1,
+        &Event::System(SystemDecision::SourceRegistered {
+            source_id,
+            canonical_key: canonical_key.into(),
+            canonical_value: "emergency housing Minneapolis".into(),
+            url: None,
+            discovery_method: DiscoveryMethod::SignalExpansion,
+            weight: 0.5,
+            source_role: SourceRole::Mixed,
+            gap_context: Some("Expanded from: Emergency bail fund for detained immigrants".into()),
+        }),
+    )];
+
+    pipeline
+        .process(&events, &tc_bbox(), &[])
         .await
-        .expect("upsert_source failed");
+        .expect("pipeline failed");
 
     // Verify the source was created with SignalExpansion discovery method
     let q = query(
         "MATCH (s:Source {canonical_key: $key})
          RETURN s.discovery_method AS dm, s.gap_context AS gc, s.active AS active",
     )
-    .param("key", "twincities:web_query:emergency housing Minneapolis");
+    .param("key", canonical_key);
 
     let mut stream = client.inner().execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
@@ -3746,7 +3742,14 @@ async fn consolidate_resources_merges_similar() {
 
     // Create edges to the duplicate
     let need1 = Uuid::new_v4();
-    create_signal(&client, "Need", need1, "Need a driver", "https://test.com/a1").await;
+    create_signal(
+        &client,
+        "Need",
+        need1,
+        "Need a driver",
+        "https://test.com/a1",
+    )
+    .await;
     writer
         .create_requires_edge(need1, id2, 0.9, Some("weekends"), None)
         .await

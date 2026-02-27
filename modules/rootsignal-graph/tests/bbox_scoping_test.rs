@@ -126,7 +126,11 @@ async fn test_find_tension_hubs_respects_bbox() {
             .await
             .expect("find_tension_hubs failed");
 
-        println!("\n[{}] Tension hubs ready to materialize: {}", slug, hubs.len());
+        println!(
+            "\n[{}] Tension hubs ready to materialize: {}",
+            slug,
+            hubs.len()
+        );
 
         for hub in &hubs {
             println!(
@@ -147,7 +151,10 @@ async fn test_find_tension_hubs_respects_bbox() {
                     let s_lng: f64 = row.get("lng").unwrap_or(0.0);
                     let title: String = row.get("title").unwrap_or_default();
                     assert!(
-                        s_lat >= min_lat && s_lat <= max_lat && s_lng >= min_lng && s_lng <= max_lng,
+                        s_lat >= min_lat
+                            && s_lat <= max_lat
+                            && s_lng >= min_lng
+                            && s_lng <= max_lng,
                         "Respondent '{}' at ({}, {}) is outside bbox for {}",
                         title,
                         s_lat,
@@ -158,51 +165,6 @@ async fn test_find_tension_hubs_respects_bbox() {
             }
         }
         println!("  ✓ All hub respondents verified within bbox");
-    }
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_find_story_growth_respects_bbox() {
-    let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
-    let regions = get_regions();
-
-    println!("\n=== Testing find_story_growth bbox scoping ===");
-
-    for (slug, lat, lng, radius) in &regions {
-        let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
-
-        let growths = writer
-            .find_story_growth(20, min_lat, max_lat, min_lng, max_lng)
-            .await
-            .expect("find_story_growth failed");
-
-        println!("\n[{}] Stories with growth candidates: {}", slug, growths.len());
-
-        for growth in &growths {
-            for resp in &growth.new_respondents {
-                let q = query(
-                    "MATCH (n {id: $id}) RETURN n.lat AS lat, n.lng AS lng, n.title AS title",
-                )
-                .param("id", resp.signal_id.to_string());
-                let mut stream = client.inner().execute(q).await.unwrap();
-                if let Ok(Some(row)) = stream.next().await {
-                    let s_lat: f64 = row.get("lat").unwrap_or(0.0);
-                    let s_lng: f64 = row.get("lng").unwrap_or(0.0);
-                    let title: String = row.get("title").unwrap_or_default();
-                    assert!(
-                        s_lat >= min_lat && s_lat <= max_lat && s_lng >= min_lng && s_lng <= max_lng,
-                        "Growth respondent '{}' at ({}, {}) is outside bbox for {}",
-                        title,
-                        s_lat,
-                        s_lng,
-                        slug
-                    );
-                }
-            }
-        }
-        println!("  ✓ All growth respondents verified within bbox");
     }
 }
 
@@ -322,7 +284,10 @@ async fn test_region_signal_assessment() {
     for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
 
-        println!("--- {} (center: {:.4}, {:.4}, radius: {:.0}km) ---", slug, lat, lng, radius);
+        println!(
+            "--- {} (center: {:.4}, {:.4}, radius: {:.0}km) ---",
+            slug, lat, lng, radius
+        );
 
         // Count signals by type
         for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
@@ -337,7 +302,11 @@ async fn test_region_signal_assessment() {
             .param("min_lng", min_lng)
             .param("max_lng", max_lng);
             let mut s = client.inner().execute(q).await.unwrap();
-            let cnt: i64 = if let Ok(Some(r)) = s.next().await { r.get("cnt").unwrap_or(0) } else { 0 };
+            let cnt: i64 = if let Ok(Some(r)) = s.next().await {
+                r.get("cnt").unwrap_or(0)
+            } else {
+                0
+            };
             if cnt > 0 {
                 println!("  {:<10} {}", label, cnt);
             }
@@ -351,7 +320,7 @@ async fn test_region_signal_assessment() {
              WITH DISTINCT s
              RETURN s.id AS id, s.headline AS headline, s.status AS status,
                     s.arc AS arc, s.category AS category, s.signal_count AS sig_count
-             ORDER BY s.energy DESC"
+             ORDER BY s.energy DESC",
         )
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -366,7 +335,14 @@ async fn test_region_signal_assessment() {
             let category: String = row.get("category").unwrap_or_default();
             let sig_count: i64 = row.get("sig_count").unwrap_or(0);
             story_count += 1;
-            println!("  Story: '{}' [{}/{}] {} signals, {}", headline.chars().take(70).collect::<String>(), status, arc, sig_count, category);
+            println!(
+                "  Story: '{}' [{}/{}] {} signals, {}",
+                headline.chars().take(70).collect::<String>(),
+                status,
+                arc,
+                sig_count,
+                category
+            );
         }
         if story_count == 0 {
             println!("  (no stories yet)");
@@ -377,14 +353,18 @@ async fn test_region_signal_assessment() {
             "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
              WHERE sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
-             RETURN count(r) AS cnt"
+             RETURN count(r) AS cnt",
         )
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
         let mut es = client.inner().execute(eq).await.unwrap();
-        let edge_cnt: i64 = if let Ok(Some(r)) = es.next().await { r.get("cnt").unwrap_or(0) } else { 0 };
+        let edge_cnt: i64 = if let Ok(Some(r)) = es.next().await {
+            r.get("cnt").unwrap_or(0)
+        } else {
+            0
+        };
         println!("  Response edges: {}", edge_cnt);
 
         // Cross-geo edges (signals responding to tensions in other regions)
@@ -393,14 +373,18 @@ async fn test_region_signal_assessment() {
              WHERE sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
                AND (abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0)
-             RETURN count(r) AS cnt"
+             RETURN count(r) AS cnt",
         )
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
         let mut xs = client.inner().execute(xq).await.unwrap();
-        let xcnt: i64 = if let Ok(Some(r)) = xs.next().await { r.get("cnt").unwrap_or(0) } else { 0 };
+        let xcnt: i64 = if let Ok(Some(r)) = xs.next().await {
+            r.get("cnt").unwrap_or(0)
+        } else {
+            0
+        };
         if xcnt > 0 {
             println!("  ⚠ Cross-geo edges: {}", xcnt);
         } else {
@@ -434,11 +418,23 @@ async fn test_find_recent_signals_by_location() {
             let lat: f64 = row.get("lat").unwrap_or(0.0);
             let lng: f64 = row.get("lng").unwrap_or(0.0);
             let url: String = row.get("url").unwrap_or_default();
-            let region = if (lat - 25.76).abs() < 1.0 { "MIAMI" }
-                else if (lat - 31.90).abs() < 1.0 { "RAMALLAH" }
-                else if (lat - 44.98).abs() < 1.0 { "TWINCITIES" }
-                else { "OTHER" };
-            println!("  [{:>8}] [{:>10}] ({:.4}, {:.4}) {}", label, region, lat, lng, title.chars().take(60).collect::<String>());
+            let region = if (lat - 25.76).abs() < 1.0 {
+                "MIAMI"
+            } else if (lat - 31.90).abs() < 1.0 {
+                "RAMALLAH"
+            } else if (lat - 44.98).abs() < 1.0 {
+                "TWINCITIES"
+            } else {
+                "OTHER"
+            };
+            println!(
+                "  [{:>8}] [{:>10}] ({:.4}, {:.4}) {}",
+                label,
+                region,
+                lat,
+                lng,
+                title.chars().take(60).collect::<String>()
+            );
         }
     }
 }
@@ -473,7 +469,10 @@ async fn test_find_duplicate_respects_bbox() {
             &embedding_f32,
             rootsignal_common::NodeType::Tension,
             0.8,
-            tc_bbox.0, tc_bbox.1, tc_bbox.2, tc_bbox.3,
+            tc_bbox.0,
+            tc_bbox.1,
+            tc_bbox.2,
+            tc_bbox.3,
         )
         .await
         .unwrap();
@@ -481,7 +480,10 @@ async fn test_find_duplicate_respects_bbox() {
         tc_result.is_some(),
         "Should find duplicate in TC bbox for a TC tension's own embedding"
     );
-    println!("  ✓ Found in TC bbox (sim={:.3})", tc_result.unwrap().similarity);
+    println!(
+        "  ✓ Found in TC bbox (sim={:.3})",
+        tc_result.unwrap().similarity
+    );
 
     // find_duplicate with a far-away bbox (e.g., Miami) should NOT find it
     let miami_bbox = compute_bbox(25.7617, -80.1918, 25.0);
@@ -490,7 +492,10 @@ async fn test_find_duplicate_respects_bbox() {
             &embedding_f32,
             rootsignal_common::NodeType::Tension,
             0.8,
-            miami_bbox.0, miami_bbox.1, miami_bbox.2, miami_bbox.3,
+            miami_bbox.0,
+            miami_bbox.1,
+            miami_bbox.2,
+            miami_bbox.3,
         )
         .await
         .unwrap();
@@ -506,12 +511,18 @@ async fn test_find_duplicate_respects_bbox() {
             &embedding_f32,
             rootsignal_common::NodeType::Tension,
             0.8,
-            -90.0, 90.0, -180.0, 180.0,
+            -90.0,
+            90.0,
+            -180.0,
+            180.0,
         )
         .await
         .unwrap();
     assert!(global_result.is_some(), "Should find with global bbox");
-    println!("  ✓ Found with global bbox (sim={:.3})", global_result.unwrap().similarity);
+    println!(
+        "  ✓ Found with global bbox (sim={:.3})",
+        global_result.unwrap().similarity
+    );
 }
 
 #[tokio::test]
@@ -547,8 +558,10 @@ async fn test_get_tension_landscape_respects_bbox() {
     let antarctica_bbox = compute_bbox(-80.0, 0.0, 10.0);
     let empty_landscape = writer
         .get_tension_landscape(
-            antarctica_bbox.0, antarctica_bbox.1,
-            antarctica_bbox.2, antarctica_bbox.3,
+            antarctica_bbox.0,
+            antarctica_bbox.1,
+            antarctica_bbox.2,
+            antarctica_bbox.3,
         )
         .await
         .unwrap();
@@ -591,10 +604,8 @@ async fn test_find_tension_linker_targets_respects_bbox() {
 
     // Verify each TC target is actually in TC bbox
     for target in &tc_targets {
-        let q = query(
-            "MATCH (n {id: $id}) RETURN n.lat AS lat, n.lng AS lng",
-        )
-        .param("id", target.signal_id.to_string());
+        let q = query("MATCH (n {id: $id}) RETURN n.lat AS lat, n.lng AS lng")
+            .param("id", target.signal_id.to_string());
         let mut stream = client.inner().execute(q).await.unwrap();
         if let Ok(Some(row)) = stream.next().await {
             let lat: f64 = row.get("lat").unwrap_or(0.0);
@@ -602,7 +613,9 @@ async fn test_find_tension_linker_targets_respects_bbox() {
             assert!(
                 lat >= tc_bbox.0 && lat <= tc_bbox.1 && lng >= tc_bbox.2 && lng <= tc_bbox.3,
                 "Target '{}' at ({}, {}) is outside TC bbox",
-                target.title, lat, lng
+                target.title,
+                lat,
+                lng
             );
         }
     }

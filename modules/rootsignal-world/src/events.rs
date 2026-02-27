@@ -9,10 +9,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::eventlike::Eventlike;
-use crate::types::{
-    ActorType, ChannelType, DiscoveryMethod, NodeType, Severity, SourceRole, Urgency,
-};
-use crate::values::{Location, Schedule, WorldSourceChange};
+use crate::types::{ActorType, ChannelType, NodeType, Severity, Urgency};
+use crate::values::{Location, Schedule};
 
 /// A world fact — something observed in reality, independent of Root Signal's
 /// editorial decisions or operational metrics.
@@ -150,39 +148,6 @@ pub enum WorldEvent {
     },
 
     // -----------------------------------------------------------------------
-    // Sources
-    // -----------------------------------------------------------------------
-    SourceRegistered {
-        source_id: Uuid,
-        canonical_key: String,
-        canonical_value: String,
-        url: Option<String>,
-        discovery_method: DiscoveryMethod,
-        weight: f64,
-        source_role: SourceRole,
-        /// Discovery provenance — e.g. "Gap: local_food | Context: ..." from gap analysis.
-        /// Part of the world record (how this source was found), not a system opinion.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        gap_context: Option<String>,
-    },
-
-    SourceChanged {
-        source_id: Uuid,
-        canonical_key: String,
-        change: WorldSourceChange,
-    },
-
-    SourceDeactivated {
-        source_ids: Vec<Uuid>,
-        reason: String,
-    },
-
-    SourceLinkDiscovered {
-        child_id: Uuid,
-        parent_canonical_key: String,
-    },
-
-    // -----------------------------------------------------------------------
     // Actors — no `discovery_depth` (system metric)
     // -----------------------------------------------------------------------
     ActorIdentified {
@@ -209,42 +174,11 @@ pub enum WorldEvent {
         role: String,
     },
 
-    ActorLinkedToSource {
-        actor_id: Uuid,
-        source_id: Uuid,
-    },
-
     ActorLocationIdentified {
         actor_id: Uuid,
         location_lat: f64,
         location_lng: f64,
         location_name: Option<String>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Community input
-    // -----------------------------------------------------------------------
-    PinCreated {
-        pin_id: Uuid,
-        location_lat: f64,
-        location_lng: f64,
-        source_id: Uuid,
-        created_by: String,
-    },
-
-    DemandReceived {
-        demand_id: Uuid,
-        query: String,
-        center_lat: f64,
-        center_lng: f64,
-        radius_km: f64,
-    },
-
-    SubmissionReceived {
-        submission_id: Uuid,
-        url: String,
-        reason: Option<String>,
-        source_canonical_key: Option<String>,
     },
 
     // -----------------------------------------------------------------------
@@ -277,14 +211,6 @@ pub enum WorldEvent {
         explanation: String,
         gathering_type: String,
     },
-
-    // -----------------------------------------------------------------------
-    // Expansion provenance
-    // -----------------------------------------------------------------------
-    ExpansionQueryCollected {
-        query: String,
-        source_url: String,
-    },
 }
 
 impl Eventlike for WorldEvent {
@@ -297,21 +223,12 @@ impl Eventlike for WorldEvent {
             WorldEvent::TensionDiscovered { .. } => "tension_discovered",
             WorldEvent::ObservationCorroborated { .. } => "observation_corroborated",
             WorldEvent::CitationRecorded { .. } => "citation_recorded",
-            WorldEvent::SourceRegistered { .. } => "source_registered",
-            WorldEvent::SourceChanged { .. } => "source_changed",
-            WorldEvent::SourceDeactivated { .. } => "source_deactivated",
-            WorldEvent::SourceLinkDiscovered { .. } => "source_link_discovered",
             WorldEvent::ActorIdentified { .. } => "actor_identified",
             WorldEvent::ActorLinkedToEntity { .. } => "actor_linked_to_entity",
-            WorldEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
             WorldEvent::ActorLocationIdentified { .. } => "actor_location_identified",
-            WorldEvent::PinCreated { .. } => "pin_created",
-            WorldEvent::DemandReceived { .. } => "demand_received",
-            WorldEvent::SubmissionReceived { .. } => "submission_received",
             WorldEvent::ResourceEdgeCreated { .. } => "resource_edge_created",
             WorldEvent::ResponseLinked { .. } => "response_linked",
             WorldEvent::GravityLinked { .. } => "gravity_linked",
-            WorldEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
         }
     }
 

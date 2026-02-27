@@ -77,7 +77,18 @@ pub async fn run_actor_extraction(
     min_lng: f64,
     max_lng: f64,
 ) -> ActorExtractorStats {
-    match run_actor_extraction_inner(store, client, anthropic_api_key, region_slug, min_lat, max_lat, min_lng, max_lng).await {
+    match run_actor_extraction_inner(
+        store,
+        client,
+        anthropic_api_key,
+        region_slug,
+        min_lat,
+        max_lat,
+        min_lng,
+        max_lng,
+    )
+    .await
+    {
         Ok(stats) => stats,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
@@ -154,16 +165,14 @@ async fn run_actor_extraction_inner(
             ));
         }
 
-        let response: ActorExtractionResponse = match claude
-            .extract(SYSTEM_PROMPT, &user_prompt)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "Actor extraction LLM call failed, skipping batch");
-                continue;
-            }
-        };
+        let response: ActorExtractionResponse =
+            match claude.extract(SYSTEM_PROMPT, &user_prompt).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "Actor extraction LLM call failed, skipping batch");
+                    continue;
+                }
+            };
 
         for extracted in &response.actors {
             let signal = match batch.get(extracted.signal_index) {

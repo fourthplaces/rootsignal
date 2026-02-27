@@ -112,7 +112,11 @@ impl Pipeline {
 
         // Count events by reading from store (rebuild doesn't return per-event stats)
         let events = store.read_from(1, 1).await?;
-        let total = if events.is_empty() { 0 } else { last_seq as u32 };
+        let total = if events.is_empty() {
+            0
+        } else {
+            last_seq as u32
+        };
 
         info!(last_seq, "Pipeline: full rebuild complete");
 

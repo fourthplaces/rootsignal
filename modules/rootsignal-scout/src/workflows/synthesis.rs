@@ -51,15 +51,20 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
                 .transition_task_phase_status(
                     &tid,
                     &[
-                        "scrape_complete", "synthesis_complete",
-                        "situation_weaver_complete", "complete",
+                        "scrape_complete",
+                        "synthesis_complete",
+                        "situation_weaver_complete",
+                        "complete",
                     ],
                     "running_synthesis",
                 )
                 .await
                 .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
             if !transitioned {
-                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+                return Err(TerminalError::new(
+                    "Prerequisites not met or another phase is running",
+                )
+                .into());
             }
             Ok(())
         })
@@ -121,8 +126,7 @@ pub async fn run_synthesis_from_deps(
     // Finders don't read SIMILAR_TO edges; only StoryWeaver does (runs after).
     info!("Starting parallel synthesis (similarity edges, response mapping, tension linker, response finder, gathering finder, investigation)...");
 
-    let run_response_mapping = budget
-        .has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10);
+    let run_response_mapping = budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10);
     let run_tension_linker = budget.has_budget(
         OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
     );
@@ -246,7 +250,9 @@ pub async fn run_synthesis_from_deps(
         },
     );
 
-    let _ = (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result);
+    let _ = (
+        sim_result, rm_result, tl_result, rf_result, gf_result, inv_result,
+    );
 
     info!("Parallel synthesis complete");
 

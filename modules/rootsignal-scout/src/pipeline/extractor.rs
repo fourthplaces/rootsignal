@@ -165,6 +165,9 @@ pub struct ExtractionResult {
     pub rejected: Vec<RejectedSignal>,
     /// Schedule nodes paired with the signal node UUID they belong to.
     pub schedules: Vec<(Uuid, ScheduleNode)>,
+    /// Author actor display names paired with the signal node UUID.
+    /// Used for actor creation on owned sources (social accounts).
+    pub author_actors: Vec<(Uuid, String)>,
 }
 
 // --- SignalExtractor trait ---
@@ -233,10 +236,7 @@ impl Extractor {
 
         let response: ExtractionResponse = self
             .claude
-            .extract(
-                &self.system_prompt,
-                &user_prompt,
-            )
+            .extract(&self.system_prompt, &user_prompt)
             .await?;
 
         Ok(Self::convert_signals(response, source_url))
@@ -253,10 +253,7 @@ impl Extractor {
     /// - RRULE validation
     /// - Tag slugification
     /// - source_url fallback (signal-level → page-level)
-    pub fn convert_signals(
-        response: ExtractionResponse,
-        source_url: &str,
-    ) -> ExtractionResult {
+    pub fn convert_signals(response: ExtractionResponse, source_url: &str) -> ExtractionResult {
         let implied_queries: Vec<String> = response
             .signals
             .iter()
@@ -269,6 +266,7 @@ impl Extractor {
         let mut signal_tags: Vec<(Uuid, Vec<String>)> = Vec::new();
         let mut rejected: Vec<RejectedSignal> = Vec::new();
         let mut schedules: Vec<(Uuid, ScheduleNode)> = Vec::new();
+        let mut author_actors: Vec<(Uuid, String)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -348,7 +346,7 @@ impl Extractor {
                 title: signal.title.clone(),
                 summary: signal.summary.clone(),
                 sensitivity,
-                confidence: 0.0,      // Will be computed by QualityScorer
+                confidence: 0.0, // Will be computed by QualityScorer
 
                 corroboration_count: 0,
                 about_location: location,
@@ -475,14 +473,16 @@ impl Extractor {
             }
 
             // Build ScheduleNode for gathering/aid signals with schedule data
-            if signal.rrule.is_some() || signal.schedule_text.is_some() || !signal.explicit_dates.is_empty() {
+            if signal.rrule.is_some()
+                || signal.schedule_text.is_some()
+                || !signal.explicit_dates.is_empty()
+            {
                 let is_schedule_type = matches!(signal.signal_type.as_str(), "gathering" | "aid");
                 if is_schedule_type {
                     // Validate RRULE at write time — discard if invalid, keep schedule_text
                     let validated_rrule = signal.rrule.as_ref().and_then(|rule| {
                         // Build a minimal RRuleSet string for parsing validation
-                        let dtstart_str = signal.starts_at.as_deref()
-                            .unwrap_or("20260101T000000Z");
+                        let dtstart_str = signal.starts_at.as_deref().unwrap_or("20260101T000000Z");
                         let rrule_str = format!("DTSTART:{dtstart_str}\nRRULE:{rule}");
                         match rrule_str.parse::<rrule::RRuleSet>() {
                             Ok(_) => Some(rule.clone()),
@@ -498,26 +498,37 @@ impl Extractor {
                         }
                     });
 
-                    let rdates: Vec<chrono::DateTime<Utc>> = signal.explicit_dates.iter()
+                    let rdates: Vec<chrono::DateTime<Utc>> = signal
+                        .explicit_dates
+                        .iter()
                         .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc))
                         .collect();
 
-                    let exdates: Vec<chrono::DateTime<Utc>> = signal.exception_dates.iter()
+                    let exdates: Vec<chrono::DateTime<Utc>> = signal
+                        .exception_dates
+                        .iter()
                         .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc))
                         .collect();
 
-                    let dtstart = signal.starts_at.as_deref()
+                    let dtstart = signal
+                        .starts_at
+                        .as_deref()
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc));
 
-                    let dtend = signal.ends_at.as_deref()
+                    let dtend = signal
+                        .ends_at
+                        .as_deref()
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc));
 
                     // Only create a ScheduleNode if we have something useful
-                    if validated_rrule.is_some() || !rdates.is_empty() || signal.schedule_text.is_some() {
+                    if validated_rrule.is_some()
+                        || !rdates.is_empty()
+                        || signal.schedule_text.is_some()
+                    {
                         let schedule = ScheduleNode {
                             id: Uuid::new_v4(),
                             rrule: validated_rrule,
@@ -531,6 +542,14 @@ impl Extractor {
                         };
                         schedules.push((node_id, schedule));
                     }
+                }
+            }
+
+            // Collect author_actor display name for actor creation on owned sources
+            if let Some(ref name) = signal.author_actor {
+                let name = name.trim();
+                if !name.is_empty() {
+                    author_actors.push((node_id, name.to_string()));
                 }
             }
 
@@ -550,6 +569,7 @@ impl Extractor {
             signal_tags,
             rejected,
             schedules,
+            author_actors,
         }
     }
 }
@@ -1004,7 +1024,10 @@ mod tests {
             nodes: vec![],
             implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
     }

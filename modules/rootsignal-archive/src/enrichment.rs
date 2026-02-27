@@ -88,14 +88,16 @@ impl WorkflowDispatcher for RestateDispatcher {
             .collect();
 
         let body = serde_json::json!({ "files": files });
-        let url = format!(
-            "{}/EnrichmentWorkflow/{key}/run/send",
-            self.ingress_url
+        let url = format!("{}/EnrichmentWorkflow/{key}/run/send", self.ingress_url);
+
+        tracing::info!(
+            url = url.as_str(),
+            file_count = files.len(),
+            "Dispatching enrichment via Restate"
         );
 
-        tracing::info!(url = url.as_str(), file_count = files.len(), "Dispatching enrichment via Restate");
-
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -105,7 +107,11 @@ impl WorkflowDispatcher for RestateDispatcher {
         if !resp.status().is_success() {
             let status = resp.status();
             let error_text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Restate enrichment dispatch failed ({}): {}", status, error_text);
+            anyhow::bail!(
+                "Restate enrichment dispatch failed ({}): {}",
+                status,
+                error_text
+            );
         }
 
         Ok(())

@@ -17,10 +17,7 @@ const MIN_PENALTY: f64 = 0.1;
 /// 1. Query Postgres for open issues → (target_id, count) pairs
 /// 2. Query Neo4j for signal → EXTRACTED_FROM → Source using those target_ids
 /// 3. Aggregate issue counts per source and apply penalties
-pub async fn apply_source_penalties(
-    client: &GraphClient,
-    pool: &PgPool,
-) -> Result<PenaltyStats> {
+pub async fn apply_source_penalties(client: &GraphClient, pool: &PgPool) -> Result<PenaltyStats> {
     let mut stats = PenaltyStats::default();
 
     // Step 1: Get open issue counts per target_id from Postgres
@@ -39,7 +36,8 @@ pub async fn apply_source_penalties(
 
     // Step 2: For each target_id, find the source via Neo4j graph traversal
     // Aggregate issue counts per source canonical_key
-    let mut source_issues: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut source_issues: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
 
     for (target_id, issue_count) in &rows {
         let q = neo4rs::query(
@@ -83,10 +81,7 @@ pub async fn apply_source_penalties(
 /// 1. Query Neo4j for penalized sources + their signal IDs
 /// 2. Batch-check Postgres for open issues against those signal IDs
 /// 3. Reset any source whose signals have zero open issues
-pub async fn reset_resolved_penalties(
-    client: &GraphClient,
-    pool: &PgPool,
-) -> Result<u64> {
+pub async fn reset_resolved_penalties(client: &GraphClient, pool: &PgPool) -> Result<u64> {
     // Step 1: Find penalized sources and their signal IDs from Neo4j
     let q = neo4rs::query(
         "MATCH (s:Source)

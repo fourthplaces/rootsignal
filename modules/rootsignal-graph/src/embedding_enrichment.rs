@@ -125,7 +125,11 @@ async fn enrich_label(
     }
 
     if total_enriched > 0 {
-        info!(label, enriched = total_enriched, "Embedding enrichment for {label}");
+        info!(
+            label,
+            enriched = total_enriched,
+            "Embedding enrichment for {label}"
+        );
     }
     Ok(total_enriched)
 }

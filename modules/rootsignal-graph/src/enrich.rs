@@ -49,11 +49,12 @@ pub async fn enrich(
 
     // 3. Cause heat: read embeddings + diversity, compute heats → SET cause_heat
     //    (depends on diversity being written first)
-    stats.cause_heat_updated =
-        crate::cause_heat::compute_cause_heat(client, threshold, min_lat, max_lat, min_lng, max_lng)
-            .await
-            .map(|_| 0u32) // cause_heat doesn't return a count yet
-            .unwrap_or(0);
+    stats.cause_heat_updated = crate::cause_heat::compute_cause_heat(
+        client, threshold, min_lat, max_lat, min_lng, max_lng,
+    )
+    .await
+    .map(|_| 0u32) // cause_heat doesn't return a count yet
+    .unwrap_or(0);
 
     info!(?stats, "Enrichment complete");
     Ok(stats)
@@ -141,8 +142,9 @@ async fn compute_diversity(
                     if url.is_empty() {
                         return None;
                     }
-                    let channel: String =
-                        ev.get::<String>("channel").unwrap_or_else(|_| "press".to_string());
+                    let channel: String = ev
+                        .get::<String>("channel")
+                        .unwrap_or_else(|_| "press".to_string());
                     Some((url, channel))
                 })
                 .collect();
@@ -267,10 +269,10 @@ mod tests {
     #[test]
     fn channel_diversity_only_counts_channels_with_external_entities() {
         let evidence = vec![
-            ev("https://example.com/a", "press"),     // same entity, press
-            ev("https://other.org/b", "press"),        // external, press
-            ev("https://example.com/c", "social"),     // same entity, social — not counted
-            ev("https://third.net/d", "government"),   // external, government
+            ev("https://example.com/a", "press"),    // same entity, press
+            ev("https://other.org/b", "press"),      // external, press
+            ev("https://example.com/c", "social"),   // same entity, social — not counted
+            ev("https://third.net/d", "government"), // external, government
         ];
         let m = compute_diversity_metrics("https://example.com/article", &evidence, &[]);
         // channels with external: press (other.org), government (third.net) → 2

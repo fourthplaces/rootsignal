@@ -49,13 +49,20 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
-                    &["synthesis_complete", "situation_weaver_complete", "complete"],
+                    &[
+                        "synthesis_complete",
+                        "situation_weaver_complete",
+                        "complete",
+                    ],
                     "running_situation_weaver",
                 )
                 .await
                 .map_err(|e| TerminalError::new(format!("Status check failed: {e}")))?;
             if !transitioned {
-                return Err(TerminalError::new("Prerequisites not met or another phase is running").into());
+                return Err(TerminalError::new(
+                    "Prerequisites not met or another phase is running",
+                )
+                .into());
             }
             Ok(())
         })
@@ -78,12 +85,20 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                let _ = super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle").await;
+                let _ =
+                    super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle")
+                        .await;
                 return Err(e.into());
             }
         };
 
-        super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "situation_weaver_complete").await?;
+        super::journaled_write_task_phase_status(
+            &ctx,
+            &self.deps,
+            &task_id,
+            "situation_weaver_complete",
+        )
+        .await?;
 
         ctx.set("status", "Situation weaving complete".to_string());
         info!("SituationWeaverWorkflow complete");
@@ -121,8 +136,7 @@ pub async fn run_situation_weaving_from_deps(
         Arc::clone(&embedder),
         scope.clone(),
     );
-    let has_situation_budget = budget
-        .has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
+    let has_situation_budget = budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
     let weaver_stats = match situation_weaver.run(&run_id, has_situation_budget).await {
         Ok(sit_stats) => {
             info!("{sit_stats}");
@@ -141,7 +155,11 @@ pub async fn run_situation_weaving_from_deps(
         Ok(situations) => {
             let hot: Vec<_> = situations
                 .iter()
-                .filter(|s| s.temperature >= 0.6 && s.sensitivity != "SENSITIVE" && s.sensitivity != "RESTRICTED")
+                .filter(|s| {
+                    s.temperature >= 0.6
+                        && s.sensitivity != "SENSITIVE"
+                        && s.sensitivity != "RESTRICTED"
+                })
                 .collect();
             if !hot.is_empty() {
                 info!(count = hot.len(), "Hot situations boosting source cadence");
@@ -163,7 +181,11 @@ pub async fn run_situation_weaving_from_deps(
                 info!(
                     count = fuzzy.len(),
                     "Fuzzy situations identified for investigation: {}",
-                    fuzzy.iter().map(|s| s.headline.as_str()).collect::<Vec<_>>().join(", ")
+                    fuzzy
+                        .iter()
+                        .map(|s| s.headline.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
         }

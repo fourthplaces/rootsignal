@@ -14,8 +14,6 @@ use rootsignal_graph::GraphClient;
 use super::triage::Suspect;
 use crate::types::{IssueType, Severity, ValidationIssue};
 
-
-
 // =============================================================================
 // Types for LLM structured output
 // =============================================================================
@@ -253,10 +251,7 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
         } else {
             signal.triage_flags.join("; ")
         };
-        let situation = signal
-            .situation_headline
-            .as_deref()
-            .unwrap_or("none");
+        let situation = signal.situation_headline.as_deref().unwrap_or("none");
 
         parts.push(format!(
             "<signal id=\"{id}\">\ntype: {signal_type}\ntitle: {title}\nsummary: {summary}\nconfidence: {confidence:.2}\nsource_url: {source_url}\nlat: {lat}, lng: {lng}\ncreated_by: {created_by}\nscout_run_id: {scout_run_id}\nsituation_headline: {situation}\ntriage_flags: {triage}\n</signal>",
@@ -273,7 +268,11 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
         ));
     }
 
-    format!("Review these {} signals:\n\n{}", signals.len(), parts.join("\n\n"))
+    format!(
+        "Review these {} signals:\n\n{}",
+        signals.len(),
+        parts.join("\n\n")
+    )
 }
 
 // =============================================================================
@@ -342,10 +341,7 @@ pub async fn review_batch(
                 passed += 1;
             }
             "reject" => {
-                let reason = verdict
-                    .rejection_reason
-                    .as_deref()
-                    .unwrap_or("unspecified");
+                let reason = verdict.rejection_reason.as_deref().unwrap_or("unspecified");
                 mark_rejected(g, &verdict.signal_id, reason).await?;
                 rejected += 1;
                 let explanation = verdict
@@ -386,12 +382,7 @@ pub async fn review_batch(
     promote_ready_situations(g).await?;
 
     let reviewed = signals.len() as u64;
-    info!(
-        reviewed,
-        passed,
-        rejected,
-        "Batch review complete"
-    );
+    info!(reviewed, passed, rejected, "Batch review complete");
 
     Ok(BatchReviewOutput {
         signals_reviewed: reviewed,
@@ -420,14 +411,24 @@ async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), n
     Ok(())
 }
 
-async fn mark_rejected(graph: &neo4rs::Graph, signal_id: &str, reason: &str) -> Result<(), neo4rs::Error> {
+async fn mark_rejected(
+    graph: &neo4rs::Graph,
+    signal_id: &str,
+    reason: &str,
+) -> Result<(), neo4rs::Error> {
     let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' \
              SET n.review_status = 'rejected', n.rejection_reason = $reason"
         );
-        graph.run(query(&cypher).param("id", signal_id).param("reason", reason)).await?;
+        graph
+            .run(
+                query(&cypher)
+                    .param("id", signal_id)
+                    .param("reason", reason),
+            )
+            .await?;
     }
     Ok(())
 }

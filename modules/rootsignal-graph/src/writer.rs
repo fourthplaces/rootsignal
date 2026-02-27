@@ -6,10 +6,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, DemandSignal, DiscoveryMethod,
-    NodeType, PinNode, ScheduleNode, SourceNode, SourceRole,
-    ScoutTask, ScoutTaskSource, ScoutTaskStatus,
-    NEED_EXPIRE_DAYS, GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    ActorNode, DemandSignal, DiscoveryMethod, NodeType, PinNode, ScheduleNode, ScoutTask,
+    ScoutTaskSource, ScoutTaskStatus, SourceNode, SourceRole, FRESHNESS_MAX_DAYS,
+    GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -69,9 +68,11 @@ impl GraphWriter {
             NodeType::Notice,
             NodeType::Tension,
         ] {
-            if let Some(m) =
-                self.vector_search(*nt, embedding, threshold, min_lat, max_lat, min_lng, max_lng)
-                    .await?
+            if let Some(m) = self
+                .vector_search(
+                    *nt, embedding, threshold, min_lat, max_lat, min_lng, max_lng,
+                )
+                .await?
             {
                 if best.as_ref().map_or(true, |b| m.similarity > b.similarity) {
                     best = Some(m);
@@ -315,7 +316,9 @@ impl GraphWriter {
             let mut channels_with_external: HashSet<String> = HashSet::new();
             for ev in &evidence {
                 let url: String = ev.get::<String>("url").unwrap_or_default();
-                let channel: String = ev.get::<String>("channel").unwrap_or_else(|_| "press".to_string());
+                let channel: String = ev
+                    .get::<String>("channel")
+                    .unwrap_or_else(|_| "press".to_string());
                 if url.is_empty() {
                     continue;
                 }
@@ -454,12 +457,15 @@ impl GraphWriter {
         // Clean up stale running status for this task (>5 min).
         self.client
             .graph
-            .run(query(
-                "MATCH (t:ScoutTask {id: $id}) \
+            .run(
+                query(
+                    "MATCH (t:ScoutTask {id: $id}) \
                  WHERE t.phase_status STARTS WITH 'running_' \
                    AND t.phase_status_updated_at < datetime() - duration('PT5M') \
-                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
-            ).param("id", task_id))
+                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()",
+                )
+                .param("id", task_id),
+            )
             .await?;
 
         // Atomic conditional SET: only transitions if current phase_status is allowed
@@ -491,10 +497,14 @@ impl GraphWriter {
     ) -> Result<(), neo4rs::Error> {
         self.client
             .graph
-            .run(query(
-                "MATCH (t:ScoutTask {id: $id})
-                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()"
-            ).param("id", task_id).param("status", status))
+            .run(
+                query(
+                    "MATCH (t:ScoutTask {id: $id})
+                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()",
+                )
+                .param("id", task_id)
+                .param("status", status),
+            )
             .await?;
         Ok(())
     }
@@ -517,7 +527,7 @@ impl GraphWriter {
              WHERE t.phase_status STARTS WITH 'running_'
                AND t.phase_status_updated_at < datetime() - duration('PT30M')
              SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()
-             RETURN count(t) AS cleaned"
+             RETURN count(t) AS cleaned",
         );
 
         let mut result = self.client.graph.execute(q).await?;
@@ -534,8 +544,9 @@ impl GraphWriter {
             "MATCH (t:ScoutTask {context: $context})
              WHERE t.phase_status STARTS WITH 'running_'
                AND t.phase_status_updated_at >= datetime() - duration('PT30M')
-             RETURN count(t) > 0 AS running"
-        ).param("context", context);
+             RETURN count(t) > 0 AS running",
+        )
+        .param("context", context);
 
         let mut result = self.client.graph.execute(q).await?;
         if let Some(row) = result.next().await? {
@@ -1068,10 +1079,7 @@ impl GraphWriter {
 
     /// Deactivate sources that have had too many consecutive empty runs.
     /// Protects curated and human-submitted sources.
-    pub async fn deactivate_dead_sources(
-        &self,
-        max_empty_runs: u32,
-    ) -> Result<u32, neo4rs::Error> {
+    pub async fn deactivate_dead_sources(&self, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {active: true})
              WHERE s.consecutive_empty_runs >= $max
@@ -1472,7 +1480,10 @@ impl GraphWriter {
             }
         }
 
-        info!(count = results.len(), "Found actors with accounts in region");
+        info!(
+            count = results.len(),
+            "Found actors with accounts in region"
+        );
         Ok(results)
     }
 
@@ -1733,7 +1744,11 @@ impl GraphWriter {
                 canonical_key: s.get("canonical_key").unwrap_or_default(),
                 canonical_value: s.get("canonical_value").unwrap_or_default(),
                 url: s.get::<String>("url").ok().filter(|u| !u.is_empty()),
-                discovery_method: match s.get::<String>("discovery_method").unwrap_or_default().as_str() {
+                discovery_method: match s
+                    .get::<String>("discovery_method")
+                    .unwrap_or_default()
+                    .as_str()
+                {
                     "curated" => DiscoveryMethod::Curated,
                     "actor_account" => DiscoveryMethod::ActorAccount,
                     "social_graph_follow" => DiscoveryMethod::SocialGraphFollow,
@@ -1848,7 +1863,11 @@ impl GraphWriter {
                 dispatch_count: row.get::<i64>("dispatch_count").unwrap_or(0) as u32,
                 location_name: {
                     let name: String = row.get("location_name").unwrap_or_default();
-                    if name.is_empty() { None } else { Some(name) }
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name)
+                    }
                 },
                 sensitivity: row.get("sensitivity").unwrap_or_default(),
             });
@@ -1880,9 +1899,7 @@ impl GraphWriter {
     /// Queue signals from emerging/fuzzy situations for re-investigation by the tension linker.
     /// Uses a 7-day cooldown per situation to avoid repeated re-triggering.
     /// Returns the number of signals queued.
-    pub async fn trigger_situation_curiosity(
-        &self,
-    ) -> Result<u32, neo4rs::Error> {
+    pub async fn trigger_situation_curiosity(&self) -> Result<u32, neo4rs::Error> {
         // Find situations that are emerging or fuzzy, haven't been curiosity-triggered in 7 days
         let q = query(
             "MATCH (sig)-[:EVIDENCES]->(s:Situation)
@@ -1911,9 +1928,7 @@ impl GraphWriter {
     }
 
     /// Aggregate counts of each active signal type. Reveals systemic imbalances.
-    pub async fn get_signal_type_counts(
-        &self,
-    ) -> Result<SignalTypeCounts, neo4rs::Error> {
+    pub async fn get_signal_type_counts(&self) -> Result<SignalTypeCounts, neo4rs::Error> {
         let mut counts = SignalTypeCounts::default();
 
         for (label, field) in &[
@@ -3293,7 +3308,6 @@ impl GraphWriter {
         Ok(())
     }
 
-
     // ─── Resource Capability Matching ────────────────────────────────
 
     /// Find or create a Resource node, deduplicating on slug.
@@ -3640,10 +3654,7 @@ impl GraphWriter {
     /// Aggregate tags from a situation's constituent signals.
     /// Tags appearing on 2+ signals bubble up to the situation.
     /// Respects SUPPRESSED_TAG edges (admin-removed tags won't reappear).
-    pub async fn aggregate_situation_tags(
-        &self,
-        situation_id: Uuid,
-    ) -> Result<(), neo4rs::Error> {
+    pub async fn aggregate_situation_tags(&self, situation_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
 
         let q = query(
@@ -3659,7 +3670,6 @@ impl GraphWriter {
 
         self.client.graph.run(q).await
     }
-
 
     /// Remove a tag from a situation: delete TAGGED edge + create SUPPRESSED_TAG.
     /// This prevents auto-aggregation from re-adding the tag.
@@ -3720,13 +3730,11 @@ impl GraphWriter {
         self.client.graph.run(q2).await?;
 
         // Delete source tag
-        let q3 = query("MATCH (t:Tag {slug: $source}) DETACH DELETE t")
-            .param("source", source_slug);
+        let q3 =
+            query("MATCH (t:Tag {slug: $source}) DETACH DELETE t").param("source", source_slug);
 
         self.client.graph.run(q3).await
     }
-
-
 
     // ========== Supervisor / Validation Issues ==========
 
@@ -3753,7 +3761,11 @@ impl GraphWriter {
         let g = &self.client.graph;
 
         let rdates_str: Vec<String> = schedule.rdates.iter().map(|d| format_datetime(d)).collect();
-        let exdates_str: Vec<String> = schedule.exdates.iter().map(|d| format_datetime(d)).collect();
+        let exdates_str: Vec<String> = schedule
+            .exdates
+            .iter()
+            .map(|d| format_datetime(d))
+            .collect();
 
         let q = query(
             "CREATE (s:Schedule {
@@ -4205,7 +4217,9 @@ pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
     let source_str: String = row.get("source").unwrap_or_default();
     let status_str: String = row.get("status").unwrap_or_default();
 
-    let phase_status: String = row.get("phase_status").unwrap_or_else(|_| "idle".to_string());
+    let phase_status: String = row
+        .get("phase_status")
+        .unwrap_or_else(|_| "idle".to_string());
 
     ScoutTask {
         id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
@@ -4320,19 +4334,10 @@ impl GraphWriter {
         .param("signal_count", situation.signal_count as i64)
         .param("tension_count", situation.tension_count as i64)
         .param("dispatch_count", situation.dispatch_count as i64)
-        .param(
-            "first_seen",
-            situation.first_seen.to_rfc3339(),
-        )
-        .param(
-            "last_updated",
-            situation.last_updated.to_rfc3339(),
-        )
+        .param("first_seen", situation.first_seen.to_rfc3339())
+        .param("last_updated", situation.last_updated.to_rfc3339())
         .param("sensitivity", situation.sensitivity.as_str())
-        .param(
-            "category",
-            situation.category.as_deref().unwrap_or(""),
-        )
+        .param("category", situation.category.as_deref().unwrap_or(""))
         .param("narrative_embedding", narrative_embedding.to_vec())
         .param("causal_embedding", causal_embedding.to_vec());
 
@@ -4348,8 +4353,11 @@ impl GraphWriter {
     ) -> Result<Uuid, neo4rs::Error> {
         let g = &self.client.graph;
 
-        let signal_ids_json: Vec<String> =
-            dispatch.signal_ids.iter().map(|id| id.to_string()).collect();
+        let signal_ids_json: Vec<String> = dispatch
+            .signal_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
 
         let q = query(
             "MATCH (s:Situation {id: $situation_id})
@@ -4383,10 +4391,7 @@ impl GraphWriter {
                 .unwrap_or_default(),
         )
         .param("flagged_for_review", dispatch.flagged_for_review)
-        .param(
-            "flag_reason",
-            dispatch.flag_reason.as_deref().unwrap_or(""),
-        )
+        .param("flag_reason", dispatch.flag_reason.as_deref().unwrap_or(""))
         .param("fidelity_score", dispatch.fidelity_score.unwrap_or(-1.0));
 
         g.run(q).await?;
@@ -4444,10 +4449,7 @@ impl GraphWriter {
     }
 
     /// Verify that all signal UUIDs actually exist in the graph. Returns the set of missing IDs.
-    pub async fn verify_signal_ids(
-        &self,
-        signal_ids: &[Uuid],
-    ) -> Result<Vec<Uuid>, neo4rs::Error> {
+    pub async fn verify_signal_ids(&self, signal_ids: &[Uuid]) -> Result<Vec<Uuid>, neo4rs::Error> {
         let g = &self.client.graph;
         let mut missing = Vec::new();
 
@@ -4631,9 +4633,7 @@ impl GraphWriter {
             };
             let name: String = row.get("name").unwrap_or_default();
             let ts: String = row.get("ts").unwrap_or_default();
-            let parsed_ts = ts
-                .parse::<DateTime<Utc>>()
-                .unwrap_or_else(|_| Utc::now());
+            let parsed_ts = ts.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
             results.push((lat, lng, name, parsed_ts));
         }
 
@@ -4739,9 +4739,10 @@ impl GraphWriter {
             .iter()
             .filter_map(|c| {
                 let field = match c.field.as_str() {
-                    "title" | "summary" | "location_name" | "action_url"
-                    | "organizer" | "what_needed" | "category" | "sensitivity"
-                    | "severity" => Some(c.field.as_str()),
+                    "title" | "summary" | "location_name" | "action_url" | "organizer"
+                    | "what_needed" | "category" | "sensitivity" | "severity" => {
+                        Some(c.field.as_str())
+                    }
                     _ => None,
                 };
                 field.map(|f| format!("n.{f} = ${f}"))
@@ -4762,9 +4763,8 @@ impl GraphWriter {
 
             for c in corrections {
                 match c.field.as_str() {
-                    "title" | "summary" | "location_name" | "action_url"
-                    | "organizer" | "what_needed" | "category" | "sensitivity"
-                    | "severity" => {
+                    "title" | "summary" | "location_name" | "action_url" | "organizer"
+                    | "what_needed" | "category" | "sensitivity" | "severity" => {
                         q = q.param(c.field.as_str(), c.new_value.as_str());
                     }
                     _ => {}
@@ -4882,5 +4882,4 @@ mod tests {
         assert!(hub.respondents[0].match_strength > hub.respondents[1].match_strength);
         assert_eq!(hub.category.as_deref(), Some("housing"));
     }
-
 }

@@ -27,48 +27,58 @@ async fn linktree_page_discovers_outbound_links() {
     let query = "site:linktr.ee mutual aid Minneapolis";
 
     let fetcher = MockFetcher::new()
-        .on_search(query, search_results(query, &[
-            "https://linktr.ee/mplsmutualaid",
-            "https://linktr.ee/northsideaid",
-        ]))
-        .on_page(
-            "https://linktr.ee/mplsmutualaid",
-            {
-                let mut page = archived_page("https://linktr.ee/mplsmutualaid", "MPLS Mutual Aid");
-                page.links = vec![
-                    "https://instagram.com/mplsmutualaid".to_string(),
-                    "https://gofundme.com/f/help-families?utm_source=linktree".to_string(),
-                    "https://localorg.org/resources".to_string(),
-                    "https://fonts.googleapis.com/css2?family=Inter".to_string(), // .css → filtered
-                ];
-                page
-            },
+        .on_search(
+            query,
+            search_results(
+                query,
+                &[
+                    "https://linktr.ee/mplsmutualaid",
+                    "https://linktr.ee/northsideaid",
+                ],
+            ),
         )
-        .on_page(
-            "https://linktr.ee/northsideaid",
-            {
-                let mut page = archived_page("https://linktr.ee/northsideaid", "Northside Aid");
-                page.links = vec![
-                    "https://northsideaid.org/volunteer".to_string(),
-                ];
-                page
-            },
-        );
+        .on_page("https://linktr.ee/mplsmutualaid", {
+            let mut page = archived_page("https://linktr.ee/mplsmutualaid", "MPLS Mutual Aid");
+            page.links = vec![
+                "https://instagram.com/mplsmutualaid".to_string(),
+                "https://gofundme.com/f/help-families?utm_source=linktree".to_string(),
+                "https://localorg.org/resources".to_string(),
+                "https://fonts.googleapis.com/css2?family=Inter".to_string(), // .css → filtered
+            ];
+            page
+        })
+        .on_page("https://linktr.ee/northsideaid", {
+            let mut page = archived_page("https://linktr.ee/northsideaid", "Northside Aid");
+            page.links = vec!["https://northsideaid.org/volunteer".to_string()];
+            page
+        });
 
     // Linktree pages: no signals, just links
     let extractor = MockExtractor::new()
-        .on_url("https://linktr.ee/mplsmutualaid", ExtractionResult {
-            nodes: vec![],
-            implied_queries: vec![],
-            resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        })
-        .on_url("https://linktr.ee/northsideaid", ExtractionResult {
-            nodes: vec![],
-            implied_queries: vec![],
-            resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+        .on_url(
+            "https://linktr.ee/mplsmutualaid",
+            ExtractionResult {
+                nodes: vec![],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+                rejected: Vec::new(),
+                schedules: Vec::new(),
+                author_actors: Vec::new(),
+            },
+        )
+        .on_url(
+            "https://linktr.ee/northsideaid",
+            ExtractionResult {
+                nodes: vec![],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+                rejected: Vec::new(),
+                schedules: Vec::new(),
+                author_actors: Vec::new(),
+            },
+        );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -98,22 +108,31 @@ async fn linktree_page_discovers_outbound_links() {
     // Signal-gate only applies when nodes were extracted but produced 0 signals.
     // So all links from Linktree should still be collected.
     assert!(
-        collected_urls.iter().any(|u| u.contains("instagram.com/mplsmutualaid")),
+        collected_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/mplsmutualaid")),
         "Instagram should be collected"
     );
     assert!(
-        collected_urls.iter().any(|u| u.contains("localorg.org/resources")),
+        collected_urls
+            .iter()
+            .any(|u| u.contains("localorg.org/resources")),
         "Org site should be collected"
     );
     assert!(
-        collected_urls.iter().any(|u| u.contains("northsideaid.org/volunteer")),
+        collected_urls
+            .iter()
+            .any(|u| u.contains("northsideaid.org/volunteer")),
         "Northside org should be collected"
     );
 
     // GoFundMe collected with tracking stripped
     let gf = collected_urls.iter().find(|u| u.contains("gofundme.com"));
     assert!(gf.is_some(), "GoFundMe should be collected");
-    assert!(!gf.unwrap().contains("utm_source"), "Tracking params should be stripped");
+    assert!(
+        !gf.unwrap().contains("utm_source"),
+        "Tracking params should be stripped"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -126,25 +145,32 @@ async fn linktree_page_discovers_outbound_links() {
 async fn page_creates_signal_wires_actors_and_records_evidence() {
     let url = "https://localorg.org/resources";
 
-    let fetcher = MockFetcher::new()
-        .on_page(url, {
-            let mut page = archived_page(url, "Free legal clinic every Tuesday at Sabathani Center...");
-            page.links = vec![
-                "https://facebook.com/localorg".to_string(),
-                "https://sabathani.org/events".to_string(),
-            ];
-            page
-        });
+    let fetcher = MockFetcher::new().on_page(url, {
+        let mut page = archived_page(
+            url,
+            "Free legal clinic every Tuesday at Sabathani Center...",
+        );
+        page.links = vec![
+            "https://facebook.com/localorg".to_string(),
+            "https://sabathani.org/events".to_string(),
+        ];
+        page
+    });
 
     let node = tension_at("Free Legal Clinic at Sabathani", 44.9341, -93.2619);
 
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -171,8 +197,14 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
 
     // Web page is NOT an owned source — no actor nodes created.
     // Mentioned actors stay as metadata strings; author_actor ignored for non-owned sources.
-    assert!(!store.has_actor("Sabathani Community Center"), "web page source should not create author actor");
-    assert!(!store.has_actor("Volunteer Lawyers Network"), "mentioned actors should not create nodes");
+    assert!(
+        !store.has_actor("Sabathani Community Center"),
+        "web page source should not create author actor"
+    );
+    assert!(
+        !store.has_actor("Volunteer Lawyers Network"),
+        "mentioned actors should not create nodes"
+    );
 
     // Evidence trail
     assert_eq!(
@@ -183,8 +215,12 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
 
     // Outbound links collected for promotion
     let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
-    assert!(collected_urls.iter().any(|u| u.contains("facebook.com/localorg")));
-    assert!(collected_urls.iter().any(|u| u.contains("sabathani.org/events")));
+    assert!(collected_urls
+        .iter()
+        .any(|u| u.contains("facebook.com/localorg")));
+    assert!(collected_urls
+        .iter()
+        .any(|u| u.contains("sabathani.org/events")));
 }
 
 /// Signal in Dallas extracted from a page. No geo-filter — stored regardless.
@@ -192,16 +228,20 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
 async fn dallas_signal_is_stored_by_minneapolis_scout() {
     let url = "https://texasorg.org/events";
 
-    let fetcher = MockFetcher::new()
-        .on_page(url, archived_page(url, "Dallas community dinner..."));
+    let fetcher = MockFetcher::new().on_page(url, archived_page(url, "Dallas community dinner..."));
 
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![tension_at("Dallas Community Dinner", DALLAS.0, DALLAS.1)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -246,19 +286,25 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
 
     for url in &urls {
         fetcher = fetcher.on_page(url, archived_page(url, "Community garden cleanup..."));
-        extractor = extractor.on_url(url, ExtractionResult {
-            nodes: vec![tension_at("Community Garden Cleanup", 44.9489, -93.2654)],
-            implied_queries: vec![],
-            resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+        extractor = extractor.on_url(
+            url,
+            ExtractionResult {
+                nodes: vec![tension_at("Community Garden Cleanup", 44.9489, -93.2654)],
+                implied_queries: vec![],
+                resource_tags: Vec::new(),
+                signal_tags: Vec::new(),
+                rejected: Vec::new(),
+                schedules: Vec::new(),
+                author_actors: Vec::new(),
+            },
+        );
     }
 
     // All three signals get near-identical embeddings → vector dedup fires
-    let embedder = Arc::new(
-        FixedEmbedder::new(TEST_EMBEDDING_DIM)
-            .on_text("Community Garden Cleanup ", vec![0.5f32; TEST_EMBEDDING_DIM]),
-    );
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM).on_text(
+        "Community Garden Cleanup ",
+        vec![0.5f32; TEST_EMBEDDING_DIM],
+    ));
 
     let store = Arc::new(MockSignalStore::new());
 
@@ -308,8 +354,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     post2.permalink = Some("https://instagram.com/p/def456".to_string());
     post2.mentions = vec!["hennepincounty".to_string()];
 
-    let fetcher = MockFetcher::new()
-        .on_posts(ig_url, vec![post1, post2]);
+    let fetcher = MockFetcher::new().on_posts(ig_url, vec![post1, post2]);
 
     // Extractor returns a signal with no coordinates but a location_name matching
     // a geo-term. This lets it survive geo-filter via name match. Actor fallback
@@ -319,14 +364,20 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         meta.about_location_name = Some("Minneapolis, MN".to_string());
         meta.confidence = 0.7;
     }
+    let node_id = node.meta().unwrap().id;
 
-    let extractor = MockExtractor::new()
-        .on_url(ig_url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: vec![(node_id, "Northside Mutual Aid".to_string())],
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -365,7 +416,10 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     assert!(store.has_signal_titled("Food Distribution at MLK Park"));
 
     // Author actor wired
-    assert!(store.has_actor("Northside Mutual Aid"), "author actor created");
+    assert!(
+        store.has_actor("Northside Mutual Aid"),
+        "author actor created"
+    );
     assert!(
         store.actor_linked_to_signal("Northside Mutual Aid", "Food Distribution at MLK Park"),
         "author actor linked to signal"
@@ -374,11 +428,15 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     // @mentions collected for promotion
     let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
     assert!(
-        mention_urls.iter().any(|u| u.contains("instagram.com/mplsfoodshelf")),
+        mention_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/mplsfoodshelf")),
         "mplsfoodshelf mention should be promoted"
     );
     assert!(
-        mention_urls.iter().any(|u| u.contains("instagram.com/hennepincounty")),
+        mention_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/hennepincounty")),
         "hennepincounty mention should be promoted"
     );
 }
@@ -389,21 +447,25 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
 async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     let ig_url = "https://www.instagram.com/nycorg";
 
-    let fetcher = MockFetcher::new()
-        .on_posts(ig_url, vec![test_post("Thoughts on organizing...")]);
+    let fetcher = MockFetcher::new().on_posts(ig_url, vec![test_post("Thoughts on organizing...")]);
 
     let mut node = tension("Organizing Reflections");
     if let Some(meta) = node.meta_mut() {
         meta.confidence = 0.5;
     }
 
-    let extractor = MockExtractor::new()
-        .on_url(ig_url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -438,12 +500,22 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     // No geo-filter — signal stored with actor location as fallback
-    assert_eq!(store.signals_created(), 1, "signal should be stored regardless of location");
+    assert_eq!(
+        store.signals_created(),
+        1,
+        "signal should be stored regardless of location"
+    );
 
     // Location metadata: no backfill at write time (derived at query time via actor graph)
     let stored = store.signal_by_title("Organizing Reflections").unwrap();
-    assert!(stored.about_location.is_none(), "about_location not backfilled from actor at write time");
-    assert!(stored.from_location.is_none(), "from_location not set at write time");
+    assert!(
+        stored.about_location.is_none(),
+        "about_location not backfilled from actor at write time"
+    );
+    assert!(
+        stored.from_location.is_none(),
+        "from_location not set at write time"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -457,16 +529,20 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
 async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     let ig_url = "https://www.instagram.com/mplsorg";
 
-    let fetcher = MockFetcher::new()
-        .on_posts(ig_url, vec![test_post("Amazing event in Dallas!")]);
+    let fetcher = MockFetcher::new().on_posts(ig_url, vec![test_post("Amazing event in Dallas!")]);
 
-    let extractor = MockExtractor::new()
-        .on_url(ig_url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
             nodes: vec![tension_at("Dallas Fundraiser", DALLAS.0, DALLAS.1)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -504,11 +580,19 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     let stored = store.signal_by_title("Dallas Fundraiser").unwrap();
 
     // about_location = Dallas (from content, NOT overwritten by actor)
-    let about = stored.about_location.expect("about_location should be Dallas");
-    assert!((about.lat - DALLAS.0).abs() < 0.001, "about_location should be Dallas, not Minneapolis");
+    let about = stored
+        .about_location
+        .expect("about_location should be Dallas");
+    assert!(
+        (about.lat - DALLAS.0).abs() < 0.001,
+        "about_location should be Dallas, not Minneapolis"
+    );
 
     // from_location not set at write time (derived at query time via actor graph)
-    assert!(stored.from_location.is_none(), "from_location not set at write time");
+    assert!(
+        stored.from_location.is_none(),
+        "from_location not set at write time"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -538,15 +622,15 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
     let post2 = test_post("Reflections on community resilience and what it means to show up.");
     let post3 = test_post("Inspired by Chicago's urban farm network — amazing what they've built.");
 
-    let fetcher = MockFetcher::new()
-        .on_posts(ig_url, vec![post1, post2, post3]);
+    let fetcher = MockFetcher::new().on_posts(ig_url, vec![post1, post2, post3]);
 
     // LLM extracts three signals with different location states:
     // 1. Powderhorn Park — explicit local coords
     // 2. Community resilience — no location at all (geo-neutral content)
     // 3. Chicago farm — explicit Chicago coords
-    let extractor = MockExtractor::new()
-        .on_url(ig_url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
             nodes: vec![
                 tension_at("Powderhorn Spring Planting", 44.9489, -93.2583),
                 tension("Community Resilience Reflections"),
@@ -554,8 +638,12 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
             ],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -590,36 +678,56 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     // All three signals stored — no geo-filter rejection
-    assert_eq!(store.signals_created(), 3, "all three posts should produce signals");
+    assert_eq!(
+        store.signals_created(),
+        3,
+        "all three posts should produce signals"
+    );
 
     // --- Signal 1: Powderhorn (explicit local location) ---
-    let powderhorn = store.signal_by_title("Powderhorn Spring Planting")
+    let powderhorn = store
+        .signal_by_title("Powderhorn Spring Planting")
         .expect("powderhorn signal should exist");
-    let about = powderhorn.about_location.expect("about_location should be Powderhorn coords");
+    let about = powderhorn
+        .about_location
+        .expect("about_location should be Powderhorn coords");
     assert!(
         (about.lat - 44.9489).abs() < 0.001,
         "about_location should be Powderhorn, not actor fallback"
     );
-    assert!(powderhorn.from_location.is_none(), "from_location not set at write time");
+    assert!(
+        powderhorn.from_location.is_none(),
+        "from_location not set at write time"
+    );
 
     // --- Signal 2: Geo-neutral (no content location, no backfill) ---
-    let reflections = store.signal_by_title("Community Resilience Reflections")
+    let reflections = store
+        .signal_by_title("Community Resilience Reflections")
         .expect("reflections signal should exist");
     assert!(
         reflections.about_location.is_none(),
         "geo-neutral post: about_location not backfilled from actor at write time"
     );
-    assert!(reflections.from_location.is_none(), "from_location not set at write time");
+    assert!(
+        reflections.from_location.is_none(),
+        "from_location not set at write time"
+    );
 
     // --- Signal 3: Chicago (explicit out-of-town location) ---
-    let chicago = store.signal_by_title("Chicago Urban Farm Network")
+    let chicago = store
+        .signal_by_title("Chicago Urban Farm Network")
         .expect("chicago signal should exist");
-    let about = chicago.about_location.expect("about_location should be Chicago coords");
+    let about = chicago
+        .about_location
+        .expect("about_location should be Chicago coords");
     assert!(
         (about.lat - 41.8781).abs() < 0.001,
         "about_location should be Chicago, NOT overwritten by Minneapolis actor"
     );
-    assert!(chicago.from_location.is_none(), "from_location not set at write time");
+    assert!(
+        chicago.from_location.is_none(),
+        "from_location not set at write time"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -649,13 +757,18 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
 
     // Extractor returns a signal — but if extraction is skipped (hash match),
     // it won't be called and no signals appear.
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![tension_at("SHOULD NOT APPEAR", 44.975, -93.270)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-        });
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
 
     // run_web sanitizes the URL before checking — pre-populate with sanitized URL
     let clean_url = crate::infra::util::sanitize_url(url);
@@ -679,12 +792,18 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // No new signals (extraction skipped)
-    assert_eq!(store.signals_created(), 0, "unchanged content should skip extraction");
+    assert_eq!(
+        store.signals_created(),
+        0,
+        "unchanged content should skip extraction"
+    );
     assert!(!store.has_signal_titled("SHOULD NOT APPEAR"));
 
     // But outbound links still collected
     assert!(
-        ctx.collected_links.iter().any(|l| l.url.contains("newpartner.org")),
+        ctx.collected_links
+            .iter()
+            .any(|l| l.url.contains("newpartner.org")),
         "links should still be collected even when content unchanged"
     );
 }
@@ -710,7 +829,10 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                 page
             })
             .on_page("https://localorg.org/resources", {
-                let mut page = archived_page("https://localorg.org/resources", "Free groceries every Saturday at MLK Park...");
+                let mut page = archived_page(
+                    "https://localorg.org/resources",
+                    "Free groceries every Saturday at MLK Park...",
+                );
                 page.links = vec!["https://facebook.com/localorg".to_string()];
                 page
             }),
@@ -721,19 +843,31 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     let extractor = Arc::new(
         MockExtractor::new()
             // Linktree: no signals, just links
-            .on_url("https://linktr.ee/mplsmutualaid", ExtractionResult {
-                nodes: vec![],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-            })
+            .on_url(
+                "https://linktr.ee/mplsmutualaid",
+                ExtractionResult {
+                    nodes: vec![],
+                    implied_queries: vec![],
+                    resource_tags: Vec::new(),
+                    signal_tags: Vec::new(),
+                    rejected: Vec::new(),
+                    schedules: Vec::new(),
+                    author_actors: Vec::new(),
+                },
+            )
             // Org site: one signal
-            .on_url("https://localorg.org/resources", ExtractionResult {
-                nodes: vec![org_node],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
-            }),
+            .on_url(
+                "https://localorg.org/resources",
+                ExtractionResult {
+                    nodes: vec![org_node],
+                    implied_queries: vec![],
+                    resource_tags: Vec::new(),
+                    signal_tags: Vec::new(),
+                    rejected: Vec::new(),
+                    schedules: Vec::new(),
+                    author_actors: Vec::new(),
+                },
+            ),
     );
 
     let store = Arc::new(MockSignalStore::new());
@@ -758,20 +892,21 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
 
     // After Phase A: localorg.org discovered in collected_links
     assert!(
-        ctx.collected_links.iter().any(|l| l.url.contains("localorg.org")),
+        ctx.collected_links
+            .iter()
+            .any(|l| l.url.contains("localorg.org")),
         "org site should be in collected_links"
     );
     assert_eq!(store.signals_created(), 0, "no signals from Linktree");
 
     // Promote collected links → creates SourceNodes in store
-    let config = PromotionConfig { max_per_source: 10, max_per_run: 50 };
-    let promoted = link_promoter::promote_links(
-        &ctx.collected_links,
-        store.as_ref(),
-        &config,
-    )
-    .await
-    .unwrap();
+    let config = PromotionConfig {
+        max_per_source: 10,
+        max_per_run: 50,
+    };
+    let promoted = link_promoter::promote_links(&ctx.collected_links, store.as_ref(), &config)
+        .await
+        .unwrap();
     assert!(promoted >= 1, "at least 1 link promoted");
     assert!(store.has_source_url("https://localorg.org/resources"));
 
@@ -800,7 +935,10 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
 
     // Phase B also collected facebook link for future promotion
     assert!(
-        ctx_b.collected_links.iter().any(|l| l.url.contains("facebook.com/localorg")),
+        ctx_b
+            .collected_links
+            .iter()
+            .any(|l| l.url.contains("facebook.com/localorg")),
         "facebook link should be collected in Phase B"
     );
 }
@@ -816,8 +954,10 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
 async fn gathering_with_rrule_creates_linked_schedule_node() {
     let url = "https://communitycenter.org/yoga";
 
-    let fetcher = MockFetcher::new()
-        .on_page(url, archived_page(url, "Weekly yoga class every Tuesday 6-8pm..."));
+    let fetcher = MockFetcher::new().on_page(
+        url,
+        archived_page(url, "Weekly yoga class every Tuesday 6-8pm..."),
+    );
 
     let node = gathering_at("Weekly Yoga Class", 44.95, -93.27);
     let node_id = node.meta().unwrap().id;
@@ -834,15 +974,18 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
         extracted_at: Utc::now(),
     };
 
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
             signal_tags: Vec::new(),
             rejected: Vec::new(),
             schedules: vec![(node_id, schedule)],
-        });
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -877,20 +1020,25 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
 async fn gathering_without_schedule_creates_no_schedule_node() {
     let url = "https://localpark.org/cleanup";
 
-    let fetcher = MockFetcher::new()
-        .on_page(url, archived_page(url, "Park cleanup this Saturday morning..."));
+    let fetcher = MockFetcher::new().on_page(
+        url,
+        archived_page(url, "Park cleanup this Saturday morning..."),
+    );
 
     let node = gathering_at("Park Cleanup Day", 44.95, -93.27);
 
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
             signal_tags: Vec::new(),
             rejected: Vec::new(),
             schedules: Vec::new(),
-        });
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
@@ -921,8 +1069,10 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
 async fn schedule_text_only_fallback_creates_schedule_node() {
     let url = "https://mosque.org/open-house";
 
-    let fetcher = MockFetcher::new()
-        .on_page(url, archived_page(url, "Open house first Saturday of every month..."));
+    let fetcher = MockFetcher::new().on_page(
+        url,
+        archived_page(url, "Open house first Saturday of every month..."),
+    );
 
     let node = gathering_at("Monthly Open House", 44.96, -93.25);
     let node_id = node.meta().unwrap().id;
@@ -939,15 +1089,18 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
         extracted_at: Utc::now(),
     };
 
-    let extractor = MockExtractor::new()
-        .on_url(url, ExtractionResult {
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
             signal_tags: Vec::new(),
             rejected: Vec::new(),
             schedules: vec![(node_id, schedule)],
-        });
+            author_actors: Vec::new(),
+        },
+    );
 
     let store = Arc::new(MockSignalStore::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));

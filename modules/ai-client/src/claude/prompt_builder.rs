@@ -191,8 +191,7 @@ impl<T: DeserializeOwned + JsonSchema + Send + 'static> OutputBuilder<T>
 
         let client = self.builder.agent.client();
 
-        let mut request = ChatRequest::new(&self.builder.agent.model)
-            .temperature(0.0); // Structured extraction must be deterministic
+        let mut request = ChatRequest::new(&self.builder.agent.model).temperature(0.0); // Structured extraction must be deterministic
 
         if let Some(ref preamble) = self.builder.preamble {
             request = request.system(preamble);

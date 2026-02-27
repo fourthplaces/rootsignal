@@ -18,8 +18,7 @@ pub async fn run_auto_fixes(
     stats.orphaned_edges_deleted = fix_orphaned_acted_in_edges(client).await?;
     stats.actors_merged = fix_duplicate_actors(client).await?;
     stats.empty_signals_deleted = fix_empty_signals(client).await?;
-    stats.fake_coords_nulled =
-        fix_fake_center_coords(client, center_lat, center_lng).await?;
+    stats.fake_coords_nulled = fix_fake_center_coords(client, center_lat, center_lng).await?;
 
     info!("{stats}");
     Ok(stats)

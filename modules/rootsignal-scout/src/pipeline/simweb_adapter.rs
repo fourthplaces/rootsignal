@@ -54,10 +54,7 @@ impl ContentFetcher for SimulatedWeb {
                 id: Uuid::new_v4(),
                 source_id: Uuid::new_v4(),
                 fetched_at: Utc::now(),
-                content_hash: format!(
-                    "{:x}",
-                    rootsignal_common::content_hash(&p.content)
-                ),
+                content_hash: format!("{:x}", rootsignal_common::content_hash(&p.content)),
                 text: Some(p.content),
                 author: p.author,
                 location: None,
@@ -93,10 +90,7 @@ impl ContentFetcher for SimulatedWeb {
                 id: Uuid::new_v4(),
                 source_id: Uuid::new_v4(),
                 fetched_at: Utc::now(),
-                content_hash: format!(
-                    "{:x}",
-                    rootsignal_common::content_hash(&p.content)
-                ),
+                content_hash: format!("{:x}", rootsignal_common::content_hash(&p.content)),
                 text: Some(p.content),
                 author: p.author,
                 location: None,
@@ -112,11 +106,7 @@ impl ContentFetcher for SimulatedWeb {
             .collect())
     }
 
-    async fn site_search(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Result<ArchivedSearchResults> {
+    async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults> {
         let sim_results = self.search(query, max_results).await?;
         Ok(to_archived_search(query, &sim_results))
     }
@@ -124,7 +114,10 @@ impl ContentFetcher for SimulatedWeb {
 
 // --- Helpers ---
 
-fn to_archived_search(query: &str, sim_results: &[simweb::SimSearchResult]) -> ArchivedSearchResults {
+fn to_archived_search(
+    query: &str,
+    sim_results: &[simweb::SimSearchResult],
+) -> ArchivedSearchResults {
     let combined = sim_results
         .iter()
         .map(|r| format!("{}{}{}", r.url, r.title, r.snippet))

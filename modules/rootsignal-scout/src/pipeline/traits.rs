@@ -49,11 +49,7 @@ pub trait ContentFetcher: Send + Sync {
 
     /// Site-scoped web search. Absorbs the
     /// `archive.source(query).search(query).max_results(n)` two-step.
-    async fn site_search(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Result<ArchivedSearchResults>;
+    async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults>;
 }
 
 #[async_trait]
@@ -84,11 +80,7 @@ impl ContentFetcher for rootsignal_archive::Archive {
         Ok(handle.search_topics(topics, limit).await?)
     }
 
-    async fn site_search(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Result<ArchivedSearchResults> {
+    async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults> {
         let handle = self.source(query).await?;
         Ok(handle.search(query).max_results(max_results).await?)
     }
@@ -123,12 +115,8 @@ pub trait SignalStore: Send + Sync {
     async fn create_evidence(&self, evidence: &CitationNode, signal_id: Uuid) -> Result<()>;
 
     /// Refresh a signal's last_confirmed_active timestamp (same-source re-encounter).
-    async fn refresh_signal(
-        &self,
-        id: Uuid,
-        node_type: NodeType,
-        now: DateTime<Utc>,
-    ) -> Result<()>;
+    async fn refresh_signal(&self, id: Uuid, node_type: NodeType, now: DateTime<Utc>)
+        -> Result<()>;
 
     /// Refresh all signals from a given source URL. Returns count refreshed.
     async fn refresh_url_signals(&self, url: &str, now: DateTime<Utc>) -> Result<u64>;
@@ -177,12 +165,8 @@ pub trait SignalStore: Send + Sync {
     async fn upsert_actor(&self, actor: &ActorNode) -> Result<()>;
 
     /// Link an actor to a signal with a role (e.g. "mentioned", "authored").
-    async fn link_actor_to_signal(
-        &self,
-        actor_id: Uuid,
-        signal_id: Uuid,
-        role: &str,
-    ) -> Result<()>;
+    async fn link_actor_to_signal(&self, actor_id: Uuid, signal_id: Uuid, role: &str)
+        -> Result<()>;
 
     /// Link an actor to its source (HAS_SOURCE edge).
     async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()>;

@@ -124,7 +124,7 @@ impl SupervisorState {
             "MATCH (t:ScoutTask) \
              WHERE t.phase_status STARTS WITH 'running_' \
                AND t.phase_status_updated_at >= datetime() - duration('PT30M') \
-             RETURN count(t) > 0 AS running"
+             RETURN count(t) > 0 AS running",
         );
         let mut stream = self.client.inner().execute(q).await?;
         if let Some(row) = stream.next().await? {

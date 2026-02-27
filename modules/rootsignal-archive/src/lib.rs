@@ -3,22 +3,22 @@ pub mod enrichment;
 pub mod error;
 pub mod fetch_request;
 pub mod links;
-pub mod router;
-pub mod text_extract;
-pub mod workflows;
-mod store;
 mod readability;
+pub mod router;
 mod services;
 mod source_handle;
+mod store;
+pub mod text_extract;
+pub mod workflows;
 
 pub use archive::{Archive, ArchiveConfig, PageBackend};
 pub use enrichment::{EnrichmentJob, MockDispatcher, RestateDispatcher, WorkflowDispatcher};
 pub use error::{ArchiveError, Result};
 pub use fetch_request::FetchRequest;
 pub use links::extract_links_by_pattern;
-pub use router::Platform;
 pub use rootsignal_common::types::{ArchiveItem, Channels};
+pub use router::Platform;
 pub use source_handle::{
-    SourceHandle, PostsRequest, StoriesRequest, ShortVideoRequest, VideoRequest,
-    PageRequest, FeedRequest, SearchRequest, TopicSearchRequest, CrawlRequest,
+    CrawlRequest, FeedRequest, PageRequest, PostsRequest, SearchRequest, ShortVideoRequest,
+    SourceHandle, StoriesRequest, TopicSearchRequest, VideoRequest,
 };

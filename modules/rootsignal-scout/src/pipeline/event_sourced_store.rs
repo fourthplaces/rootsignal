@@ -16,10 +16,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::events::{Event, Location, Schedule, WorldEvent, SystemDecision, TelemetryEvent};
-use rootsignal_common::types::{
-    ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode,
+use rootsignal_common::events::{
+    Event, Location, Schedule, SystemDecision, TelemetryEvent, WorldEvent,
 };
+use rootsignal_common::types::{ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
     EntityMappingOwned, FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
     NOTICE_EXPIRE_DAYS,
@@ -31,8 +31,8 @@ use super::traits::SignalStore;
 
 /// SignalStore that appends events then projects them to the graph.
 pub struct EventSourcedStore {
-    writer: GraphWriter,         // kept for READ methods + resource/edge pass-through
-    projector: GraphProjector,   // sole write path for signal lifecycle
+    writer: GraphWriter,       // kept for READ methods + resource/edge pass-through
+    projector: GraphProjector, // sole write path for signal lifecycle
     event_store: EventStore,
     run_id: String,
 }
@@ -180,12 +180,10 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
 /// Returns SensitivityClassified (always) + ImpliedQueriesExtracted (if non-empty).
 fn node_system_events(node: &Node) -> Vec<SystemDecision> {
     let meta = node.meta().expect("discovery nodes always have meta");
-    let mut events = vec![
-        SystemDecision::SensitivityClassified {
-            entity_id: meta.id,
-            level: meta.sensitivity,
-        },
-    ];
+    let mut events = vec![SystemDecision::SensitivityClassified {
+        entity_id: meta.id,
+        level: meta.sensitivity,
+    }];
     if !meta.implied_queries.is_empty() {
         events.push(SystemDecision::ImpliedQueriesExtracted {
             entity_id: meta.id,
@@ -260,8 +258,8 @@ impl EventSourcedStore {
 
     /// Append an event and project it to the graph.
     async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
-        let mut append = AppendEvent::new(event.event_type(), event.to_payload())
-            .with_run_id(&self.run_id);
+        let mut append =
+            AppendEvent::new(event.event_type(), event.to_payload()).with_run_id(&self.run_id);
         if let Some(a) = actor {
             append = append.with_actor(a);
         }
@@ -428,7 +426,15 @@ impl SignalStore for EventSourcedStore {
     ) -> Result<Option<DuplicateMatch>> {
         Ok(self
             .writer
-            .find_duplicate(embedding, primary_type, threshold, min_lat, max_lat, min_lng, max_lng)
+            .find_duplicate(
+                embedding,
+                primary_type,
+                threshold,
+                min_lat,
+                max_lat,
+                min_lng,
+                max_lng,
+            )
             .await?)
     }
 
@@ -470,7 +476,7 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
-        let event = Event::World(WorldEvent::ActorLinkedToSource {
+        let event = Event::System(SystemDecision::ActorLinkedToSource {
             actor_id,
             source_id,
         });
@@ -609,7 +615,7 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn upsert_source(&self, source: &SourceNode) -> Result<()> {
-        let event = Event::World(WorldEvent::SourceRegistered {
+        let event = Event::System(SystemDecision::SourceRegistered {
             source_id: source.id,
             canonical_key: source.canonical_key.clone(),
             canonical_value: source.canonical_value.clone(),
@@ -628,7 +634,10 @@ impl SignalStore for EventSourcedStore {
         signals_produced: u32,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Ok(self.writer.record_source_scrape(canonical_key, signals_produced, now).await?)
+        Ok(self
+            .writer
+            .record_source_scrape(canonical_key, signals_produced, now)
+            .await?)
     }
 
     async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {
@@ -771,7 +780,7 @@ impl SignalStore for EventSourcedStore {
                  MERGE (t:Tag {slug: $slug})
                  ON CREATE SET t.name = $name
                  MERGE (s)-[r:TAGGED]->(t)
-                 SET r.weight = $weight"
+                 SET r.weight = $weight",
             )
             .param("signal_id", signal_id.to_string())
             .param("slug", slug.as_str())
@@ -803,7 +812,11 @@ impl SignalStore for EventSourcedStore {
             actor_id,
             location_lat: lat,
             location_lng: lng,
-            location_name: if name.is_empty() { None } else { Some(name.to_string()) },
+            location_name: if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            },
         });
         self.append_and_project(&event, None).await
     }
@@ -820,7 +833,7 @@ impl SignalStore for EventSourcedStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootsignal_common::events::{Event, WorldEvent, SystemDecision};
+    use rootsignal_common::events::{Event, SystemDecision, WorldEvent};
     use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::*;
 
@@ -869,7 +882,14 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::GatheringDiscovered { id: eid, ref title, ref organizer, ref action_url, ref schedule, .. } => {
+            WorldEvent::GatheringDiscovered {
+                id: eid,
+                ref title,
+                ref organizer,
+                ref action_url,
+                ref schedule,
+                ..
+            } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Community Dinner");
                 assert_eq!(*organizer, Some("Lake Street Council".to_string()));
@@ -882,7 +902,10 @@ mod tests {
         // Verify no sensitivity field in serialized payload
         let event = Event::World(world);
         let payload = event.to_payload();
-        assert!(payload.get("sensitivity").is_none(), "World event should not contain sensitivity");
+        assert!(
+            payload.get("sensitivity").is_none(),
+            "World event should not contain sensitivity"
+        );
     }
 
     #[test]
@@ -933,7 +956,10 @@ mod tests {
 
         let events = node_system_events(&node);
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], SystemDecision::SensitivityClassified { .. }));
+        assert!(matches!(
+            &events[0],
+            SystemDecision::SensitivityClassified { .. }
+        ));
     }
 
     #[test]
@@ -949,7 +975,13 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::AidDiscovered { id: eid, title, availability, is_ongoing, .. } => {
+            WorldEvent::AidDiscovered {
+                id: eid,
+                title,
+                availability,
+                is_ongoing,
+                ..
+            } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Food Shelf");
                 assert_eq!(availability, Some("Mon-Fri".to_string()));
@@ -973,7 +1005,14 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::NeedDiscovered { id: eid, title, urgency, what_needed, goal, .. } => {
+            WorldEvent::NeedDiscovered {
+                id: eid,
+                title,
+                urgency,
+                what_needed,
+                goal,
+                ..
+            } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Volunteers Needed");
                 assert_eq!(urgency, Some(Urgency::High));
@@ -1000,7 +1039,14 @@ mod tests {
 
         let event = evidence_to_event(&evidence, signal_id);
         match event {
-            Event::World(WorldEvent::CitationRecorded { citation_id, entity_id, url, content_hash, snippet, .. }) => {
+            Event::World(WorldEvent::CitationRecorded {
+                citation_id,
+                entity_id,
+                url,
+                content_hash,
+                snippet,
+                ..
+            }) => {
                 assert_eq!(citation_id, evidence.id);
                 assert_eq!(entity_id, signal_id);
                 assert_eq!(url, "https://source.com/article");
@@ -1063,7 +1109,11 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::GatheringDiscovered { action_url, schedule, .. } => {
+            WorldEvent::GatheringDiscovered {
+                action_url,
+                schedule,
+                ..
+            } => {
                 assert!(action_url.is_none());
                 assert!(schedule.is_none());
             }

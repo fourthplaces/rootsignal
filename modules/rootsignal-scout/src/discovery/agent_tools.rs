@@ -70,9 +70,15 @@ impl Tool for WebSearchTool {
     }
 
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
-        let handle = self.archive.source(&args.query).await
+        let handle = self
+            .archive
+            .source(&args.query)
+            .await
             .map_err(|e| ToolError(format!("Search failed: {e}")))?;
-        let search = handle.search(&args.query).max_results(10).await
+        let search = handle
+            .search(&args.query)
+            .max_results(10)
+            .await
             .map_err(|e| ToolError(format!("Search failed: {e}")))?;
 
         let results: Vec<WebSearchResultItem> = search
@@ -139,7 +145,10 @@ impl Tool for ReadPageTool {
     }
 
     async fn call(&self, args: Self::Args) -> std::result::Result<Self::Output, Self::Error> {
-        let page = self.archive.page(&args.url).await
+        let page = self
+            .archive
+            .page(&args.url)
+            .await
             .map_err(|e| ToolError(format!("Scrape failed: {e}")))?;
         let content = page.markdown;
 

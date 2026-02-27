@@ -92,7 +92,10 @@ fn community_garden_gathering_scores_high_confidence() {
         "Complete gathering with exact geo should score ~1.0, got {}",
         q.confidence
     );
-    assert!(q.actionable, "Gathering with URL + date should be actionable");
+    assert!(
+        q.actionable,
+        "Gathering with URL + date should be actionable"
+    );
     assert!(q.has_location);
     assert!(q.has_action_url);
     assert!(q.has_timing);
@@ -132,7 +135,10 @@ fn food_shelf_aid_scores_high_confidence() {
         "Food shelf with location + URL + ongoing should score high: {}",
         q.confidence
     );
-    assert!(q.actionable, "Aid with action_url + is_ongoing should be actionable");
+    assert!(
+        q.actionable,
+        "Aid with action_url + is_ongoing should be actionable"
+    );
     assert!(q.has_location);
     assert!(q.has_action_url);
 }
@@ -159,7 +165,10 @@ fn food_shelf_aid_without_url_not_actionable() {
     });
 
     let q = quality::score(&node);
-    assert!(!q.actionable, "Aid without action_url should not be actionable");
+    assert!(
+        !q.actionable,
+        "Aid without action_url should not be actionable"
+    );
 }
 
 // ===========================================================================
@@ -197,7 +206,10 @@ fn ice_enforcement_tension_moderate_confidence() {
         "Tension with neighborhood geo: expected ~0.85, got {}",
         q.confidence
     );
-    assert!(!q.actionable, "Tension signals are never actionable (no action_url concept)");
+    assert!(
+        !q.actionable,
+        "Tension signals are never actionable (no action_url concept)"
+    );
 }
 
 /// Emergency community meeting from the tension fixture should be a
@@ -233,7 +245,10 @@ fn emergency_meeting_gathering_is_actionable() {
         q.confidence
     );
     // Not actionable: has timing but no action_url
-    assert!(!q.actionable, "Gathering without distinct action_url is not actionable");
+    assert!(
+        !q.actionable,
+        "Gathering without distinct action_url is not actionable"
+    );
 }
 
 /// Legal aid from the tension fixture — an Aid signal with location.
@@ -293,10 +308,7 @@ fn notice_always_actionable_even_empty() {
     });
 
     let q = quality::score(&node);
-    assert!(
-        q.actionable,
-        "Notice should always be actionable by design"
-    );
+    assert!(q.actionable, "Notice should always be actionable by design");
     // But confidence should be low: completeness 0/1, geo Low (0.3)
     // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
     assert!(
@@ -385,7 +397,10 @@ fn need_without_url_not_actionable() {
     });
 
     let q = quality::score(&node);
-    assert!(!q.actionable, "Need without action_url should not be actionable");
+    assert!(
+        !q.actionable,
+        "Need without action_url should not be actionable"
+    );
 }
 
 /// Aid with is_ongoing=false and no other timing → completeness 2/3 at best.
@@ -424,8 +439,14 @@ fn one_time_aid_distribution_scores_lower_than_ongoing() {
         q_ongoing.confidence,
         q_one_time.confidence
     );
-    assert!(q_ongoing.actionable, "Ongoing aid with URL should be actionable");
-    assert!(!q_one_time.actionable, "One-time aid (is_ongoing=false) with URL should NOT be actionable");
+    assert!(
+        q_ongoing.actionable,
+        "Ongoing aid with URL should be actionable"
+    );
+    assert!(
+        !q_one_time.actionable,
+        "One-time aid (is_ongoing=false) with URL should NOT be actionable"
+    );
 }
 
 /// Quality scorer treats backfilled Approximate coords as Low accuracy,

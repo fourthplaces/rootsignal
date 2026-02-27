@@ -9,7 +9,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ScoutScope, CitationNode};
+use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::pipeline::traits::SignalStore;
@@ -145,12 +145,7 @@ impl<'a> Investigator<'a> {
 
         let targets = match self
             .writer
-            .find_investigation_targets(
-                self.min_lat,
-                self.max_lat,
-                self.min_lng,
-                self.max_lng,
-            )
+            .find_investigation_targets(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
             .await
         {
             Ok(t) => t,
@@ -242,10 +237,8 @@ impl<'a> Investigator<'a> {
             target.node_type, target.title, target.summary, target.source_url, self.region,
         );
 
-        let queries: InvestigationQueries = self
-            .claude
-            .extract(&system_prompt, &user_prompt)
-            .await?;
+        let queries: InvestigationQueries =
+            self.claude.extract(&system_prompt, &user_prompt).await?;
 
         let queries: Vec<_> = queries
             .queries
@@ -267,8 +260,16 @@ impl<'a> Investigator<'a> {
             stats.search_queries_used += 1;
 
             match async {
-                let handle = self.archive.source(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                let search = handle.search(query).max_results(15).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                let handle = self
+                    .archive
+                    .source(query)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let search = handle
+                    .search(query)
+                    .max_results(15)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok::<_, anyhow::Error>(search.results)
             }
             .await

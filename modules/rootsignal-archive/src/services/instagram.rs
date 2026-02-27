@@ -43,7 +43,10 @@ impl InstagramService {
     ) -> Result<Vec<FetchedPost>> {
         info!(identifier, limit, "instagram: fetching posts");
 
-        let raw = self.client.scrape_instagram_posts(identifier, limit).await?;
+        let raw = self
+            .client
+            .scrape_instagram_posts(identifier, limit)
+            .await?;
 
         let posts = raw
             .into_iter()
@@ -184,8 +187,7 @@ pub(crate) fn sanitize_topics_to_hashtags(topics: &[&str]) -> Vec<String> {
                         let mut chars = w.chars();
                         match chars.next() {
                             Some(first) => {
-                                first.to_uppercase().to_string()
-                                    + &chars.as_str().to_lowercase()
+                                first.to_uppercase().to_string() + &chars.as_str().to_lowercase()
                             }
                             None => String::new(),
                         }

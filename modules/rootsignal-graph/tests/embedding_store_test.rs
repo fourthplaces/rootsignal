@@ -71,7 +71,9 @@ fn store(pool: PgPool) -> EmbeddingStore {
 
 #[tokio::test]
 async fn cache_miss_computes_stores_and_returns() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let s = store(pool.clone());
 
     let embedding = s.get("hello world").await.unwrap();
@@ -87,7 +89,9 @@ async fn cache_miss_computes_stores_and_returns() {
 
 #[tokio::test]
 async fn cache_hit_returns_stored_embedding() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let s = store(pool);
 
     let first = s.get("hello world").await.unwrap();
@@ -98,7 +102,9 @@ async fn cache_hit_returns_stored_embedding() {
 
 #[tokio::test]
 async fn different_text_produces_different_embedding() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let s = store(pool);
 
     let a = s.get("hello").await.unwrap();
@@ -109,7 +115,9 @@ async fn different_text_produces_different_embedding() {
 
 #[tokio::test]
 async fn model_version_change_causes_cache_miss() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
 
     let s_v1 = EmbeddingStore::new(pool.clone(), Arc::new(MockEmbedder), "v1".to_string());
     let s_v2 = EmbeddingStore::new(pool.clone(), Arc::new(MockEmbedder), "v2".to_string());
@@ -129,7 +137,9 @@ async fn model_version_change_causes_cache_miss() {
 
 #[tokio::test]
 async fn warm_batch_computes_and_stores() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let s = store(pool.clone());
 
     let computed = s.warm(&["alpha", "beta", "gamma"]).await.unwrap();
@@ -145,7 +155,9 @@ async fn warm_batch_computes_and_stores() {
 
 #[tokio::test]
 async fn warm_skips_already_cached_texts() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let s = store(pool);
 
     // Pre-cache one

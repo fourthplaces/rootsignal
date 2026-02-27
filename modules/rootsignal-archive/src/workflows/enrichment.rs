@@ -40,10 +40,7 @@ impl EnrichmentWorkflow for EnrichmentWorkflowImpl {
         req: EnrichmentRequest,
     ) -> Result<EnrichmentResult, HandlerError> {
         let total = req.files.len();
-        ctx.set(
-            "status",
-            format!("Enriching {total} files..."),
-        );
+        ctx.set("status", format!("Enriching {total} files..."));
 
         let mut enriched = 0u32;
         let mut failed = 0u32;
@@ -52,10 +49,7 @@ impl EnrichmentWorkflow for EnrichmentWorkflowImpl {
             let deps = self.deps.clone();
             let file_id = file_req.file_id;
 
-            match ctx
-                .run(|| enrich_single_file(deps, file_req))
-                .await
-            {
+            match ctx.run(|| enrich_single_file(deps, file_req)).await {
                 Ok(()) => {
                     enriched += 1;
                     info!(%file_id, "enrichment: file complete");
@@ -69,10 +63,9 @@ impl EnrichmentWorkflow for EnrichmentWorkflowImpl {
                     let _ = ctx
                         .run(|| async move {
                             let store = crate::store::Store::new(deps.pg_pool.clone());
-                            store
-                                .update_file_text(fid, "", None)
-                                .await
-                                .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
+                            store.update_file_text(fid, "", None).await.map_err(
+                                |e| -> HandlerError { TerminalError::new(e.to_string()).into() },
+                            )?;
                             Ok(())
                         })
                         .await;
@@ -111,27 +104,35 @@ async fn enrich_single_file(
 ) -> Result<(), HandlerError> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&file_req.media_bytes_b64)
-        .map_err(|e| -> HandlerError { TerminalError::new(format!("base64 decode failed: {e}")).into() })?;
+        .map_err(|e| -> HandlerError {
+            TerminalError::new(format!("base64 decode failed: {e}")).into()
+        })?;
 
     let text = if file_req.mime_type.starts_with("image/") {
         let claude = ai_client::Claude::new(&deps.anthropic_api_key, "claude-sonnet-4-20250514");
         claude
             .describe_image(&bytes, &file_req.mime_type, OCR_PROMPT)
             .await
-            .map_err(|e| -> HandlerError { TerminalError::new(format!("Claude vision failed: {e}")).into() })?
+            .map_err(|e| -> HandlerError {
+                TerminalError::new(format!("Claude vision failed: {e}")).into()
+            })?
     } else {
         let openai = ai_client::OpenAi::new(&deps.openai_api_key, "whisper-1");
         openai
             .transcribe(bytes, &file_req.mime_type)
             .await
-            .map_err(|e| -> HandlerError { TerminalError::new(format!("Whisper failed: {e}")).into() })?
+            .map_err(|e| -> HandlerError {
+                TerminalError::new(format!("Whisper failed: {e}")).into()
+            })?
     };
 
     let store = crate::store::Store::new(deps.pg_pool.clone());
     store
         .update_file_text(file_req.file_id, &text, None)
         .await
-        .map_err(|e| -> HandlerError { TerminalError::new(format!("DB update failed: {e}")).into() })?;
+        .map_err(|e| -> HandlerError {
+            TerminalError::new(format!("DB update failed: {e}")).into()
+        })?;
 
     Ok(())
 }

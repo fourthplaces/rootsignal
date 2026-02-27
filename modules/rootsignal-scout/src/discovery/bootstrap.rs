@@ -5,11 +5,12 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{canonical_value, PinNode, ScoutScope, DiscoveryMethod, SourceNode, SourceRole};
+use rootsignal_common::{
+    canonical_value, DiscoveryMethod, PinNode, ScoutScope, SourceNode, SourceRole,
+};
 use rootsignal_graph::GraphWriter;
 
 use rootsignal_archive::Archive;
-
 
 /// Handles cold-start bootstrapping for a brand-new region.
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
@@ -321,15 +322,16 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
                     .await
                     .is_ok();
                     if reachable {
-                        let mut source = make_url(
-                            &feed_url,
-                            SourceRole::Mixed,
-                        );
+                        let mut source = make_url(&feed_url, SourceRole::Mixed);
                         source.canonical_value = name.clone();
                         source.gap_context = Some(format!("Outlet: {name}"));
                         sources.push(source);
                     } else {
-                        warn!(outlet = name.as_str(), feed_url = feed_url.as_str(), "RSS feed unreachable, skipping");
+                        warn!(
+                            outlet = name.as_str(),
+                            feed_url = feed_url.as_str(),
+                            "RSS feed unreachable, skipping"
+                        );
                     }
                 }
             }
@@ -408,22 +410,36 @@ Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
             .trim_end_matches("```")
             .trim();
 
-        let outlets: Vec<NewsOutlet> = serde_json::from_str(json_str)
-            .unwrap_or_else(|e| {
-                warn!(error = %e, "Failed to parse news outlet JSON");
-                Vec::new()
-            });
+        let outlets: Vec<NewsOutlet> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to parse news outlet JSON");
+            Vec::new()
+        });
 
         let mut results = Vec::new();
 
-        for outlet in outlets.into_iter().filter(|o| !o.name.is_empty() && !o.url.is_empty()).take(8) {
-            match self.discover_feed_for_outlet(&outlet.name, &outlet.url).await {
+        for outlet in outlets
+            .into_iter()
+            .filter(|o| !o.name.is_empty() && !o.url.is_empty())
+            .take(8)
+        {
+            match self
+                .discover_feed_for_outlet(&outlet.name, &outlet.url)
+                .await
+            {
                 Some(feed_url) => {
-                    info!(outlet = outlet.name.as_str(), feed_url = feed_url.as_str(), "Discovered RSS feed");
+                    info!(
+                        outlet = outlet.name.as_str(),
+                        feed_url = feed_url.as_str(),
+                        "Discovered RSS feed"
+                    );
                     results.push((outlet.name, feed_url));
                 }
                 None => {
-                    warn!(outlet = outlet.name.as_str(), url = outlet.url.as_str(), "No RSS feed found");
+                    warn!(
+                        outlet = outlet.name.as_str(),
+                        url = outlet.url.as_str(),
+                        "No RSS feed found"
+                    );
                 }
             }
         }
@@ -462,10 +478,9 @@ Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
 
 /// Extract RSS/Atom feed URLs from HTML `<link rel="alternate">` tags.
 fn extract_feed_links(html: &str, base_url: &str) -> Vec<String> {
-    let link_re = regex::Regex::new(
-        r#"<link[^>]+type\s*=\s*["']application/(rss\+xml|atom\+xml)["'][^>]*>"#,
-    )
-    .expect("Invalid RSS link regex");
+    let link_re =
+        regex::Regex::new(r#"<link[^>]+type\s*=\s*["']application/(rss\+xml|atom\+xml)["'][^>]*>"#)
+            .expect("Invalid RSS link regex");
     let href_re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("Invalid href regex");
 
     let mut feeds = Vec::new();
@@ -478,7 +493,12 @@ fn extract_feed_links(html: &str, base_url: &str) -> Vec<String> {
                     href_str.to_string()
                 } else if href_str.starts_with('/') {
                     if let Ok(base) = url::Url::parse(base_url) {
-                        format!("{}://{}{}", base.scheme(), base.host_str().unwrap_or(""), href_str)
+                        format!(
+                            "{}://{}{}",
+                            base.scheme(),
+                            base.host_str().unwrap_or(""),
+                            href_str
+                        )
                     } else {
                         continue;
                     }
@@ -516,7 +536,10 @@ pub async fn tension_seed_queries(
 
     for (title, what_would_help) in &tensions {
         let help_text = what_would_help.as_deref().unwrap_or(title);
-        let query = format!("organizations helping with {} in {}", help_text, region_name);
+        let query = format!(
+            "organizations helping with {} in {}",
+            help_text, region_name
+        );
 
         let cv = query.clone();
         let ck = canonical_value(&cv);

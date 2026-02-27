@@ -4,10 +4,10 @@ use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, NeedNode, GatheringNode, CitationNode, GeoPoint, GeoPrecision, AidNode, Node,
-    NodeMeta, NodeType, NoticeNode, ScheduleNode, SensitivityLevel, Severity,
-    TensionNode, TensionResponse, Urgency, NEED_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED,
-    GATHERING_PAST_GRACE_HOURS, FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    fuzz_location, AidNode, CitationNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node,
+    NodeMeta, NodeType, NoticeNode, ScheduleNode, SensitivityLevel, Severity, TensionNode,
+    TensionResponse, Urgency, CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS,
+    GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
 
 use crate::GraphClient;
@@ -133,9 +133,15 @@ impl PublicGraphReader {
                     }
 
                     // Derive from_location at query time from authored actor's location
-                    if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
+                    if let (Ok(lat), Ok(lng)) =
+                        (row.get::<f64>("author_lat"), row.get::<f64>("author_lng"))
+                    {
                         if let Some(meta) = node.meta_mut() {
-                            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+                            meta.from_location = Some(GeoPoint {
+                                lat,
+                                lng,
+                                precision: GeoPrecision::Approximate,
+                            });
                         }
                     }
 
@@ -387,10 +393,7 @@ impl PublicGraphReader {
     }
 
     /// Count EVIDENCE_OF edges on a Tension — a structural measure of how well-grounded it is.
-    pub async fn evidence_of_count(
-        &self,
-        tension_id: Uuid,
-    ) -> Result<u32, neo4rs::Error> {
+    pub async fn evidence_of_count(&self, tension_id: Uuid) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (sig)-[:EVIDENCE_OF]->(t:Tension {id: $id})
              RETURN count(sig) AS cnt",
@@ -547,8 +550,7 @@ impl PublicGraphReader {
                 let embedding_vec = embedding_vec.clone();
                 let graph = &self.client.graph;
                 async move {
-                    let cypher =
-                        "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                    let cypher = "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
                            AND node.review_status = 'live'
@@ -593,9 +595,7 @@ impl PublicGraphReader {
             scored.extend(result?);
         }
 
-        scored.sort_by(|(_, a), (_, b)| {
-            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit as usize);
         Ok(scored)
     }
@@ -810,14 +810,32 @@ impl PublicGraphReader {
                 // Parse rdates/exdates arrays of datetime strings
                 let rdates_raw: Vec<String> = s.get("rdates").unwrap_or_default();
                 let exdates_raw: Vec<String> = s.get("exdates").unwrap_or_default();
-                let rdates: Vec<DateTime<Utc>> = rdates_raw.iter().filter_map(|d| {
-                    DateTime::parse_from_rfc3339(d).ok().map(|dt| dt.with_timezone(&Utc))
-                        .or_else(|| NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|n| n.and_utc()))
-                }).collect();
-                let exdates: Vec<DateTime<Utc>> = exdates_raw.iter().filter_map(|d| {
-                    DateTime::parse_from_rfc3339(d).ok().map(|dt| dt.with_timezone(&Utc))
-                        .or_else(|| NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|n| n.and_utc()))
-                }).collect();
+                let rdates: Vec<DateTime<Utc>> = rdates_raw
+                    .iter()
+                    .filter_map(|d| {
+                        DateTime::parse_from_rfc3339(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f")
+                                    .ok()
+                                    .map(|n| n.and_utc())
+                            })
+                    })
+                    .collect();
+                let exdates: Vec<DateTime<Utc>> = exdates_raw
+                    .iter()
+                    .filter_map(|d| {
+                        DateTime::parse_from_rfc3339(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f")
+                                    .ok()
+                                    .map(|n| n.and_utc())
+                            })
+                    })
+                    .collect();
 
                 let schedule = ScheduleNode {
                     id: schedule_id,
@@ -826,8 +844,16 @@ impl PublicGraphReader {
                     exdates,
                     dtstart,
                     dtend,
-                    timezone: if timezone.is_empty() { None } else { Some(timezone) },
-                    schedule_text: if schedule_text.is_empty() { None } else { Some(schedule_text) },
+                    timezone: if timezone.is_empty() {
+                        None
+                    } else {
+                        Some(timezone)
+                    },
+                    schedule_text: if schedule_text.is_empty() {
+                        None
+                    } else {
+                        Some(schedule_text)
+                    },
                     extracted_at,
                 };
                 map.insert(id, schedule);
@@ -932,8 +958,8 @@ impl PublicGraphReader {
         let mut stream = self.client.graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             // Try to parse as Need or Gathering
-            let node =
-                row_to_node(&row, NodeType::Need).or_else(|| row_to_node(&row, NodeType::Gathering));
+            let node = row_to_node(&row, NodeType::Need)
+                .or_else(|| row_to_node(&row, NodeType::Gathering));
 
             let Some(node) = node else { continue };
             if !passes_display_filter(&node) {
@@ -1171,8 +1197,10 @@ impl PublicGraphReader {
         let mut total_open = 0i64;
         let mut total_resolved = 0i64;
         let mut total_dismissed = 0i64;
-        let mut count_by_type: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-        let mut count_by_severity: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut count_by_type: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        let mut count_by_severity: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
 
         while let Some(row) = stream.next().await? {
             total_open = row.get::<i64>("total_open").unwrap_or(0);
@@ -1227,12 +1255,24 @@ impl ValidationIssueRow {
             suggested_action: n.get("suggested_action").unwrap_or_default(),
             status: n.get("status").unwrap_or_default(),
             created_at: n.get::<String>("created_at").ok().and_then(|s| {
-                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
-                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|d| d.and_utc())
+                    })
             }),
             resolved_at: n.get::<String>("resolved_at").ok().and_then(|s| {
-                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
-                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|d| d.and_utc())
+                    })
             }),
         }
     }
@@ -1327,7 +1367,11 @@ pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
     // Derive from_location at query time from authored actor's location
     if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
         if let Some(meta) = node.meta_mut() {
-            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+            meta.from_location = Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            });
         }
     }
     Some(node)
@@ -1503,11 +1547,19 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         was_corrected: n.get("was_corrected").unwrap_or(false),
         corrections: {
             let c: String = n.get("corrections").unwrap_or_default();
-            if c.is_empty() { None } else { Some(c) }
+            if c.is_empty() {
+                None
+            } else {
+                Some(c)
+            }
         },
         rejection_reason: {
             let r: String = n.get("rejection_reason").unwrap_or_default();
-            if r.is_empty() { None } else { Some(r) }
+            if r.is_empty() {
+                None
+            } else {
+                Some(r)
+            }
         },
     };
 
@@ -2045,17 +2097,16 @@ impl PublicGraphReader {
 }
 
 /// Parse a Situation node from a neo4rs Row.
-fn row_to_situation(
-    row: &neo4rs::Row,
-    key: &str,
-) -> Option<rootsignal_common::SituationNode> {
+fn row_to_situation(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::SituationNode> {
     let n: neo4rs::Node = row.get(key).ok()?;
     let id_str: String = n.get("id").ok()?;
     let id = Uuid::parse_str(&id_str).ok()?;
     let headline: String = n.get("headline").unwrap_or_default();
     let lede: String = n.get("lede").unwrap_or_default();
     let arc_str: String = n.get("arc").unwrap_or_default();
-    let arc: rootsignal_common::SituationArc = arc_str.parse().unwrap_or(rootsignal_common::SituationArc::Emerging);
+    let arc: rootsignal_common::SituationArc = arc_str
+        .parse()
+        .unwrap_or(rootsignal_common::SituationArc::Emerging);
 
     let temperature: f64 = n.get("temperature").unwrap_or(0.0);
     let tension_heat: f64 = n.get("tension_heat").unwrap_or(0.0);
@@ -2065,11 +2116,16 @@ fn row_to_situation(
     let clarity_need: f64 = n.get("clarity_need").unwrap_or(0.0);
 
     let clarity_str: String = n.get("clarity").unwrap_or_default();
-    let clarity: rootsignal_common::Clarity = clarity_str.parse().unwrap_or(rootsignal_common::Clarity::Fuzzy);
+    let clarity: rootsignal_common::Clarity = clarity_str
+        .parse()
+        .unwrap_or(rootsignal_common::Clarity::Fuzzy);
 
     let centroid_lat: Option<f64> = n.get("centroid_lat").ok();
     let centroid_lng: Option<f64> = n.get("centroid_lng").ok();
-    let location_name: Option<String> = n.get("location_name").ok().filter(|s: &String| !s.is_empty());
+    let location_name: Option<String> = n
+        .get("location_name")
+        .ok()
+        .filter(|s: &String| !s.is_empty());
 
     let structured_state: String = n.get("structured_state").unwrap_or_default();
 
@@ -2115,10 +2171,7 @@ fn row_to_situation(
 }
 
 /// Parse a Dispatch node from a neo4rs Row.
-fn row_to_dispatch(
-    row: &neo4rs::Row,
-    key: &str,
-) -> Option<rootsignal_common::DispatchNode> {
+fn row_to_dispatch(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::DispatchNode> {
     let n: neo4rs::Node = row.get(key).ok()?;
     let id_str: String = n.get("id").ok()?;
     let id = Uuid::parse_str(&id_str).ok()?;
@@ -2134,10 +2187,12 @@ fn row_to_dispatch(
 
     let created_at = parse_datetime_prop(&n, "created_at");
     let dispatch_type_str: String = n.get("dispatch_type").unwrap_or_default();
-    let dispatch_type: rootsignal_common::DispatchType =
-        dispatch_type_str.parse().unwrap_or(rootsignal_common::DispatchType::Update);
+    let dispatch_type: rootsignal_common::DispatchType = dispatch_type_str
+        .parse()
+        .unwrap_or(rootsignal_common::DispatchType::Update);
 
-    let supersedes_str: Option<String> = n.get("supersedes").ok().filter(|s: &String| !s.is_empty());
+    let supersedes_str: Option<String> =
+        n.get("supersedes").ok().filter(|s: &String| !s.is_empty());
     let supersedes = supersedes_str.and_then(|s| Uuid::parse_str(&s).ok());
 
     let flagged_for_review: bool = n.get("flagged_for_review").unwrap_or(false);

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
-    Post, ScoutScope, SourceNode, ReviewStatus,
+    Post, ReviewStatus, ScoutScope, SourceNode,
 };
 use rootsignal_common::{canonical_value, EntityMappingOwned};
 use rootsignal_graph::{DuplicateMatch, ReapStats};
@@ -142,9 +142,7 @@ impl ContentFetcher for MockFetcher {
             .get(platform_url)
             .cloned()
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "MockFetcher: no topic search registered for {platform_url}"
-                )
+                anyhow::anyhow!("MockFetcher: no topic search registered for {platform_url}")
             })
     }
 
@@ -250,7 +248,11 @@ impl MockSignalStore {
 
     /// Pre-populate a blocked URL pattern.
     pub fn block_url(self, pattern: &str) -> Self {
-        self.inner.lock().unwrap().blocked.insert(pattern.to_string());
+        self.inner
+            .lock()
+            .unwrap()
+            .blocked
+            .insert(pattern.to_string());
         self
     }
 
@@ -291,9 +293,7 @@ impl MockSignalStore {
 
     pub fn has_actor(&self, name: &str) -> bool {
         let inner = self.inner.lock().unwrap();
-        inner
-            .actor_by_name
-            .contains_key(&name.to_lowercase())
+        inner.actor_by_name.contains_key(&name.to_lowercase())
     }
 
     pub fn actor_linked_to_signal(&self, actor_name: &str, signal_title: &str) -> bool {
@@ -330,7 +330,11 @@ impl MockSignalStore {
 
     pub fn evidence_count_for(&self, signal_id: Uuid) -> usize {
         let inner = self.inner.lock().unwrap();
-        inner.evidence.iter().filter(|(id, _)| *id == signal_id).count()
+        inner
+            .evidence
+            .iter()
+            .filter(|(id, _)| *id == signal_id)
+            .count()
     }
 
     pub fn evidence_count_for_title(&self, title: &str) -> usize {
@@ -399,12 +403,9 @@ impl MockSignalStore {
             Some(id) => *id,
             None => return false,
         };
-        inner
-            .resource_edges
-            .iter()
-            .any(|(sid, rid, role)| {
-                *sid == signal_id && *rid == resource_id && role == expected_role
-            })
+        inner.resource_edges.iter().any(|(sid, rid, role)| {
+            *sid == signal_id && *rid == resource_id && role == expected_role
+        })
     }
 
     /// Count resource edges for a signal.
@@ -540,7 +541,9 @@ impl SignalStore for MockSignalStore {
 
     async fn content_already_processed(&self, hash: &str, url: &str) -> Result<bool> {
         let inner = self.inner.lock().unwrap();
-        Ok(inner.processed_hashes.contains(&(hash.to_string(), url.to_string())))
+        Ok(inner
+            .processed_hashes
+            .contains(&(hash.to_string(), url.to_string())))
     }
 
     async fn create_node(
@@ -579,14 +582,8 @@ impl SignalStore for MockSignalStore {
             extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
         };
         inner.signals.insert(id, stored);
-        inner
-            .title_index
-            .insert((normalized, node_type), id);
-        inner
-            .url_titles
-            .entry(source_url)
-            .or_default()
-            .push(title);
+        inner.title_index.insert((normalized, node_type), id);
+        inner.url_titles.entry(source_url).or_default().push(title);
         Ok(id)
     }
 
@@ -631,11 +628,7 @@ impl SignalStore for MockSignalStore {
 
     async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
         let inner = self.inner.lock().unwrap();
-        Ok(inner
-            .url_titles
-            .get(url)
-            .cloned()
-            .unwrap_or_default())
+        Ok(inner.url_titles.get(url).cloned().unwrap_or_default())
     }
 
     async fn find_by_titles_and_types(
@@ -648,10 +641,7 @@ impl SignalStore for MockSignalStore {
             let normalized = title.trim().to_lowercase();
             if let Some(id) = inner.title_index.get(&(normalized.clone(), *nt)) {
                 if let Some(signal) = inner.signals.get(id) {
-                    results.insert(
-                        (normalized, *nt),
-                        (*id, signal.source_url.clone()),
-                    );
+                    results.insert((normalized, *nt), (*id, signal.source_url.clone()));
                 }
             }
         }
@@ -853,10 +843,7 @@ impl SignalStore for MockSignalStore {
             if link.actor_id == actor_id && link.role == "authored" {
                 if let Some(signal) = inner.signals.get(&link.signal_id) {
                     if let Some(ref loc) = signal.about_location {
-                        let name = signal
-                            .about_location_name
-                            .clone()
-                            .unwrap_or_default();
+                        let name = signal.about_location_name.clone().unwrap_or_default();
                         results.push((loc.lat, loc.lng, name, signal.extracted_at));
                     }
                 }
@@ -927,7 +914,9 @@ impl FixedEmbedder {
         let mut state = seed;
         for v in vec.iter_mut() {
             // Simple LCG PRNG
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             *v = ((state >> 33) as f32 / u32::MAX as f32) * 2.0 - 1.0;
         }
         // Normalize to unit vector
@@ -1007,6 +996,7 @@ impl SignalExtractor for MockExtractor {
                 signal_tags: result.signal_tags.clone(),
                 rejected: Vec::new(),
                 schedules: Vec::new(),
+                author_actors: Vec::new(),
             });
         }
         if let Some(ref default) = self.default_result {
@@ -1017,6 +1007,7 @@ impl SignalExtractor for MockExtractor {
                 signal_tags: default.signal_tags.clone(),
                 rejected: Vec::new(),
                 schedules: Vec::new(),
+                author_actors: Vec::new(),
             });
         }
         bail!("MockExtractor: no result registered for {source_url}")
@@ -1029,8 +1020,8 @@ impl SignalExtractor for MockExtractor {
 
 /// Create a Tension node with just a title (no location).
 pub fn tension(title: &str) -> Node {
-    use rootsignal_common::types::{Severity, TensionNode, NodeMeta};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{NodeMeta, Severity, TensionNode};
     Node::Tension(TensionNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
@@ -1065,8 +1056,8 @@ pub fn tension(title: &str) -> Node {
 
 /// Create a Tension node with a title and geographic coordinates.
 pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{Severity, TensionNode, NodeMeta, GeoPoint};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{GeoPoint, NodeMeta, Severity, TensionNode};
     use rootsignal_common::GeoPrecision;
     Node::Tension(TensionNode {
         meta: NodeMeta {
@@ -1077,7 +1068,11 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            about_location: Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            }),
             about_location_name: None,
             from_location: None,
             source_url: String::new(),
@@ -1102,8 +1097,8 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Need node with just a title (no location).
 pub fn need(title: &str) -> Node {
-    use rootsignal_common::types::{Urgency, NeedNode, NodeMeta};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{NeedNode, NodeMeta, Urgency};
     Node::Need(NeedNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
@@ -1139,8 +1134,8 @@ pub fn need(title: &str) -> Node {
 
 /// Create a Need node with a title and geographic coordinates.
 pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{Urgency, NeedNode, NodeMeta, GeoPoint};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{GeoPoint, NeedNode, NodeMeta, Urgency};
     use rootsignal_common::GeoPrecision;
     Node::Need(NeedNode {
         meta: NodeMeta {
@@ -1151,7 +1146,11 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            about_location: Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            }),
             about_location_name: None,
             from_location: None,
             source_url: String::new(),
@@ -1177,8 +1176,8 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Gathering node with just a title (no location).
 pub fn gathering(title: &str) -> Node {
-    use rootsignal_common::types::{GatheringNode, NodeMeta};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{GatheringNode, NodeMeta};
     Node::Gathering(GatheringNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
@@ -1215,8 +1214,8 @@ pub fn gathering(title: &str) -> Node {
 
 /// Create a Gathering node with a title and geographic coordinates.
 pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{GatheringNode, NodeMeta, GeoPoint};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{GatheringNode, GeoPoint, NodeMeta};
     use rootsignal_common::GeoPrecision;
     Node::Gathering(GatheringNode {
         meta: NodeMeta {
@@ -1227,7 +1226,11 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            about_location: Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            }),
             about_location_name: None,
             from_location: None,
             source_url: String::new(),
@@ -1254,8 +1257,8 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create an Aid node with just a title (no location).
 pub fn aid(title: &str) -> Node {
-    use rootsignal_common::types::{AidNode, NodeMeta};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{AidNode, NodeMeta};
     Node::Aid(AidNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
@@ -1290,8 +1293,8 @@ pub fn aid(title: &str) -> Node {
 
 /// Create an Aid node with a title and geographic coordinates.
 pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{AidNode, NodeMeta, GeoPoint};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{AidNode, GeoPoint, NodeMeta};
     use rootsignal_common::GeoPrecision;
     Node::Aid(AidNode {
         meta: NodeMeta {
@@ -1302,7 +1305,11 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            about_location: Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            }),
             about_location_name: None,
             from_location: None,
             source_url: String::new(),
@@ -1327,8 +1334,8 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Notice node with just a title (no location).
 pub fn notice(title: &str) -> Node {
-    use rootsignal_common::types::{NoticeNode, NodeMeta, Severity};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{NodeMeta, NoticeNode, Severity};
     Node::Notice(NoticeNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
@@ -1364,8 +1371,8 @@ pub fn notice(title: &str) -> Node {
 
 /// Create a Notice node with a title and geographic coordinates.
 pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{NoticeNode, NodeMeta, GeoPoint, Severity};
     use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::{GeoPoint, NodeMeta, NoticeNode, Severity};
     use rootsignal_common::GeoPrecision;
     Node::Notice(NoticeNode {
         meta: NodeMeta {
@@ -1376,7 +1383,11 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
+            about_location: Some(GeoPoint {
+                lat,
+                lng,
+                precision: GeoPrecision::Approximate,
+            }),
             about_location_name: None,
             from_location: None,
             source_url: String::new(),
@@ -1593,13 +1604,27 @@ mod tests {
         assert_eq!(store.corroborations_for("Bus Route Cut"), 0);
 
         store
-            .corroborate(id, NodeType::Tension, Utc::now(), &[], "https://other.com", 0.92)
+            .corroborate(
+                id,
+                NodeType::Tension,
+                Utc::now(),
+                &[],
+                "https://other.com",
+                0.92,
+            )
             .await
             .unwrap();
         assert_eq!(store.corroborations_for("Bus Route Cut"), 1);
 
         store
-            .corroborate(id, NodeType::Tension, Utc::now(), &[], "https://third.com", 0.88)
+            .corroborate(
+                id,
+                NodeType::Tension,
+                Utc::now(),
+                &[],
+                "https://third.com",
+                0.88,
+            )
             .await
             .unwrap();
         assert_eq!(store.corroborations_for("Bus Route Cut"), 2);

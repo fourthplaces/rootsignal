@@ -10,8 +10,8 @@ use rootsignal_graph::{CachedReader, GraphWriter};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
-    ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader,
-    SituationsBySignalLoader, TagsBySituationLoader,
+    ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader, SituationsBySignalLoader,
+    TagsBySituationLoader,
 };
 use super::mutations::MutationRoot;
 use super::types::*;
@@ -52,7 +52,6 @@ impl QueryRoot {
             .await?;
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
-
 
     /// List recent signals, ordered by triangulation quality.
     async fn signals_recent(
@@ -112,9 +111,10 @@ impl QueryRoot {
         let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
         let limit = limit.unwrap_or(50).min(200);
 
-        let embedding = embedder.embed(&query).await.map_err(|e| {
-            async_graphql::Error::new(format!("Embedding failed: {e}"))
-        })?;
+        let embedding = embedder
+            .embed(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Embedding failed: {e}")))?;
 
         let results = reader
             .semantic_search_signals_in_bounds(
@@ -132,11 +132,7 @@ impl QueryRoot {
     }
 
     /// List available tags, sorted by usage count.
-    async fn tags(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlTag>> {
+    async fn tags(&self, ctx: &Context<'_>, limit: Option<u32>) -> Result<Vec<GqlTag>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200) as usize;
         let tags = reader.top_tags(limit).await?;
@@ -146,11 +142,7 @@ impl QueryRoot {
     // ========== Situation queries ==========
 
     /// Top situations by temperature.
-    async fn situations(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlSituation>> {
+    async fn situations(&self, ctx: &Context<'_>, limit: Option<u32>) -> Result<Vec<GqlSituation>> {
         let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
         let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
         let limit = limit.unwrap_or(20).min(100);
@@ -230,7 +222,9 @@ impl QueryRoot {
     ) -> Result<Vec<GqlActor>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
-        let actors = reader.actors_in_bounds(min_lat, max_lat, min_lng, max_lng, limit).await?;
+        let actors = reader
+            .actors_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 
@@ -245,7 +239,11 @@ impl QueryRoot {
 
     /// Dashboard data for a region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_dashboard(&self, ctx: &Context<'_>, region: String) -> Result<AdminDashboardData> {
+    async fn admin_dashboard(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+    ) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
@@ -416,10 +414,7 @@ impl QueryRoot {
 
     /// List active sources with schedule preview.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_region_sources(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<Vec<AdminSource>> {
+    async fn admin_region_sources(&self, ctx: &Context<'_>) -> Result<Vec<AdminSource>> {
         let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
         let sources = writer.get_active_sources().await?;
         Ok(sources
@@ -427,7 +422,9 @@ impl QueryRoot {
             .map(|s| {
                 let effective_weight = s.weight * s.quality_penalty;
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
-                    rootsignal_scout::scheduling::scheduler::cadence_hours_for_weight(effective_weight)
+                    rootsignal_scout::scheduling::scheduler::cadence_hours_for_weight(
+                        effective_weight,
+                    )
                 });
                 let source_label = source_label_from_value(s.value());
                 AdminSource {
@@ -511,9 +508,9 @@ impl QueryRoot {
         limit: Option<u32>,
     ) -> Result<Vec<ScoutRun>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
-        let pool = pool.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Postgres not configured")
-        })?;
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
         let limit = limit.unwrap_or(20).min(100);
 
         let rows = crate::db::scout_run::list_by_region(pool, &region, limit)
@@ -525,15 +522,11 @@ impl QueryRoot {
 
     /// Get a single scout run by run_id.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_run(
-        &self,
-        ctx: &Context<'_>,
-        run_id: String,
-    ) -> Result<Option<ScoutRun>> {
+    async fn admin_scout_run(&self, ctx: &Context<'_>, run_id: String) -> Result<Option<ScoutRun>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
-        let pool = pool.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Postgres not configured")
-        })?;
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
         let row = crate::db::scout_run::find_by_id(pool, &run_id)
             .await
@@ -584,10 +577,7 @@ impl QueryRoot {
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
 
-        Ok(tasks
-            .into_iter()
-            .map(GqlScoutTask::from_task)
-            .collect())
+        Ok(tasks.into_iter().map(GqlScoutTask::from_task).collect())
     }
 
     // ========== Archive queries ==========
@@ -600,9 +590,9 @@ impl QueryRoot {
             .as_ref()
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
-        let counts = crate::db::archive::count_all(pool)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive counts: {e}")))?;
+        let counts = crate::db::archive::count_all(pool).await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to query archive counts: {e}"))
+        })?;
 
         Ok(GqlArchiveCounts {
             posts: counts.posts,
@@ -631,7 +621,9 @@ impl QueryRoot {
         let days = days.unwrap_or(7);
         let rows = crate::db::archive::volume_by_day(pool, days)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive volume: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive volume: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -664,7 +656,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_posts(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive posts: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive posts: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -697,7 +691,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_short_videos(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive short videos: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive short videos: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -727,7 +723,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_stories(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive stories: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive stories: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -758,7 +756,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_long_videos(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive long videos: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive long videos: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -788,7 +788,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_pages(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive pages: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive pages: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -816,7 +818,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_feeds(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive feeds: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive feeds: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -845,7 +849,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_search_results(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive search results: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive search results: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -873,7 +879,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_files(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive files: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive files: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -1109,7 +1117,7 @@ struct GqlArchiveFile {
 
 // ========== Scout Run Types ==========
 
-use crate::db::scout_run::{ScoutRunRow, StatsJson, EventRow};
+use crate::db::scout_run::{EventRow, ScoutRunRow, StatsJson};
 
 /// GraphQL output type for a scout run.
 /// Events are loaded lazily — only queried when the client requests the `events` field.
@@ -1119,17 +1127,27 @@ struct ScoutRun {
 
 #[Object]
 impl ScoutRun {
-    async fn run_id(&self) -> &str { &self.row.run_id }
-    async fn region(&self) -> &str { &self.row.region }
-    async fn started_at(&self) -> DateTime<Utc> { self.row.started_at }
-    async fn finished_at(&self) -> DateTime<Utc> { self.row.finished_at }
-    async fn stats(&self) -> ScoutRunStats { ScoutRunStats::from(&self.row.stats) }
+    async fn run_id(&self) -> &str {
+        &self.row.run_id
+    }
+    async fn region(&self) -> &str {
+        &self.row.region
+    }
+    async fn started_at(&self) -> DateTime<Utc> {
+        self.row.started_at
+    }
+    async fn finished_at(&self) -> DateTime<Utc> {
+        self.row.finished_at
+    }
+    async fn stats(&self) -> ScoutRunStats {
+        ScoutRunStats::from(&self.row.stats)
+    }
 
     async fn events(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRunEvent>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
-        let pool = pool.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Postgres not configured")
-        })?;
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
         let rows = crate::db::scout_run::list_events_by_run_id(pool, &self.row.run_id, None)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{Result};
+use anyhow::Result;
 use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use crate::pipeline::traits::SignalStore;
 
 use rootsignal_common::{
-    is_web_query, scraping_strategy, ScoutScope, DiscoveryMethod, ScrapingStrategy, SourceNode,
+    is_web_query, scraping_strategy, DiscoveryMethod, ScoutScope, ScrapingStrategy, SourceNode,
 };
 use rootsignal_events::EventStore;
 use rootsignal_graph::{enrich, enrich_embeddings, GraphClient, GraphProjector, GraphWriter};
@@ -25,17 +25,17 @@ use rootsignal_archive::Archive;
 
 use crate::pipeline::event_sourced_store::EventSourcedStore;
 
-use crate::scheduling::budget::BudgetTracker;
-use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::extractor::SignalExtractor;
-use crate::pipeline::expansion::Expansion;
+use crate::discovery::source_finder::SourceFinderStats;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
-use crate::scheduling::metrics::Metrics;
+use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
+use crate::infra::util::sanitize_url;
+use crate::pipeline::expansion::Expansion;
+use crate::pipeline::extractor::SignalExtractor;
 use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::pipeline::stats::ScoutStats;
-use crate::discovery::source_finder::SourceFinderStats;
-use crate::infra::util::sanitize_url;
+use crate::scheduling::budget::BudgetTracker;
+use crate::scheduling::metrics::Metrics;
 
 pub(crate) fn check_cancelled_flag(cancelled: &AtomicBool) -> Result<()> {
     if cancelled.load(Ordering::Relaxed) {
@@ -140,11 +140,15 @@ impl<'a> ScrapePipeline<'a> {
         &self,
         run_log: &RunLogger,
     ) -> Result<(ScheduledRun, RunContext)> {
-        let mut all_sources = match self.writer.get_sources_for_region(
-            self.region.center_lat,
-            self.region.center_lng,
-            self.region.radius_km,
-        ).await {
+        let mut all_sources = match self
+            .writer
+            .get_sources_for_region(
+                self.region.center_lat,
+                self.region.center_lng,
+                self.region.radius_km,
+            )
+            .await
+        {
             Ok(sources) => {
                 let curated = sources
                     .iter()
@@ -175,12 +179,15 @@ impl<'a> ScrapePipeline<'a> {
             );
             match bootstrapper.run().await {
                 Ok(n) => {
-                    run_log.log(EventKind::Bootstrap { sources_created: n as u64 });
+                    run_log.log(EventKind::Bootstrap {
+                        sources_created: n as u64,
+                    });
                     info!(sources = n, "Bootstrap created seed sources");
                 }
                 Err(e) => warn!(error = %e, "Bootstrap failed"),
             }
-            all_sources = self.writer
+            all_sources = self
+                .writer
                 .get_sources_for_region(
                     self.region.center_lat,
                     self.region.center_lng,
@@ -192,13 +199,15 @@ impl<'a> ScrapePipeline<'a> {
 
         // Actor discovery — if no actors in region, discover from web pages
         let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
-        let actors_in_region = self.writer
+        let actors_in_region = self
+            .writer
             .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
             .await
             .unwrap_or_default();
 
         // Actor sources — inject known actor accounts with elevated priority
-        let actor_pairs = match self.writer
+        let actor_pairs = match self
+            .writer
             .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
             .await
         {
@@ -221,8 +230,10 @@ impl<'a> ScrapePipeline<'a> {
         };
 
         // Boost existing entity sources or add new ones
-        let _existing_keys: HashSet<String> =
-            all_sources.iter().map(|s| s.canonical_key.clone()).collect();
+        let _existing_keys: HashSet<String> = all_sources
+            .iter()
+            .map(|s| s.canonical_key.clone())
+            .collect();
         for (_actor, sources) in &actor_pairs {
             for source in sources {
                 if let Some(existing) = all_sources
@@ -230,9 +241,8 @@ impl<'a> ScrapePipeline<'a> {
                     .find(|s| s.canonical_key == source.canonical_key)
                 {
                     existing.weight = existing.weight.max(0.7);
-                    existing.cadence_hours = Some(
-                        existing.cadence_hours.map(|h| h.min(12)).unwrap_or(12),
-                    );
+                    existing.cadence_hours =
+                        Some(existing.cadence_hours.map(|h| h.min(12)).unwrap_or(12));
                 } else {
                     all_sources.push(source.clone());
                 }
@@ -240,9 +250,12 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         // Pin consumption — add pin sources to the pool
-        let existing_keys: HashSet<String> =
-            all_sources.iter().map(|s| s.canonical_key.clone()).collect();
-        let consumed_pin_ids = match self.writer
+        let existing_keys: HashSet<String> = all_sources
+            .iter()
+            .map(|s| s.canonical_key.clone())
+            .collect();
+        let consumed_pin_ids = match self
+            .writer
             .find_pins_in_region(min_lat, max_lat, min_lng, max_lng)
             .await
         {
@@ -275,8 +288,7 @@ impl<'a> ScrapePipeline<'a> {
             .map(|s| s.canonical_key.clone())
             .collect();
 
-        let tension_phase_keys: HashSet<String> =
-            schedule.tension_phase.iter().cloned().collect();
+        let tension_phase_keys: HashSet<String> = schedule.tension_phase.iter().cloned().collect();
         let response_phase_keys: HashSet<String> =
             schedule.response_phase.iter().cloned().collect();
 
@@ -290,9 +302,9 @@ impl<'a> ScrapePipeline<'a> {
         );
 
         // Web query tiered scheduling
-        let wq_schedule = crate::scheduling::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
-        let wq_scheduled_keys: HashSet<String> =
-            wq_schedule.scheduled.into_iter().collect();
+        let wq_schedule =
+            crate::scheduling::scheduler::schedule_web_queries(&all_sources, 0, now_schedule);
+        let wq_scheduled_keys: HashSet<String> = wq_schedule.scheduled.into_iter().collect();
 
         let scheduled_sources: Vec<SourceNode> = all_sources
             .iter()
@@ -379,7 +391,8 @@ impl<'a> ScrapePipeline<'a> {
         run_log: &RunLogger,
     ) {
         info!("=== Phase A: Find Problems ===");
-        let phase_a_sources: Vec<&SourceNode> = run.scheduled_sources
+        let phase_a_sources: Vec<&SourceNode> = run
+            .scheduled_sources
             .iter()
             .filter(|s| run.tension_phase_keys.contains(&s.canonical_key))
             .collect();
@@ -387,7 +400,8 @@ impl<'a> ScrapePipeline<'a> {
         run.phase.run_web(&phase_a_sources, ctx, run_log).await;
 
         // Phase A social: tension + mixed social sources
-        let phase_a_social: Vec<&SourceNode> = run.scheduled_sources
+        let phase_a_social: Vec<&SourceNode> = run
+            .scheduled_sources
             .iter()
             .filter(|s| {
                 matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
@@ -433,11 +447,15 @@ impl<'a> ScrapePipeline<'a> {
         info!("=== Phase B: Find Responses ===");
 
         // Reload sources to pick up fresh discovery sources from mid-run
-        let fresh_sources = match self.writer.get_sources_for_region(
-            self.region.center_lat,
-            self.region.center_lng,
-            self.region.radius_km,
-        ).await {
+        let fresh_sources = match self
+            .writer
+            .get_sources_for_region(
+                self.region.center_lat,
+                self.region.center_lng,
+                self.region.radius_km,
+            )
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to reload sources for Phase B");
@@ -472,7 +490,8 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         // Phase B social: response social sources
-        let phase_b_social: Vec<&SourceNode> = run.scheduled_sources
+        let phase_b_social: Vec<&SourceNode> = run
+            .scheduled_sources
             .iter()
             .filter(|s| {
                 matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
@@ -507,7 +526,14 @@ impl<'a> ScrapePipeline<'a> {
             self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
             &self.region.name,
         );
-        metrics.update(&run.all_sources, &ctx.source_signal_counts, &ctx.query_api_errors, Utc::now()).await;
+        metrics
+            .update(
+                &run.all_sources,
+                &ctx.source_signal_counts,
+                &ctx.query_api_errors,
+                Utc::now(),
+            )
+            .await;
 
         // Log budget status before compute-heavy phases
         self.budget.log_status();
@@ -546,8 +572,13 @@ impl<'a> ScrapePipeline<'a> {
             info!("{end_discovery_stats}");
         }
         if !end_social_topics.is_empty() {
-            info!(count = end_social_topics.len(), "Consuming end-of-run social topics");
-            run.phase.discover_from_topics(&end_social_topics, ctx, run_log).await;
+            info!(
+                count = end_social_topics.len(),
+                "Consuming end-of-run social topics"
+            );
+            run.phase
+                .discover_from_topics(&end_social_topics, ctx, run_log)
+                .await;
             self.promote_collected_links(ctx).await;
         }
 
@@ -570,7 +601,12 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Run all phases in sequence.
     pub async fn run_all(self) -> Result<ScoutStats> {
-        let run_log = RunLogger::new(self.run_id.clone(), self.region.name.clone(), self.pg_pool.clone()).await;
+        let run_log = RunLogger::new(
+            self.run_id.clone(),
+            self.region.name.clone(),
+            self.pg_pool.clone(),
+        )
+        .await;
 
         self.reap_expired_signals(&run_log).await;
 
@@ -582,7 +618,8 @@ impl<'a> ScrapePipeline<'a> {
         let (_, social_topics) = self.discover_mid_run_sources().await;
         check_cancelled_flag(&self.cancelled)?;
 
-        self.scrape_response_sources(&run, social_topics, &mut ctx, &run_log).await?;
+        self.scrape_response_sources(&run, social_topics, &mut ctx, &run_log)
+            .await?;
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
@@ -629,8 +666,13 @@ impl<'a> ScrapePipeline<'a> {
             &self.graph_client,
             &[],
             0.3,
-            min_lat, max_lat, min_lng, max_lng,
-        ).await {
+            min_lat,
+            max_lat,
+            min_lng,
+            max_lng,
+        )
+        .await
+        {
             Ok(stats) => info!(?stats, "Metric enrichment complete"),
             Err(e) => warn!(error = %e, "Metric enrichment failed, continuing"),
         }

@@ -43,7 +43,9 @@ pub enum Urgency {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Low,
@@ -233,8 +235,6 @@ pub enum EdgeType {
     RespondsTo,
     /// Actor -> Signal (participation). Properties: role
     ActedIn,
-    /// Signal <-> Signal (clustering). Properties: weight
-    SimilarTo,
     /// Submission -> Source (human submission)
     SubmittedFor,
     /// Aid/Gathering/Need -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
@@ -243,119 +243,10 @@ pub enum EdgeType {
     GathersAt,
     /// Signal -> Tag (thematic tag)
     Tagged,
-    /// Signal -> Tag (admin suppressed an auto-aggregated tag)
-    SuppressedTag,
     /// Need/Gathering -> Resource (must have this capability to help). Properties: confidence, quantity, notes
     Requires,
     /// Need/Gathering -> Resource (better if you have it, not required). Properties: confidence
     Prefers,
     /// Aid -> Resource (this is what we provide). Properties: confidence, capacity
     Offers,
-}
-
-// --- Situation Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SituationArc {
-    Emerging,
-    Developing,
-    Active,
-    Cooling,
-    Cold,
-}
-
-impl std::fmt::Display for SituationArc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SituationArc::Emerging => write!(f, "emerging"),
-            SituationArc::Developing => write!(f, "developing"),
-            SituationArc::Active => write!(f, "active"),
-            SituationArc::Cooling => write!(f, "cooling"),
-            SituationArc::Cold => write!(f, "cold"),
-        }
-    }
-}
-
-impl std::str::FromStr for SituationArc {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "emerging" => Ok(Self::Emerging),
-            "developing" => Ok(Self::Developing),
-            "active" => Ok(Self::Active),
-            "cooling" => Ok(Self::Cooling),
-            "cold" => Ok(Self::Cold),
-            other => Err(format!("unknown SituationArc: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Clarity {
-    Fuzzy,
-    Sharpening,
-    Sharp,
-}
-
-impl std::fmt::Display for Clarity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Clarity::Fuzzy => write!(f, "fuzzy"),
-            Clarity::Sharpening => write!(f, "sharpening"),
-            Clarity::Sharp => write!(f, "sharp"),
-        }
-    }
-}
-
-impl std::str::FromStr for Clarity {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "fuzzy" => Ok(Self::Fuzzy),
-            "sharpening" => Ok(Self::Sharpening),
-            "sharp" => Ok(Self::Sharp),
-            other => Err(format!("unknown Clarity: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DispatchType {
-    Update,
-    Emergence,
-    Split,
-    Merge,
-    Reactivation,
-    Correction,
-}
-
-impl std::fmt::Display for DispatchType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DispatchType::Update => write!(f, "update"),
-            DispatchType::Emergence => write!(f, "emergence"),
-            DispatchType::Split => write!(f, "split"),
-            DispatchType::Merge => write!(f, "merge"),
-            DispatchType::Reactivation => write!(f, "reactivation"),
-            DispatchType::Correction => write!(f, "correction"),
-        }
-    }
-}
-
-impl std::str::FromStr for DispatchType {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "update" => Ok(Self::Update),
-            "emergence" => Ok(Self::Emergence),
-            "split" => Ok(Self::Split),
-            "merge" => Ok(Self::Merge),
-            "reactivation" => Ok(Self::Reactivation),
-            "correction" => Ok(Self::Correction),
-            other => Err(format!("unknown DispatchType: {other}")),
-        }
-    }
 }
