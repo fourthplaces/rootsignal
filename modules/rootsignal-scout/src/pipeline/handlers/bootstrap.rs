@@ -7,9 +7,7 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use rootsignal_common::{
-    canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
-};
+use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::state::{PipelineDeps, PipelineState};
@@ -34,7 +32,10 @@ pub async fn handle_engine_started(
         None => return Ok(vec![]),
     };
 
-    info!(region = region.name.as_str(), "No sources found — seeding from EngineStarted");
+    info!(
+        region = region.name.as_str(),
+        "No sources found — seeding from EngineStarted"
+    );
 
     let seed_sources = generate_seed_queries(&api_key, region).await?;
     let platform_sources =
@@ -57,8 +58,7 @@ pub async fn generate_seed_queries(
     region: &ScoutScope,
 ) -> Result<Vec<SourceNode>> {
     let region_name = &region.name;
-    let claude =
-        ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
 
     let tension_prompt = format!(
         r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {region_name}. These should find:
@@ -131,8 +131,13 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         for q in parse_lines(&text) {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
-                ck, q, None,
-                DiscoveryMethod::ColdStart, 0.5, SourceRole::Tension, None,
+                ck,
+                q,
+                None,
+                DiscoveryMethod::ColdStart,
+                0.5,
+                SourceRole::Tension,
+                None,
             ));
         }
     }
@@ -141,8 +146,13 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         for q in parse_lines(&text) {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
-                ck, q, None,
-                DiscoveryMethod::ColdStart, 0.5, SourceRole::Response, None,
+                ck,
+                q,
+                None,
+                DiscoveryMethod::ColdStart,
+                0.5,
+                SourceRole::Response,
+                None,
             ));
         }
     }
@@ -151,8 +161,13 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         for q in parse_lines(&text) {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
-                ck, q, None,
-                DiscoveryMethod::ColdStart, 0.5, SourceRole::Mixed, None,
+                ck,
+                q,
+                None,
+                DiscoveryMethod::ColdStart,
+                0.5,
+                SourceRole::Mixed,
+                None,
             ));
         }
     }
@@ -174,38 +189,81 @@ pub async fn generate_platform_sources(
     let make_url = |url: &str, role: SourceRole| {
         let ck = canonical_value(url);
         let cv = canonical_value(url);
-        SourceNode::new(ck, cv, Some(url.to_string()), DiscoveryMethod::ColdStart, 0.5, role, None)
+        SourceNode::new(
+            ck,
+            cv,
+            Some(url.to_string()),
+            DiscoveryMethod::ColdStart,
+            0.5,
+            role,
+            None,
+        )
     };
 
     let make_query = |query: &str, role: SourceRole| {
         let ck = canonical_value(query);
-        SourceNode::new(ck, query.to_string(), None, DiscoveryMethod::ColdStart, 0.5, role, None)
+        SourceNode::new(
+            ck,
+            query.to_string(),
+            None,
+            DiscoveryMethod::ColdStart,
+            0.5,
+            role,
+            None,
+        )
     };
 
     let mut sources = vec![
         make_url(
-            &format!("https://www.eventbrite.com/d/united-states--{}/community/", region_name_encoded),
+            &format!(
+                "https://www.eventbrite.com/d/united-states--{}/community/",
+                region_name_encoded
+            ),
             SourceRole::Response,
         ),
         make_url(
-            &format!("https://www.eventbrite.com/d/united-states--{}/volunteer/", region_name_encoded),
+            &format!(
+                "https://www.eventbrite.com/d/united-states--{}/volunteer/",
+                region_name_encoded
+            ),
             SourceRole::Response,
         ),
         make_url(
-            &format!("https://www.volunteermatch.org/search?l={}&k=&v=true", region_name_encoded),
+            &format!(
+                "https://www.volunteermatch.org/search?l={}&k=&v=true",
+                region_name_encoded
+            ),
             SourceRole::Response,
         ),
-        make_query(&format!("site:gofundme.com/f/ {}", region_name), SourceRole::Response),
-        make_query(&format!("site:linktr.ee mutual aid {}", region_name), SourceRole::Response),
-        make_query(&format!("site:linktr.ee community {}", region_name), SourceRole::Response),
-        make_query(&format!("site:linktr.ee {}", region_name), SourceRole::Response),
-        make_query(&format!("{} community organizations", region_name), SourceRole::Response),
+        make_query(
+            &format!("site:gofundme.com/f/ {}", region_name),
+            SourceRole::Response,
+        ),
+        make_query(
+            &format!("site:linktr.ee mutual aid {}", region_name),
+            SourceRole::Response,
+        ),
+        make_query(
+            &format!("site:linktr.ee community {}", region_name),
+            SourceRole::Response,
+        ),
+        make_query(
+            &format!("site:linktr.ee {}", region_name),
+            SourceRole::Response,
+        ),
+        make_query(
+            &format!("{} community organizations", region_name),
+            SourceRole::Response,
+        ),
     ];
 
     // Reddit — discover relevant subreddits via LLM
     match discover_subreddits(anthropic_api_key, region).await {
         Ok(subreddits) => {
-            info!(count = subreddits.len(), "Discovered subreddits for {}", region_name);
+            info!(
+                count = subreddits.len(),
+                "Discovered subreddits for {}", region_name
+            );
             for sub in subreddits {
                 sources.push(make_url(
                     &format!("https://www.reddit.com/r/{}/", sub),
@@ -222,7 +280,10 @@ pub async fn generate_platform_sources(
     if let Some(fetcher) = fetcher {
         match discover_news_outlets(anthropic_api_key, region, fetcher).await {
             Ok(outlets) => {
-                info!(count = outlets.len(), "Discovered news outlets for {}", region_name);
+                info!(
+                    count = outlets.len(),
+                    "Discovered news outlets for {}", region_name
+                );
                 for (name, feed_url) in outlets {
                     let reachable = fetcher.feed(&feed_url).await.is_ok();
                     if reachable {
@@ -231,7 +292,11 @@ pub async fn generate_platform_sources(
                         source.gap_context = Some(format!("Outlet: {name}"));
                         sources.push(source);
                     } else {
-                        warn!(outlet = name.as_str(), feed_url = feed_url.as_str(), "RSS feed unreachable, skipping");
+                        warn!(
+                            outlet = name.as_str(),
+                            feed_url = feed_url.as_str(),
+                            "RSS feed unreachable, skipping"
+                        );
                     }
                 }
             }
@@ -266,7 +331,12 @@ Maximum 5 subreddits."#
 
     let subreddits: Vec<String> = response
         .lines()
-        .map(|l| l.trim().trim_start_matches("r/").trim_start_matches("/r/").to_string())
+        .map(|l| {
+            l.trim()
+                .trim_start_matches("r/")
+                .trim_start_matches("/r/")
+                .to_string()
+        })
         .filter(|l| !l.is_empty() && !l.contains(' ') && l.len() >= 2)
         .take(5)
         .collect();
@@ -315,14 +385,26 @@ Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
     });
 
     let mut results = Vec::new();
-    for outlet in outlets.into_iter().filter(|o| !o.name.is_empty() && !o.url.is_empty()).take(8) {
+    for outlet in outlets
+        .into_iter()
+        .filter(|o| !o.name.is_empty() && !o.url.is_empty())
+        .take(8)
+    {
         match discover_feed_for_outlet(fetcher, &outlet.name, &outlet.url).await {
             Some(feed_url) => {
-                info!(outlet = outlet.name.as_str(), feed_url = feed_url.as_str(), "Discovered RSS feed");
+                info!(
+                    outlet = outlet.name.as_str(),
+                    feed_url = feed_url.as_str(),
+                    "Discovered RSS feed"
+                );
                 results.push((outlet.name, feed_url));
             }
             None => {
-                warn!(outlet = outlet.name.as_str(), url = outlet.url.as_str(), "No RSS feed found");
+                warn!(
+                    outlet = outlet.name.as_str(),
+                    url = outlet.url.as_str(),
+                    "No RSS feed found"
+                );
             }
         }
     }
@@ -376,7 +458,12 @@ fn extract_feed_links(html: &str, base_url: &str) -> Vec<String> {
                     href_str.to_string()
                 } else if href_str.starts_with('/') {
                     if let Ok(base) = url::Url::parse(base_url) {
-                        format!("{}://{}{}", base.scheme(), base.host_str().unwrap_or(""), href_str)
+                        format!(
+                            "{}://{}{}",
+                            base.scheme(),
+                            base.host_str().unwrap_or(""),
+                            href_str
+                        )
                     } else {
                         continue;
                     }

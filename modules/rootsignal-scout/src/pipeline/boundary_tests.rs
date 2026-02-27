@@ -204,12 +204,9 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        3,
+        ctx.stats.signals_stored, 3,
         "all three signals should be created"
     );
-
-
 }
 
 #[tokio::test]
@@ -257,11 +254,9 @@ async fn same_title_extracted_twice_produces_one_signal() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "duplicate title+type should be deduped to 1"
     );
-
 }
 
 // NOTE: Tests `mentioned_actors_are_linked_to_their_signal` and
@@ -319,11 +314,9 @@ async fn all_signals_stored_regardless_of_region() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "all signals stored regardless of location"
     );
-
 }
 
 #[tokio::test]
@@ -367,8 +360,7 @@ async fn blocked_url_produces_nothing() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "blocked URL should produce no signals"
     );
 }
@@ -412,8 +404,7 @@ async fn unchanged_content_is_not_re_extracted() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "unchanged content should skip extraction"
     );
 }
@@ -523,7 +514,8 @@ async fn same_link_from_two_pages_becomes_one_source() {
     let sources = link_promoter::promote_links(&links, &config);
 
     assert_eq!(
-        sources.len(), 2,
+        sources.len(),
+        2,
         "duplicate URLs should be deduped to 2 unique sources"
     );
 }
@@ -686,8 +678,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "empty extraction → no signals, no panic"
     );
 }
@@ -737,8 +728,7 @@ async fn database_write_failure_does_not_crash() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "signal event is still emitted (store failure only affects projection)"
     );
 }
@@ -839,12 +829,9 @@ async fn all_signal_types_are_stored() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        3,
+        ctx.stats.signals_stored, 3,
         "all 3 node types should be created"
     );
-
-
 }
 
 #[tokio::test]
@@ -894,7 +881,6 @@ async fn unicode_and_emoji_titles_are_preserved() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(ctx.stats.signals_stored, 2);
-
 }
 
 #[tokio::test]
@@ -939,8 +925,7 @@ async fn signal_at_zero_zero_is_still_stored() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "null island signal is stored (no geo-filter)"
     );
 }
@@ -977,8 +962,7 @@ async fn broken_extraction_skips_page_gracefully() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "extractor error → no signals, no panic"
     );
 }
@@ -1027,7 +1011,10 @@ async fn blank_author_name_does_not_create_actor() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 1, "signal should still be created");
+    assert_eq!(
+        ctx.stats.signals_stored, 1,
+        "signal should still be created"
+    );
 }
 
 #[tokio::test]
@@ -1086,7 +1073,6 @@ async fn signal_with_resource_needs_gets_resource_edge() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
-
 }
 
 #[tokio::test]
@@ -1151,8 +1137,7 @@ async fn outbound_links_collected_despite_extraction_failure() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "no signals from failed extraction"
     );
     // But links should still be collected
@@ -1273,7 +1258,10 @@ async fn empty_markdown_page_still_collects_outbound_links() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 0, "no signals from empty markdown");
+    assert_eq!(
+        ctx.stats.signals_stored, 0,
+        "no signals from empty markdown"
+    );
     // Links should still be collected even from empty-markdown pages
     let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
     assert!(
@@ -1335,8 +1323,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "only the good page produces a signal"
     );
 }
@@ -1372,8 +1359,7 @@ async fn social_scrape_failure_does_not_crash() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "social fetch error → no signals"
     );
 }
@@ -1425,8 +1411,7 @@ async fn batch_title_dedup_is_case_insensitive() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "case-insensitive dedup should produce 2 signals"
     );
 }
@@ -1476,7 +1461,6 @@ async fn web_source_without_actor_stores_content_location_only() {
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
-
 }
 
 #[tokio::test]
@@ -1533,7 +1517,6 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
 
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
-
 }
 
 #[tokio::test]
@@ -1590,7 +1573,6 @@ async fn explicit_content_location_not_overwritten_by_actor() {
 
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,7 +1639,10 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 1, "signal should be created for discovered actor");
+    assert_eq!(
+        ctx.stats.signals_stored, 1,
+        "signal should be created for discovered actor"
+    );
 }
 
 #[tokio::test]
@@ -1703,7 +1688,10 @@ async fn bootstrap_actor_gets_depth_zero() {
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 1, "bootstrap actor signal should be created");
+    assert_eq!(
+        ctx.stats.signals_stored, 1,
+        "bootstrap actor signal should be created"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1772,7 +1760,6 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
-
 }
 
 #[tokio::test]
@@ -1839,7 +1826,6 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
-
 }
 
 #[tokio::test]
@@ -1889,7 +1875,6 @@ async fn social_published_at_becomes_published_at_fallback() {
     let mut log = run_log();
 
     phase.run_social(&sources, &mut ctx, &mut log).await;
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1947,8 +1932,7 @@ async fn ocean_coordinates_store_ecological_signal() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "ocean-coordinate ecological signals should be stored"
     );
 }
@@ -2002,8 +1986,7 @@ async fn antarctic_coordinates_store_signal() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "Antarctic signal should be stored"
     );
 }
@@ -2062,8 +2045,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
     // Signal is stored — we don't validate coordinate ranges at pipeline level.
     // Downstream display/query layers are responsible for geo-bounds checks.
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "out-of-bounds coords should not crash pipeline"
     );
 }
@@ -2125,12 +2107,9 @@ async fn environmental_disaster_produces_all_signal_types() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        5,
+        ctx.stats.signals_stored, 5,
         "all 5 signal types should be stored in crisis"
     );
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -2192,8 +2171,7 @@ async fn hallucinated_future_date_does_not_crash() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "future date should not prevent storage"
     );
 }
@@ -2246,8 +2224,7 @@ async fn epoch_zero_date_does_not_crash() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "epoch date should not prevent storage"
     );
 }
@@ -2302,8 +2279,7 @@ async fn extremely_long_title_survives_pipeline() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "long title should not crash pipeline"
     );
 }
@@ -2386,8 +2362,7 @@ async fn same_signal_from_two_sources_corroborates() {
     phase.run_web(&sources_b, &mut ctx2, &mut log2).await;
 
     assert_eq!(
-        ctx2.stats.signals_stored,
-        1,
+        ctx2.stats.signals_stored, 1,
         "second source should corroborate (counted as stored)"
     );
 }
@@ -2466,11 +2441,9 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "only text posts should produce signals"
     );
-
 }
 
 // ---------------------------------------------------------------------------
@@ -2522,8 +2495,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "bare signal should still be stored"
     );
 }
@@ -2578,7 +2550,10 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
 
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 1, "signal should be created for owned source");
+    assert_eq!(
+        ctx.stats.signals_stored, 1,
+        "signal should be created for owned source"
+    );
 }
 
 #[tokio::test]
@@ -2672,8 +2647,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "signal should still be stored with mentions in metadata"
     );
 }
@@ -2785,7 +2759,10 @@ use uuid::Uuid;
 /// returning the event sink so tests can inspect dispatched events.
 async fn enrich_with_sink(
     store: &dyn SignalReader,
-    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+    actors: &[(
+        rootsignal_common::ActorNode,
+        Vec<rootsignal_common::SourceNode>,
+    )],
 ) -> (u32, std::sync::Arc<rootsignal_engine::MemoryEventSink>) {
     let dummy_store: std::sync::Arc<dyn SignalReader> =
         std::sync::Arc::new(crate::testing::MockSignalReader::new());
@@ -2804,7 +2781,10 @@ async fn enrich_with_sink(
 /// Wrapper for tests that only need the updated count.
 async fn enrich_with_engine(
     store: &dyn SignalReader,
-    actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
+    actors: &[(
+        rootsignal_common::ActorNode,
+        Vec<rootsignal_common::SourceNode>,
+    )],
 ) -> u32 {
     let (updated, _) = enrich_with_sink(store, actors).await;
     updated
@@ -3504,7 +3484,10 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(ctx.stats.signals_stored, 1, "signal should still be created");
+    assert_eq!(
+        ctx.stats.signals_stored, 1,
+        "signal should still be created"
+    );
 }
 
 #[tokio::test]
@@ -3573,8 +3556,6 @@ async fn resource_roles_wire_to_correct_edge_types() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
-
-
 }
 
 #[tokio::test]
@@ -3643,8 +3624,6 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -3739,8 +3718,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "second signal should corroborate the first, not create a new one"
     );
 }
@@ -3828,8 +3806,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     assert_eq!(
-        ctx.stats.signals_stored,
-        2,
+        ctx.stats.signals_stored, 2,
         "both signals should be created (similarity below cross-source threshold)"
     );
 }

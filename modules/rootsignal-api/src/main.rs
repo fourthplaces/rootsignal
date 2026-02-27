@@ -200,13 +200,15 @@ async fn main() -> Result<()> {
 
     let store_factory = pg_pool
         .clone()
-        .map(|pool| rootsignal_scout::store::SignalReaderFactory::new(client.clone(), pool));
+        .map(|_pool| rootsignal_scout::store::SignalReaderFactory::new(client.clone()));
     let engine_factory = pg_pool
         .clone()
         .map(|pool| rootsignal_scout::store::EngineFactory::new(client.clone(), pool));
 
     if store_factory.is_none() {
-        tracing::warn!("SignalReaderFactory not available — mutations that write signals will fail");
+        tracing::warn!(
+            "SignalReaderFactory not available — mutations that write signals will fail"
+        );
     }
 
     let schema = build_schema(

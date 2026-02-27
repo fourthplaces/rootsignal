@@ -368,7 +368,10 @@ impl<'a> GatheringFinder<'a> {
                 break;
             }
 
-            let found_gatherings = match self.investigate_tension(target, &mut stats, &mut discovered_sources).await {
+            let found_gatherings = match self
+                .investigate_tension(target, &mut stats, &mut discovered_sources)
+                .await
+            {
                 Ok(found) => {
                     stats.targets_investigated += 1;
                     found
@@ -485,7 +488,10 @@ impl<'a> GatheringFinder<'a> {
             .into_iter()
             .take(MAX_GATHERINGS_PER_TENSION)
         {
-            if let Err(e) = self.process_gathering(target, &gathering, stats, discovered_sources).await {
+            if let Err(e) = self
+                .process_gathering(target, &gathering, stats, discovered_sources)
+                .await
+            {
                 warn!(
                     tension_id = %target.tension_id,
                     gathering_title = gathering.title.as_str(),
@@ -533,7 +539,8 @@ impl<'a> GatheringFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .deps.store
+            .deps
+            .store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -564,7 +571,11 @@ impl<'a> GatheringFinder<'a> {
                     confirmed_at: Utc::now(),
                 });
                 let mut state = PipelineState::new(std::collections::HashMap::new());
-                if let Err(e) = self.engine.dispatch(refresh_event, &mut state, self.deps).await {
+                if let Err(e) = self
+                    .engine
+                    .dispatch(refresh_event, &mut state, self.deps)
+                    .await
+                {
                     warn!(error = %e, "Failed to refresh signal freshness (non-fatal)");
                 }
 
@@ -588,17 +599,15 @@ impl<'a> GatheringFinder<'a> {
             source_url: None,
         });
         let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine.dispatch(drawn_event, &mut state, self.deps).await?;
+        self.engine
+            .dispatch(drawn_event, &mut state, self.deps)
+            .await?;
         stats.edges_created += 1;
 
         // Wire additional DRAWN_TO edges for also_addresses
         if !gathering.also_addresses.is_empty() {
             if let Err(e) = self
-                .wire_also_addresses(
-                    signal_id,
-                    &gathering.also_addresses,
-                    &gathering.explanation,
-                )
+                .wire_also_addresses(signal_id, &gathering.also_addresses, &gathering.explanation)
                 .await
             {
                 warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
@@ -786,18 +795,16 @@ impl<'a> GatheringFinder<'a> {
                     source_url: None,
                 });
                 let mut state = PipelineState::new(std::collections::HashMap::new());
-                self.engine.dispatch(also_event, &mut state, self.deps).await?;
+                self.engine
+                    .dispatch(also_event, &mut state, self.deps)
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    fn build_future_query_source(
-        &self,
-        query: &str,
-        target: &GatheringFinderTarget,
-    ) -> SourceNode {
+    fn build_future_query_source(&self, query: &str, target: &GatheringFinderTarget) -> SourceNode {
         let cv = query.to_string();
         let ck = canonical_value(&cv);
         let gap_context = format!(

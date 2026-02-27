@@ -17,7 +17,7 @@ use uuid::Uuid;
 use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, SourceNode,
 };
-use rootsignal_graph::{DuplicateMatch, ReapStats};
+use rootsignal_graph::DuplicateMatch;
 
 // ---------------------------------------------------------------------------
 // ContentFetcher — replaces Arc<Archive>
@@ -86,7 +86,7 @@ impl ContentFetcher for rootsignal_archive::Archive {
 }
 
 // ---------------------------------------------------------------------------
-// SignalReader — read-only graph queries + infrastructure ops
+// SignalReader — read-only graph queries
 // ---------------------------------------------------------------------------
 
 #[async_trait]
@@ -144,15 +144,11 @@ pub trait SignalReader: Send + Sync {
     /// Get all active source nodes.
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>>;
 
-    // --- Pin lifecycle ---
-
-    /// Delete consumed pins by their IDs.
-    async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()>;
-
     // --- Signal reaping ---
 
-    /// Remove expired signals from the graph. Returns counts by category.
-    async fn reap_expired(&self) -> Result<ReapStats>;
+    /// Find signals that have expired by age or staleness rules.
+    /// Returns (signal_id, node_type, reason) tuples for the caller to act on.
+    async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>>;
 
     // --- Actor location enrichment ---
 

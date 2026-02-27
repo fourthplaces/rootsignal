@@ -324,11 +324,10 @@ mod tests {
             SourceRole::Response,
             None,
         );
-        let pipeline_projectable =
-            ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
-                source,
-                discovered_by: "test".into(),
-            });
+        let pipeline_projectable = ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+            source,
+            discovered_by: "test".into(),
+        });
         assert!(pipeline_projectable.is_projectable());
 
         let pipeline_not = ScoutEvent::Pipeline(PipelineEvent::PhaseStarted {

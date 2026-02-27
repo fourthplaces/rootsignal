@@ -231,7 +231,12 @@ pub async fn handle_signal_stored(
                 .map(|ac| ac.discovery_depth + 1)
                 .unwrap_or(0);
             let actor_events = handle_author_actor(
-                node_id, author_name, source_url, ctx.source_id, discovery_depth, deps,
+                node_id,
+                author_name,
+                source_url,
+                ctx.source_id,
+                discovery_depth,
+                deps,
             )
             .await?;
             events.extend(actor_events);
@@ -259,21 +264,19 @@ async fn handle_author_actor(
         Ok(None) => {
             // New actor — emit ActorIdentified event (projector creates it in Neo4j)
             let new_id = Uuid::new_v4();
-            let mut events = vec![
-                ScoutEvent::World(WorldEvent::ActorIdentified {
-                    actor_id: new_id,
-                    name: author_name.to_string(),
-                    actor_type: rootsignal_common::ActorType::Organization,
-                    canonical_key,
-                    domains: vec![],
-                    social_urls: vec![],
-                    description: String::new(),
-                    bio: None,
-                    location_lat: None,
-                    location_lng: None,
-                    location_name: None,
-                }),
-            ];
+            let mut events = vec![ScoutEvent::World(WorldEvent::ActorIdentified {
+                actor_id: new_id,
+                name: author_name.to_string(),
+                actor_type: rootsignal_common::ActorType::Organization,
+                canonical_key,
+                domains: vec![],
+                social_urls: vec![],
+                description: String::new(),
+                bio: None,
+                location_lat: None,
+                location_lng: None,
+                location_name: None,
+            })];
             if let Some(sid) = source_id {
                 events.push(ScoutEvent::System(SystemEvent::ActorLinkedToSource {
                     actor_id: new_id,

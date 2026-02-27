@@ -13,6 +13,8 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
+use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::state::{PipelineDeps, PipelineState};
 use crate::pipeline::ScoutEngine;
 use crate::traits::SignalReader;
 
@@ -90,13 +92,7 @@ impl<'a> ScrapePipeline<'a> {
         run_id: String,
         pg_pool: PgPool,
     ) -> Self {
-        let store_projector = GraphProjector::new(graph_client.clone());
-        let store = Arc::new(EventSourcedReader::new(
-            writer.clone(),
-            store_projector,
-            event_store.clone(),
-            run_id.clone(),
-        ));
+        let store = Arc::new(EventSourcedReader::new(writer.clone()));
         let engine_projector = GraphProjector::new(graph_client.clone());
         let engine = Arc::new(rootsignal_engine::Engine::new(
             crate::pipeline::reducer::ScoutReducer,
@@ -121,26 +117,65 @@ impl<'a> ScrapePipeline<'a> {
         }
     }
 
-    /// Remove stale signals from the graph.
+    /// Find expired signals and dispatch EntityExpired events through the engine.
     pub async fn reap_expired_signals(&self, run_log: &RunLogger) {
         info!("Reaping expired signals...");
-        match self.store.reap_expired().await {
-            Ok(reap) => {
-                run_log.log(EventKind::ReapExpired {
-                    gatherings: reap.gatherings,
-                    needs: reap.needs,
-                    stale: reap.stale,
-                });
-                if reap.gatherings + reap.needs + reap.stale > 0 {
-                    info!(
-                        gatherings = reap.gatherings,
-                        needs = reap.needs,
-                        stale = reap.stale,
-                        "Expired signals removed"
-                    );
-                }
+        let expired = match self.store.find_expired_signals().await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(error = %e, "Failed to find expired signals, continuing");
+                return;
             }
-            Err(e) => warn!(error = %e, "Failed to reap expired signals, continuing"),
+        };
+
+        let mut gatherings = 0u64;
+        let mut needs = 0u64;
+        let mut stale = 0u64;
+
+        let mut reap_state = PipelineState::new(Default::default());
+        let reap_deps = self.reap_deps();
+
+        for (signal_id, node_type, reason) in &expired {
+            let event = ScoutEvent::System(rootsignal_common::events::SystemEvent::EntityExpired {
+                signal_id: *signal_id,
+                node_type: *node_type,
+                reason: reason.clone(),
+            });
+            if let Err(e) = self
+                .engine
+                .dispatch(event, &mut reap_state, &reap_deps)
+                .await
+            {
+                warn!(error = %e, signal_id = %signal_id, "Failed to expire signal");
+                continue;
+            }
+            match node_type {
+                rootsignal_common::types::NodeType::Gathering => gatherings += 1,
+                rootsignal_common::types::NodeType::Need => needs += 1,
+                _ => stale += 1,
+            }
+        }
+
+        run_log.log(EventKind::ReapExpired {
+            gatherings,
+            needs,
+            stale,
+        });
+        if gatherings + needs + stale > 0 {
+            info!(gatherings, needs, stale, "Expired signals removed");
+        }
+    }
+
+    /// Minimal PipelineDeps for engine dispatch during reaping (no fetcher/embedder needed).
+    fn reap_deps(&self) -> PipelineDeps {
+        PipelineDeps {
+            store: self.store.clone() as Arc<dyn SignalReader>,
+            embedder: Arc::new(crate::infra::embedder::NoOpEmbedder)
+                as Arc<dyn crate::infra::embedder::TextEmbedder>,
+            region: None,
+            run_id: self.run_id.clone(),
+            fetcher: None,
+            anthropic_api_key: None,
         }
     }
 
@@ -187,16 +222,21 @@ impl<'a> ScrapePipeline<'a> {
                 fetcher: Some(self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>),
                 anthropic_api_key: Some(self.anthropic_api_key.clone()),
             };
-            let mut boot_state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
-            match self.engine.dispatch(
-                crate::pipeline::events::ScoutEvent::Pipeline(
-                    crate::pipeline::events::PipelineEvent::EngineStarted {
-                        run_id: self.run_id.clone(),
-                    },
-                ),
-                &mut boot_state,
-                &pipe_deps,
-            ).await {
+            let mut boot_state =
+                crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+            match self
+                .engine
+                .dispatch(
+                    crate::pipeline::events::ScoutEvent::Pipeline(
+                        crate::pipeline::events::PipelineEvent::EngineStarted {
+                            run_id: self.run_id.clone(),
+                        },
+                    ),
+                    &mut boot_state,
+                    &pipe_deps,
+                )
+                .await
+            {
                 Ok(()) => {
                     let n = boot_state.stats.sources_discovered;
                     if n > 0 {
@@ -397,7 +437,11 @@ impl<'a> ScrapePipeline<'a> {
         let sources = link_promoter::promote_links(&ctx.collected_links, &config);
         if !sources.is_empty() {
             let count = sources.len();
-            if let Err(e) = run.phase.register_sources(sources, "link_promoter", ctx).await {
+            if let Err(e) = run
+                .phase
+                .register_sources(sources, "link_promoter", ctx)
+                .await
+            {
                 warn!(error = %e, "Failed to register promoted links");
             } else {
                 info!(promoted = count, "Promoted linked URLs");
@@ -441,7 +485,9 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Find new sources from graph analysis (actor-linked accounts, coverage gaps).
     /// Returns discovery stats, social topics, and discovered sources.
-    pub(crate) async fn discover_mid_run_sources(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>) {
+    pub(crate) async fn discover_mid_run_sources(
+        &self,
+    ) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>) {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
@@ -552,12 +598,7 @@ impl<'a> ScrapePipeline<'a> {
             fetcher: None,
             anthropic_api_key: None,
         };
-        let metrics = Metrics::new(
-            &self.writer,
-            &self.engine,
-            &pipe_deps,
-            &self.region.name,
-        );
+        let metrics = Metrics::new(&self.writer, &self.engine, &pipe_deps, &self.region.name);
         metrics
             .update(
                 &run.all_sources,
@@ -579,14 +620,12 @@ impl<'a> ScrapePipeline<'a> {
         run_log: &RunLogger,
     ) -> Result<()> {
         // Signal Expansion — create sources from implied queries
-        let expansion = Expansion::new(
-            &self.writer,
-            &*self.embedder,
-            &self.region.name,
-        );
+        let expansion = Expansion::new(&self.writer, &*self.embedder, &self.region.name);
         let expansion_sources = expansion.run(ctx, run_log).await;
         if !expansion_sources.is_empty() {
-            run.phase.register_sources(expansion_sources, "signal_expansion", ctx).await?;
+            run.phase
+                .register_sources(expansion_sources, "signal_expansion", ctx)
+                .await?;
         }
 
         check_cancelled_flag(&self.cancelled)?;
@@ -600,9 +639,12 @@ impl<'a> ScrapePipeline<'a> {
             self.budget,
         )
         .with_embedder(&*self.embedder);
-        let (end_discovery_stats, end_social_topics, end_discovery_sources) = end_discoverer.run().await;
+        let (end_discovery_stats, end_social_topics, end_discovery_sources) =
+            end_discoverer.run().await;
         if !end_discovery_sources.is_empty() {
-            run.phase.register_sources(end_discovery_sources, "source_finder", ctx).await?;
+            run.phase
+                .register_sources(end_discovery_sources, "source_finder", ctx)
+                .await?;
         }
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
@@ -653,7 +695,9 @@ impl<'a> ScrapePipeline<'a> {
 
         let (_, social_topics, mid_run_sources) = self.discover_mid_run_sources().await;
         if !mid_run_sources.is_empty() {
-            run.phase.register_sources(mid_run_sources, "source_finder", &mut ctx).await?;
+            run.phase
+                .register_sources(mid_run_sources, "source_finder", &mut ctx)
+                .await?;
         }
         check_cancelled_flag(&self.cancelled)?;
 
@@ -662,7 +706,7 @@ impl<'a> ScrapePipeline<'a> {
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
-            match self.store.delete_pins(&run.consumed_pin_ids).await {
+            match self.writer.delete_pins(&run.consumed_pin_ids).await {
                 Ok(_) => info!(count = run.consumed_pin_ids.len(), "Deleted consumed pins"),
                 Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
             }

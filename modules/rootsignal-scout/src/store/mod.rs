@@ -9,27 +9,16 @@ use sqlx::PgPool;
 use crate::pipeline::ScoutEngine;
 use crate::traits::SignalReader;
 
-/// Build the production SignalReader: events → Postgres, projections → Neo4j.
+/// Build the production SignalReader: read-only queries via Neo4j.
 ///
-/// Pure assembly — no logic, no side effects. Caller owns the run_id and
-/// decides when to construct.
-pub fn build_signal_reader(
-    graph_client: GraphClient,
-    pg_pool: PgPool,
-    run_id: String,
-) -> event_sourced::EventSourcedReader {
-    event_sourced::EventSourcedReader::new(
-        GraphWriter::new(graph_client.clone()),
-        GraphProjector::new(graph_client),
-        EventStore::new(pg_pool),
-        run_id,
-    )
+/// Pure assembly — no logic, no side effects.
+pub fn build_signal_reader(graph_client: GraphClient) -> event_sourced::EventSourcedReader {
+    event_sourced::EventSourcedReader::new(GraphWriter::new(graph_client))
 }
 
 /// Factory for creating per-operation SignalReader instances.
 ///
-/// Production: each call creates a new EventSourcedReader with a unique run_id,
-/// giving proper event correlation per API mutation.
+/// Production: each call creates a new EventSourcedReader.
 ///
 /// Tests: wraps a shared MockSignalReader via `fixed()`.
 pub struct SignalReaderFactory {
@@ -37,18 +26,10 @@ pub struct SignalReaderFactory {
 }
 
 impl SignalReaderFactory {
-    /// Production factory: each `create()` yields a new EventSourcedReader
-    /// with a unique run_id.
-    pub fn new(graph_client: GraphClient, pg_pool: PgPool) -> Self {
+    /// Production factory: each `create()` yields a new EventSourcedReader.
+    pub fn new(graph_client: GraphClient) -> Self {
         Self {
-            create_fn: Box::new(move || {
-                let run_id = format!("api-{}", uuid::Uuid::new_v4());
-                Arc::new(build_signal_reader(
-                    graph_client.clone(),
-                    pg_pool.clone(),
-                    run_id,
-                ))
-            }),
+            create_fn: Box::new(move || Arc::new(build_signal_reader(graph_client.clone()))),
         }
     }
 
@@ -88,11 +69,8 @@ impl EngineFactory {
                     Arc::new(event_store) as Arc<dyn rootsignal_engine::EventPersister>,
                     run_id.clone(),
                 );
-                let store = Arc::new(build_signal_reader(
-                    graph_client.clone(),
-                    pg_pool.clone(),
-                    run_id.clone(),
-                )) as Arc<dyn SignalReader>;
+                let store =
+                    Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
                 let deps = crate::pipeline::state::PipelineDeps {

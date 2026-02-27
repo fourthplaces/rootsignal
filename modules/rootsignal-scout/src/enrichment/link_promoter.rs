@@ -83,10 +83,7 @@ pub fn extract_links(page_links: &[String]) -> Vec<String> {
 /// source inherits those coordinates — not the region center.
 ///
 /// Returns the SourceNodes to be registered through the engine.
-pub fn promote_links(
-    links: &[CollectedLink],
-    config: &PromotionConfig,
-) -> Vec<SourceNode> {
+pub fn promote_links(links: &[CollectedLink], config: &PromotionConfig) -> Vec<SourceNode> {
     if links.is_empty() {
         return Vec::new();
     }

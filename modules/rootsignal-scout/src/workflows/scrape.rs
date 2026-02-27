@@ -162,7 +162,9 @@ async fn run_scrape_from_deps(
         .await;
     let (_, social_topics, mid_run_sources) = pipeline.discover_mid_run_sources().await;
     if !mid_run_sources.is_empty() {
-        run.phase.register_sources(mid_run_sources, "source_finder", &mut ctx).await?;
+        run.phase
+            .register_sources(mid_run_sources, "source_finder", &mut ctx)
+            .await?;
     }
     pipeline
         .scrape_response_sources(&run, social_topics, &mut ctx, &run_log)

@@ -9,8 +9,8 @@
 
 use chrono::Utc;
 use rootsignal_common::events::{
-    Event, GatheringCorrection, SituationChange, SystemEvent, SystemSourceChange,
-    TelemetryEvent, WorldEvent,
+    Event, GatheringCorrection, SituationChange, SystemEvent, SystemSourceChange, TelemetryEvent,
+    WorldEvent,
 };
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::*;

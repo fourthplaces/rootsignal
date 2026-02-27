@@ -120,8 +120,7 @@ pub async fn run_synthesis_from_deps(
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
-    let store: Arc<dyn crate::traits::SignalReader> =
-        Arc::new(deps.build_store(run_id.clone()));
+    let store: Arc<dyn crate::traits::SignalReader> = Arc::new(deps.build_store());
     let engine = deps.build_engine(&run_id);
     let pipe_deps = deps.build_pipeline_deps(
         store.clone(),
@@ -280,8 +279,12 @@ pub async fn run_synthesis_from_deps(
     let finder_sources: Vec<rootsignal_common::SourceNode> =
         rf_result.into_iter().chain(gf_result).collect();
     if !finder_sources.is_empty() {
-        info!(count = finder_sources.len(), "Registering finder-discovered sources through engine");
-        let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+        info!(
+            count = finder_sources.len(),
+            "Registering finder-discovered sources through engine"
+        );
+        let mut state =
+            crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
         for source in finder_sources {
             if let Err(e) = engine
                 .dispatch(

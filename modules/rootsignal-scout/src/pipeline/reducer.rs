@@ -78,10 +78,7 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
             }
 
             // Links
-            PipelineEvent::LinkCollected {
-                url,
-                discovered_on,
-            } => {
+            PipelineEvent::LinkCollected { url, discovered_on } => {
                 state.collected_links.push(CollectedLink {
                     url: url.clone(),
                     discovered_on: discovered_on.clone(),

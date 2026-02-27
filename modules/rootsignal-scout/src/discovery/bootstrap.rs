@@ -7,9 +7,7 @@
 use anyhow::Result;
 use tracing::info;
 
-use rootsignal_common::{
-    canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
-};
+use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 use rootsignal_graph::GraphWriter;
 
 /// Generate tension-seeded follow-up queries from existing tensions.

@@ -874,13 +874,11 @@ async fn same_source_does_not_inflate_corroboration() {
         let seq = (i as i64) * 2 + 3;
         events.push(stored(
             seq,
-            &Event::System(
-                SystemEvent::FreshnessConfirmed {
-                    signal_ids: vec![signal_id],
-                    node_type: rootsignal_common::NodeType::Gathering,
-                    confirmed_at: Utc::now(),
-                },
-            ),
+            &Event::System(SystemEvent::FreshnessConfirmed {
+                signal_ids: vec![signal_id],
+                node_type: rootsignal_common::NodeType::Gathering,
+                confirmed_at: Utc::now(),
+            }),
         ));
         events.push(stored(
             seq + 1,
@@ -1717,8 +1715,7 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     assert_eq!(tid, survivor_id.to_string());
 
     // Duplicate is deleted
-    let q = query("MATCH (t:Tension {id: $id}) RETURN t.id AS id")
-        .param("id", dup_id.to_string());
+    let q = query("MATCH (t:Tension {id: $id}) RETURN t.id AS id").param("id", dup_id.to_string());
     let mut stream = client.inner().execute(q).await.unwrap();
     let row = stream.next().await.unwrap();
     assert!(row.is_none(), "Duplicate tension should be deleted");

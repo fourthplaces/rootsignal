@@ -102,12 +102,14 @@ pub async fn handle_signals_extracted(
                     new_source = url,
                     "Global title+type match from different source"
                 );
-                events.push(ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
-                    existing_id,
-                    node_type: node.node_type(),
-                    source_url: url.to_string(),
-                    similarity,
-                }));
+                events.push(ScoutEvent::Pipeline(
+                    PipelineEvent::CrossSourceMatchDetected {
+                        existing_id,
+                        node_type: node.node_type(),
+                        source_url: url.to_string(),
+                        similarity,
+                    },
+                ));
             }
             DedupVerdict::Refresh {
                 existing_id,
@@ -120,12 +122,14 @@ pub async fn handle_signals_extracted(
                     source = url,
                     "Same-source title match"
                 );
-                events.push(ScoutEvent::Pipeline(PipelineEvent::SameSourceReencountered {
-                    existing_id,
-                    node_type: node.node_type(),
-                    source_url: url.to_string(),
-                    similarity,
-                }));
+                events.push(ScoutEvent::Pipeline(
+                    PipelineEvent::SameSourceReencountered {
+                        existing_id,
+                        node_type: node.node_type(),
+                        source_url: url.to_string(),
+                        similarity,
+                    },
+                ));
             }
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
@@ -226,7 +230,11 @@ pub async fn handle_signals_extracted(
                 similarity,
                 ..
             } => {
-                let source_layer = if cache_hit.is_some() { "cache" } else { "graph" };
+                let source_layer = if cache_hit.is_some() {
+                    "cache"
+                } else {
+                    "graph"
+                };
                 info!(
                     existing_id = %existing_id,
                     similarity,
@@ -245,12 +253,14 @@ pub async fn handle_signals_extracted(
                         );
                     }
                 }
-                events.push(ScoutEvent::Pipeline(PipelineEvent::SameSourceReencountered {
-                    existing_id,
-                    node_type,
-                    source_url: url.to_string(),
-                    similarity,
-                }));
+                events.push(ScoutEvent::Pipeline(
+                    PipelineEvent::SameSourceReencountered {
+                        existing_id,
+                        node_type,
+                        source_url: url.to_string(),
+                        similarity,
+                    },
+                ));
             }
             DedupVerdict::Corroborate {
                 existing_id,
@@ -280,24 +290,23 @@ pub async fn handle_signals_extracted(
                         );
                     }
                 }
-                events.push(ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
-                    existing_id,
-                    node_type,
-                    source_url: url.to_string(),
-                    similarity,
-                }));
+                events.push(ScoutEvent::Pipeline(
+                    PipelineEvent::CrossSourceMatchDetected {
+                        existing_id,
+                        node_type,
+                        source_url: url.to_string(),
+                        similarity,
+                    },
+                ));
             }
             DedupVerdict::Create => {
                 let node_id = node.id();
                 let meta_id = node.meta().map(|m| m.id);
 
                 // Add to embed cache (interior mutability — exception for deterministic cache)
-                state.embed_cache.add(
-                    embedding.clone(),
-                    node_id,
-                    node_type,
-                    url.to_string(),
-                );
+                state
+                    .embed_cache
+                    .add(embedding.clone(), node_id, node_type, url.to_string());
 
                 let author_name = meta_id
                     .and_then(|mid| batch.author_actors.get(&mid))

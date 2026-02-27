@@ -82,7 +82,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
             .run(|| async {
                 let run_id = uuid::Uuid::new_v4().to_string();
                 let engine = deps.build_engine(&run_id);
-                let store = deps.build_store(run_id.clone());
+                let store = deps.build_store();
                 let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
                     Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
                 let pipe_deps = deps.build_pipeline_deps(

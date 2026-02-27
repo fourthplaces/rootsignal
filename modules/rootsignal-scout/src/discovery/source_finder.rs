@@ -501,7 +501,11 @@ impl<'a> SourceFinder<'a> {
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
-    async fn discover_from_actors(&self, stats: &mut SourceFinderStats, sources: &mut Vec<SourceNode>) {
+    async fn discover_from_actors(
+        &self,
+        stats: &mut SourceFinderStats,
+        sources: &mut Vec<SourceNode>,
+    ) {
         let actors = match self
             .writer
             .get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH))
@@ -1128,7 +1132,10 @@ mod tests {
 
         // Situations include arc and temperature
         assert!(prompt.contains("arc=emerging"), "Missing situation arc");
-        assert!(prompt.contains("temp=0.72"), "Missing situation temperature");
+        assert!(
+            prompt.contains("temp=0.72"),
+            "Missing situation temperature"
+        );
 
         // Signal balance line
         assert!(prompt.contains("Gatherings: 23"), "Missing gathering count");

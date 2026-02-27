@@ -741,9 +741,9 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
-    use rootsignal_scout::traits::SignalReader;
     use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
     use rootsignal_scout::testing::MockSignalReader;
+    use rootsignal_scout::traits::SignalReader;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
 

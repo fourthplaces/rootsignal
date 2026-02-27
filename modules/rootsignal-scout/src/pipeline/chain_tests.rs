@@ -472,11 +472,9 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
 
     // No geo-filter — signal stored with actor location as fallback
     assert_eq!(
-        ctx.stats.signals_stored,
-        1,
+        ctx.stats.signals_stored, 1,
         "signal should be stored regardless of location"
     );
-
 }
 
 // ---------------------------------------------------------------------------
@@ -626,11 +624,9 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
 
     // All three signals stored — no geo-filter rejection
     assert_eq!(
-        ctx.stats.signals_stored,
-        3,
+        ctx.stats.signals_stored, 3,
         "all three posts should produce signals"
     );
-
 }
 
 // ---------------------------------------------------------------------------
@@ -697,8 +693,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
 
     // No new signals (extraction skipped)
     assert_eq!(
-        ctx.stats.signals_stored,
-        0,
+        ctx.stats.signals_stored, 0,
         "unchanged content should skip extraction"
     );
 
@@ -810,7 +805,10 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     };
     let promoted_sources = link_promoter::promote_links(&ctx.collected_links, &config);
     assert!(!promoted_sources.is_empty(), "at least 1 link promoted");
-    let promoted_urls: Vec<_> = promoted_sources.iter().filter_map(|s| s.url.as_deref()).collect();
+    let promoted_urls: Vec<_> = promoted_sources
+        .iter()
+        .filter_map(|s| s.url.as_deref())
+        .collect();
     assert!(promoted_urls.contains(&"https://localorg.org/resources"));
 
     // --- Phase B: scrape the discovered org site ---

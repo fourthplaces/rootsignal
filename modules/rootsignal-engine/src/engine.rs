@@ -57,11 +57,7 @@ where
             let stored = match parent_seq {
                 None => {
                     self.persister
-                        .persist(
-                            evt.event_type_str(),
-                            evt.to_persist_payload(),
-                            &self.run_id,
-                        )
+                        .persist(evt.event_type_str(), evt.to_persist_payload(), &self.run_id)
                         .await?
                 }
                 Some(parent) => {

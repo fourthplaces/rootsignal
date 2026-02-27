@@ -30,13 +30,7 @@ pub trait Reducer<E: EventLike, S: Send>: Send + Sync {
 /// Returns zero or more child events that re-enter the dispatch loop.
 #[async_trait]
 pub trait Router<E: EventLike, S: Send, D: Send + Sync>: Send + Sync {
-    async fn route(
-        &self,
-        event: &E,
-        stored: &StoredEvent,
-        state: &S,
-        deps: &D,
-    ) -> Result<Vec<E>>;
+    async fn route(&self, event: &E, stored: &StoredEvent, state: &S, deps: &D) -> Result<Vec<E>>;
 }
 
 /// Persists events and returns a StoredEvent with sequence numbers.

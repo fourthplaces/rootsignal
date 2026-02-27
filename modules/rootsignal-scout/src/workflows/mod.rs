@@ -50,11 +50,8 @@ pub struct ScoutDeps {
 
 impl ScoutDeps {
     /// Build the production SignalReader from these deps.
-    pub fn build_store(
-        &self,
-        run_id: String,
-    ) -> crate::store::event_sourced::EventSourcedReader {
-        crate::store::build_signal_reader(self.graph_client.clone(), self.pg_pool.clone(), run_id)
+    pub fn build_store(&self) -> crate::store::event_sourced::EventSourcedReader {
+        crate::store::build_signal_reader(self.graph_client.clone())
     }
 
     /// Build a ScoutEngine wired to the event store and graph projector.
@@ -64,7 +61,8 @@ impl ScoutDeps {
         rootsignal_engine::Engine::new(
             crate::pipeline::reducer::ScoutReducer,
             crate::pipeline::router::ScoutRouter::new(Some(projector)),
-            std::sync::Arc::new(event_store) as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
+            std::sync::Arc::new(event_store)
+                as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
             run_id.into(),
         )
     }

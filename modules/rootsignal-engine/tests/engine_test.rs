@@ -223,7 +223,12 @@ async fn chained_events_form_causal_tree() {
         return;
     };
     let store = EventStore::new(pool);
-    let engine = Engine::new(TestReducer, ChainingRouter, store.clone(), "chain-run".into());
+    let engine = Engine::new(
+        TestReducer,
+        ChainingRouter,
+        store.clone(),
+        "chain-run".into(),
+    );
 
     let mut state = TestState::default();
     engine
@@ -305,9 +310,7 @@ async fn fan_out_creates_sibling_children() {
     let children = store.read_children(root_seq).await.unwrap();
     assert_eq!(children.len(), 3);
     assert!(children.iter().all(|c| c.parent_seq == Some(root_seq)));
-    assert!(children
-        .iter()
-        .all(|c| c.caused_by_seq == Some(root_seq)));
+    assert!(children.iter().all(|c| c.caused_by_seq == Some(root_seq)));
 }
 
 #[tokio::test]
@@ -329,12 +332,8 @@ async fn dispatch_processes_breadth_first() {
         ) -> Result<Vec<TestEvent>> {
             match event {
                 TestEvent::Start { .. } => Ok(vec![
-                    TestEvent::Middle {
-                        label: "A".into(),
-                    },
-                    TestEvent::Middle {
-                        label: "B".into(),
-                    },
+                    TestEvent::Middle { label: "A".into() },
+                    TestEvent::Middle { label: "B".into() },
                 ]),
                 TestEvent::Middle { label } => Ok(vec![TestEvent::End {
                     label: format!("end-{label}"),
@@ -363,10 +362,7 @@ async fn dispatch_processes_breadth_first() {
         .unwrap();
 
     // BFS order: root, A, B, end-A, end-B
-    assert_eq!(
-        state.events_seen,
-        vec!["root", "A", "B", "end-A", "end-B"]
-    );
+    assert_eq!(state.events_seen, vec!["root", "A", "B", "end-A", "end-B"]);
 }
 
 #[tokio::test]
@@ -384,13 +380,7 @@ async fn run_id_set_on_all_persisted_events() {
 
     let mut state = TestState::default();
     engine
-        .dispatch(
-            TestEvent::Start {
-                label: "go".into(),
-            },
-            &mut state,
-            &(),
-        )
+        .dispatch(TestEvent::Start { label: "go".into() }, &mut state, &())
         .await
         .unwrap();
 

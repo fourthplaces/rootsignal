@@ -171,9 +171,7 @@ async fn new_signal_accepted_persists_causal_chain() {
         children.len()
     );
 
-    assert!(children
-        .iter()
-        .any(|e| e.event_type == "citation_recorded"));
+    assert!(children.iter().any(|e| e.event_type == "citation_recorded"));
     assert!(children
         .iter()
         .any(|e| e.event_type == "pipeline:signal_stored"));
@@ -401,9 +399,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
         .expect("expected SameSourceReencountered event");
     assert_eq!(reencounter.caused_by_seq, Some(events[0].seq));
 
-    assert!(events
-        .iter()
-        .any(|e| e.event_type == "freshness_confirmed"));
+    assert!(events.iter().any(|e| e.event_type == "freshness_confirmed"));
 }
 
 // ---------------------------------------------------------------------------

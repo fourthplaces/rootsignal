@@ -123,8 +123,8 @@ pub async fn enrich_actor_locations(
         Vec<rootsignal_common::SourceNode>,
     )],
 ) -> u32 {
-    use rootsignal_common::events::WorldEvent;
     use crate::pipeline::events::ScoutEvent;
+    use rootsignal_common::events::WorldEvent;
 
     let mut updated = 0;
     let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());

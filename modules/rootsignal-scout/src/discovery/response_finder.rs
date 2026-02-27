@@ -392,7 +392,12 @@ impl<'a> ResponseFinder<'a> {
             }
 
             match self
-                .investigate_tension(target, &situation_context, &mut stats, &mut discovered_sources)
+                .investigate_tension(
+                    target,
+                    &situation_context,
+                    &mut stats,
+                    &mut discovered_sources,
+                )
                 .await
             {
                 Ok(()) => {
@@ -558,7 +563,8 @@ impl<'a> ResponseFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .deps.store
+            .deps
+            .store
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -601,7 +607,9 @@ impl<'a> ResponseFinder<'a> {
             source_url: None,
         });
         let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine.dispatch(resp_event, &mut state, self.deps).await?;
+        self.engine
+            .dispatch(resp_event, &mut state, self.deps)
+            .await?;
         stats.edges_created += 1;
 
         // Wire additional edges for also_addresses
@@ -650,10 +658,17 @@ impl<'a> ResponseFinder<'a> {
                 description: description.to_string(),
             });
             let mut state = PipelineState::new(std::collections::HashMap::new());
-            self.engine.dispatch(resource_event, &mut state, self.deps).await?;
+            self.engine
+                .dispatch(resource_event, &mut state, self.deps)
+                .await?;
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-            let (role, quantity, notes, capacity): (&str, Option<&str>, Option<&str>, Option<&str>) = match tag.role.as_str() {
+            let (role, quantity, notes, capacity): (
+                &str,
+                Option<&str>,
+                Option<&str>,
+                Option<&str>,
+            ) = match tag.role.as_str() {
                 "requires" => ("requires", tag.context.as_deref(), None, None),
                 "prefers" => ("prefers", None, None, None),
                 "offers" => ("offers", None, None, tag.context.as_deref()),
@@ -676,7 +691,9 @@ impl<'a> ResponseFinder<'a> {
                 notes: notes.map(|s| s.to_string()),
                 capacity: capacity.map(|s| s.to_string()),
             });
-            self.engine.dispatch(edge_event, &mut state, self.deps).await?;
+            self.engine
+                .dispatch(edge_event, &mut state, self.deps)
+                .await?;
 
             info!(
                 signal_id = %signal_id,
@@ -832,7 +849,9 @@ impl<'a> ResponseFinder<'a> {
                     source_url: None,
                 });
                 let mut state = PipelineState::new(std::collections::HashMap::new());
-                self.engine.dispatch(also_event, &mut state, self.deps).await?;
+                self.engine
+                    .dispatch(also_event, &mut state, self.deps)
+                    .await?;
             }
         }
 
@@ -849,7 +868,8 @@ impl<'a> ResponseFinder<'a> {
 
         // Dedup check (region-scoped)
         let existing = self
-            .deps.store
+            .deps
+            .store
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,
@@ -951,11 +971,7 @@ impl<'a> ResponseFinder<'a> {
         Ok(())
     }
 
-    fn build_future_query_source(
-        &self,
-        query: &str,
-        target: &ResponseFinderTarget,
-    ) -> SourceNode {
+    fn build_future_query_source(&self, query: &str, target: &ResponseFinderTarget) -> SourceNode {
         let cv = query.to_string();
         let ck = canonical_value(&cv);
         let gap_context = format!(

@@ -30,9 +30,7 @@ async fn run_dedup(
     state: &mut PipelineState,
     deps: &PipelineDeps,
 ) -> Vec<ScoutEvent> {
-    state
-        .extracted_batches
-        .insert(url.to_string(), batch);
+    state.extracted_batches.insert(url.to_string(), batch);
     super::dedup::handle_signals_extracted(url, &*state, deps)
         .await
         .unwrap()
@@ -296,7 +294,10 @@ async fn create_stashes_tags_and_author_from_extraction_id() {
                 pending_node.signal_tags,
                 vec!["food".to_string(), "mutual-aid".to_string()]
             );
-            assert_eq!(pending_node.author_name.as_deref(), Some("Northside Mutual Aid"));
+            assert_eq!(
+                pending_node.author_name.as_deref(),
+                Some("Northside Mutual Aid")
+            );
             assert_eq!(pending_node.source_id, Some(source_id));
         }
         other => panic!("expected NewSignalAccepted, got {:?}", other),
@@ -394,13 +395,10 @@ async fn missing_batch_returns_no_events() {
     let mut state = PipelineState::new(HashMap::new());
 
     // Don't stash anything — call handler directly
-    let events = super::dedup::handle_signals_extracted(
-        "https://example.org/events",
-        &state,
-        &deps,
-    )
-    .await
-    .unwrap();
+    let events =
+        super::dedup::handle_signals_extracted("https://example.org/events", &state, &deps)
+            .await
+            .unwrap();
 
     assert!(events.is_empty());
 }
@@ -428,7 +426,9 @@ async fn extracted_batch_consumed_after_dedup() {
 
     // Handler reads but doesn't remove — reducer cleans up on DedupCompleted
     assert!(
-        state.extracted_batches.contains_key("https://example.org/events"),
+        state
+            .extracted_batches
+            .contains_key("https://example.org/events"),
         "extracted batch should still be in state (reducer cleans up, not handler)"
     );
 }

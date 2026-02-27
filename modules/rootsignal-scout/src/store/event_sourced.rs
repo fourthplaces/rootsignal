@@ -4,7 +4,6 @@
 //! All domain writes flow through the engine dispatch loop.
 //!
 //! Read methods delegate to GraphWriter (graph is always current).
-//! Infrastructure ops (reap_expired, delete_pins) remain here as direct writes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,40 +12,23 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::events::{
-    Event, Location, Schedule, SystemEvent, TelemetryEvent, WorldEvent,
-};
+use rootsignal_common::events::{Location, Schedule, SystemEvent, WorldEvent};
 use rootsignal_common::types::{ActorNode, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
-    FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
-    NOTICE_EXPIRE_DAYS,
+    FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-use rootsignal_events::{AppendEvent, EventStore};
-use rootsignal_graph::{DuplicateMatch, GraphProjector, GraphWriter, ReapStats};
+use rootsignal_graph::{DuplicateMatch, GraphWriter};
 
 use crate::traits::SignalReader;
 
-/// SignalReader backed by Neo4j via GraphWriter. Infra ops use projector.
+/// Read-only SignalReader backed by Neo4j via GraphWriter.
 pub struct EventSourcedReader {
-    writer: GraphWriter,       // read methods delegate here
-    projector: GraphProjector, // infra ops (reap, delete) project here
-    event_store: EventStore,
-    run_id: String,
+    writer: GraphWriter,
 }
 
 impl EventSourcedReader {
-    pub fn new(
-        writer: GraphWriter,
-        projector: GraphProjector,
-        event_store: EventStore,
-        run_id: String,
-    ) -> Self {
-        Self {
-            writer,
-            projector,
-            event_store,
-            run_id,
-        }
+    pub fn new(writer: GraphWriter) -> Self {
+        Self { writer }
     }
 }
 
@@ -204,24 +186,6 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-impl EventSourcedReader {
-    /// Append an event and project it to the graph.
-    async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
-        let mut append =
-            AppendEvent::new(event.event_type(), event.to_payload()).with_run_id(&self.run_id);
-        if let Some(a) = actor {
-            append = append.with_actor(a);
-        }
-        let stored = self.event_store.append_and_read(append).await?;
-        self.projector.project(&stored).await?;
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
 // SignalReader implementation
 // ---------------------------------------------------------------------------
 
@@ -336,7 +300,10 @@ impl SignalReader for EventSourcedReader {
     }
 
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
-        Ok(self.writer.find_actor_by_canonical_key(canonical_key).await?)
+        Ok(self
+            .writer
+            .find_actor_by_canonical_key(canonical_key)
+            .await?)
     }
 
     // --- Source management (append event → project to graph) ---
@@ -345,19 +312,9 @@ impl SignalReader for EventSourcedReader {
         Ok(self.writer.get_active_sources().await?)
     }
 
-    async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {
-        if pin_ids.is_empty() {
-            return Ok(());
-        }
-        let event = Event::Telemetry(TelemetryEvent::PinsRemoved {
-            pin_ids: pin_ids.to_vec(),
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn reap_expired(&self) -> Result<ReapStats> {
-        let mut stats = ReapStats::default();
+    async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
         let graph = self.writer.client().inner();
+        let mut expired = Vec::new();
 
         // 1. Past non-recurring gatherings
         let q = rootsignal_graph::query(&format!(
@@ -372,23 +329,13 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
         ));
-        let mut ids = Vec::new();
         let mut stream = graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                ids.push(id);
+                expired.push((id, NodeType::Gathering, "past_event".to_string()));
             }
         }
-        for id in &ids {
-            let event = Event::System(SystemEvent::EntityExpired {
-                signal_id: *id,
-                node_type: NodeType::Gathering,
-                reason: "past_event".to_string(),
-            });
-            self.append_and_project(&event, None).await?;
-        }
-        stats.gatherings = ids.len() as u64;
 
         // 2. Expired needs
         let q = rootsignal_graph::query(&format!(
@@ -397,23 +344,13 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             NEED_EXPIRE_DAYS
         ));
-        let mut ids = Vec::new();
         let mut stream = graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                ids.push(id);
+                expired.push((id, NodeType::Need, "need_expired".to_string()));
             }
         }
-        for id in &ids {
-            let event = Event::System(SystemEvent::EntityExpired {
-                signal_id: *id,
-                node_type: NodeType::Need,
-                reason: "need_expired".to_string(),
-            });
-            self.append_and_project(&event, None).await?;
-        }
-        stats.needs = ids.len() as u64;
 
         // 3. Expired notices
         let q = rootsignal_graph::query(&format!(
@@ -422,23 +359,13 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             NOTICE_EXPIRE_DAYS
         ));
-        let mut ids = Vec::new();
         let mut stream = graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                ids.push(id);
+                expired.push((id, NodeType::Notice, "notice_expired".to_string()));
             }
         }
-        for id in &ids {
-            let event = Event::System(SystemEvent::EntityExpired {
-                signal_id: *id,
-                node_type: NodeType::Notice,
-                reason: "notice_expired".to_string(),
-            });
-            self.append_and_project(&event, None).await?;
-        }
-        stats.stale += ids.len() as u64;
 
         // 4. Stale unconfirmed signals (Aid, Tension)
         for (label, node_type) in &[("Aid", NodeType::Aid), ("Tension", NodeType::Tension)] {
@@ -449,26 +376,16 @@ impl SignalReader for EventSourcedReader {
                 label = label,
                 days = FRESHNESS_MAX_DAYS,
             ));
-            let mut ids = Vec::new();
             let mut stream = graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 if let Ok(id) = Uuid::parse_str(&id_str) {
-                    ids.push(id);
+                    expired.push((id, *node_type, "stale_unconfirmed".to_string()));
                 }
             }
-            for id in &ids {
-                let event = Event::System(SystemEvent::EntityExpired {
-                    signal_id: *id,
-                    node_type: *node_type,
-                    reason: "stale_unconfirmed".to_string(),
-                });
-                self.append_and_project(&event, None).await?;
-            }
-            stats.stale += ids.len() as u64;
         }
 
-        Ok(stats)
+        Ok(expired)
     }
 
     // --- Actor location enrichment (pass through) ---
@@ -492,7 +409,7 @@ impl SignalReader for EventSourcedReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootsignal_common::events::{Event, SystemEvent, WorldEvent};
+    use rootsignal_common::events::{Event, SystemEvent, TelemetryEvent, WorldEvent};
     use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::*;
 

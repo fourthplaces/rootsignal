@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 // Re-exports — value types from rootsignal-world
 // ---------------------------------------------------------------------------
 
-pub use rootsignal_world::Eventlike;
 pub use rootsignal_world::values::{Location, Schedule};
+pub use rootsignal_world::Eventlike;
 
 // ---------------------------------------------------------------------------
 // Re-exports — the three event layers

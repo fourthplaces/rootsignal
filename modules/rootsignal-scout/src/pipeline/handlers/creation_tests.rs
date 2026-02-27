@@ -50,14 +50,19 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         },
     );
 
-    let events = super::creation::handle_create(node_id, "https://localorg.org/events", &state, &deps)
-        .await
-        .unwrap();
+    let events =
+        super::creation::handle_create(node_id, "https://localorg.org/events", &state, &deps)
+            .await
+            .unwrap();
 
     // Should emit: World(discovery) + System(sensitivity) + World(CitationRecorded)
     //            + Pipeline(SignalReaderd)
     // May also emit System(ImpliedQueries) if the node has implied queries.
-    assert!(events.len() >= 4, "expected at least 4 events, got {}", events.len());
+    assert!(
+        events.len() >= 4,
+        "expected at least 4 events, got {}",
+        events.len()
+    );
 
     // First event: World discovery
     assert!(
@@ -66,20 +71,24 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
     );
 
     // At least one System event (sensitivity)
-    let system_count = events.iter().filter(|e| matches!(e, ScoutEvent::System(_))).count();
+    let system_count = events
+        .iter()
+        .filter(|e| matches!(e, ScoutEvent::System(_)))
+        .count();
     assert!(system_count >= 1, "expected at least one System event");
 
     // CitationRecorded present (evidence flows through events)
-    let has_citation = events.iter().any(|e| matches!(
-        e,
-        ScoutEvent::World(WorldEvent::CitationRecorded { .. })
-    ));
+    let has_citation = events
+        .iter()
+        .any(|e| matches!(e, ScoutEvent::World(WorldEvent::CitationRecorded { .. })));
     assert!(has_citation, "expected CitationRecorded event");
 
     // Last event: SignalReaderd pipeline event
     let last = events.last().unwrap();
     match last {
-        ScoutEvent::Pipeline(PipelineEvent::SignalReaderd { node_id: stored_id, .. }) => {
+        ScoutEvent::Pipeline(PipelineEvent::SignalReaderd {
+            node_id: stored_id, ..
+        }) => {
             assert_eq!(*stored_id, node_id);
         }
         other => panic!("expected SignalReaderd, got {:?}", other),
@@ -181,14 +190,18 @@ async fn refresh_emits_citation_and_freshness_confirmed() {
     let existing_id = Uuid::new_v4();
     let node_type = rootsignal_common::types::NodeType::Gathering;
 
-    let events = super::creation::handle_refresh(existing_id, node_type, "https://example.org", &deps)
-        .await
-        .unwrap();
+    let events =
+        super::creation::handle_refresh(existing_id, node_type, "https://example.org", &deps)
+            .await
+            .unwrap();
 
     assert_eq!(events.len(), 2);
 
     // CitationRecorded
-    assert!(matches!(&events[0], ScoutEvent::World(WorldEvent::CitationRecorded { .. })));
+    assert!(matches!(
+        &events[0],
+        ScoutEvent::World(WorldEvent::CitationRecorded { .. })
+    ));
 
     // FreshnessConfirmed
     match &events[1] {
@@ -300,7 +313,11 @@ async fn signal_stored_with_author_emits_actor_linked() {
     .unwrap();
 
     // Author present (new actor) → ActorIdentified + ActorLinkedToSignal
-    assert_eq!(events.len(), 2, "expected ActorIdentified + ActorLinkedToSignal");
+    assert_eq!(
+        events.len(),
+        2,
+        "expected ActorIdentified + ActorLinkedToSignal"
+    );
 
     // ActorIdentified emitted
     assert!(

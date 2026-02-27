@@ -35,7 +35,9 @@ pub async fn route_pipeline(
 
         // Dedup verdicts → creation / corroboration / freshness handlers
         PipelineEvent::NewSignalAccepted {
-            node_id, source_url, ..
+            node_id,
+            source_url,
+            ..
         } => creation::handle_create(*node_id, source_url, state, deps).await,
         PipelineEvent::CrossSourceMatchDetected {
             existing_id,
@@ -72,9 +74,7 @@ pub async fn route_pipeline(
         }
 
         // Engine lifecycle — seed sources when region is empty
-        PipelineEvent::EngineStarted { .. } => {
-            bootstrap::handle_engine_started(state, deps).await
-        }
+        PipelineEvent::EngineStarted { .. } => bootstrap::handle_engine_started(state, deps).await,
 
         // Phase lifecycle and other informational events — no handler needed.
         _ => Ok(vec![]),

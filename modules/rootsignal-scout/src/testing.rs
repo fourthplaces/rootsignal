@@ -16,12 +16,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use rootsignal_common::canonical_value;
 use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
     Post, ReviewStatus, ScoutScope, SourceNode,
 };
-use rootsignal_common::canonical_value;
-use rootsignal_graph::{DuplicateMatch, ReapStats};
+use rootsignal_graph::DuplicateMatch;
 
 use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
 use crate::traits::{ContentFetcher, SignalReader};
@@ -439,7 +439,11 @@ impl MockSignalReader {
     /// Pre-populate URL→titles mapping for URL-based title dedup (Layer 2).
     pub fn add_url_titles(&self, url: &str, titles: Vec<String>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.url_titles.entry(url.to_string()).or_default().extend(titles);
+        inner
+            .url_titles
+            .entry(url.to_string())
+            .or_default()
+            .extend(titles);
     }
 
     /// Insert a signal directly into the mock store so `find_by_titles_and_types`
@@ -722,12 +726,8 @@ impl SignalReader for MockSignalReader {
         Ok(inner.sources.values().cloned().collect())
     }
 
-    async fn delete_pins(&self, _pin_ids: &[Uuid]) -> Result<()> {
-        Ok(())
-    }
-
-    async fn reap_expired(&self) -> Result<ReapStats> {
-        Ok(ReapStats::default())
+    async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
+        Ok(vec![])
     }
 
     async fn get_signals_for_actor(
@@ -1437,7 +1437,9 @@ pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
 }
 
 /// Create test PipelineDeps with a given store.
-pub fn test_pipeline_deps(store: std::sync::Arc<dyn crate::traits::SignalReader>) -> crate::pipeline::state::PipelineDeps {
+pub fn test_pipeline_deps(
+    store: std::sync::Arc<dyn crate::traits::SignalReader>,
+) -> crate::pipeline::state::PipelineDeps {
     crate::pipeline::state::PipelineDeps {
         store,
         embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
