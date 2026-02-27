@@ -12,7 +12,7 @@ use uuid::Uuid;
 use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 use rootsignal_archive::Archive;
 

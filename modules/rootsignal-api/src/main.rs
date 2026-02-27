@@ -200,7 +200,7 @@ async fn main() -> Result<()> {
 
     let store_factory = pg_pool
         .clone()
-        .map(|pool| rootsignal_scout::pipeline::SignalStoreFactory::new(client.clone(), pool));
+        .map(|pool| rootsignal_scout::store::SignalStoreFactory::new(client.clone(), pool));
 
     if store_factory.is_none() {
         tracing::warn!("SignalStoreFactory not available — mutations that write signals will fail");

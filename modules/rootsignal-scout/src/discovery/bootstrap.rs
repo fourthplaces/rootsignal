@@ -16,7 +16,7 @@ use rootsignal_archive::Archive;
 /// Generates seed search queries, performs a news sweep, and creates initial Source nodes.
 pub struct Bootstrapper<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     archive: Arc<Archive>,
     anthropic_api_key: String,
     region: ScoutScope,
@@ -25,7 +25,7 @@ pub struct Bootstrapper<'a> {
 impl<'a> Bootstrapper<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: ScoutScope,

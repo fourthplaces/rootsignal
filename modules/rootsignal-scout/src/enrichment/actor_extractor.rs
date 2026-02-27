@@ -11,7 +11,7 @@ use uuid::Uuid;
 use rootsignal_common::{ActorNode, ActorType};
 use rootsignal_graph::{query, GraphClient};
 
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 /// Response schema for actor extraction LLM call.
 #[derive(Debug, Deserialize, JsonSchema)]

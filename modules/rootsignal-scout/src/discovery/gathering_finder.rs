@@ -267,7 +267,7 @@ Return valid JSON matching the GravityFinding schema.";
 
 pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -283,7 +283,7 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,

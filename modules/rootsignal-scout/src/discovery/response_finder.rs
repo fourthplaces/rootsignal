@@ -274,7 +274,7 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -291,7 +291,7 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,

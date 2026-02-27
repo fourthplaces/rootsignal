@@ -14,14 +14,14 @@ use rootsignal_graph::GraphWriter;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         region_slug: &'a str,
     ) -> Self {
         Self {

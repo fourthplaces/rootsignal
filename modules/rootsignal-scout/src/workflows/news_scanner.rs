@@ -80,7 +80,7 @@ pub async fn run_news_scan_from_deps(deps: &ScoutDeps) -> anyhow::Result<NewsSca
     let archive = super::create_archive(deps);
     let writer = GraphWriter::new(deps.graph_client.clone());
 
-    let scanner = crate::pipeline::news_scanner::NewsScanner::new(
+    let scanner = crate::news_scanner::NewsScanner::new(
         archive,
         &deps.anthropic_api_key,
         writer,

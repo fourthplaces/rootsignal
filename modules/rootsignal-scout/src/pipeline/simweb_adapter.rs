@@ -11,7 +11,7 @@ use rootsignal_common::types::{
 };
 use simweb::SimulatedWeb;
 
-use super::traits::ContentFetcher;
+use crate::traits::ContentFetcher;
 
 #[async_trait]
 impl ContentFetcher for SimulatedWeb {

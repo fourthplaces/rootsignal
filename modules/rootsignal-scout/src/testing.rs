@@ -24,7 +24,7 @@ use rootsignal_common::{canonical_value, EntityMappingOwned};
 use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
-use crate::pipeline::traits::{ContentFetcher, SignalStore};
+use crate::traits::{ContentFetcher, SignalStore};
 
 // ---------------------------------------------------------------------------
 // Test constants

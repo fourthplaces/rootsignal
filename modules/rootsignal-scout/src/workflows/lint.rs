@@ -12,8 +12,8 @@ use tracing::info;
 use rootsignal_graph::GraphWriter;
 
 use crate::infra::run_log::RunLogger;
-use crate::pipeline::signal_lint::SignalLinter;
-use crate::pipeline::traits::{ContentFetcher, SignalStore};
+use crate::lint::signal_lint::SignalLinter;
+use crate::traits::{ContentFetcher, SignalStore};
 
 use super::types::{EmptyRequest, SignalLintResult, TaskRequest};
 use super::ScoutDeps;

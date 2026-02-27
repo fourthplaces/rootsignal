@@ -20,7 +20,7 @@ use rootsignal_archive::Archive;
 
 use super::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;

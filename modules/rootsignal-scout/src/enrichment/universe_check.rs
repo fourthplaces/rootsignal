@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use rootsignal_common::ScoutScope;
 
-use crate::pipeline::traits::ContentFetcher;
+use crate::traits::ContentFetcher;
 
 #[derive(Deserialize, JsonSchema)]
 struct UniverseVerdict {

@@ -2945,7 +2945,7 @@ async fn social_signal_has_produced_by_edge() {
 // ---------------------------------------------------------------------------
 
 use crate::enrichment::actor_location::enrich_actor_locations;
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;

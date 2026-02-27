@@ -81,7 +81,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 let store = deps.build_store(uuid::Uuid::new_v4().to_string());
                 let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     archive,
                     &api_key,
                     scope,

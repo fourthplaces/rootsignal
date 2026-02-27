@@ -24,7 +24,7 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 
 pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
@@ -32,7 +32,7 @@ pub(crate) struct Expansion<'a> {
 impl<'a> Expansion<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {

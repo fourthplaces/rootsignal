@@ -325,20 +325,20 @@ pub(crate) fn dedup_verdict(
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ScrapePhase {
-    store: Arc<dyn super::traits::SignalStore>,
+    store: Arc<dyn crate::traits::SignalStore>,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
-    fetcher: Arc<dyn super::traits::ContentFetcher>,
+    fetcher: Arc<dyn crate::traits::ContentFetcher>,
     region: ScoutScope,
     run_id: String,
 }
 
 impl ScrapePhase {
     pub fn new(
-        store: Arc<dyn super::traits::SignalStore>,
+        store: Arc<dyn crate::traits::SignalStore>,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
-        fetcher: Arc<dyn super::traits::ContentFetcher>,
+        fetcher: Arc<dyn crate::traits::ContentFetcher>,
         region: ScoutScope,
         run_id: String,
     ) -> Self {

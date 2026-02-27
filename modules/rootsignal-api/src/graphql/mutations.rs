@@ -11,7 +11,7 @@ use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
-use rootsignal_scout::pipeline::SignalStoreFactory;
+use rootsignal_scout::store::SignalStoreFactory;
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -667,7 +667,7 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 /// Create a per-mutation SignalStore via the factory, returning a clear error if Postgres is not configured.
 fn require_store(
     ctx: &Context<'_>,
-) -> Result<Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>> {
+) -> Result<Arc<dyn rootsignal_scout::traits::SignalStore>> {
     ctx.data_unchecked::<Option<SignalStoreFactory>>()
         .as_ref()
         .ok_or_else(|| async_graphql::Error::new("Event store not configured (Postgres required)"))
@@ -718,8 +718,8 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
-    use rootsignal_scout::pipeline::traits::SignalStore;
-    use rootsignal_scout::pipeline::SignalStoreFactory;
+    use rootsignal_scout::traits::SignalStore;
+    use rootsignal_scout::store::SignalStoreFactory;
     use rootsignal_scout::testing::MockSignalStore;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};

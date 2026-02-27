@@ -427,7 +427,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::pipeline::traits::SignalStore,
+    store: &'a dyn crate::traits::SignalStore,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -443,7 +443,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 impl<'a> SourceFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::pipeline::traits::SignalStore,
+        store: &'a dyn crate::traits::SignalStore,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,

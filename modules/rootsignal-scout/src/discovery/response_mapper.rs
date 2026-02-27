@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rootsignal_graph::GraphWriter;
 
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {

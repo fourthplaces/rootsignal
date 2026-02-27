@@ -13,7 +13,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 use rootsignal_common::{
     is_web_query, scraping_strategy, DiscoveryMethod, ScoutScope, ScrapingStrategy, SourceNode,
@@ -23,7 +23,7 @@ use rootsignal_graph::{enrich, enrich_embeddings, GraphClient, GraphProjector, G
 
 use rootsignal_archive::Archive;
 
-use crate::pipeline::event_sourced_store::EventSourcedStore;
+use crate::store::event_sourced::EventSourcedStore;
 
 use crate::discovery::source_finder::SourceFinderStats;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
@@ -172,7 +172,7 @@ impl<'a> ScrapePipeline<'a> {
             info!("No sources found — running cold-start bootstrap");
             let bootstrapper = crate::discovery::bootstrap::Bootstrapper::new(
                 &self.writer,
-                self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+                self.store.as_ref() as &dyn crate::traits::SignalStore,
                 self.archive.clone(),
                 &self.anthropic_api_key,
                 self.region.clone(),
@@ -340,10 +340,10 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         let phase = ScrapePhase::new(
-            self.store.clone() as Arc<dyn crate::pipeline::traits::SignalStore>,
+            self.store.clone() as Arc<dyn crate::traits::SignalStore>,
             self.extractor.clone(),
             self.embedder.clone(),
-            self.archive.clone() as Arc<dyn crate::pipeline::traits::ContentFetcher>,
+            self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>,
             self.region.clone(),
             self.run_id.clone(),
         );
@@ -370,7 +370,7 @@ impl<'a> ScrapePipeline<'a> {
         let config = PromotionConfig::default();
         match link_promoter::promote_links(
             &ctx.collected_links,
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &config,
         )
         .await
@@ -421,7 +421,7 @@ impl<'a> ScrapePipeline<'a> {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
@@ -523,7 +523,7 @@ impl<'a> ScrapePipeline<'a> {
     pub(crate) async fn update_source_metrics(&self, run: &ScheduledRun, ctx: &RunContext) {
         let metrics = Metrics::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.region.name,
         );
         metrics
@@ -549,7 +549,7 @@ impl<'a> ScrapePipeline<'a> {
         // Signal Expansion — create sources from implied queries
         let expansion = Expansion::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &*self.embedder,
             &self.region.name,
         );
@@ -560,7 +560,7 @@ impl<'a> ScrapePipeline<'a> {
         // End-of-run discovery — find new sources for next run
         let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
@@ -638,7 +638,7 @@ impl<'a> ScrapePipeline<'a> {
         // Actor extraction — extract actors from signals that have none
         info!("=== Actor Extraction ===");
         let actor_stats = crate::enrichment::actor_extractor::run_actor_extraction(
-            self.store.as_ref() as &dyn crate::pipeline::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.graph_client,
             &self.anthropic_api_key,
             &self.region.name,

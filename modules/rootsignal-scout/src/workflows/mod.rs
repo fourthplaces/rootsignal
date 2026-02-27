@@ -53,8 +53,8 @@ impl ScoutDeps {
     pub fn build_store(
         &self,
         run_id: String,
-    ) -> crate::pipeline::event_sourced_store::EventSourcedStore {
-        crate::pipeline::build_signal_store(self.graph_client.clone(), self.pg_pool.clone(), run_id)
+    ) -> crate::store::event_sourced::EventSourcedStore {
+        crate::store::build_signal_store(self.graph_client.clone(), self.pg_pool.clone(), run_id)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

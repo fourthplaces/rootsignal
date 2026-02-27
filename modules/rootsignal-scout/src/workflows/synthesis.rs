@@ -160,7 +160,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting response mapping...");
                 let response_mapper = crate::discovery::response_mapper::ResponseMapper::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     &deps.anthropic_api_key,
                     scope.center_lat,
                     scope.center_lng,
@@ -179,7 +179,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting tension linker...");
                 let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -198,7 +198,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting response finder...");
                 let response_finder = crate::discovery::response_finder::ResponseFinder::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -217,7 +217,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting gathering finder...");
                 let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -236,7 +236,7 @@ pub async fn run_synthesis_from_deps(
                 info!("Starting investigation phase...");
                 let investigator = crate::discovery::investigator::Investigator::new(
                     &writer,
-                    &store as &dyn crate::pipeline::traits::SignalStore,
+                    &store as &dyn crate::traits::SignalStore,
                     archive.clone(),
                     &deps.anthropic_api_key,
                     scope,

@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use rootsignal_common::extract_domain;
 
-use crate::pipeline::traits::SignalStore;
+use crate::traits::SignalStore;
 
 #[derive(Deserialize, JsonSchema)]
 struct DomainFilterResponse {
