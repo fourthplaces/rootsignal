@@ -22,12 +22,10 @@ use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
-use crate::pipeline::state::{ExtractedBatch, PipelineDeps, PipelineState};
-use crate::pipeline::stats::ScoutStats;
+use crate::pipeline::state::{ExtractedBatch, PipelineDeps};
 use rootsignal_common::{
-    canonical_value, channel_type, is_web_query, scraping_strategy, ActorContext, ActorNode,
-    ActorType, CitationNode, DiscoveryMethod, Node, NodeType, Post, ReviewStatus, ScoutScope,
-    ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
+    canonical_value, is_web_query, scraping_strategy, ActorContext, DiscoveryMethod, Node, NodeType,
+    Post, ScoutScope, ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
 };
 
 
@@ -1594,6 +1592,7 @@ impl ScrapePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rootsignal_common::ReviewStatus;
 
     #[test]
     fn normalize_title_trims_whitespace() {

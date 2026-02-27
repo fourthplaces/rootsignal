@@ -15,7 +15,6 @@ use std::collections::HashSet;
 use anyhow::Result;
 use rootsignal_common::types::NodeType;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::infra::util::sanitize_url;
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
