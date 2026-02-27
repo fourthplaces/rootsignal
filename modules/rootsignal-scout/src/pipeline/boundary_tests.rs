@@ -1768,12 +1768,12 @@ async fn bootstrap_actor_gets_depth_zero() {
 // ---------------------------------------------------------------------------
 // Content date fallback
 //
-// RSS pub_date and social published_at flow into content_date when the
+// RSS pub_date and social published_at flow into published_at when the
 // LLM didn't extract one.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn rss_pub_date_becomes_content_date_when_llm_omits_it() {
+async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     use chrono::TimeZone;
 
     let feed_url = "https://localorg.org/feed";
@@ -1798,7 +1798,7 @@ async fn rss_pub_date_becomes_content_date_when_llm_omits_it() {
         archived_page(article_url, "# Community event recap"),
     );
 
-    // Extractor returns signal with NO content_date
+    // Extractor returns signal with NO published_at
     let extractor = MockExtractor::new().on_url(
         article_url,
         crate::pipeline::extractor::ExtractionResult {
@@ -1834,17 +1834,17 @@ async fn rss_pub_date_becomes_content_date_when_llm_omits_it() {
     let stored = store
         .signal_by_title("Community Event Recap")
         .expect("signal should exist");
-    let content_date = stored
-        .content_date
-        .expect("content_date should be backfilled from RSS pub_date");
+    let published_at = stored
+        .published_at
+        .expect("published_at should be backfilled from RSS pub_date");
     assert_eq!(
-        content_date, pub_date,
-        "content_date should match RSS pub_date"
+        published_at, pub_date,
+        "published_at should match RSS pub_date"
     );
 }
 
 #[tokio::test]
-async fn llm_content_date_not_overwritten_by_rss_pub_date() {
+async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     use chrono::TimeZone;
 
     let feed_url = "https://localorg.org/feed";
@@ -1869,10 +1869,10 @@ async fn llm_content_date_not_overwritten_by_rss_pub_date() {
         .on_feed(feed_url, feed)
         .on_page(article_url, archived_page(article_url, "# Upcoming event"));
 
-    // Extractor returns signal WITH an explicit content_date
+    // Extractor returns signal WITH an explicit published_at
     let mut node = tension_at("Upcoming Event", 44.975, -93.270);
     if let Some(meta) = node.meta_mut() {
-        meta.content_date = Some(llm_date);
+        meta.published_at = Some(llm_date);
     }
 
     let extractor = MockExtractor::new().on_url(
@@ -1910,15 +1910,15 @@ async fn llm_content_date_not_overwritten_by_rss_pub_date() {
     let stored = store
         .signal_by_title("Upcoming Event")
         .expect("signal should exist");
-    let content_date = stored.content_date.expect("content_date should exist");
+    let published_at = stored.published_at.expect("published_at should exist");
     assert_eq!(
-        content_date, llm_date,
-        "LLM content_date should NOT be overwritten by RSS pub_date"
+        published_at, llm_date,
+        "LLM published_at should NOT be overwritten by RSS pub_date"
     );
 }
 
 #[tokio::test]
-async fn social_published_at_becomes_content_date_fallback() {
+async fn social_published_at_becomes_published_at_fallback() {
     use chrono::TimeZone;
 
     let ig_url = "https://www.instagram.com/localorg";
@@ -1931,7 +1931,7 @@ async fn social_published_at_becomes_content_date_fallback() {
 
     let fetcher = MockFetcher::new().on_posts(ig_url, vec![post]);
 
-    // Signal with NO content_date
+    // Signal with NO published_at
     let extractor = MockExtractor::new().on_url(
         ig_url,
         crate::pipeline::extractor::ExtractionResult {
@@ -1967,10 +1967,10 @@ async fn social_published_at_becomes_content_date_fallback() {
     let stored = store
         .signal_by_title("Big Community Event")
         .expect("signal should exist");
-    let content_date = stored
-        .content_date
-        .expect("content_date should be backfilled from post published_at");
-    assert_eq!(content_date, post_date);
+    let published_at = stored
+        .published_at
+        .expect("published_at should be backfilled from post published_at");
+    assert_eq!(published_at, post_date);
 }
 
 // ---------------------------------------------------------------------------
@@ -2266,7 +2266,7 @@ async fn hallucinated_future_date_does_not_crash() {
 
     let mut node = tension_at("Signal From Year 2099", 44.975, -93.270);
     if let Some(meta) = node.meta_mut() {
-        meta.content_date = Some(
+        meta.published_at = Some(
             chrono::Utc
                 .with_ymd_and_hms(2099, 12, 31, 23, 59, 59)
                 .unwrap(),
@@ -2311,7 +2311,7 @@ async fn hallucinated_future_date_does_not_crash() {
         "future date should not prevent storage"
     );
     let stored = store.signal_by_title("Signal From Year 2099").unwrap();
-    assert_eq!(chrono::Datelike::year(&stored.content_date.unwrap()), 2099);
+    assert_eq!(chrono::Datelike::year(&stored.published_at.unwrap()), 2099);
 }
 
 #[tokio::test]
@@ -2325,7 +2325,7 @@ async fn epoch_zero_date_does_not_crash() {
 
     let mut node = tension_at("Signal With Epoch Date", 44.975, -93.270);
     if let Some(meta) = node.meta_mut() {
-        meta.content_date = Some(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+        meta.published_at = Some(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
     }
 
     let extractor = MockExtractor::new().on_url(
@@ -2366,7 +2366,7 @@ async fn epoch_zero_date_does_not_crash() {
         "epoch date should not prevent storage"
     );
     let stored = store.signal_by_title("Signal With Epoch Date").unwrap();
-    assert_eq!(chrono::Datelike::year(&stored.content_date.unwrap()), 1970);
+    assert_eq!(chrono::Datelike::year(&stored.published_at.unwrap()), 1970);
 }
 
 // ---------------------------------------------------------------------------
@@ -2662,7 +2662,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
         stored.from_location.is_none(),
         "web source has no actor context"
     );
-    assert!(stored.content_date.is_none(), "no date metadata available");
+    assert!(stored.published_at.is_none(), "no date metadata available");
     assert!(
         stored.confidence > 0.0,
         "even bare signal has non-zero confidence from quality scoring"
@@ -2677,7 +2677,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn owned_source_author_creates_actor_with_url_entity_id() {
+async fn owned_source_author_creates_actor_with_url_canonical_key() {
     let ig_url = "https://www.instagram.com/friendsfalls";
 
     let fetcher =
@@ -2723,9 +2723,9 @@ async fn owned_source_author_creates_actor_with_url_entity_id() {
         "actor should be created for owned source author"
     );
     assert_eq!(
-        store.actor_entity_id("Friends of the Falls").unwrap(),
+        store.actor_canonical_key("Friends of the Falls").unwrap(),
         "instagram.com/friendsfalls",
-        "entity_id should be URL-based, not slug-based"
+        "canonical_key should be URL-based, not slug-based"
     );
     assert!(
         store.actor_has_source("Friends of the Falls", source.id),
@@ -2962,7 +2962,7 @@ fn test_actor(name: &str) -> rootsignal_common::ActorNode {
         id: Uuid::new_v4(),
         name: name.to_string(),
         actor_type: ActorType::Organization,
-        entity_id: format!("{}-entity", name.to_lowercase().replace(' ', "-")),
+        canonical_key: format!("{}-entity", name.to_lowercase().replace(' ', "-")),
         domains: vec![],
         social_urls: vec![],
         description: String::new(),

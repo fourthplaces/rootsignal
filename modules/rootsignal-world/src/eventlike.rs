@@ -1,4 +1,4 @@
-/// Trait shared by all event layers: WorldEvent, SystemDecision, TelemetryEvent.
+/// Trait shared by all event layers: WorldEvent, SystemEvent, TelemetryEvent.
 ///
 /// Enables generic `append_and_project` — any event that implements this can be
 /// stored in the EventStore (which accepts `event_type` + `serde_json::Value`).

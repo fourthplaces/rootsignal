@@ -243,7 +243,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // --- Actor constraints and indexes ---
     let actor_constraints = [
         "CREATE CONSTRAINT actor_id_unique IF NOT EXISTS FOR (a:Actor) REQUIRE a.id IS UNIQUE",
-        "CREATE CONSTRAINT actor_entity_id_unique IF NOT EXISTS FOR (a:Actor) REQUIRE a.entity_id IS UNIQUE",
+        "CREATE CONSTRAINT actor_canonical_key_unique IF NOT EXISTS FOR (a:Actor) REQUIRE a.canonical_key IS UNIQUE",
     ];
 
     for c in &actor_constraints {

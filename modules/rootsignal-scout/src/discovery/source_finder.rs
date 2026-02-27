@@ -1140,9 +1140,9 @@ mod tests {
             "Missing what_would_help text"
         );
 
-        // Stories include arc and energy
-        assert!(prompt.contains("Emerging"), "Missing story arc");
-        assert!(prompt.contains("energy=0.7"), "Missing story energy");
+        // Situations include arc and temperature
+        assert!(prompt.contains("arc=emerging"), "Missing situation arc");
+        assert!(prompt.contains("temp=0.72"), "Missing situation temperature");
 
         // Signal balance line
         assert!(prompt.contains("Gatherings: 23"), "Missing gathering count");

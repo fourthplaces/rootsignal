@@ -85,7 +85,7 @@ async fn pipeline_creates_signal_with_factual_and_derived_properties() {
         confidence: 0.85,
         source_url: "https://patch.com/mn/potluck".into(),
         extracted_at: Utc::now(),
-        content_date: None,
+        published_at: None,
         location: mpls(),
         from_location: None,
         mentioned_actors: vec![],
@@ -136,7 +136,7 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
                 confidence: 0.9,
                 source_url: "https://startribune.com/rally".into(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 location: mpls(),
                 from_location: None,
                 mentioned_actors: vec![],
@@ -150,7 +150,7 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
             2,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev1_id,
-                entity_id: signal_id,
+                signal_id: signal_id,
                 url: "https://mpr.org/rally-coverage".into(),
                 content_hash: "abc123".into(),
                 snippet: Some("MPR reports on the rally".into()),
@@ -163,7 +163,7 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
             3,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev2_id,
-                entity_id: signal_id,
+                signal_id: signal_id,
                 url: "https://twitter.com/user/rally".into(),
                 content_hash: "def456".into(),
                 snippet: Some("Live from the rally".into()),
@@ -214,7 +214,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
                 confidence: 0.8,
                 source_url: "https://example.com/housing".into(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 location: mpls(),
                 from_location: None,
                 mentioned_actors: vec![],
@@ -232,7 +232,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
                 confidence: 0.85,
                 source_url: "https://example.com/aid".into(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 location: mpls(),
                 from_location: None,
                 mentioned_actors: vec![],
@@ -248,7 +248,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
                 actor_id,
                 name: "Housing Alliance".into(),
                 actor_type: ActorType::Organization,
-                entity_id: sig1.to_string(),
+                canonical_key: sig1.to_string(),
                 domains: vec![],
                 social_urls: vec![],
                 description: "Housing advocacy org".into(),
@@ -260,9 +260,9 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
         ),
         stored(
             4,
-            &Event::World(WorldEvent::ActorLinkedToEntity {
+            &Event::World(WorldEvent::ActorLinkedToSignal {
                 actor_id,
-                entity_id: sig2,
+                signal_id: sig2,
                 role: "provider".into(),
             }),
         ),
@@ -274,7 +274,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
         .expect("pipeline failed");
 
     // ActorIdentified creates the Actor node (no ACTED_IN edge)
-    // ActorLinkedToEntity creates one ACTED_IN edge to sig2
+    // ActorLinkedToSignal creates one ACTED_IN edge to sig2
     // Enrichment computes signal_count = 1
     let count: i64 = read_prop(&client, "Actor", actor_id, "signal_count").await;
     assert_eq!(count, 1);
@@ -320,7 +320,7 @@ async fn replay_produces_identical_graph() {
                 confidence: 0.9,
                 source_url: "https://patch.com/market".into(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 location: mpls(),
                 from_location: None,
                 mentioned_actors: vec![],
@@ -334,7 +334,7 @@ async fn replay_produces_identical_graph() {
             2,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev_id,
-                entity_id: signal_id,
+                signal_id: signal_id,
                 url: "https://mpr.org/market".into(),
                 content_hash: "hash1".into(),
                 snippet: Some("MPR covers the market".into()),

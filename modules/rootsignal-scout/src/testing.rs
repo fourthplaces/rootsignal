@@ -169,7 +169,7 @@ pub struct StoredSignal {
     pub embedding: Vec<f32>,
     pub about_location: Option<rootsignal_common::GeoPoint>,
     pub from_location: Option<rootsignal_common::GeoPoint>,
-    pub content_date: Option<DateTime<Utc>>,
+    pub published_at: Option<DateTime<Utc>>,
     pub about_location_name: Option<String>,
     pub confidence: f32,
     pub extracted_at: DateTime<Utc>,
@@ -205,8 +205,8 @@ struct MockSignalStoreInner {
     actor_sources: Vec<(Uuid, Uuid)>,
     /// (signal_id, source_id) — PRODUCED_BY edges
     signal_sources: Vec<(Uuid, Uuid)>,
-    /// entity_id → actor_id for find_actor_by_entity_id lookups
-    actor_by_entity_id: HashMap<String, Uuid>,
+    /// canonical_key → actor_id for find_actor_by_canonical_key lookups
+    actor_by_canonical_key: HashMap<String, Uuid>,
 }
 
 /// Stateful in-memory graph mock. Thread-safe via interior Mutex.
@@ -235,7 +235,7 @@ impl MockSignalStore {
                 fail_on_create: false,
                 actor_sources: Vec::new(),
                 signal_sources: Vec::new(),
-                actor_by_entity_id: HashMap::new(),
+                actor_by_canonical_key: HashMap::new(),
             }),
         }
     }
@@ -449,16 +449,16 @@ impl MockSignalStore {
         self.inner.lock().unwrap().actors.len()
     }
 
-    pub fn has_actor_with_entity_id(&self, entity_id: &str) -> bool {
+    pub fn has_actor_with_canonical_key(&self, canonical_key: &str) -> bool {
         let inner = self.inner.lock().unwrap();
-        inner.actor_by_entity_id.contains_key(entity_id)
+        inner.actor_by_canonical_key.contains_key(canonical_key)
     }
 
-    pub fn actor_entity_id(&self, actor_name: &str) -> Option<String> {
+    pub fn actor_canonical_key(&self, actor_name: &str) -> Option<String> {
         let inner = self.inner.lock().unwrap();
         let actor_id = inner.actor_by_name.get(&actor_name.to_lowercase())?;
         let actor = inner.actors.get(actor_id)?;
-        Some(actor.entity_id.clone())
+        Some(actor.canonical_key.clone())
     }
 
     pub fn actor_location_name(&self, actor_name: &str) -> Option<String> {
@@ -576,7 +576,7 @@ impl SignalStore for MockSignalStore {
             embedding: embedding.to_vec(),
             about_location: meta.and_then(|m| m.about_location),
             from_location: meta.and_then(|m| m.from_location),
-            content_date: meta.and_then(|m| m.content_date),
+            published_at: meta.and_then(|m| m.published_at),
             about_location_name: meta.and_then(|m| m.about_location_name.clone()),
             confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
             extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
@@ -674,10 +674,10 @@ impl SignalStore for MockSignalStore {
         inner
             .actor_by_name
             .insert(actor.name.to_lowercase(), actor.id);
-        if !actor.entity_id.is_empty() {
+        if !actor.canonical_key.is_empty() {
             inner
-                .actor_by_entity_id
-                .insert(actor.entity_id.clone(), actor.id);
+                .actor_by_canonical_key
+                .insert(actor.canonical_key.clone(), actor.id);
         }
         inner.actors.insert(actor.id, actor.clone());
         Ok(())
@@ -710,9 +710,9 @@ impl SignalStore for MockSignalStore {
         Ok(())
     }
 
-    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>> {
+    async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         let inner = self.inner.lock().unwrap();
-        Ok(inner.actor_by_entity_id.get(entity_id).copied())
+        Ok(inner.actor_by_canonical_key.get(canonical_key).copied())
     }
 
     async fn find_or_create_resource(
@@ -788,7 +788,6 @@ impl SignalStore for MockSignalStore {
         _tension_id: Uuid,
         _strength: f64,
         _explanation: &str,
-        _gathering_type: &str,
     ) -> Result<()> {
         Ok(())
     }
@@ -994,9 +993,9 @@ impl SignalExtractor for MockExtractor {
                 implied_queries: result.implied_queries.clone(),
                 resource_tags: result.resource_tags.clone(),
                 signal_tags: result.signal_tags.clone(),
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
+                rejected: result.rejected.clone(),
+                schedules: result.schedules.clone(),
+                author_actors: result.author_actors.clone(),
             });
         }
         if let Some(ref default) = self.default_result {
@@ -1005,9 +1004,9 @@ impl SignalExtractor for MockExtractor {
                 implied_queries: default.implied_queries.clone(),
                 resource_tags: default.resource_tags.clone(),
                 signal_tags: default.signal_tags.clone(),
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
+                rejected: default.rejected.clone(),
+                schedules: default.schedules.clone(),
+                author_actors: default.author_actors.clone(),
             });
         }
         bail!("MockExtractor: no result registered for {source_url}")
@@ -1036,7 +1035,7 @@ pub fn tension(title: &str) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1077,7 +1076,7 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1113,7 +1112,7 @@ pub fn need(title: &str) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1155,7 +1154,7 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1192,7 +1191,7 @@ pub fn gathering(title: &str) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1235,7 +1234,7 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1273,7 +1272,7 @@ pub fn aid(title: &str) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1314,7 +1313,7 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1350,7 +1349,7 @@ pub fn notice(title: &str) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1392,7 +1391,7 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
             from_location: None,
             source_url: String::new(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
 
@@ -1495,7 +1494,7 @@ pub fn test_meta(source_url: &str) -> rootsignal_common::NodeMeta {
         from_location: None,
         source_url: source_url.to_string(),
         extracted_at: Utc::now(),
-        content_date: None,
+        published_at: None,
         last_confirmed_active: Utc::now(),
         source_diversity: 1,
         cause_heat: 0.0,
@@ -1667,7 +1666,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: "Legal Aid Org".to_string(),
             actor_type: rootsignal_common::ActorType::Organization,
-            entity_id: "legal-aid-org".to_string(),
+            canonical_key: "legal-aid-org".to_string(),
             domains: vec![],
             social_urls: vec![],
             description: String::new(),

@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 
 use rootsignal_common::events::{
     AidCorrection, Event, GatheringCorrection, Location, NeedCorrection, NoticeCorrection,
-    Schedule, SituationChange, SourceChange, SystemDecision, SystemSourceChange, TensionCorrection,
+    Schedule, SituationChange, SourceChange, SystemEvent, SystemSourceChange, TensionCorrection,
     WorldEvent,
 };
 use rootsignal_common::types::NodeType;
@@ -88,7 +88,7 @@ impl GraphProjector {
                 confidence,
                 source_url,
                 extracted_at,
-                content_date,
+                published_at,
                 location,
                 schedule,
                 action_url,
@@ -106,7 +106,7 @@ impl GraphProjector {
                        n.action_url = $action_url, n.organizer = $organizer,
                        n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
                     id, &title, &summary, confidence, &source_url,
-                    &extracted_at, content_date, &location, event,
+                    &extracted_at, published_at, &location, event,
                 )
                 .param("starts_at", starts_at)
                 .param("ends_at", ends_at)
@@ -127,7 +127,7 @@ impl GraphProjector {
                 confidence,
                 source_url,
                 extracted_at,
-                content_date,
+                published_at,
                 location,
                 action_url,
                 availability,
@@ -146,7 +146,7 @@ impl GraphProjector {
                     confidence,
                     &source_url,
                     &extracted_at,
-                    content_date,
+                    published_at,
                     &location,
                     event,
                 )
@@ -165,7 +165,7 @@ impl GraphProjector {
                 confidence,
                 source_url,
                 extracted_at,
-                content_date,
+                published_at,
                 location,
                 urgency,
                 what_needed,
@@ -183,7 +183,7 @@ impl GraphProjector {
                     confidence,
                     &source_url,
                     &extracted_at,
-                    content_date,
+                    published_at,
                     &location,
                     event,
                 )
@@ -202,7 +202,7 @@ impl GraphProjector {
                 confidence,
                 source_url,
                 extracted_at,
-                content_date,
+                published_at,
                 location,
                 severity,
                 category,
@@ -218,7 +218,7 @@ impl GraphProjector {
                        n.effective_date = CASE WHEN $effective_date = '' THEN null ELSE datetime($effective_date) END,
                        n.source_authority = $source_authority",
                     id, &title, &summary, confidence, &source_url,
-                    &extracted_at, content_date, &location, event,
+                    &extracted_at, published_at, &location, event,
                 )
                 .param("severity", severity.map(|s| severity_str(s)).unwrap_or(""))
                 .param("category", category.unwrap_or_default())
@@ -236,7 +236,7 @@ impl GraphProjector {
                 confidence,
                 source_url,
                 extracted_at,
-                content_date,
+                published_at,
                 location,
                 severity,
                 what_would_help,
@@ -253,7 +253,7 @@ impl GraphProjector {
                     confidence,
                     &source_url,
                     &extracted_at,
-                    content_date,
+                    published_at,
                     &location,
                     event,
                 )
@@ -268,7 +268,7 @@ impl GraphProjector {
             // Corroboration — world fact only (no scoring)
             // ---------------------------------------------------------
             WorldEvent::ObservationCorroborated {
-                entity_id,
+                signal_id,
                 node_type,
                 ..
             } => {
@@ -277,7 +277,7 @@ impl GraphProjector {
                     "MATCH (n:{label} {{id: $id}})
                      SET n.last_confirmed_active = datetime($ts)"
                 ))
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("ts", format_dt_from_stored(event));
 
                 self.client.graph.run(q).await?;
@@ -289,7 +289,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             WorldEvent::CitationRecorded {
                 citation_id,
-                entity_id,
+                signal_id,
                 url,
                 content_hash,
                 snippet,
@@ -298,11 +298,11 @@ impl GraphProjector {
                 evidence_confidence,
             } => {
                 let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $entity_id})
-                     OPTIONAL MATCH (a:Aid {id: $entity_id})
-                     OPTIONAL MATCH (n:Need {id: $entity_id})
-                     OPTIONAL MATCH (nc:Notice {id: $entity_id})
-                     OPTIONAL MATCH (t:Tension {id: $entity_id})
+                    "OPTIONAL MATCH (g:Gathering {id: $signal_id})
+                     OPTIONAL MATCH (a:Aid {id: $signal_id})
+                     OPTIONAL MATCH (n:Need {id: $signal_id})
+                     OPTIONAL MATCH (nc:Notice {id: $signal_id})
+                     OPTIONAL MATCH (t:Tension {id: $signal_id})
                      WITH coalesce(g, a, n, nc, t) AS node
                      WHERE node IS NOT NULL
                      MERGE (node)-[:SOURCED_FROM]->(ev:Evidence {source_url: $url})
@@ -319,7 +319,7 @@ impl GraphProjector {
                          ev.content_hash = $content_hash",
                 )
                 .param("ev_id", citation_id.to_string())
-                .param("entity_id", entity_id.to_string())
+                .param("signal_id", signal_id.to_string())
                 .param("url", url.as_str())
                 .param("ts", format_dt_from_stored(event))
                 .param("content_hash", content_hash.as_str())
@@ -345,7 +345,7 @@ impl GraphProjector {
                 actor_id,
                 name,
                 actor_type,
-                entity_id,
+                canonical_key,
                 domains,
                 social_urls,
                 description,
@@ -355,7 +355,7 @@ impl GraphProjector {
                 location_name,
             } => {
                 let q = query(
-                    "MERGE (a:Actor {entity_id: $entity_id})
+                    "MERGE (a:Actor {canonical_key: $canonical_key})
                      ON CREATE SET
                          a.id = $id,
                          a.name = $name,
@@ -375,7 +375,7 @@ impl GraphProjector {
                          a.last_active = datetime($ts)",
                 )
                 .param("id", actor_id.to_string())
-                .param("entity_id", entity_id.as_str())
+                .param("canonical_key", canonical_key.as_str())
                 .param("name", name.as_str())
                 .param("actor_type", actor_type.to_string())
                 .param("domains", domains)
@@ -391,18 +391,18 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            WorldEvent::ActorLinkedToEntity {
+            WorldEvent::ActorLinkedToSignal {
                 actor_id,
-                entity_id,
+                signal_id,
                 role,
             } => {
                 let q = query(
                     "MATCH (a:Actor {id: $actor_id})
-                     MATCH (n) WHERE n.id = $entity_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                     MATCH (n) WHERE n.id = $signal_id AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                      MERGE (a)-[:ACTED_IN {role: $role}]->(n)"
                 )
                 .param("actor_id", actor_id.to_string())
-                .param("entity_id", entity_id.to_string())
+                .param("signal_id", signal_id.to_string())
                 .param("role", role.as_str());
 
                 self.client.graph.run(q).await?;
@@ -497,6 +497,7 @@ impl GraphProjector {
                 tension_id,
                 strength,
                 explanation,
+                ..
             } => {
                 let q = query(
                     "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
@@ -514,25 +515,24 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            WorldEvent::GravityLinked {
+            WorldEvent::TensionLinked {
                 signal_id,
                 tension_id,
                 strength,
                 explanation,
-                gathering_type,
+                ..
             } => {
                 let q = query(
                     "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
                      MATCH (t:Tension {id: $tid})
                      MERGE (resp)-[r:DRAWN_TO]->(t)
-                     ON CREATE SET r.match_strength = $strength, r.explanation = $explanation, r.gathering_type = $gathering_type
-                     ON MATCH SET r.match_strength = $strength, r.explanation = $explanation, r.gathering_type = $gathering_type"
+                     ON CREATE SET r.match_strength = $strength, r.explanation = $explanation
+                     ON MATCH SET r.match_strength = $strength, r.explanation = $explanation"
                 )
                 .param("resp_id", signal_id.to_string())
                 .param("tid", tension_id.to_string())
                 .param("strength", strength)
-                .param("explanation", explanation.as_str())
-                .param("gathering_type", gathering_type.as_str());
+                .param("explanation", explanation.as_str());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -546,14 +546,14 @@ impl GraphProjector {
 
     async fn project_system(
         &self,
-        system: SystemDecision,
+        system: SystemEvent,
         event: &StoredEvent,
     ) -> Result<ApplyResult> {
         match system {
             // ---------------------------------------------------------
             // Sensitivity + implied queries (paired with discoveries)
             // ---------------------------------------------------------
-            SystemDecision::SensitivityClassified { entity_id, level } => {
+            SystemEvent::SensitivityClassified { signal_id, level } => {
                 let q = query(
                     "OPTIONAL MATCH (g:Gathering {id: $id})
                      OPTIONAL MATCH (a:Aid {id: $id})
@@ -564,14 +564,14 @@ impl GraphProjector {
                      WHERE node IS NOT NULL
                      SET node.sensitivity = $level",
                 )
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("level", level.as_str());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::ImpliedQueriesExtracted { entity_id, queries } => {
+            SystemEvent::ImpliedQueriesExtracted { signal_id, queries } => {
                 let q = query(
                     "OPTIONAL MATCH (g:Gathering {id: $id})
                      OPTIONAL MATCH (a:Aid {id: $id})
@@ -582,7 +582,7 @@ impl GraphProjector {
                      WHERE node IS NOT NULL
                      SET node.implied_queries = $queries",
                 )
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("queries", queries);
 
                 self.client.graph.run(q).await?;
@@ -592,8 +592,8 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Corroboration scoring
             // ---------------------------------------------------------
-            SystemDecision::CorroborationScored {
-                entity_id,
+            SystemEvent::CorroborationScored {
+                signal_id,
                 new_corroboration_count,
                 ..
             } => {
@@ -608,7 +608,7 @@ impl GraphProjector {
                      WHERE node IS NOT NULL
                      SET node.corroboration_count = $count",
                 )
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("count", new_corroboration_count as i64);
 
                 self.client.graph.run(q).await?;
@@ -618,13 +618,13 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Signal lifecycle decisions
             // ---------------------------------------------------------
-            SystemDecision::FreshnessConfirmed {
-                entity_ids,
+            SystemEvent::FreshnessConfirmed {
+                signal_ids,
                 node_type,
                 confirmed_at,
             } => {
                 let label = node_type_label(node_type);
-                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
+                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(&format!(
                     "UNWIND $ids AS id
                      MATCH (n:{label} {{id: id}})
@@ -637,8 +637,8 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::ConfidenceScored {
-                entity_id,
+            SystemEvent::ConfidenceScored {
+                signal_id,
                 new_confidence,
                 ..
             } => {
@@ -652,14 +652,14 @@ impl GraphProjector {
                      WHERE node IS NOT NULL
                      SET node.confidence = $confidence",
                 )
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("confidence", new_confidence as f64);
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::ObservationRejected { .. } => {
+            SystemEvent::ObservationRejected { .. } => {
                 debug!(
                     seq = event.seq,
                     "No-op (observation rejected — informational)"
@@ -667,8 +667,8 @@ impl GraphProjector {
                 Ok(ApplyResult::NoOp)
             }
 
-            SystemDecision::EntityExpired {
-                entity_id,
+            SystemEvent::EntityExpired {
+                signal_id,
                 node_type,
                 reason,
             } => {
@@ -679,7 +679,7 @@ impl GraphProjector {
                          n.expired_at = datetime($ts),
                          n.expired_reason = $reason"
                 ))
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("ts", format_dt_from_stored(event))
                 .param("reason", reason.as_str());
 
@@ -687,8 +687,8 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::EntityPurged {
-                entity_id,
+            SystemEvent::EntityPurged {
+                signal_id,
                 node_type,
                 ..
             } => {
@@ -698,13 +698,13 @@ impl GraphProjector {
                      OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
                      DETACH DELETE n, ev"
                 ))
-                .param("id", entity_id.to_string());
+                .param("id", signal_id.to_string());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::DuplicateDetected { .. } => {
+            SystemEvent::DuplicateDetected { .. } => {
                 debug!(
                     seq = event.seq,
                     "No-op (duplicate detected — informational)"
@@ -712,7 +712,7 @@ impl GraphProjector {
                 Ok(ApplyResult::NoOp)
             }
 
-            SystemDecision::ExtractionDroppedNoDate { .. } => {
+            SystemEvent::ExtractionDroppedNoDate { .. } => {
                 debug!(
                     seq = event.seq,
                     "No-op (extraction dropped — informational)"
@@ -720,8 +720,8 @@ impl GraphProjector {
                 Ok(ApplyResult::NoOp)
             }
 
-            SystemDecision::ReviewVerdictReached {
-                entity_id,
+            SystemEvent::ReviewVerdictReached {
+                signal_id,
                 new_status,
                 ..
             } => {
@@ -735,15 +735,15 @@ impl GraphProjector {
                      WHERE node IS NOT NULL
                      SET node.review_status = $status",
                 )
-                .param("id", entity_id.to_string())
+                .param("id", signal_id.to_string())
                 .param("status", new_status.as_str());
 
                 self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::ImpliedQueriesConsumed { entity_ids } => {
-                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
+            SystemEvent::ImpliedQueriesConsumed { signal_ids } => {
+                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      MATCH (n) WHERE n.id = id AND (n:Aid OR n:Gathering)
@@ -758,37 +758,37 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Corrections
             // ---------------------------------------------------------
-            SystemDecision::GatheringCorrected {
-                entity_id,
+            SystemEvent::GatheringCorrected {
+                signal_id,
                 correction,
                 ..
             } => {
                 match correction {
                     GatheringCorrection::Title { new, .. } => {
-                        self.set_str("Gathering", entity_id, "title", &new).await?
+                        self.set_str("Gathering", signal_id, "title", &new).await?
                     }
                     GatheringCorrection::Summary { new, .. } => {
-                        self.set_str("Gathering", entity_id, "summary", &new)
+                        self.set_str("Gathering", signal_id, "summary", &new)
                             .await?
                     }
                     GatheringCorrection::Confidence { new, .. } => {
-                        self.set_f64("Gathering", entity_id, "confidence", new as f64)
+                        self.set_f64("Gathering", signal_id, "confidence", new as f64)
                             .await?
                     }
                     GatheringCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Gathering", entity_id, "sensitivity", new.as_str())
+                        self.set_str("Gathering", signal_id, "sensitivity", new.as_str())
                             .await?
                     }
                     GatheringCorrection::Location { new, .. } => {
-                        self.set_location("Gathering", entity_id, &new).await?
+                        self.set_location("Gathering", signal_id, &new).await?
                     }
                     GatheringCorrection::Schedule { new, .. } => {
-                        self.set_schedule("Gathering", entity_id, &new).await?
+                        self.set_schedule("Gathering", signal_id, &new).await?
                     }
                     GatheringCorrection::Organizer { new, .. } => {
                         self.set_str(
                             "Gathering",
-                            entity_id,
+                            signal_id,
                             "organizer",
                             new.as_deref().unwrap_or(""),
                         )
@@ -797,7 +797,7 @@ impl GraphProjector {
                     GatheringCorrection::ActionUrl { new, .. } => {
                         self.set_str(
                             "Gathering",
-                            entity_id,
+                            signal_id,
                             "action_url",
                             new.as_deref().unwrap_or(""),
                         )
@@ -807,77 +807,77 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::AidCorrected {
-                entity_id,
+            SystemEvent::AidCorrected {
+                signal_id,
                 correction,
                 ..
             } => {
                 match correction {
                     AidCorrection::Title { new, .. } => {
-                        self.set_str("Aid", entity_id, "title", &new).await?
+                        self.set_str("Aid", signal_id, "title", &new).await?
                     }
                     AidCorrection::Summary { new, .. } => {
-                        self.set_str("Aid", entity_id, "summary", &new).await?
+                        self.set_str("Aid", signal_id, "summary", &new).await?
                     }
                     AidCorrection::Confidence { new, .. } => {
-                        self.set_f64("Aid", entity_id, "confidence", new as f64)
+                        self.set_f64("Aid", signal_id, "confidence", new as f64)
                             .await?
                     }
                     AidCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Aid", entity_id, "sensitivity", new.as_str())
+                        self.set_str("Aid", signal_id, "sensitivity", new.as_str())
                             .await?
                     }
                     AidCorrection::Location { new, .. } => {
-                        self.set_location("Aid", entity_id, &new).await?
+                        self.set_location("Aid", signal_id, &new).await?
                     }
                     AidCorrection::ActionUrl { new, .. } => {
-                        self.set_str("Aid", entity_id, "action_url", new.as_deref().unwrap_or(""))
+                        self.set_str("Aid", signal_id, "action_url", new.as_deref().unwrap_or(""))
                             .await?
                     }
                     AidCorrection::Availability { new, .. } => {
                         self.set_str(
                             "Aid",
-                            entity_id,
+                            signal_id,
                             "availability",
                             new.as_deref().unwrap_or(""),
                         )
                         .await?
                     }
                     AidCorrection::IsOngoing { new, .. } => {
-                        self.set_bool("Aid", entity_id, "is_ongoing", new.unwrap_or(false))
+                        self.set_bool("Aid", signal_id, "is_ongoing", new.unwrap_or(false))
                             .await?
                     }
                 }
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::NeedCorrected {
-                entity_id,
+            SystemEvent::NeedCorrected {
+                signal_id,
                 correction,
                 ..
             } => {
                 match correction {
                     NeedCorrection::Title { new, .. } => {
-                        self.set_str("Need", entity_id, "title", &new).await?
+                        self.set_str("Need", signal_id, "title", &new).await?
                     }
                     NeedCorrection::Summary { new, .. } => {
-                        self.set_str("Need", entity_id, "summary", &new).await?
+                        self.set_str("Need", signal_id, "summary", &new).await?
                     }
                     NeedCorrection::Confidence { new, .. } => {
-                        self.set_f64("Need", entity_id, "confidence", new as f64)
+                        self.set_f64("Need", signal_id, "confidence", new as f64)
                             .await?
                     }
                     NeedCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Need", entity_id, "sensitivity", new.as_str())
+                        self.set_str("Need", signal_id, "sensitivity", new.as_str())
                             .await?
                     }
                     NeedCorrection::Location { new, .. } => {
-                        self.set_location("Need", entity_id, &new).await?
+                        self.set_location("Need", signal_id, &new).await?
                     }
                     NeedCorrection::Urgency { new, .. } => {
                         self.set_str(
                             "Need",
-                            entity_id,
+                            signal_id,
                             "urgency",
                             new.map(|u| urgency_str(u)).unwrap_or(""),
                         )
@@ -886,47 +886,47 @@ impl GraphProjector {
                     NeedCorrection::WhatNeeded { new, .. } => {
                         self.set_str(
                             "Need",
-                            entity_id,
+                            signal_id,
                             "what_needed",
                             new.as_deref().unwrap_or(""),
                         )
                         .await?
                     }
                     NeedCorrection::Goal { new, .. } => {
-                        self.set_str("Need", entity_id, "goal", new.as_deref().unwrap_or(""))
+                        self.set_str("Need", signal_id, "goal", new.as_deref().unwrap_or(""))
                             .await?
                     }
                 }
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::NoticeCorrected {
-                entity_id,
+            SystemEvent::NoticeCorrected {
+                signal_id,
                 correction,
                 ..
             } => {
                 match correction {
                     NoticeCorrection::Title { new, .. } => {
-                        self.set_str("Notice", entity_id, "title", &new).await?
+                        self.set_str("Notice", signal_id, "title", &new).await?
                     }
                     NoticeCorrection::Summary { new, .. } => {
-                        self.set_str("Notice", entity_id, "summary", &new).await?
+                        self.set_str("Notice", signal_id, "summary", &new).await?
                     }
                     NoticeCorrection::Confidence { new, .. } => {
-                        self.set_f64("Notice", entity_id, "confidence", new as f64)
+                        self.set_f64("Notice", signal_id, "confidence", new as f64)
                             .await?
                     }
                     NoticeCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Notice", entity_id, "sensitivity", new.as_str())
+                        self.set_str("Notice", signal_id, "sensitivity", new.as_str())
                             .await?
                     }
                     NoticeCorrection::Location { new, .. } => {
-                        self.set_location("Notice", entity_id, &new).await?
+                        self.set_location("Notice", signal_id, &new).await?
                     }
                     NoticeCorrection::Severity { new, .. } => {
                         self.set_str(
                             "Notice",
-                            entity_id,
+                            signal_id,
                             "severity",
                             new.map(|s| severity_str(s)).unwrap_or(""),
                         )
@@ -935,7 +935,7 @@ impl GraphProjector {
                     NoticeCorrection::Category { new, .. } => {
                         self.set_str(
                             "Notice",
-                            entity_id,
+                            signal_id,
                             "category",
                             new.as_deref().unwrap_or(""),
                         )
@@ -944,14 +944,14 @@ impl GraphProjector {
                     NoticeCorrection::EffectiveDate { new, .. } => {
                         let val = new.map(|dt| format_dt(&dt)).unwrap_or_default();
                         let q = query("MATCH (n:Notice {id: $id}) SET n.effective_date = CASE WHEN $value = '' THEN null ELSE datetime($value) END")
-                            .param("id", entity_id.to_string())
+                            .param("id", signal_id.to_string())
                             .param("value", val);
                         self.client.graph.run(q).await?;
                     }
                     NoticeCorrection::SourceAuthority { new, .. } => {
                         self.set_str(
                             "Notice",
-                            entity_id,
+                            signal_id,
                             "source_authority",
                             new.as_deref().unwrap_or(""),
                         )
@@ -961,33 +961,33 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::TensionCorrected {
-                entity_id,
+            SystemEvent::TensionCorrected {
+                signal_id,
                 correction,
                 ..
             } => {
                 match correction {
                     TensionCorrection::Title { new, .. } => {
-                        self.set_str("Tension", entity_id, "title", &new).await?
+                        self.set_str("Tension", signal_id, "title", &new).await?
                     }
                     TensionCorrection::Summary { new, .. } => {
-                        self.set_str("Tension", entity_id, "summary", &new).await?
+                        self.set_str("Tension", signal_id, "summary", &new).await?
                     }
                     TensionCorrection::Confidence { new, .. } => {
-                        self.set_f64("Tension", entity_id, "confidence", new as f64)
+                        self.set_f64("Tension", signal_id, "confidence", new as f64)
                             .await?
                     }
                     TensionCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Tension", entity_id, "sensitivity", new.as_str())
+                        self.set_str("Tension", signal_id, "sensitivity", new.as_str())
                             .await?
                     }
                     TensionCorrection::Location { new, .. } => {
-                        self.set_location("Tension", entity_id, &new).await?
+                        self.set_location("Tension", signal_id, &new).await?
                     }
                     TensionCorrection::Severity { new, .. } => {
                         self.set_str(
                             "Tension",
-                            entity_id,
+                            signal_id,
                             "severity",
                             new.map(|s| severity_str(s)).unwrap_or(""),
                         )
@@ -996,7 +996,7 @@ impl GraphProjector {
                     TensionCorrection::WhatWouldHelp { new, .. } => {
                         self.set_str(
                             "Tension",
-                            entity_id,
+                            signal_id,
                             "what_would_help",
                             new.as_deref().unwrap_or(""),
                         )
@@ -1009,7 +1009,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Actor decisions
             // ---------------------------------------------------------
-            SystemDecision::DuplicateActorsMerged {
+            SystemEvent::DuplicateActorsMerged {
                 kept_id,
                 merged_ids,
             } => {
@@ -1037,7 +1037,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::OrphanedActorsCleaned { actor_ids } => {
+            SystemEvent::OrphanedActorsCleaned { actor_ids } => {
                 let ids: Vec<String> = actor_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
@@ -1053,7 +1053,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Situations / dispatches
             // ---------------------------------------------------------
-            SystemDecision::SituationIdentified {
+            SystemEvent::SituationIdentified {
                 situation_id,
                 headline,
                 lede,
@@ -1100,7 +1100,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SituationChanged {
+            SystemEvent::SituationChanged {
                 situation_id,
                 change,
             } => {
@@ -1153,7 +1153,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SituationPromoted { situation_ids } => {
+            SystemEvent::SituationPromoted { situation_ids } => {
                 let ids: Vec<String> = situation_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
@@ -1166,7 +1166,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::DispatchCreated { .. } => {
+            SystemEvent::DispatchCreated { .. } => {
                 debug!(seq = event.seq, "No-op (dispatch — not a graph node)");
                 Ok(ApplyResult::NoOp)
             }
@@ -1174,7 +1174,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Tags
             // ---------------------------------------------------------
-            SystemDecision::TagSuppressed {
+            SystemEvent::TagSuppressed {
                 situation_id,
                 tag_slug,
             } => {
@@ -1189,7 +1189,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::TagsMerged {
+            SystemEvent::TagsMerged {
                 source_slug,
                 target_slug,
             } => {
@@ -1212,8 +1212,8 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Quality / lint
             // ---------------------------------------------------------
-            SystemDecision::EmptyEntitiesCleaned { entity_ids } => {
-                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
+            SystemEvent::EmptyEntitiesCleaned { signal_ids } => {
+                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      OPTIONAL MATCH (g:Gathering {id: id})
@@ -1232,8 +1232,8 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::FakeCoordinatesNulled { entity_ids, .. } => {
-                let ids: Vec<String> = entity_ids.iter().map(|id| id.to_string()).collect();
+            SystemEvent::FakeCoordinatesNulled { signal_ids, .. } => {
+                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
                      OPTIONAL MATCH (g:Gathering {id: id})
@@ -1251,7 +1251,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::OrphanedCitationsCleaned { citation_ids } => {
+            SystemEvent::OrphanedCitationsCleaned { citation_ids } => {
                 let ids: Vec<String> = citation_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
@@ -1267,7 +1267,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Source system changes (editorial)
             // ---------------------------------------------------------
-            SystemDecision::SourceSystemChanged {
+            SystemEvent::SourceSystemChanged {
                 canonical_key,
                 change,
                 ..
@@ -1297,7 +1297,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Source registry
             // ---------------------------------------------------------
-            SystemDecision::SourceRegistered {
+            SystemEvent::SourceRegistered {
                 source_id,
                 canonical_key,
                 canonical_value,
@@ -1343,7 +1343,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SourceChanged {
+            SystemEvent::SourceChanged {
                 canonical_key,
                 change,
                 ..
@@ -1382,7 +1382,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SourceDeactivated { source_ids, .. } => {
+            SystemEvent::SourceDeactivated { source_ids, .. } => {
                 let ids: Vec<String> = source_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
@@ -1395,7 +1395,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SourceLinkDiscovered { .. } => {
+            SystemEvent::SourceLinkDiscovered { .. } => {
                 debug!(seq = event.seq, "No-op (source link — informational)");
                 Ok(ApplyResult::NoOp)
             }
@@ -1403,7 +1403,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Actor-source links
             // ---------------------------------------------------------
-            SystemDecision::ActorLinkedToSource {
+            SystemEvent::ActorLinkedToSource {
                 actor_id,
                 source_id,
             } => {
@@ -1422,7 +1422,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // App user actions
             // ---------------------------------------------------------
-            SystemDecision::PinCreated {
+            SystemEvent::PinCreated {
                 pin_id,
                 location_lat,
                 location_lng,
@@ -1449,7 +1449,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::DemandReceived {
+            SystemEvent::DemandReceived {
                 demand_id,
                 query: demand_query,
                 center_lat,
@@ -1475,7 +1475,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemDecision::SubmissionReceived {
+            SystemEvent::SubmissionReceived {
                 submission_id,
                 url,
                 reason,
@@ -1507,7 +1507,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // System curiosity
             // ---------------------------------------------------------
-            SystemDecision::ExpansionQueryCollected { .. } => {
+            SystemEvent::ExpansionQueryCollected { .. } => {
                 debug!(seq = event.seq, "No-op (expansion query — informational)");
                 Ok(ApplyResult::NoOp)
             }
@@ -1698,7 +1698,7 @@ fn extract_schedule(schedule: &Option<Schedule>) -> (String, String, String, boo
 }
 
 /// Build the common MERGE/ON CREATE SET query for all 5 discovery event types.
-/// No sensitivity or implied_queries — those come from separate SystemDecision events.
+/// No sensitivity or implied_queries — those come from separate SystemEvent events.
 fn build_discovery_query(
     label: &str,
     type_specific_set: &str,
@@ -1708,7 +1708,7 @@ fn build_discovery_query(
     confidence: f32,
     source_url: &str,
     extracted_at: &DateTime<Utc>,
-    content_date: Option<DateTime<Utc>>,
+    published_at: Option<DateTime<Utc>>,
     location: &Option<Location>,
     event: &StoredEvent,
 ) -> neo4rs::Query {
@@ -1727,7 +1727,7 @@ fn build_discovery_query(
              n.source_url = $source_url,
              n.extracted_at = datetime($extracted_at),
              n.last_confirmed_active = datetime($extracted_at),
-             n.content_date = CASE WHEN $content_date = '' THEN null ELSE datetime($content_date) END,
+             n.published_at = CASE WHEN $published_at = '' THEN null ELSE datetime($published_at) END,
              n.location_name = $location_name,
              n.address = $address,
              n.lat = $lat,
@@ -1747,8 +1747,8 @@ fn build_discovery_query(
         .param("source_url", source_url)
         .param("extracted_at", format_dt(extracted_at))
         .param(
-            "content_date",
-            content_date.map(|dt| format_dt(&dt)).unwrap_or_default(),
+            "published_at",
+            published_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
         )
         .param("location_name", loc_name)
         .param("address", loc_address)

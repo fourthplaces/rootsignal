@@ -83,7 +83,7 @@ pub trait Eventlike: Debug + Send + Sync {
 }
 ```
 
-Implemented by `WorldEvent` (this crate), `SystemDecision`, and `TelemetryEvent`
+Implemented by `WorldEvent` (this crate), `SystemEvent`, and `TelemetryEvent`
 (both in `rootsignal-common`). Enables generic event storage — any type that
 implements `Eventlike` can be appended to the EventStore.
 

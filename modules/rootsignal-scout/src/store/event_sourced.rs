@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::events::{
-    Event, Location, Schedule, SystemDecision, TelemetryEvent, WorldEvent,
+    Event, Location, Schedule, SystemEvent, TelemetryEvent, WorldEvent,
 };
 use rootsignal_common::types::{ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
@@ -91,7 +91,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
             extracted_at: n.meta.extracted_at,
-            content_date: n.meta.content_date,
+            published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             mentioned_actors: vec![],
@@ -111,7 +111,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
             extracted_at: n.meta.extracted_at,
-            content_date: n.meta.content_date,
+            published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             mentioned_actors: vec![],
@@ -131,7 +131,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
             extracted_at: n.meta.extracted_at,
-            content_date: n.meta.content_date,
+            published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             mentioned_actors: vec![],
@@ -147,7 +147,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
             extracted_at: n.meta.extracted_at,
-            content_date: n.meta.content_date,
+            published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             mentioned_actors: vec![],
@@ -164,7 +164,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
             confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
             extracted_at: n.meta.extracted_at,
-            content_date: n.meta.content_date,
+            published_at: n.meta.published_at,
             location: meta_to_location(&n.meta),
             from_location: meta_to_from_location(&n.meta),
             mentioned_actors: vec![],
@@ -178,15 +178,15 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
 
 /// Build system decision events paired with a discovery.
 /// Returns SensitivityClassified (always) + ImpliedQueriesExtracted (if non-empty).
-fn node_system_events(node: &Node) -> Vec<SystemDecision> {
+fn node_system_events(node: &Node) -> Vec<SystemEvent> {
     let meta = node.meta().expect("discovery nodes always have meta");
-    let mut events = vec![SystemDecision::SensitivityClassified {
-        entity_id: meta.id,
+    let mut events = vec![SystemEvent::SensitivityClassified {
+        signal_id: meta.id,
         level: meta.sensitivity,
     }];
     if !meta.implied_queries.is_empty() {
-        events.push(SystemDecision::ImpliedQueriesExtracted {
-            entity_id: meta.id,
+        events.push(SystemEvent::ImpliedQueriesExtracted {
+            signal_id: meta.id,
             queries: meta.implied_queries.clone(),
         });
     }
@@ -209,7 +209,7 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
 fn evidence_to_event(evidence: &CitationNode, signal_id: Uuid) -> Event {
     Event::World(WorldEvent::CitationRecorded {
         citation_id: evidence.id,
-        entity_id: signal_id,
+        signal_id: signal_id,
         url: evidence.source_url.clone(),
         content_hash: evidence.content_hash.clone(),
         snippet: evidence.snippet.clone(),
@@ -327,8 +327,8 @@ impl SignalStore for EventSourcedStore {
         node_type: NodeType,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        let event = Event::System(SystemDecision::FreshnessConfirmed {
-            entity_ids: vec![id],
+        let event = Event::System(SystemEvent::FreshnessConfirmed {
+            signal_ids: vec![id],
             node_type,
             confirmed_at: now,
         });
@@ -361,8 +361,8 @@ impl SignalStore for EventSourcedStore {
 
             if !ids.is_empty() {
                 total += ids.len() as u64;
-                let event = Event::System(SystemDecision::FreshnessConfirmed {
-                    entity_ids: ids,
+                let event = Event::System(SystemEvent::FreshnessConfirmed {
+                    signal_ids: ids,
                     node_type: *node_type,
                     confirmed_at: now,
                 });
@@ -385,7 +385,7 @@ impl SignalStore for EventSourcedStore {
 
         // World fact: observation was corroborated from a new source
         let world_event = Event::World(WorldEvent::ObservationCorroborated {
-            entity_id: id,
+            signal_id: id,
             node_type,
             new_source_url: source_url.to_string(),
             summary: None,
@@ -393,8 +393,8 @@ impl SignalStore for EventSourcedStore {
         self.append_and_project(&world_event, None).await?;
 
         // System decision: corroboration scoring
-        let system_event = Event::System(SystemDecision::CorroborationScored {
-            entity_id: id,
+        let system_event = Event::System(SystemEvent::CorroborationScored {
+            signal_id: id,
             similarity,
             new_corroboration_count: current_count + 1,
         });
@@ -449,7 +449,7 @@ impl SignalStore for EventSourcedStore {
             actor_id: actor.id,
             name: actor.name.clone(),
             actor_type: actor.actor_type,
-            entity_id: actor.entity_id.clone(),
+            canonical_key: actor.canonical_key.clone(),
             domains: actor.domains.clone(),
             social_urls: actor.social_urls.clone(),
             description: actor.description.clone(),
@@ -467,16 +467,16 @@ impl SignalStore for EventSourcedStore {
         signal_id: Uuid,
         role: &str,
     ) -> Result<()> {
-        let event = Event::World(WorldEvent::ActorLinkedToEntity {
+        let event = Event::World(WorldEvent::ActorLinkedToSignal {
             actor_id,
-            entity_id: signal_id,
+            signal_id: signal_id,
             role: role.to_string(),
         });
         self.append_and_project(&event, None).await
     }
 
     async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
-        let event = Event::System(SystemDecision::ActorLinkedToSource {
+        let event = Event::System(SystemEvent::ActorLinkedToSource {
             actor_id,
             source_id,
         });
@@ -496,8 +496,8 @@ impl SignalStore for EventSourcedStore {
         Ok(())
     }
 
-    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>> {
-        Ok(self.writer.find_actor_by_entity_id(entity_id).await?)
+    async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
+        Ok(self.writer.find_actor_by_canonical_key(canonical_key).await?)
     }
 
     // --- Resource graph (pass through for find_or_create, events for edges) ---
@@ -586,6 +586,7 @@ impl SignalStore for EventSourcedStore {
             tension_id,
             strength,
             explanation: explanation.to_string(),
+            source_url: None,
         });
         self.append_and_project(&event, None).await
     }
@@ -596,14 +597,13 @@ impl SignalStore for EventSourcedStore {
         tension_id: Uuid,
         strength: f64,
         explanation: &str,
-        gathering_type: &str,
     ) -> Result<()> {
-        let event = Event::World(WorldEvent::GravityLinked {
+        let event = Event::World(WorldEvent::TensionLinked {
             signal_id,
             tension_id,
             strength,
             explanation: explanation.to_string(),
-            gathering_type: gathering_type.to_string(),
+            source_url: None,
         });
         self.append_and_project(&event, None).await
     }
@@ -615,7 +615,7 @@ impl SignalStore for EventSourcedStore {
     }
 
     async fn upsert_source(&self, source: &SourceNode) -> Result<()> {
-        let event = Event::System(SystemDecision::SourceRegistered {
+        let event = Event::System(SystemEvent::SourceRegistered {
             source_id: source.id,
             canonical_key: source.canonical_key.clone(),
             canonical_value: source.canonical_value.clone(),
@@ -676,8 +676,8 @@ impl SignalStore for EventSourcedStore {
             }
         }
         for id in &ids {
-            let event = Event::System(SystemDecision::EntityExpired {
-                entity_id: *id,
+            let event = Event::System(SystemEvent::EntityExpired {
+                signal_id: *id,
                 node_type: NodeType::Gathering,
                 reason: "past_event".to_string(),
             });
@@ -701,8 +701,8 @@ impl SignalStore for EventSourcedStore {
             }
         }
         for id in &ids {
-            let event = Event::System(SystemDecision::EntityExpired {
-                entity_id: *id,
+            let event = Event::System(SystemEvent::EntityExpired {
+                signal_id: *id,
                 node_type: NodeType::Need,
                 reason: "need_expired".to_string(),
             });
@@ -726,8 +726,8 @@ impl SignalStore for EventSourcedStore {
             }
         }
         for id in &ids {
-            let event = Event::System(SystemDecision::EntityExpired {
-                entity_id: *id,
+            let event = Event::System(SystemEvent::EntityExpired {
+                signal_id: *id,
                 node_type: NodeType::Notice,
                 reason: "notice_expired".to_string(),
             });
@@ -753,8 +753,8 @@ impl SignalStore for EventSourcedStore {
                 }
             }
             for id in &ids {
-                let event = Event::System(SystemDecision::EntityExpired {
-                    entity_id: *id,
+                let event = Event::System(SystemEvent::EntityExpired {
+                    signal_id: *id,
                     node_type: *node_type,
                     reason: "stale_unconfirmed".to_string(),
                 });
@@ -833,7 +833,7 @@ impl SignalStore for EventSourcedStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootsignal_common::events::{Event, SystemDecision, WorldEvent};
+    use rootsignal_common::events::{Event, SystemEvent, WorldEvent};
     use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::*;
 
@@ -854,7 +854,7 @@ mod tests {
             from_location: None,
             source_url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 0,
             cause_heat: 0.0,
@@ -925,16 +925,16 @@ mod tests {
         assert_eq!(events.len(), 2);
 
         match &events[0] {
-            SystemDecision::SensitivityClassified { entity_id, level } => {
-                assert_eq!(*entity_id, id);
+            SystemEvent::SensitivityClassified { signal_id, level } => {
+                assert_eq!(*signal_id, id);
                 assert_eq!(*level, SensitivityLevel::General);
             }
             _ => panic!("Expected SensitivityClassified"),
         }
 
         match &events[1] {
-            SystemDecision::ImpliedQueriesExtracted { entity_id, queries } => {
-                assert_eq!(*entity_id, id);
+            SystemEvent::ImpliedQueriesExtracted { signal_id, queries } => {
+                assert_eq!(*signal_id, id);
                 assert_eq!(queries, &["test query".to_string()]);
             }
             _ => panic!("Expected ImpliedQueriesExtracted"),
@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            SystemDecision::SensitivityClassified { .. }
+            SystemEvent::SensitivityClassified { .. }
         ));
     }
 
@@ -1041,14 +1041,14 @@ mod tests {
         match event {
             Event::World(WorldEvent::CitationRecorded {
                 citation_id,
-                entity_id,
+                signal_id,
                 url,
                 content_hash,
                 snippet,
                 ..
             }) => {
                 assert_eq!(citation_id, evidence.id);
-                assert_eq!(entity_id, signal_id);
+                assert_eq!(signal_id, signal_id);
                 assert_eq!(url, "https://source.com/article");
                 assert_eq!(content_hash, "abc123");
                 assert_eq!(snippet, Some("relevant text".to_string()));

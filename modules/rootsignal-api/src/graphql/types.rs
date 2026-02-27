@@ -390,8 +390,8 @@ impl GqlGatheringSignal {
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
     }
-    async fn content_date(&self) -> Option<DateTime<Utc>> {
-        self.meta().content_date
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
@@ -500,8 +500,8 @@ impl GqlAidSignal {
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
     }
-    async fn content_date(&self) -> Option<DateTime<Utc>> {
-        self.meta().content_date
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
@@ -604,8 +604,8 @@ impl GqlNeedSignal {
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
     }
-    async fn content_date(&self) -> Option<DateTime<Utc>> {
-        self.meta().content_date
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
@@ -707,8 +707,8 @@ impl GqlNoticeSignal {
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
     }
-    async fn content_date(&self) -> Option<DateTime<Utc>> {
-        self.meta().content_date
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
@@ -810,8 +810,8 @@ impl GqlTensionSignal {
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
     }
-    async fn content_date(&self) -> Option<DateTime<Utc>> {
-        self.meta().content_date
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
@@ -911,8 +911,8 @@ impl GqlActor {
     async fn actor_type(&self) -> GqlActorType {
         self.0.actor_type.into()
     }
-    async fn entity_id(&self) -> &str {
-        &self.0.entity_id
+    async fn canonical_key(&self) -> &str {
+        &self.0.canonical_key
     }
     async fn domains(&self) -> &[String] {
         &self.0.domains

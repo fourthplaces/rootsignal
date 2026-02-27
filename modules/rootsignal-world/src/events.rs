@@ -29,7 +29,7 @@ pub enum WorldEvent {
         confidence: f32,
         source_url: String,
         extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
+        published_at: Option<DateTime<Utc>>,
         location: Option<Location>,
         from_location: Option<Location>,
         mentioned_actors: Vec<String>,
@@ -49,7 +49,7 @@ pub enum WorldEvent {
         confidence: f32,
         source_url: String,
         extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
+        published_at: Option<DateTime<Utc>>,
         location: Option<Location>,
         from_location: Option<Location>,
         mentioned_actors: Vec<String>,
@@ -69,7 +69,7 @@ pub enum WorldEvent {
         confidence: f32,
         source_url: String,
         extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
+        published_at: Option<DateTime<Utc>>,
         location: Option<Location>,
         from_location: Option<Location>,
         mentioned_actors: Vec<String>,
@@ -89,7 +89,7 @@ pub enum WorldEvent {
         confidence: f32,
         source_url: String,
         extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
+        published_at: Option<DateTime<Utc>>,
         location: Option<Location>,
         from_location: Option<Location>,
         mentioned_actors: Vec<String>,
@@ -111,7 +111,7 @@ pub enum WorldEvent {
         confidence: f32,
         source_url: String,
         extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
+        published_at: Option<DateTime<Utc>>,
         location: Option<Location>,
         from_location: Option<Location>,
         mentioned_actors: Vec<String>,
@@ -126,7 +126,7 @@ pub enum WorldEvent {
     // Corroboration — the world fact only (no similarity score or count)
     // -----------------------------------------------------------------------
     ObservationCorroborated {
-        entity_id: Uuid,
+        signal_id: Uuid,
         node_type: NodeType,
         new_source_url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,7 +138,7 @@ pub enum WorldEvent {
     // -----------------------------------------------------------------------
     CitationRecorded {
         citation_id: Uuid,
-        entity_id: Uuid,
+        signal_id: Uuid,
         url: String,
         content_hash: String,
         snippet: Option<String>,
@@ -154,7 +154,7 @@ pub enum WorldEvent {
         actor_id: Uuid,
         name: String,
         actor_type: ActorType,
-        entity_id: String,
+        canonical_key: String,
         domains: Vec<String>,
         social_urls: Vec<String>,
         description: String,
@@ -168,9 +168,9 @@ pub enum WorldEvent {
         location_name: Option<String>,
     },
 
-    ActorLinkedToEntity {
+    ActorLinkedToSignal {
         actor_id: Uuid,
-        entity_id: Uuid,
+        signal_id: Uuid,
         role: String,
     },
 
@@ -202,14 +202,17 @@ pub enum WorldEvent {
         tension_id: Uuid,
         strength: f64,
         explanation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_url: Option<String>,
     },
 
-    GravityLinked {
+    TensionLinked {
         signal_id: Uuid,
         tension_id: Uuid,
         strength: f64,
         explanation: String,
-        gathering_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_url: Option<String>,
     },
 }
 
@@ -224,11 +227,11 @@ impl Eventlike for WorldEvent {
             WorldEvent::ObservationCorroborated { .. } => "observation_corroborated",
             WorldEvent::CitationRecorded { .. } => "citation_recorded",
             WorldEvent::ActorIdentified { .. } => "actor_identified",
-            WorldEvent::ActorLinkedToEntity { .. } => "actor_linked_to_entity",
+            WorldEvent::ActorLinkedToSignal { .. } => "actor_linked_to_signal",
             WorldEvent::ActorLocationIdentified { .. } => "actor_location_identified",
             WorldEvent::ResourceEdgeCreated { .. } => "resource_edge_created",
             WorldEvent::ResponseLinked { .. } => "response_linked",
-            WorldEvent::GravityLinked { .. } => "gravity_linked",
+            WorldEvent::TensionLinked { .. } => "tension_linked",
         }
     }
 

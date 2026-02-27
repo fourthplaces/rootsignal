@@ -1503,7 +1503,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
 
     // Parse timestamps
     let extracted_at = parse_datetime_prop(&n, "extracted_at");
-    let content_date = parse_optional_datetime_prop(&n, "content_date");
+    let published_at = parse_optional_datetime_prop(&n, "published_at");
     let last_confirmed_active = parse_datetime_prop(&n, "last_confirmed_active");
 
     let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
@@ -1529,7 +1529,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         from_location: None,
         source_url,
         extracted_at,
-        content_date,
+        published_at,
         last_confirmed_active,
         source_diversity: source_diversity as u32,
         cause_heat,
@@ -1834,7 +1834,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         "coalition" => rootsignal_common::ActorType::Coalition,
         _ => rootsignal_common::ActorType::Organization,
     };
-    let entity_id: String = n.get("entity_id").unwrap_or_default();
+    let canonical_key: String = n.get("canonical_key").unwrap_or_default();
     let domains: Vec<String> = n.get("domains").unwrap_or_default();
     let social_urls: Vec<String> = n.get("social_urls").unwrap_or_default();
     let description: String = n.get("description").unwrap_or_default();
@@ -1852,7 +1852,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         id,
         name,
         actor_type,
-        entity_id,
+        canonical_key,
         domains,
         social_urls,
         description,

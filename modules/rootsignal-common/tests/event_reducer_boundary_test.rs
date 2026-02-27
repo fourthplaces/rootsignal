@@ -9,7 +9,7 @@
 
 use chrono::Utc;
 use rootsignal_common::events::{
-    Event, GatheringCorrection, SituationChange, SystemDecision, SystemSourceChange,
+    Event, GatheringCorrection, SituationChange, SystemEvent, SystemSourceChange,
     TelemetryEvent, WorldEvent,
 };
 use rootsignal_common::safety::SensitivityLevel;
@@ -35,12 +35,12 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "citation_recorded",
     // World: Actors
     "actor_identified",
-    "actor_linked_to_entity",
+    "actor_linked_to_signal",
     "actor_location_identified",
     // World: Relationship edges
     "resource_edge_created",
     "response_linked",
-    "gravity_linked",
+    "tension_linked",
     // System: Observation lifecycle
     "freshness_confirmed",
     "confidence_scored",
@@ -230,7 +230,7 @@ fn gathering_discovered_missing_optional_fields_deserializes() {
 fn observation_corroborated_missing_summary_deserializes() {
     let old_payload = json!({
         "type": "observation_corroborated",
-        "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+        "signal_id": "550e8400-e29b-41d4-a716-446655440000",
         "node_type": "gathering",
         "new_source_url": "https://example.com/source2"
         // NOTE: no summary field
@@ -274,7 +274,7 @@ fn discovery_has_no_enrichment_fields() {
         confidence: 0.8,
         source_url: "https://example.com".into(),
         extracted_at: Utc::now(),
-        content_date: None,
+        published_at: None,
         location: None,
         from_location: None,
         mentioned_actors: vec![],
@@ -319,7 +319,7 @@ fn discovery_has_no_enrichment_fields() {
 #[test]
 fn corroboration_world_fact_has_no_scoring_fields() {
     let event = Event::World(WorldEvent::ObservationCorroborated {
-        entity_id: Uuid::new_v4(),
+        signal_id: Uuid::new_v4(),
         node_type: NodeType::Gathering,
         new_source_url: "https://source2.com".into(),
         summary: None,
@@ -371,7 +371,7 @@ fn scout_pipeline_event_chain_is_expressible() {
         confidence: 0.88,
         source_url: "https://lakestreetstories.com/events".into(),
         extracted_at: Utc::now(),
-        content_date: Some(Utc::now()),
+        published_at: Some(Utc::now()),
         location: Some(Location {
             point: Some(GeoPoint {
                 lat: 44.9488,
@@ -397,7 +397,7 @@ fn scout_pipeline_event_chain_is_expressible() {
 
     let citation = Event::World(WorldEvent::CitationRecorded {
         citation_id: Uuid::new_v4(),
-        entity_id: Uuid::new_v4(),
+        signal_id: Uuid::new_v4(),
         url: "https://lakestreetstories.com/events".into(),
         content_hash: "abc123".into(),
         snippet: Some("Join us for the annual block party...".into()),
@@ -419,8 +419,8 @@ fn scout_pipeline_event_chain_is_expressible() {
 
 #[test]
 fn review_verdict_event_captures_status_change() {
-    let event = Event::System(SystemDecision::ReviewVerdictReached {
-        entity_id: Uuid::new_v4(),
+    let event = Event::System(SystemEvent::ReviewVerdictReached {
+        signal_id: Uuid::new_v4(),
         old_status: "staged".into(),
         new_status: "live".into(),
         reason: "Verified against source content".into(),
@@ -435,8 +435,8 @@ fn review_verdict_event_captures_status_change() {
 fn bulk_operation_decomposes_into_individual_events() {
     let expired: Vec<Event> = (0..5)
         .map(|_| {
-            Event::System(SystemDecision::EntityExpired {
-                entity_id: Uuid::new_v4(),
+            Event::System(SystemEvent::EntityExpired {
+                signal_id: Uuid::new_v4(),
                 node_type: NodeType::Gathering,
                 reason: "gathering_past_end_date".into(),
             })
@@ -598,7 +598,7 @@ fn build_all_events() -> Vec<Event> {
             confidence: 0.0,
             source_url: "z".into(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             location: None,
             from_location: None,
             mentioned_actors: vec![],
@@ -614,7 +614,7 @@ fn build_all_events() -> Vec<Event> {
             confidence: 0.0,
             source_url: "z".into(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             location: None,
             from_location: None,
             mentioned_actors: vec![],
@@ -630,7 +630,7 @@ fn build_all_events() -> Vec<Event> {
             confidence: 0.0,
             source_url: "z".into(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             location: None,
             from_location: None,
             mentioned_actors: vec![],
@@ -646,7 +646,7 @@ fn build_all_events() -> Vec<Event> {
             confidence: 0.0,
             source_url: "z".into(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             location: None,
             from_location: None,
             mentioned_actors: vec![],
@@ -663,7 +663,7 @@ fn build_all_events() -> Vec<Event> {
             confidence: 0.0,
             source_url: "z".into(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             location: None,
             from_location: None,
             mentioned_actors: vec![],
@@ -673,7 +673,7 @@ fn build_all_events() -> Vec<Event> {
         }),
         // Corroboration (world fact only)
         Event::World(WorldEvent::ObservationCorroborated {
-            entity_id: id,
+            signal_id: id,
             node_type: NodeType::Aid,
             new_source_url: "x".into(),
             summary: None,
@@ -681,7 +681,7 @@ fn build_all_events() -> Vec<Event> {
         // Citations
         Event::World(WorldEvent::CitationRecorded {
             citation_id: id,
-            entity_id: id,
+            signal_id: id,
             url: "x".into(),
             content_hash: "y".into(),
             snippet: None,
@@ -694,7 +694,7 @@ fn build_all_events() -> Vec<Event> {
             actor_id: id,
             name: "x".into(),
             actor_type: ActorType::Organization,
-            entity_id: "y".into(),
+            canonical_key: "y".into(),
             domains: vec![],
             social_urls: vec![],
             description: "z".into(),
@@ -703,9 +703,9 @@ fn build_all_events() -> Vec<Event> {
             location_lng: None,
             location_name: None,
         }),
-        Event::World(WorldEvent::ActorLinkedToEntity {
+        Event::World(WorldEvent::ActorLinkedToSignal {
             actor_id: id,
-            entity_id: id,
+            signal_id: id,
             role: "organizer".into(),
         }),
         Event::World(WorldEvent::ActorLocationIdentified {
@@ -729,51 +729,52 @@ fn build_all_events() -> Vec<Event> {
             tension_id: id,
             strength: 0.7,
             explanation: "x".into(),
+            source_url: None,
         }),
-        Event::World(WorldEvent::GravityLinked {
+        Event::World(WorldEvent::TensionLinked {
             signal_id: id,
             tension_id: id,
             strength: 0.6,
             explanation: "x".into(),
-            gathering_type: "community".into(),
+            source_url: None,
         }),
         // =====================================================================
         // System (38 variants)
         // =====================================================================
         // Observation lifecycle
-        Event::System(SystemDecision::FreshnessConfirmed {
-            entity_ids: vec![id],
+        Event::System(SystemEvent::FreshnessConfirmed {
+            signal_ids: vec![id],
             node_type: NodeType::Need,
             confirmed_at: now,
         }),
-        Event::System(SystemDecision::ConfidenceScored {
-            entity_id: id,
+        Event::System(SystemEvent::ConfidenceScored {
+            signal_id: id,
             old_confidence: 0.5,
             new_confidence: 0.8,
         }),
-        Event::System(SystemDecision::CorroborationScored {
-            entity_id: id,
+        Event::System(SystemEvent::CorroborationScored {
+            signal_id: id,
             similarity: 0.9,
             new_corroboration_count: 2,
         }),
-        Event::System(SystemDecision::ObservationRejected {
-            entity_id: Some(id),
+        Event::System(SystemEvent::ObservationRejected {
+            signal_id: Some(id),
             title: "x".into(),
             source_url: "y".into(),
             reason: "z".into(),
         }),
-        Event::System(SystemDecision::EntityExpired {
-            entity_id: id,
+        Event::System(SystemEvent::EntityExpired {
+            signal_id: id,
             node_type: NodeType::Gathering,
             reason: "past_end_date".into(),
         }),
-        Event::System(SystemDecision::EntityPurged {
-            entity_id: id,
+        Event::System(SystemEvent::EntityPurged {
+            signal_id: id,
             node_type: NodeType::Tension,
             reason: "admin".into(),
             context: None,
         }),
-        Event::System(SystemDecision::DuplicateDetected {
+        Event::System(SystemEvent::DuplicateDetected {
             node_type: NodeType::Gathering,
             title: "x".into(),
             matched_id: id,
@@ -782,63 +783,63 @@ fn build_all_events() -> Vec<Event> {
             source_url: "y".into(),
             summary: None,
         }),
-        Event::System(SystemDecision::ExtractionDroppedNoDate {
+        Event::System(SystemEvent::ExtractionDroppedNoDate {
             title: "x".into(),
             source_url: "y".into(),
         }),
-        Event::System(SystemDecision::ReviewVerdictReached {
-            entity_id: id,
+        Event::System(SystemEvent::ReviewVerdictReached {
+            signal_id: id,
             old_status: "staged".into(),
             new_status: "live".into(),
             reason: "ok".into(),
         }),
-        Event::System(SystemDecision::ImpliedQueriesConsumed {
-            entity_ids: vec![id],
+        Event::System(SystemEvent::ImpliedQueriesConsumed {
+            signal_ids: vec![id],
         }),
         // Classifications
-        Event::System(SystemDecision::SensitivityClassified {
-            entity_id: id,
+        Event::System(SystemEvent::SensitivityClassified {
+            signal_id: id,
             level: SensitivityLevel::General,
         }),
-        Event::System(SystemDecision::ImpliedQueriesExtracted {
-            entity_id: id,
+        Event::System(SystemEvent::ImpliedQueriesExtracted {
+            signal_id: id,
             queries: vec!["test query".into()],
         }),
         // Corrections (5 typed variants)
-        Event::System(SystemDecision::GatheringCorrected {
-            entity_id: id,
+        Event::System(SystemEvent::GatheringCorrected {
+            signal_id: id,
             correction: GatheringCorrection::Title {
                 old: "old".into(),
                 new: "new".into(),
             },
             reason: "typo".into(),
         }),
-        Event::System(SystemDecision::AidCorrected {
-            entity_id: id,
+        Event::System(SystemEvent::AidCorrected {
+            signal_id: id,
             correction: rootsignal_common::events::AidCorrection::Title {
                 old: "old".into(),
                 new: "new".into(),
             },
             reason: "typo".into(),
         }),
-        Event::System(SystemDecision::NeedCorrected {
-            entity_id: id,
+        Event::System(SystemEvent::NeedCorrected {
+            signal_id: id,
             correction: rootsignal_common::events::NeedCorrection::Title {
                 old: "old".into(),
                 new: "new".into(),
             },
             reason: "typo".into(),
         }),
-        Event::System(SystemDecision::NoticeCorrected {
-            entity_id: id,
+        Event::System(SystemEvent::NoticeCorrected {
+            signal_id: id,
             correction: rootsignal_common::events::NoticeCorrection::Title {
                 old: "old".into(),
                 new: "new".into(),
             },
             reason: "typo".into(),
         }),
-        Event::System(SystemDecision::TensionCorrected {
-            entity_id: id,
+        Event::System(SystemEvent::TensionCorrected {
+            signal_id: id,
             correction: rootsignal_common::events::TensionCorrection::Title {
                 old: "old".into(),
                 new: "new".into(),
@@ -846,15 +847,15 @@ fn build_all_events() -> Vec<Event> {
             reason: "typo".into(),
         }),
         // Actors
-        Event::System(SystemDecision::DuplicateActorsMerged {
+        Event::System(SystemEvent::DuplicateActorsMerged {
             kept_id: id,
             merged_ids: vec![Uuid::new_v4()],
         }),
-        Event::System(SystemDecision::OrphanedActorsCleaned {
+        Event::System(SystemEvent::OrphanedActorsCleaned {
             actor_ids: vec![id],
         }),
         // Situations
-        Event::System(SystemDecision::SituationIdentified {
+        Event::System(SystemEvent::SituationIdentified {
             situation_id: id,
             headline: "x".into(),
             lede: "y".into(),
@@ -867,53 +868,53 @@ fn build_all_events() -> Vec<Event> {
             category: None,
             structured_state: "{}".into(),
         }),
-        Event::System(SystemDecision::SituationChanged {
+        Event::System(SystemEvent::SituationChanged {
             situation_id: id,
             change: SituationChange::Headline {
                 old: "old".into(),
                 new: "new".into(),
             },
         }),
-        Event::System(SystemDecision::SituationPromoted {
+        Event::System(SystemEvent::SituationPromoted {
             situation_ids: vec![id],
         }),
-        Event::System(SystemDecision::DispatchCreated {
+        Event::System(SystemEvent::DispatchCreated {
             dispatch_id: id,
             situation_id: id,
             body: "x".into(),
-            entity_ids: vec![],
+            signal_ids: vec![],
             dispatch_type: DispatchType::Emergence,
             supersedes: None,
             fidelity_score: Some(0.9),
         }),
         // Tags
-        Event::System(SystemDecision::TagSuppressed {
+        Event::System(SystemEvent::TagSuppressed {
             situation_id: id,
             tag_slug: "generic".into(),
         }),
-        Event::System(SystemDecision::TagsMerged {
+        Event::System(SystemEvent::TagsMerged {
             source_slug: "old".into(),
             target_slug: "new".into(),
         }),
         // Quality
-        Event::System(SystemDecision::EmptyEntitiesCleaned {
-            entity_ids: vec![id],
+        Event::System(SystemEvent::EmptyEntitiesCleaned {
+            signal_ids: vec![id],
         }),
-        Event::System(SystemDecision::FakeCoordinatesNulled {
-            entity_ids: vec![id],
+        Event::System(SystemEvent::FakeCoordinatesNulled {
+            signal_ids: vec![id],
             old_coords: vec![(0.0, 0.0)],
         }),
-        Event::System(SystemDecision::OrphanedCitationsCleaned {
+        Event::System(SystemEvent::OrphanedCitationsCleaned {
             citation_ids: vec![id],
         }),
         // Source editorial
-        Event::System(SystemDecision::SourceSystemChanged {
+        Event::System(SystemEvent::SourceSystemChanged {
             source_id: id,
             canonical_key: "x".into(),
             change: SystemSourceChange::QualityPenalty { old: 0.0, new: 0.5 },
         }),
         // Source registry
-        Event::System(SystemDecision::SourceRegistered {
+        Event::System(SystemEvent::SourceRegistered {
             source_id: id,
             canonical_key: "x".into(),
             canonical_value: "y".into(),
@@ -923,47 +924,47 @@ fn build_all_events() -> Vec<Event> {
             source_role: SourceRole::Mixed,
             gap_context: None,
         }),
-        Event::System(SystemDecision::SourceChanged {
+        Event::System(SystemEvent::SourceChanged {
             source_id: id,
             canonical_key: "x".into(),
             change: rootsignal_common::events::SourceChange::Weight { old: 0.5, new: 0.8 },
         }),
-        Event::System(SystemDecision::SourceDeactivated {
+        Event::System(SystemEvent::SourceDeactivated {
             source_ids: vec![id],
             reason: "empty".into(),
         }),
-        Event::System(SystemDecision::SourceLinkDiscovered {
+        Event::System(SystemEvent::SourceLinkDiscovered {
             child_id: id,
             parent_canonical_key: "x".into(),
         }),
         // Actor-source links
-        Event::System(SystemDecision::ActorLinkedToSource {
+        Event::System(SystemEvent::ActorLinkedToSource {
             actor_id: id,
             source_id: id,
         }),
         // App user actions
-        Event::System(SystemDecision::PinCreated {
+        Event::System(SystemEvent::PinCreated {
             pin_id: id,
             location_lat: 44.9,
             location_lng: -93.2,
             source_id: id,
             created_by: "scout".into(),
         }),
-        Event::System(SystemDecision::DemandReceived {
+        Event::System(SystemEvent::DemandReceived {
             demand_id: id,
             query: "food shelf".into(),
             center_lat: 44.9,
             center_lng: -93.2,
             radius_km: 10.0,
         }),
-        Event::System(SystemDecision::SubmissionReceived {
+        Event::System(SystemEvent::SubmissionReceived {
             submission_id: id,
             url: "https://example.com".into(),
             reason: Some("good source".into()),
             source_canonical_key: Some("example.com".into()),
         }),
         // System curiosity
-        Event::System(SystemDecision::ExpansionQueryCollected {
+        Event::System(SystemEvent::ExpansionQueryCollected {
             query: "x".into(),
             source_url: "y".into(),
         }),

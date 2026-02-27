@@ -127,7 +127,7 @@ pub struct ActorNode {
     pub id: Uuid,
     pub name: String,
     pub actor_type: ActorType,
-    pub entity_id: String,
+    pub canonical_key: String,
     pub domains: Vec<String>,
     pub social_urls: Vec<String>,
     pub description: String,
@@ -199,7 +199,7 @@ pub struct NodeMeta {
     /// When the content was actually published/updated (from LLM extraction, RSS pub_date, or social published_at).
     /// Falls back to `extracted_at` when unavailable.
     #[serde(default)]
-    pub content_date: Option<DateTime<Utc>>,
+    pub published_at: Option<DateTime<Utc>>,
     pub last_confirmed_active: DateTime<Utc>,
     /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
     pub source_diversity: u32,
@@ -1275,7 +1275,7 @@ fn default_channel_diversity() -> u32 {
 /// Used across scout (corroboration) and graph (clustering) crates.
 #[derive(Debug, Clone)]
 pub struct EntityMappingOwned {
-    pub entity_id: String,
+    pub canonical_key: String,
     pub domains: Vec<String>,
     pub instagram: Vec<String>,
     pub facebook: Vec<String>,
@@ -1283,31 +1283,31 @@ pub struct EntityMappingOwned {
 }
 
 /// Resolve a source URL to its parent entity ID using entity mappings.
-/// Returns the entity_id if matched, otherwise extracts the domain as a fallback entity.
+/// Returns the canonical_key if matched, otherwise extracts the domain as a fallback entity.
 pub fn resolve_entity(url: &str, mappings: &[EntityMappingOwned]) -> String {
     let domain = extract_domain(url);
 
     for mapping in mappings {
         for d in &mapping.domains {
             if domain.contains(d.as_str()) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for ig in &mapping.instagram {
             if url.contains(&format!("instagram.com/{ig}")) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for fb in &mapping.facebook {
             if url.contains(fb.as_str()) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for r in &mapping.reddit {
             if url.contains(&format!("reddit.com/user/{r}"))
                 || url.contains(&format!("reddit.com/u/{r}"))
             {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
     }
@@ -1424,7 +1424,7 @@ mod tests {
             from_location: None,
             source_url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             cause_heat: 0.0,

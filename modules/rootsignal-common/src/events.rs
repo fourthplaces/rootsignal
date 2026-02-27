@@ -1,4 +1,4 @@
-//! Three-layer event wrapper — dispatches to WorldEvent, SystemDecision, TelemetryEvent.
+//! Three-layer event wrapper — dispatches to WorldEvent, SystemEvent, TelemetryEvent.
 //!
 //! The wrapper uses `#[serde(untagged)]` so deserialization tries each inner enum
 //! in order (world → system → telemetry). Each inner enum uses `#[serde(tag = "type")]`
@@ -18,7 +18,7 @@ pub use rootsignal_world::values::{Location, Schedule};
 // Re-exports — the three event layers
 // ---------------------------------------------------------------------------
 
-pub use crate::system_events::SystemDecision;
+pub use crate::system_events::SystemEvent;
 pub use crate::telemetry_events::TelemetryEvent;
 pub use rootsignal_world::events::WorldEvent;
 
@@ -310,12 +310,12 @@ pub enum TensionCorrection {
 ///
 /// Serialization preserves the inner enum's `#[serde(tag = "type")]` format.
 /// Deserialization uses `untagged` — tries WorldEvent first (most common),
-/// then SystemDecision, then TelemetryEvent.
+/// then SystemEvent, then TelemetryEvent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Event {
     World(WorldEvent),
-    System(SystemDecision),
+    System(SystemEvent),
     Telemetry(TelemetryEvent),
 }
 
@@ -340,7 +340,7 @@ impl Event {
 
     /// Deserialize an event from a JSON payload.
     ///
-    /// Tries WorldEvent → SystemDecision → TelemetryEvent (via `#[serde(untagged)]`).
+    /// Tries WorldEvent → SystemEvent → TelemetryEvent (via `#[serde(untagged)]`).
     pub fn from_payload(payload: &serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(payload.clone())
     }
@@ -356,8 +356,8 @@ impl From<WorldEvent> for Event {
     }
 }
 
-impl From<SystemDecision> for Event {
-    fn from(s: SystemDecision) -> Self {
+impl From<SystemEvent> for Event {
+    fn from(s: SystemEvent) -> Self {
         Event::System(s)
     }
 }
@@ -384,7 +384,7 @@ mod tests {
             confidence: 0.85,
             source_url: "https://example.com/cleanup".into(),
             extracted_at: Utc::now(),
-            content_date: Some(Utc::now()),
+            published_at: Some(Utc::now()),
             location: Some(Location {
                 point: Some(crate::types::GeoPoint {
                     lat: 44.9778,
@@ -432,9 +432,9 @@ mod tests {
     }
 
     #[test]
-    fn system_decision_roundtrips_through_wrapper() {
-        let system = SystemDecision::SensitivityClassified {
-            entity_id: Uuid::new_v4(),
+    fn system_event_roundtrips_through_wrapper() {
+        let system = SystemEvent::SensitivityClassified {
+            signal_id: Uuid::new_v4(),
             level: SensitivityLevel::Sensitive,
         };
 
@@ -444,10 +444,10 @@ mod tests {
 
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::SensitivityClassified { level, .. }) => {
+            Event::System(SystemEvent::SensitivityClassified { level, .. }) => {
                 assert_eq!(level, SensitivityLevel::Sensitive);
             }
-            _ => panic!("Expected Event::System(SystemDecision::SensitivityClassified)"),
+            _ => panic!("Expected Event::System(SystemEvent::SensitivityClassified)"),
         }
     }
 
@@ -470,8 +470,8 @@ mod tests {
 
     #[test]
     fn implied_queries_extracted_roundtrips() {
-        let system = SystemDecision::ImpliedQueriesExtracted {
-            entity_id: Uuid::new_v4(),
+        let system = SystemEvent::ImpliedQueriesExtracted {
+            signal_id: Uuid::new_v4(),
             queries: vec!["cleanup Minneapolis".into(), "volunteer events".into()],
         };
 
@@ -479,7 +479,7 @@ mod tests {
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::ImpliedQueriesExtracted { queries, .. }) => {
+            Event::System(SystemEvent::ImpliedQueriesExtracted { queries, .. }) => {
                 assert_eq!(queries.len(), 2);
                 assert_eq!(queries[0], "cleanup Minneapolis");
             }
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn source_change_nested_enum_roundtrip() {
-        let system = SystemDecision::SourceChanged {
+        let system = SystemEvent::SourceChanged {
             source_id: Uuid::new_v4(),
             canonical_key: "web:example.com".into(),
             change: SourceChange::Weight { old: 0.5, new: 0.8 },
@@ -502,20 +502,20 @@ mod tests {
 
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::SourceChanged { change, .. }) => match change {
+            Event::System(SystemEvent::SourceChanged { change, .. }) => match change {
                 SourceChange::Weight { old, new } => {
                     assert!((old - 0.5).abs() < f64::EPSILON);
                     assert!((new - 0.8).abs() < f64::EPSILON);
                 }
                 _ => panic!("Expected SourceChange::Weight"),
             },
-            _ => panic!("Expected Event::System(SystemDecision::SourceChanged)"),
+            _ => panic!("Expected Event::System(SystemEvent::SourceChanged)"),
         }
     }
 
     #[test]
     fn situation_change_nested_enum_roundtrip() {
-        let system = SystemDecision::SituationChanged {
+        let system = SystemEvent::SituationChanged {
             situation_id: Uuid::new_v4(),
             change: SituationChange::Arc {
                 old: crate::types::SituationArc::Emerging,
@@ -527,7 +527,7 @@ mod tests {
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::SituationChanged {
+            Event::System(SystemEvent::SituationChanged {
                 change: SituationChange::Arc { old, new },
                 ..
             }) => {
@@ -540,8 +540,8 @@ mod tests {
 
     #[test]
     fn gathering_correction_roundtrip() {
-        let system = SystemDecision::GatheringCorrected {
-            entity_id: Uuid::new_v4(),
+        let system = SystemEvent::GatheringCorrected {
+            signal_id: Uuid::new_v4(),
             correction: GatheringCorrection::Title {
                 old: "Commuinty Cleanup".into(),
                 new: "Community Cleanup".into(),
@@ -553,7 +553,7 @@ mod tests {
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::System(SystemDecision::GatheringCorrected {
+            Event::System(SystemEvent::GatheringCorrected {
                 correction: GatheringCorrection::Title { old, new },
                 reason,
                 ..
@@ -569,7 +569,7 @@ mod tests {
     #[test]
     fn from_impls_work() {
         let w: Event = WorldEvent::ObservationCorroborated {
-            entity_id: Uuid::new_v4(),
+            signal_id: Uuid::new_v4(),
             node_type: crate::types::NodeType::Gathering,
             new_source_url: "test".into(),
             summary: None,
@@ -577,8 +577,8 @@ mod tests {
         .into();
         assert_eq!(w.event_type(), "observation_corroborated");
 
-        let s: Event = SystemDecision::EntityExpired {
-            entity_id: Uuid::new_v4(),
+        let s: Event = SystemEvent::EntityExpired {
+            signal_id: Uuid::new_v4(),
             node_type: crate::types::NodeType::Gathering,
             reason: "test".into(),
         }

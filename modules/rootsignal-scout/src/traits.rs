@@ -174,8 +174,8 @@ pub trait SignalStore: Send + Sync {
     /// Link a signal to its source (PRODUCED_BY edge).
     async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()>;
 
-    /// Find an actor by entity_id (URL-based identity).
-    async fn find_actor_by_entity_id(&self, entity_id: &str) -> Result<Option<Uuid>>;
+    /// Find an actor by canonical_key (URL-based identity).
+    async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>>;
 
     // --- Resource graph ---
 
@@ -233,7 +233,6 @@ pub trait SignalStore: Send + Sync {
         tension_id: Uuid,
         strength: f64,
         explanation: &str,
-        gathering_type: &str,
     ) -> Result<()>;
 
     // --- Source management ---

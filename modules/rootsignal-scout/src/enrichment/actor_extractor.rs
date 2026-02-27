@@ -202,7 +202,7 @@ async fn run_actor_extraction_inner(
                         id: Uuid::new_v4(),
                         name: extracted.name.clone(),
                         actor_type,
-                        entity_id: extracted.name.to_lowercase().replace(' ', "-"),
+                        canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
                         domains: vec![],
                         social_urls: vec![],
                         description: String::new(),

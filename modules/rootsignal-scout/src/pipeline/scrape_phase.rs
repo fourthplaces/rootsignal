@@ -48,7 +48,7 @@ pub(crate) struct RunContext {
     /// a known actor via HAS_ACCOUNT, its context is stored here for location
     /// fallback during signal extraction.
     pub actor_contexts: HashMap<String, ActorContext>,
-    /// RSS/Atom pub_date keyed by article URL, used as fallback content_date.
+    /// RSS/Atom pub_date keyed by article URL, used as fallback published_at.
     pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
     /// Links collected during scraping, carrying the discovering source's coordinates.
     pub collected_links: Vec<CollectedLink>,
@@ -671,12 +671,12 @@ impl ScrapePhase {
                         implied_queries: implied_q_count,
                     });
 
-                    // Apply RSS/Atom pub_date as fallback content_date
+                    // Apply RSS/Atom pub_date as fallback published_at
                     if let Some(pub_date) = ctx.url_to_pub_date.get(&url) {
                         for node in &mut nodes {
                             if let Some(meta) = node.meta_mut() {
-                                if meta.content_date.is_none() {
-                                    meta.content_date = Some(*pub_date);
+                                if meta.published_at.is_none() {
+                                    meta.published_at = Some(*pub_date);
                                 }
                             }
                         }
@@ -753,7 +753,7 @@ impl ScrapePhase {
             HashMap<Uuid, String>,
             usize,
             Vec<String>,
-            Option<DateTime<Utc>>, // most recent published_at for content_date fallback
+            Option<DateTime<Utc>>, // most recent published_at for published_at fallback
         )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, author_actors, post_count, mentions, newest_published_at)
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
@@ -928,7 +928,7 @@ impl ScrapePhase {
                 };
                 let post_count = posts.len();
 
-                // Find the most recent published_at for content_date fallback
+                // Find the most recent published_at for published_at fallback
                 let newest_published_at = posts.iter().filter_map(|p| p.published_at).max();
 
                 // Collect @mentions from posts
@@ -1067,12 +1067,12 @@ impl ScrapePhase {
                 newest_published_at,
             ) = result;
 
-            // Apply social published_at as fallback content_date when LLM didn't extract one
+            // Apply social published_at as fallback published_at when LLM didn't extract one
             if let Some(pub_at) = newest_published_at {
                 for node in &mut nodes {
                     if let Some(meta) = node.meta_mut() {
-                        if meta.content_date.is_none() {
-                            meta.content_date = Some(pub_at);
+                        if meta.published_at.is_none() {
+                            meta.published_at = Some(pub_at);
                         }
                     }
                 }
@@ -1910,15 +1910,15 @@ impl ScrapePhase {
                     .and_then(|m| author_actors.get(&m.id))
                     .map(|s| s.as_str());
                 if let Some(author_name) = author_name {
-                    let entity_id = canonical_value(&url);
-                    let actor_id = match self.store.find_actor_by_entity_id(&entity_id).await {
+                    let canonical_key = canonical_value(&url);
+                    let actor_id = match self.store.find_actor_by_canonical_key(&canonical_key).await {
                         Ok(Some(id)) => Some(id),
                         Ok(None) => {
                             let actor = ActorNode {
                                 id: Uuid::new_v4(),
                                 name: author_name.to_string(),
                                 actor_type: ActorType::Organization,
-                                entity_id: entity_id.clone(),
+                                canonical_key: canonical_key.clone(),
                                 domains: vec![],
                                 social_urls: vec![],
                                 description: String::new(),
@@ -1952,7 +1952,7 @@ impl ScrapePhase {
                             }
                         }
                         Err(e) => {
-                            warn!(error = %e, actor = author_name, "Actor entity_id lookup failed (non-fatal)");
+                            warn!(error = %e, actor = author_name, "Actor canonical_key lookup failed (non-fatal)");
                             None
                         }
                     };
@@ -2132,7 +2132,7 @@ mod tests {
                 from_location: None,
                 source_url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
 
@@ -2165,7 +2165,7 @@ mod tests {
                 from_location: None,
                 source_url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
 
@@ -2590,7 +2590,7 @@ mod tests {
                 from_location: None,
                 source_url: String::new(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
 
@@ -2678,7 +2678,7 @@ mod tests {
                 from_location: None,
                 source_url: String::new(),
                 extracted_at: Utc::now(),
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: Utc::now(),
                 source_diversity: 1,
 

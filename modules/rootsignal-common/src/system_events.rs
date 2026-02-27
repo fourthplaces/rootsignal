@@ -1,4 +1,4 @@
-//! Layer 2: System Decisions — the editorial layer.
+//! Layer 2: System Events — the editorial layer.
 //!
 //! Every variant describes a decision Root Signal made about world facts:
 //! scoring, correcting, classifying, expiring, clustering. These can evolve
@@ -17,34 +17,34 @@ use crate::events::{
 use crate::safety::SensitivityLevel;
 use crate::types::{DiscoveryMethod, DispatchType, NodeType, SituationArc, SourceRole};
 
-/// A system decision — an editorial judgment Root Signal made about world facts.
+/// A system event — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum SystemDecision {
+pub enum SystemEvent {
     // -----------------------------------------------------------------------
     // Signal lifecycle decisions
     // -----------------------------------------------------------------------
     FreshnessConfirmed {
-        entity_ids: Vec<Uuid>,
+        signal_ids: Vec<Uuid>,
         node_type: NodeType,
         confirmed_at: DateTime<Utc>,
     },
 
     ConfidenceScored {
-        entity_id: Uuid,
+        signal_id: Uuid,
         old_confidence: f32,
         new_confidence: f32,
     },
 
     /// Split from ObservationCorroborated — the system's assessment of corroboration.
     CorroborationScored {
-        entity_id: Uuid,
+        signal_id: Uuid,
         similarity: f64,
         new_corroboration_count: u32,
     },
 
     ObservationRejected {
-        entity_id: Option<Uuid>,
+        signal_id: Option<Uuid>,
         title: String,
         source_url: String,
         reason: String,
@@ -52,13 +52,13 @@ pub enum SystemDecision {
 
     /// Soft-delete — sets `expired = true` on the node (no fact disappears).
     EntityExpired {
-        entity_id: Uuid,
+        signal_id: Uuid,
         node_type: NodeType,
         reason: String,
     },
 
     EntityPurged {
-        entity_id: Uuid,
+        signal_id: Uuid,
         node_type: NodeType,
         reason: String,
         context: Option<String>,
@@ -81,26 +81,26 @@ pub enum SystemDecision {
     },
 
     ReviewVerdictReached {
-        entity_id: Uuid,
+        signal_id: Uuid,
         old_status: String,
         new_status: String,
         reason: String,
     },
 
     ImpliedQueriesConsumed {
-        entity_ids: Vec<Uuid>,
+        signal_ids: Vec<Uuid>,
     },
 
     // -----------------------------------------------------------------------
     // Sensitivity classification (NEW — moved from discovery events)
     // -----------------------------------------------------------------------
     SensitivityClassified {
-        entity_id: Uuid,
+        signal_id: Uuid,
         level: SensitivityLevel,
     },
 
     ImpliedQueriesExtracted {
-        entity_id: Uuid,
+        signal_id: Uuid,
         queries: Vec<String>,
     },
 
@@ -108,31 +108,31 @@ pub enum SystemDecision {
     // Correction decisions
     // -----------------------------------------------------------------------
     GatheringCorrected {
-        entity_id: Uuid,
+        signal_id: Uuid,
         correction: GatheringCorrection,
         reason: String,
     },
 
     AidCorrected {
-        entity_id: Uuid,
+        signal_id: Uuid,
         correction: AidCorrection,
         reason: String,
     },
 
     NeedCorrected {
-        entity_id: Uuid,
+        signal_id: Uuid,
         correction: NeedCorrection,
         reason: String,
     },
 
     NoticeCorrected {
-        entity_id: Uuid,
+        signal_id: Uuid,
         correction: NoticeCorrection,
         reason: String,
     },
 
     TensionCorrected {
-        entity_id: Uuid,
+        signal_id: Uuid,
         correction: TensionCorrection,
         reason: String,
     },
@@ -179,7 +179,7 @@ pub enum SystemDecision {
         dispatch_id: Uuid,
         situation_id: Uuid,
         body: String,
-        entity_ids: Vec<Uuid>,
+        signal_ids: Vec<Uuid>,
         dispatch_type: DispatchType,
         supersedes: Option<Uuid>,
         fidelity_score: Option<f64>,
@@ -202,11 +202,11 @@ pub enum SystemDecision {
     // Quality / lint decisions
     // -----------------------------------------------------------------------
     EmptyEntitiesCleaned {
-        entity_ids: Vec<Uuid>,
+        signal_ids: Vec<Uuid>,
     },
 
     FakeCoordinatesNulled {
-        entity_ids: Vec<Uuid>,
+        signal_ids: Vec<Uuid>,
         old_coords: Vec<(f64, f64)>,
     },
 
@@ -297,57 +297,57 @@ pub enum SystemDecision {
     },
 }
 
-impl Eventlike for SystemDecision {
+impl Eventlike for SystemEvent {
     fn event_type(&self) -> &'static str {
         match self {
-            SystemDecision::FreshnessConfirmed { .. } => "freshness_confirmed",
-            SystemDecision::ConfidenceScored { .. } => "confidence_scored",
-            SystemDecision::CorroborationScored { .. } => "corroboration_scored",
-            SystemDecision::ObservationRejected { .. } => "observation_rejected",
-            SystemDecision::EntityExpired { .. } => "entity_expired",
-            SystemDecision::EntityPurged { .. } => "entity_purged",
-            SystemDecision::DuplicateDetected { .. } => "duplicate_detected",
-            SystemDecision::ExtractionDroppedNoDate { .. } => "extraction_dropped_no_date",
-            SystemDecision::ReviewVerdictReached { .. } => "review_verdict_reached",
-            SystemDecision::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
-            SystemDecision::SensitivityClassified { .. } => "sensitivity_classified",
-            SystemDecision::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
-            SystemDecision::GatheringCorrected { .. } => "gathering_corrected",
-            SystemDecision::AidCorrected { .. } => "aid_corrected",
-            SystemDecision::NeedCorrected { .. } => "need_corrected",
-            SystemDecision::NoticeCorrected { .. } => "notice_corrected",
-            SystemDecision::TensionCorrected { .. } => "tension_corrected",
-            SystemDecision::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
-            SystemDecision::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
-            SystemDecision::SituationIdentified { .. } => "situation_identified",
-            SystemDecision::SituationChanged { .. } => "situation_changed",
-            SystemDecision::SituationPromoted { .. } => "situation_promoted",
-            SystemDecision::DispatchCreated { .. } => "dispatch_created",
-            SystemDecision::TagSuppressed { .. } => "tag_suppressed",
-            SystemDecision::TagsMerged { .. } => "tags_merged",
-            SystemDecision::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
-            SystemDecision::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
-            SystemDecision::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
-            SystemDecision::SourceSystemChanged { .. } => "source_system_changed",
-            SystemDecision::SourceRegistered { .. } => "source_registered",
-            SystemDecision::SourceChanged { .. } => "source_changed",
-            SystemDecision::SourceDeactivated { .. } => "source_deactivated",
-            SystemDecision::SourceLinkDiscovered { .. } => "source_link_discovered",
-            SystemDecision::ActorLinkedToSource { .. } => "actor_linked_to_source",
-            SystemDecision::PinCreated { .. } => "pin_created",
-            SystemDecision::DemandReceived { .. } => "demand_received",
-            SystemDecision::SubmissionReceived { .. } => "submission_received",
-            SystemDecision::ExpansionQueryCollected { .. } => "expansion_query_collected",
+            SystemEvent::FreshnessConfirmed { .. } => "freshness_confirmed",
+            SystemEvent::ConfidenceScored { .. } => "confidence_scored",
+            SystemEvent::CorroborationScored { .. } => "corroboration_scored",
+            SystemEvent::ObservationRejected { .. } => "observation_rejected",
+            SystemEvent::EntityExpired { .. } => "entity_expired",
+            SystemEvent::EntityPurged { .. } => "entity_purged",
+            SystemEvent::DuplicateDetected { .. } => "duplicate_detected",
+            SystemEvent::ExtractionDroppedNoDate { .. } => "extraction_dropped_no_date",
+            SystemEvent::ReviewVerdictReached { .. } => "review_verdict_reached",
+            SystemEvent::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
+            SystemEvent::SensitivityClassified { .. } => "sensitivity_classified",
+            SystemEvent::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
+            SystemEvent::GatheringCorrected { .. } => "gathering_corrected",
+            SystemEvent::AidCorrected { .. } => "aid_corrected",
+            SystemEvent::NeedCorrected { .. } => "need_corrected",
+            SystemEvent::NoticeCorrected { .. } => "notice_corrected",
+            SystemEvent::TensionCorrected { .. } => "tension_corrected",
+            SystemEvent::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
+            SystemEvent::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
+            SystemEvent::SituationIdentified { .. } => "situation_identified",
+            SystemEvent::SituationChanged { .. } => "situation_changed",
+            SystemEvent::SituationPromoted { .. } => "situation_promoted",
+            SystemEvent::DispatchCreated { .. } => "dispatch_created",
+            SystemEvent::TagSuppressed { .. } => "tag_suppressed",
+            SystemEvent::TagsMerged { .. } => "tags_merged",
+            SystemEvent::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
+            SystemEvent::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
+            SystemEvent::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
+            SystemEvent::SourceSystemChanged { .. } => "source_system_changed",
+            SystemEvent::SourceRegistered { .. } => "source_registered",
+            SystemEvent::SourceChanged { .. } => "source_changed",
+            SystemEvent::SourceDeactivated { .. } => "source_deactivated",
+            SystemEvent::SourceLinkDiscovered { .. } => "source_link_discovered",
+            SystemEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
+            SystemEvent::PinCreated { .. } => "pin_created",
+            SystemEvent::DemandReceived { .. } => "demand_received",
+            SystemEvent::SubmissionReceived { .. } => "submission_received",
+            SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
         }
     }
 
     fn to_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SystemDecision serialization should never fail")
+        serde_json::to_value(self).expect("SystemEvent serialization should never fail")
     }
 }
 
-impl SystemDecision {
-    /// Deserialize a system decision from a JSON payload.
+impl SystemEvent {
+    /// Deserialize a system event from a JSON payload.
     pub fn from_payload(payload: &serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(payload.clone())
     }

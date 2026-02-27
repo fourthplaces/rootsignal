@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn entity_mapping_groups_subdomains_into_one_entity() {
         let mappings = vec![EntityMappingOwned {
-            entity_id: "big-media".to_string(),
+            canonical_key: "big-media".to_string(),
             domains: vec!["news.big.com".to_string(), "opinion.big.com".to_string()],
             instagram: vec![],
             facebook: vec![],
