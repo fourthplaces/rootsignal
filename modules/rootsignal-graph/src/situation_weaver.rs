@@ -120,7 +120,7 @@ struct DiscoveredSignal {
     lat: Option<f64>,
     lng: Option<f64>,
     embedding: Vec<f32>,
-    content_date: Option<String>,
+    published_at: Option<String>,
 }
 
 struct CandidateSituation {
@@ -299,7 +299,7 @@ impl SituationWeaver {
                         n.source_url AS source_url,
                         coalesce(n.cause_heat, 0.0) AS cause_heat,
                         n.lat AS lat, n.lng AS lng,
-                        n.content_date AS content_date"
+                        n.published_at AS published_at"
             ))
             .param("run_id", scout_run_id);
 
@@ -325,7 +325,7 @@ impl SituationWeaver {
                     lat: row.get("lat").ok(),
                     lng: row.get("lng").ok(),
                     embedding,
-                    content_date: row.get("content_date").ok(),
+                    published_at: row.get("published_at").ok(),
                 });
             }
         }
@@ -462,7 +462,7 @@ impl SituationWeaver {
 
         // Sort signals chronologically before building JSON
         let mut sorted_signals: Vec<&DiscoveredSignal> = signals.iter().collect();
-        sorted_signals.sort_by(|a, b| a.content_date.cmp(&b.content_date));
+        sorted_signals.sort_by(|a, b| a.published_at.cmp(&b.published_at));
 
         let signals_json: Vec<serde_json::Value> = sorted_signals
             .iter()
@@ -914,7 +914,7 @@ fn signal_to_json(s: &DiscoveredSignal) -> serde_json::Value {
         "source_url": s.source_url,
         "location": format_location(s.lat, s.lng),
     });
-    if let Some(date) = &s.content_date {
+    if let Some(date) = &s.published_at {
         obj.as_object_mut()
             .unwrap()
             .insert("published".to_string(), serde_json::json!(date));
@@ -1010,7 +1010,7 @@ mod tests {
                 lat: None,
                 lng: None,
                 embedding: vec![],
-                content_date: Some("2024-01-15".into()),
+                published_at: Some("2024-01-15".into()),
             },
             DiscoveredSignal {
                 id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
@@ -1022,13 +1022,13 @@ mod tests {
                 lat: None,
                 lng: None,
                 embedding: vec![],
-                content_date: Some("2024-01-05".into()),
+                published_at: Some("2024-01-05".into()),
             },
         ];
 
         // Sort the same way weave_batch does
         let mut sorted: Vec<&DiscoveredSignal> = signals.iter().collect();
-        sorted.sort_by(|a, b| a.content_date.cmp(&b.content_date));
+        sorted.sort_by(|a, b| a.published_at.cmp(&b.published_at));
 
         let json_values: Vec<serde_json::Value> =
             sorted.iter().map(|s| signal_to_json(s)).collect();
@@ -1043,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_without_content_date_omits_published_field() {
+    fn signal_without_published_at_omits_published_field() {
         let signal = DiscoveredSignal {
             id: Uuid::new_v4(),
             title: "No date signal".into(),
@@ -1054,13 +1054,13 @@ mod tests {
             lat: None,
             lng: None,
             embedding: vec![],
-            content_date: None,
+            published_at: None,
         };
 
         let json = signal_to_json(&signal);
         assert!(
             json.get("published").is_none(),
-            "Should not have published field when content_date is None"
+            "Should not have published field when published_at is None"
         );
     }
 }

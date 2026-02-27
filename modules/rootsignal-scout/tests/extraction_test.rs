@@ -506,7 +506,7 @@ async fn vague_dates_handled_gracefully() {
     // The "Community Garden Plot Lottery" deadline "was last Tuesday" — this is
     // a past event. It should either:
     // - Not be extracted (ideal)
-    // - Be extracted with content_date in the past
+    // - Be extracted with published_at in the past
     let lottery_signals: Vec<_> = response
         .signals
         .iter()
@@ -794,26 +794,26 @@ async fn closed_program_excluded_or_marked_inactive() {
     // This is a completed 2019 coat drive — ideally the extractor recognizes
     // it as stale/completed and either:
     // 1. Extracts no signals (ideal)
-    // 2. Extracts signals but with content_date in 2019 (so staleness filter catches them)
+    // 2. Extracts signals but with published_at in 2019 (so staleness filter catches them)
     // 3. Extracts signals (worst case — documenting current behavior)
 
     if !result.nodes.is_empty() {
-        // If signals were extracted, check content_date
-        let has_old_content_date = response.signals.iter().any(|s| {
-            s.content_date
+        // If signals were extracted, check published_at
+        let has_old_published_at = response.signals.iter().any(|s| {
+            s.published_at
                 .as_deref()
                 .map(|d| d.contains("2019") || d.contains("2020"))
                 .unwrap_or(false)
         });
 
-        if has_old_content_date {
+        if has_old_published_at {
             eprintln!(
-                "Good: Extractor set content_date to 2019/2020 for stale fixture ({} signals)",
+                "Good: Extractor set published_at to 2019/2020 for stale fixture ({} signals)",
                 result.nodes.len()
             );
         } else {
             eprintln!(
-                "WARNING: Extractor produced {} signals from 2019 content without old content_date. \
+                "WARNING: Extractor produced {} signals from 2019 content without old published_at. \
                  Staleness filtering gap detected.",
                 result.nodes.len()
             );

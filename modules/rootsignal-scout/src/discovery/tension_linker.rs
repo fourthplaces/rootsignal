@@ -493,7 +493,7 @@ impl<'a> TensionLinker<'a> {
                 about_location_name: Some(self.region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
 
@@ -633,7 +633,7 @@ mod tests {
                 about_location_name: Some(region.name.clone()),
                 source_url: tension.source_url.clone(),
                 extracted_at: now,
-                content_date: None,
+                published_at: None,
                 last_confirmed_active: now,
                 source_diversity: 1,
 

@@ -142,7 +142,7 @@ pub struct CorrectSignalOutput {
 }
 
 const CORRECTABLE_FIELDS: &[&str] = &[
-    "title", "summary", "starts_at", "ends_at", "content_date",
+    "title", "summary", "starts_at", "ends_at", "published_at",
     "location_name", "lat", "lng", "action_url",
     "organizer", "what_needed", "goal",
     "sensitivity", "severity", "category",
@@ -158,7 +158,7 @@ impl Tool for CorrectSignalTool {
     async fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Correct a specific field on a signal. Can be called multiple times for the same signal to fix different fields. The signal is auto-promoted after corrections. Allowed fields: title, summary, starts_at, ends_at, content_date, location_name, lat, lng, action_url, organizer, what_needed, goal, sensitivity, severity, category.".to_string(),
+            description: "Correct a specific field on a signal. Can be called multiple times for the same signal to fix different fields. The signal is auto-promoted after corrections. Allowed fields: title, summary, starts_at, ends_at, published_at, location_name, lat, lng, action_url, organizer, what_needed, goal, sensitivity, severity, category.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

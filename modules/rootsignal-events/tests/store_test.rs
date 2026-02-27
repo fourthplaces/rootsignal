@@ -571,7 +571,7 @@ async fn large_payload_roundtrips() {
         "confidence": 0.85,
         "source_url": "https://example.com/really/long/path/to/article",
         "extracted_at": "2026-02-25T12:00:00Z",
-        "content_date": "2026-02-25T12:00:00Z",
+        "published_at": "2026-02-25T12:00:00Z",
         "about_location": {"lat": 44.9778, "lng": -93.265, "precision": "neighborhood"},
         "about_location_name": "Minneapolis",
         "implied_queries": (0..20).map(|i| format!("query {i}")).collect::<Vec<_>>(),

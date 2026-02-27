@@ -268,7 +268,7 @@ fn format_batch_prompt(source_url: &str, signals: &[&StagedSignal]) -> String {
 
         if let Some(ref v) = signal.starts_at { prompt.push_str(&format!("starts_at: {v}\n")); }
         if let Some(ref v) = signal.ends_at { prompt.push_str(&format!("ends_at: {v}\n")); }
-        if let Some(ref v) = signal.content_date { prompt.push_str(&format!("content_date: {v}\n")); }
+        if let Some(ref v) = signal.published_at { prompt.push_str(&format!("published_at: {v}\n")); }
         if let Some(ref v) = signal.location_name { prompt.push_str(&format!("location_name: {v}\n")); }
         if let (Some(lat), Some(lng)) = (signal.lat, signal.lng) {
             prompt.push_str(&format!("lat: {lat}\nlng: {lng}\n"));

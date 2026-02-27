@@ -379,7 +379,7 @@ impl CachedReader {
                 };
 
                 // Time filter
-                let signal_time = meta.content_date.unwrap_or(meta.extracted_at);
+                let signal_time = meta.published_at.unwrap_or(meta.extracted_at);
                 if signal_time < from || signal_time > to {
                     continue;
                 }
@@ -428,7 +428,7 @@ impl CachedReader {
                         metadata: serde_json::json!({
                             "sourceUrl": meta.source_url,
                             "extractedAt": meta.extracted_at.to_rfc3339(),
-                            "contentDate": meta.content_date.map(|d| d.to_rfc3339()),
+                            "contentDate": meta.published_at.map(|d| d.to_rfc3339()),
                             "reviewStatus": meta.review_status,
                             "summary": meta.summary,
                         })
@@ -442,7 +442,7 @@ impl CachedReader {
         // --- Collect actors ---
         if type_set.contains("Actor") {
             for actor in &snap.actors {
-                // Actors don't have content_date; use last_active as proxy
+                // Actors don't have published_at; use last_active as proxy
                 if actor.last_active < from || actor.last_active > to {
                     continue;
                 }

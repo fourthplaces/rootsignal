@@ -32,7 +32,7 @@ fn test_meta() -> NodeMeta {
         from_location: None,
         source_url: "https://example.com".into(),
         extracted_at: Utc::now(),
-        content_date: None,
+        published_at: None,
         last_confirmed_active: Utc::now(),
         source_diversity: 1,
         cause_heat: 0.0,

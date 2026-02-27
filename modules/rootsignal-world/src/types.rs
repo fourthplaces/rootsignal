@@ -237,7 +237,7 @@ pub enum EdgeType {
     ActedIn,
     /// Submission -> Source (human submission)
     SubmittedFor,
-    /// Aid/Gathering/Need -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
+    /// Aid/Gathering/Need -> Tension (drawn toward a tension). Properties: match_strength, explanation
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,

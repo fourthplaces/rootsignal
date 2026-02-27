@@ -4099,7 +4099,7 @@ pub struct StagedSignal {
     pub location_name: Option<String>,
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
-    pub content_date: Option<String>,
+    pub published_at: Option<String>,
     pub action_url: Option<String>,
     pub organizer: Option<String>,
     pub sensitivity: Option<String>,

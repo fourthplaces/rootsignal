@@ -58,7 +58,7 @@ pub struct ExtractedSignal {
     pub source_authority: Option<String>,
     /// Best-guess date when this content was published or last updated (ISO 8601).
     /// Used for staleness filtering — signals older than 1 year are dropped.
-    pub content_date: Option<String>,
+    pub published_at: Option<String>,
     /// Organizations, groups, or individuals mentioned in the signal
     pub mentioned_actors: Option<Vec<String>>,
     /// The specific source URL this signal was extracted from (e.g. a specific post URL).
@@ -334,8 +334,8 @@ impl Extractor {
                 .unwrap_or(source_url)
                 .to_string();
 
-            let content_date = signal
-                .content_date
+            let published_at = signal
+                .published_at
                 .as_deref()
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&Utc));
@@ -354,7 +354,7 @@ impl Extractor {
                 from_location: None,
                 source_url: effective_source_url.clone(),
                 extracted_at: now,
-                content_date,
+                published_at,
                 last_confirmed_active: now,
                 source_diversity: 1,
                 cause_heat: 0.0,
@@ -685,15 +685,15 @@ For gathering and aid signals with recurring schedules, extract structured recur
 
 When the source mentions a recurring schedule, always set is_recurring to true AND provide schedule fields. The schedule_text fallback is always valuable, even when rrule is also provided.
 
-## Publication Date (content_date)
-Set content_date to the ISO 8601 date when this content was originally published.
+## Publication Date (published_at)
+Set published_at to the ISO 8601 date when this content was originally published.
 Look for: byline dates, "Published on...", article timestamps, post dates.
 - Use the ORIGINAL publication date, not "Updated" or "Modified" dates
 - If the page shows a clear publication date, use it (e.g. "2026-02-20T00:00:00Z")
 - If only a relative date is visible ("2 days ago", "last week"), resolve it against today ({today})
-- If no publication date is visible anywhere in the content, leave content_date null
-- Do NOT use event start times as content_date — content_date is when the page was written, not when an event occurs
-Signals without a content_date may be dropped, so extracting this accurately is important.
+- If no publication date is visible anywhere in the content, leave published_at null
+- Do NOT use event start times as published_at — published_at is when the page was written, not when an event occurs
+Signals without a published_at may be dropped, so extracting this accurately is important.
 
 ## Notice Fields
 - severity: "low", "medium", "high", "critical"
@@ -847,7 +847,7 @@ mod tests {
             category: Some("housing".to_string()),
             effective_date: None,
             source_authority: None,
-            content_date: None,
+            published_at: None,
             mentioned_actors: None,
             what_would_help: Some("affordable housing policy".to_string()),
             source_url: None,
@@ -903,7 +903,7 @@ mod tests {
             from_location: None,
             source_url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
             cause_heat: 0.0,
@@ -938,7 +938,7 @@ mod tests {
             from_location: None,
             source_url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: chrono::Utc::now(),
             source_diversity: 1,
             cause_heat: 0.0,

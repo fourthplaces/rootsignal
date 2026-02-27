@@ -580,7 +580,6 @@ impl<'a> GatheringFinder<'a> {
                 target.tension_id,
                 gathering.match_strength.clamp(0.0, 1.0),
                 &gathering.explanation,
-                &gathering.gathering_type,
             )
             .await?;
         stats.edges_created += 1;
@@ -592,7 +591,6 @@ impl<'a> GatheringFinder<'a> {
                     signal_id,
                     &gathering.also_addresses,
                     &gathering.explanation,
-                    &gathering.gathering_type,
                 )
                 .await
             {
@@ -656,7 +654,7 @@ impl<'a> GatheringFinder<'a> {
             about_location_name: Some(self.region.name.clone()),
             source_url: gathering.url.clone(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             last_confirmed_active: now,
             source_diversity: 1,
 
@@ -720,15 +718,13 @@ impl<'a> GatheringFinder<'a> {
         Ok(node_id)
     }
 
-    /// Wire gravity edges to additional tensions that this gathering also addresses.
+    /// Wire tension edges to additional tensions that this gathering also addresses.
     /// Uses embedding similarity against all active tensions (>0.85 threshold).
-    /// Passes gathering_type through so all edges are marked as gravity.
     async fn wire_also_addresses(
         &self,
         signal_id: Uuid,
         also_addresses: &[String],
         explanation: &str,
-        gathering_type: &str,
     ) -> Result<()> {
         let lat_delta = self.region.radius_km / 111.0;
         let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
@@ -773,7 +769,6 @@ impl<'a> GatheringFinder<'a> {
                         tension_id,
                         sim.clamp(0.0, 1.0),
                         explanation,
-                        gathering_type,
                     )
                     .await?;
             }
@@ -990,7 +985,7 @@ mod tests {
             about_location_name: Some(region.name.clone()),
             source_url: "https://example.com/singing".to_string(),
             extracted_at: now,
-            content_date: None,
+            published_at: None,
             last_confirmed_active: now,
             source_diversity: 1,
 
