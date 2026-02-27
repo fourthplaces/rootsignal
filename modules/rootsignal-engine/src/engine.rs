@@ -79,8 +79,8 @@ where
             // 2. Reduce (pure state update)
             self.reducer.reduce(state, &evt);
 
-            // 3. Route (may do I/O, may emit new events)
-            let children = self.router.route(&evt, &stored, state, deps).await?;
+            // 3. Route (may do I/O, may emit new events) — &S (auto-reborrows)
+            let children = self.router.route(&evt, &stored, &*state, deps).await?;
 
             // 4. Enqueue children (chained off this event)
             for child in children {

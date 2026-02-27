@@ -29,7 +29,7 @@ impl Router<ScoutEvent, PipelineState, PipelineDeps> for ScoutRouter {
         &self,
         event: &ScoutEvent,
         stored: &StoredEvent,
-        state: &mut PipelineState,
+        state: &PipelineState,
         deps: &PipelineDeps,
     ) -> Result<Vec<ScoutEvent>> {
         match event {

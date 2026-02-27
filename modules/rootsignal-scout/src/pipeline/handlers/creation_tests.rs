@@ -48,7 +48,7 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         },
     );
 
-    let events = super::creation::handle_create(node_id, "https://localorg.org/events", &mut state, &deps)
+    let events = super::creation::handle_create(node_id, "https://localorg.org/events", &state, &deps)
         .await
         .unwrap();
 
@@ -83,14 +83,10 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         other => panic!("expected SignalStored, got {:?}", other),
     }
 
-    // PendingNode consumed, WiringContext stashed
+    // PendingNode still in state (handler reads, reducer cleans up on SignalStored)
     assert!(
-        !state.pending_nodes.contains_key(&node_id),
-        "pending node should be consumed"
-    );
-    assert!(
-        state.wiring_contexts.contains_key(&node_id),
-        "wiring context should be stashed for signal_stored"
+        state.pending_nodes.contains_key(&node_id),
+        "pending node should still be in state (handler reads, reducer cleans up)"
     );
 }
 
@@ -102,7 +98,7 @@ async fn missing_pending_node_returns_empty_events() {
     let mut state = PipelineState::new(HashMap::new());
     let bogus_id = Uuid::new_v4();
 
-    let events = super::creation::handle_create(bogus_id, "https://example.org", &mut state, &deps)
+    let events = super::creation::handle_create(bogus_id, "https://example.org", &state, &deps)
         .await
         .unwrap();
 
@@ -235,7 +231,7 @@ async fn signal_stored_wires_tags_and_source_link() {
         rootsignal_common::types::NodeType::Tension,
         "https://localorg.org/events",
         "localorg.org",
-        &mut state,
+        &state,
         &deps,
     )
     .await
@@ -264,10 +260,10 @@ async fn signal_stored_wires_tags_and_source_link() {
         "expected SignalTagged event"
     );
 
-    // Wiring context consumed
+    // Wiring context stays in state (handler reads, cleaned up at end of run)
     assert!(
-        !state.wiring_contexts.contains_key(&node_id),
-        "wiring context should be consumed"
+        state.wiring_contexts.contains_key(&node_id),
+        "wiring context should still be in state (handler reads, not consumes)"
     );
 }
 
@@ -295,7 +291,7 @@ async fn signal_stored_with_author_emits_actor_linked() {
         rootsignal_common::types::NodeType::Tension,
         "https://instagram.com/northsidemutualaid",
         "instagram.com/northsidemutualaid",
-        &mut state,
+        &state,
         &deps,
     )
     .await
@@ -348,7 +344,7 @@ async fn blank_author_name_does_not_create_actor() {
         rootsignal_common::types::NodeType::Tension,
         "https://example.org",
         "example.org",
-        &mut state,
+        &state,
         &deps,
     )
     .await

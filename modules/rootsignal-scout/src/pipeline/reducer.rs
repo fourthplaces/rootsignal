@@ -6,7 +6,7 @@
 use rootsignal_engine::Reducer;
 
 use crate::pipeline::events::{FreshnessBucket, PipelineEvent, ScoutEvent};
-use crate::pipeline::state::PipelineState;
+use crate::pipeline::state::{PipelineState, WiringContext};
 
 use crate::enrichment::link_promoter::CollectedLink;
 
@@ -37,11 +37,28 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
             }
 
             // Dedup verdicts
-            PipelineEvent::NewSignalAccepted { node_type, .. } => {
+            PipelineEvent::NewSignalAccepted {
+                node_id,
+                node_type,
+                pending_node,
+                ..
+            } => {
                 state.stats.signals_stored += 1;
                 if let Some(idx) = signal_type_index(node_type) {
                     state.stats.by_type[idx] += 1;
                 }
+                // Stash WiringContext for handle_signal_stored
+                state.wiring_contexts.insert(
+                    *node_id,
+                    WiringContext {
+                        resource_tags: pending_node.resource_tags.clone(),
+                        signal_tags: pending_node.signal_tags.clone(),
+                        author_name: pending_node.author_name.clone(),
+                        source_id: pending_node.source_id,
+                    },
+                );
+                // Stash PendingNode for handle_create
+                state.pending_nodes.insert(*node_id, *pending_node.clone());
             }
             PipelineEvent::CrossSourceMatchDetected { .. }
             | PipelineEvent::SameSourceReencountered { .. } => {
@@ -94,11 +111,20 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
                 FreshnessBucket::Older | FreshnessBucket::Unknown => {}
             },
 
+            // SignalStored — clean up PendingNode (WiringContext stays until end of run)
+            PipelineEvent::SignalStored { node_id, .. } => {
+                state.pending_nodes.remove(node_id);
+            }
+
+            // DedupCompleted — clean up extracted batch
+            PipelineEvent::DedupCompleted { url } => {
+                state.extracted_batches.remove(url);
+            }
+
             // Phase lifecycle — no state changes
             PipelineEvent::PhaseStarted { .. }
             | PipelineEvent::PhaseCompleted { .. }
             | PipelineEvent::ExtractionFailed { .. }
-            | PipelineEvent::SignalStored { .. }
             | PipelineEvent::SourceDiscovered { .. } => {}
         }
     }

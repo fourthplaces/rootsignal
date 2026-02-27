@@ -34,7 +34,7 @@ pub trait Router<E: EventLike, S: Send, D: Send + Sync>: Send + Sync {
         &self,
         event: &E,
         stored: &StoredEvent,
-        state: &mut S,
+        state: &S,
         deps: &D,
     ) -> Result<Vec<E>>;
 }

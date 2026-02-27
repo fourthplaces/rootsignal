@@ -9,6 +9,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use rootsignal_common::types::ActorContext;
 use rootsignal_common::ScoutScope;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rootsignal_common::types::SourceNode;
@@ -81,8 +82,10 @@ pub struct ExtractedBatch {
 }
 
 /// Node data stashed by the dedup handler for the creation handler to consume.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingNode {
     pub node: rootsignal_common::Node,
+    #[serde(skip)]
     pub embedding: Vec<f32>,
     pub content_hash: String,
     pub resource_tags: Vec<ResourceTag>,

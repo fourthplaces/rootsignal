@@ -23,7 +23,7 @@ use crate::pipeline::state::{PipelineDeps, PipelineState};
 pub async fn route_pipeline(
     event: &PipelineEvent,
     _stored: &StoredEvent,
-    state: &mut PipelineState,
+    state: &PipelineState,
     deps: &PipelineDeps,
 ) -> Result<Vec<ScoutEvent>> {
     match event {

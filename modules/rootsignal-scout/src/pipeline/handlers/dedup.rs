@@ -25,10 +25,10 @@ use crate::pipeline::state::{PendingNode, PipelineDeps, PipelineState};
 /// Handle `SignalsExtracted`: pull the extracted batch from state and run dedup.
 pub async fn handle_signals_extracted(
     url: &str,
-    state: &mut PipelineState,
+    state: &PipelineState,
     deps: &PipelineDeps,
 ) -> Result<Vec<ScoutEvent>> {
-    let batch = match state.extracted_batches.remove(url) {
+    let batch = match state.extracted_batches.get(url) {
         Some(b) => b,
         None => {
             tracing::warn!(url, "SignalsExtracted: no extracted batch found in state");
@@ -37,7 +37,9 @@ pub async fn handle_signals_extracted(
     };
 
     if batch.nodes.is_empty() {
-        return Ok(vec![]);
+        return Ok(vec![ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+            url: url.to_string(),
+        })]);
     }
 
     let content_hash_str = format!("{:x}", rootsignal_common::content_hash(&batch.content));
@@ -56,8 +58,9 @@ pub async fn handle_signals_extracted(
     let before_url_dedup = batch.nodes.len();
     let nodes: Vec<_> = batch
         .nodes
-        .into_iter()
+        .iter()
         .filter(|n| !existing_titles.contains(&normalize_title(n.title())))
+        .cloned()
         .collect();
     let url_deduped = before_url_dedup - nodes.len();
     if url_deduped > 0 {
@@ -65,6 +68,9 @@ pub async fn handle_signals_extracted(
     }
 
     if nodes.is_empty() {
+        events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+            url: url.to_string(),
+        }));
         return Ok(events);
     }
 
@@ -130,6 +136,9 @@ pub async fn handle_signals_extracted(
     let nodes = remaining_nodes;
 
     if nodes.is_empty() {
+        events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+            url: url.to_string(),
+        }));
         return Ok(events);
     }
 
@@ -196,7 +205,7 @@ pub async fn handle_signals_extracted(
 
         let cache_match = cache_hit
             .as_ref()
-            .map(|(id, ty, u, s)| (*id, *ty, &**u, *s));
+            .map(|(id, ty, u, s)| (*id, *ty, u.as_str(), *s));
         let graph_match = graph_hit
             .as_ref()
             .map(|(id, ty, u, s)| (*id, *ty, u.as_str(), *s));
@@ -269,9 +278,16 @@ pub async fn handle_signals_extracted(
                 }));
             }
             DedupVerdict::Create => {
-                // Stash as PendingNode for handle_create to consume
                 let node_id = node.id();
                 let meta_id = node.meta().map(|m| m.id);
+
+                // Add to embed cache (interior mutability — exception for deterministic cache)
+                state.embed_cache.add(
+                    embedding.clone(),
+                    node_id,
+                    node_type,
+                    url.to_string(),
+                );
 
                 let author_name = meta_id
                     .and_then(|mid| batch.author_actors.get(&mid))
@@ -285,28 +301,31 @@ pub async fn handle_signals_extracted(
                     .cloned()
                     .unwrap_or_default();
 
-                state.pending_nodes.insert(
-                    node_id,
-                    PendingNode {
-                        node,
-                        embedding,
-                        content_hash: content_hash_str.clone(),
-                        resource_tags: node_resource_tags,
-                        signal_tags: node_signal_tags,
-                        author_name,
-                        source_id: batch.source_id,
-                    },
-                );
+                let title = node.title().to_string();
+                let pn = PendingNode {
+                    node,
+                    embedding,
+                    content_hash: content_hash_str.clone(),
+                    resource_tags: node_resource_tags,
+                    signal_tags: node_signal_tags,
+                    author_name,
+                    source_id: batch.source_id,
+                };
 
                 events.push(ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted {
                     node_id,
                     node_type,
-                    title: state.pending_nodes[&node_id].node.title().to_string(),
+                    title,
                     source_url: url.to_string(),
+                    pending_node: Box::new(pn),
                 }));
             }
         }
     }
+
+    events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+        url: url.to_string(),
+    }));
 
     Ok(events)
 }

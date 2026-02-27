@@ -100,6 +100,7 @@ pub enum PipelineEvent {
         node_type: NodeType,
         title: String,
         source_url: String,
+        pending_node: Box<crate::pipeline::state::PendingNode>,
     },
     CrossSourceMatchDetected {
         existing_id: Uuid,
@@ -120,6 +121,11 @@ pub enum PipelineEvent {
         node_type: NodeType,
         source_url: String,
         canonical_key: String,
+    },
+
+    // Dedup batch complete — reducer cleans up extracted batch
+    DedupCompleted {
+        url: String,
     },
 
     // URL-level summary (replaces stats diffing pattern)
@@ -180,6 +186,7 @@ impl PipelineEvent {
             PipelineEvent::CrossSourceMatchDetected { .. } => "cross_source_match_detected",
             PipelineEvent::SameSourceReencountered { .. } => "same_source_reencountered",
             PipelineEvent::SignalStored { .. } => "signal_stored",
+            PipelineEvent::DedupCompleted { .. } => "dedup_completed",
             PipelineEvent::UrlProcessed { .. } => "url_processed",
             PipelineEvent::LinkCollected { .. } => "link_collected",
             PipelineEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",

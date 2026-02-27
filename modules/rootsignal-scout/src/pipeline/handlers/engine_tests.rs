@@ -30,7 +30,7 @@ impl Router<ScoutEvent, PipelineState, PipelineDeps> for TestRouter {
         &self,
         event: &ScoutEvent,
         stored: &StoredEvent,
-        state: &mut PipelineState,
+        state: &PipelineState,
         deps: &PipelineDeps,
     ) -> Result<Vec<ScoutEvent>> {
         match event {
@@ -66,19 +66,17 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
     let node_id = node.id();
 
+    let pn = PendingNode {
+        node,
+        embedding: vec![0.1; TEST_EMBEDDING_DIM],
+        content_hash: "abc123".to_string(),
+        resource_tags: vec![],
+        signal_tags: vec!["legal".to_string()],
+        author_name: Some("Local Legal Aid".to_string()),
+        source_id: None,
+    };
+
     let mut state = PipelineState::new(HashMap::new());
-    state.pending_nodes.insert(
-        node_id,
-        PendingNode {
-            node,
-            embedding: vec![0.1; TEST_EMBEDDING_DIM],
-            content_hash: "abc123".to_string(),
-            resource_tags: vec![],
-            signal_tags: vec!["legal".to_string()],
-            author_name: Some("Local Legal Aid".to_string()),
-            source_id: None,
-        },
-    );
 
     engine
         .dispatch(
@@ -87,6 +85,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
                 node_type: rootsignal_common::types::NodeType::Tension,
                 title: "Free Legal Clinic".to_string(),
                 source_url: "https://www.instagram.com/locallegalaid".to_string(),
+                pending_node: Box::new(pn),
             }),
             &mut state,
             &deps,
@@ -111,9 +110,8 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         "expected ActorIdentified event in sink"
     );
 
-    // Both pending_nodes and wiring_contexts fully consumed
+    // PendingNode consumed by reducer on SignalStored, wiring contexts stay until end of run
     assert!(!state.pending_nodes.contains_key(&node_id));
-    assert!(!state.wiring_contexts.contains_key(&node_id));
 }
 
 #[tokio::test]
@@ -127,19 +125,17 @@ async fn new_signal_accepted_persists_causal_chain() {
     let node = tension_at("Community Dinner", 44.95, -93.27);
     let node_id = node.id();
 
+    let pn = PendingNode {
+        node,
+        embedding: vec![0.1; TEST_EMBEDDING_DIM],
+        content_hash: "def456".to_string(),
+        resource_tags: vec![],
+        signal_tags: vec![],
+        author_name: None,
+        source_id: None,
+    };
+
     let mut state = PipelineState::new(HashMap::new());
-    state.pending_nodes.insert(
-        node_id,
-        PendingNode {
-            node,
-            embedding: vec![0.1; TEST_EMBEDDING_DIM],
-            content_hash: "def456".to_string(),
-            resource_tags: vec![],
-            signal_tags: vec![],
-            author_name: None,
-            source_id: None,
-        },
-    );
 
     engine
         .dispatch(
@@ -148,6 +144,7 @@ async fn new_signal_accepted_persists_causal_chain() {
                 node_type: rootsignal_common::types::NodeType::Tension,
                 title: "Community Dinner".to_string(),
                 source_url: "https://example.org".to_string(),
+                pending_node: Box::new(pn),
             }),
             &mut state,
             &deps,
@@ -313,14 +310,14 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
     assert_eq!(state.stats.signals_extracted, 1);
     assert_eq!(state.stats.signals_stored, 1);
 
-    // Extracted batch consumed
+    // Extracted batch cleaned up by reducer on DedupCompleted
     assert!(state.extracted_batches.is_empty());
 
-    // Pending nodes consumed (handle_create ran)
+    // Pending nodes cleaned up by reducer on SignalStored
     assert!(state.pending_nodes.is_empty());
 
-    // Wiring contexts consumed (handle_signal_stored ran)
-    assert!(state.wiring_contexts.is_empty());
+    // Wiring contexts stay until end of run (handler reads, not consumes)
+    assert!(!state.wiring_contexts.is_empty());
 
     // Causal chain in event store
     let events = sink.events();

@@ -15,20 +15,20 @@ use rootsignal_common::types::NodeType;
 use uuid::Uuid;
 
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
-use crate::pipeline::state::{PipelineDeps, PipelineState, WiringContext};
+use crate::pipeline::state::{PipelineDeps, PipelineState};
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
 /// NewSignalAccepted: a new signal passed all dedup layers.
 /// Emits World + System + Citation events, then triggers edge wiring via SignalStored.
 ///
-/// Consumes PendingNode, stashes WiringContext for handle_signal_stored.
+/// Reads PendingNode from state (stashed by reducer). Pure — no state mutations.
 pub async fn handle_create(
     node_id: Uuid,
     scrape_url: &str,
-    state: &mut PipelineState,
+    state: &PipelineState,
     _deps: &PipelineDeps,
 ) -> Result<Vec<ScoutEvent>> {
-    let pending = match state.pending_nodes.remove(&node_id) {
+    let pending = match state.pending_nodes.get(&node_id) {
         Some(p) => p,
         None => {
             tracing::warn!(%node_id, "NewSignalAccepted: no pending node found");
@@ -38,13 +38,8 @@ pub async fn handle_create(
 
     let stored_id = pending.node.id();
 
-    // Add to embed cache so subsequent batches can find it
-    state.embed_cache.add(
-        pending.embedding.clone(),
-        stored_id,
-        pending.node.node_type(),
-        scrape_url.to_string(),
-    );
+    // embed_cache.add already done by dedup handler
+    // wiring_contexts already stashed by reducer
 
     let mut events = Vec::new();
 
@@ -80,17 +75,6 @@ pub async fn handle_create(
         source_url: scrape_url.to_string(),
         canonical_key,
     }));
-
-    // Stash wiring context for handle_signal_stored (separate map, clear lifecycle)
-    state.wiring_contexts.insert(
-        stored_id,
-        WiringContext {
-            resource_tags: pending.resource_tags,
-            signal_tags: pending.signal_tags,
-            author_name: pending.author_name,
-            source_id: pending.source_id,
-        },
-    );
 
     Ok(events)
 }
@@ -165,16 +149,16 @@ pub async fn handle_refresh(
 }
 
 /// SignalStored: wire edges (source, actor, resources, tags) via events.
-/// Consumes WiringContext (not PendingNode).
+/// Reads WiringContext from state (stashed by reducer). Pure — no state mutations.
 pub async fn handle_signal_stored(
     node_id: Uuid,
     _node_type: NodeType,
     source_url: &str,
     canonical_key: &str,
-    state: &mut PipelineState,
+    state: &PipelineState,
     deps: &PipelineDeps,
 ) -> Result<Vec<ScoutEvent>> {
-    let ctx = match state.wiring_contexts.remove(&node_id) {
+    let ctx = match state.wiring_contexts.get(&node_id) {
         Some(c) => c,
         None => return Ok(vec![]),
     };
@@ -233,7 +217,7 @@ pub async fn handle_signal_stored(
     if !ctx.signal_tags.is_empty() {
         events.push(ScoutEvent::System(SystemEvent::SignalTagged {
             signal_id: node_id,
-            tag_slugs: ctx.signal_tags,
+            tag_slugs: ctx.signal_tags.clone(),
         }));
     }
 
