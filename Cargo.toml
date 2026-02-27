@@ -4,6 +4,7 @@ members = [
     "modules/apify-client",
     "modules/twilio-rs",
     "modules/rootsignal-common",
+    "modules/rootsignal-engine",
     "modules/rootsignal-events",
     "modules/rootsignal-graph",
     "modules/browserless-client",

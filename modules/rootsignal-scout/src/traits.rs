@@ -17,7 +17,6 @@ use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
     Post, SourceNode,
 };
-use rootsignal_common::EntityMappingOwned;
 use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 // ---------------------------------------------------------------------------
@@ -121,16 +120,8 @@ pub trait SignalStore: Send + Sync {
     /// Refresh all signals from a given source URL. Returns count refreshed.
     async fn refresh_url_signals(&self, url: &str, now: DateTime<Utc>) -> Result<u64>;
 
-    /// Increment corroboration count and recompute diversity metrics.
-    async fn corroborate(
-        &self,
-        id: Uuid,
-        node_type: NodeType,
-        now: DateTime<Utc>,
-        entity_mappings: &[EntityMappingOwned],
-        source_url: &str,
-        similarity: f64,
-    ) -> Result<()>;
+    /// Read the current corroboration count for a signal.
+    async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32>;
 
     // --- Dedup queries ---
 
@@ -167,12 +158,6 @@ pub trait SignalStore: Send + Sync {
     /// Link an actor to a signal with a role (e.g. "mentioned", "authored").
     async fn link_actor_to_signal(&self, actor_id: Uuid, signal_id: Uuid, role: &str)
         -> Result<()>;
-
-    /// Link an actor to its source (HAS_SOURCE edge).
-    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()>;
-
-    /// Link a signal to its source (PRODUCED_BY edge).
-    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()>;
 
     /// Find an actor by canonical_key (URL-based identity).
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>>;
@@ -242,9 +227,6 @@ pub trait SignalStore: Send + Sync {
 
     /// Create or update a source node (MERGE by canonical_key).
     async fn upsert_source(&self, source: &SourceNode) -> Result<()>;
-
-    /// Batch-create Tag nodes and TAGGED edges for a signal.
-    async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()>;
 
     // --- Source scrape metrics ---
 

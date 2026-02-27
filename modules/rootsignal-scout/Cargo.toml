@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 rootsignal-common = { workspace = true }
+rootsignal-engine = { path = "../rootsignal-engine" }
 rootsignal-events = { workspace = true }
 rootsignal-graph = { workspace = true }
 rootsignal-archive = { workspace = true }

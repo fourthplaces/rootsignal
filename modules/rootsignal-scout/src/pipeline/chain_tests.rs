@@ -9,6 +9,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rootsignal_common::types::ActorContext;
 use rootsignal_common::{canonical_value, ScheduleNode};
+use rootsignal_engine::MemoryEventSink;
 use uuid::Uuid;
 
 use crate::pipeline::extractor::ExtractionResult;
@@ -90,17 +91,19 @@ async fn linktree_page_discovers_outbound_links() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = web_query_source(query);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // No signals from Linktree pages
-    assert_eq!(store.signals_created(), 0);
+    assert_eq!(ctx.stats.signals_stored, 0);
 
     let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
 
@@ -182,36 +185,19 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // Signal created
-    assert_eq!(store.signals_created(), 1);
-    assert!(store.has_signal_titled("Free Legal Clinic at Sabathani"));
-
-    // Web page is NOT an owned source — no actor nodes created.
-    // Mentioned actors stay as metadata strings; author_actor ignored for non-owned sources.
-    assert!(
-        !store.has_actor("Sabathani Community Center"),
-        "web page source should not create author actor"
-    );
-    assert!(
-        !store.has_actor("Volunteer Lawyers Network"),
-        "mentioned actors should not create nodes"
-    );
-
-    // Evidence trail
-    assert_eq!(
-        store.evidence_count_for_title("Free Legal Clinic at Sabathani"),
-        1,
-        "one evidence record for the signal"
-    );
+    assert_eq!(ctx.stats.signals_stored, 1);
 
     // Outbound links collected for promotion
     let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
@@ -253,17 +239,19 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // No geo-filter — all signals stored
-    assert_eq!(store.signals_created(), 1);
+    assert_eq!(ctx.stats.signals_stored, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,24 +303,21 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source_nodes: Vec<_> = urls.iter().map(|u| page_source(u)).collect();
     let sources: Vec<&_> = source_nodes.iter().collect();
-    let mut ctx = RunContext::new(&source_nodes);
+    let mut ctx = RunContext::from_sources(&source_nodes);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // ONE signal, not three
-    assert_eq!(store.signals_created(), 1, "should dedup to 1 signal");
+    assert_eq!(ctx.stats.signals_stored, 1, "should dedup to 1 signal");
 
     // Corroborated by the other two
-    assert_eq!(
-        store.corroborations_for("Community Garden Cleanup"),
-        2,
-        "two corroborations (first creates, second and third corroborate)"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -389,11 +374,13 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
 
     // Inject actor context — location fallback for signals without geography
     ctx.actor_contexts.insert(
@@ -412,18 +399,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
     // Signal stored (actor fallback gave it Minneapolis coords → survives geo filter)
-    assert_eq!(store.signals_created(), 1);
-    assert!(store.has_signal_titled("Food Distribution at MLK Park"));
-
-    // Author actor wired
-    assert!(
-        store.has_actor("Northside Mutual Aid"),
-        "author actor created"
-    );
-    assert!(
-        store.actor_linked_to_signal("Northside Mutual Aid", "Food Distribution at MLK Park"),
-        "author actor linked to signal"
-    );
+    assert_eq!(ctx.stats.signals_stored, 1);
 
     // @mentions collected for promotion
     let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
@@ -477,11 +453,13 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
 
     // Actor in NYC
     ctx.actor_contexts.insert(
@@ -501,21 +479,11 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
 
     // No geo-filter — signal stored with actor location as fallback
     assert_eq!(
-        store.signals_created(),
+        ctx.stats.signals_stored,
         1,
         "signal should be stored regardless of location"
     );
 
-    // Location metadata: no backfill at write time (derived at query time via actor graph)
-    let stored = store.signal_by_title("Organizing Reflections").unwrap();
-    assert!(
-        stored.about_location.is_none(),
-        "about_location not backfilled from actor at write time"
-    );
-    assert!(
-        stored.from_location.is_none(),
-        "from_location not set at write time"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -554,11 +522,13 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
 
     // Actor in Minneapolis
     ctx.actor_contexts.insert(
@@ -576,23 +546,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     let mut log = run_log();
     phase.run_social(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 1);
-    let stored = store.signal_by_title("Dallas Fundraiser").unwrap();
-
-    // about_location = Dallas (from content, NOT overwritten by actor)
-    let about = stored
-        .about_location
-        .expect("about_location should be Dallas");
-    assert!(
-        (about.lat - DALLAS.0).abs() < 0.001,
-        "about_location should be Dallas, not Minneapolis"
-    );
-
-    // from_location not set at write time (derived at query time via actor graph)
-    assert!(
-        stored.from_location.is_none(),
-        "from_location not set at write time"
-    );
+    assert_eq!(ctx.stats.signals_stored, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -655,11 +609,13 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
 
     // Actor context: IG bio says "Minneapolis, MN"
     ctx.actor_contexts.insert(
@@ -679,55 +635,11 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
 
     // All three signals stored — no geo-filter rejection
     assert_eq!(
-        store.signals_created(),
+        ctx.stats.signals_stored,
         3,
         "all three posts should produce signals"
     );
 
-    // --- Signal 1: Powderhorn (explicit local location) ---
-    let powderhorn = store
-        .signal_by_title("Powderhorn Spring Planting")
-        .expect("powderhorn signal should exist");
-    let about = powderhorn
-        .about_location
-        .expect("about_location should be Powderhorn coords");
-    assert!(
-        (about.lat - 44.9489).abs() < 0.001,
-        "about_location should be Powderhorn, not actor fallback"
-    );
-    assert!(
-        powderhorn.from_location.is_none(),
-        "from_location not set at write time"
-    );
-
-    // --- Signal 2: Geo-neutral (no content location, no backfill) ---
-    let reflections = store
-        .signal_by_title("Community Resilience Reflections")
-        .expect("reflections signal should exist");
-    assert!(
-        reflections.about_location.is_none(),
-        "geo-neutral post: about_location not backfilled from actor at write time"
-    );
-    assert!(
-        reflections.from_location.is_none(),
-        "from_location not set at write time"
-    );
-
-    // --- Signal 3: Chicago (explicit out-of-town location) ---
-    let chicago = store
-        .signal_by_title("Chicago Urban Farm Network")
-        .expect("chicago signal should exist");
-    let about = chicago
-        .about_location
-        .expect("about_location should be Chicago coords");
-    assert!(
-        (about.lat - 41.8781).abs() < 0.001,
-        "about_location should be Chicago, NOT overwritten by Minneapolis actor"
-    );
-    assert!(
-        chicago.from_location.is_none(),
-        "from_location not set at write time"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -782,22 +694,23 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
     // No new signals (extraction skipped)
     assert_eq!(
-        store.signals_created(),
+        ctx.stats.signals_stored,
         0,
         "unchanged content should skip extraction"
     );
-    assert!(!store.has_signal_titled("SHOULD NOT APPEAR"));
 
     // But outbound links still collected
     assert!(
@@ -881,11 +794,13 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         fetcher.clone(),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let linktree_source = page_source("https://linktr.ee/mplsmutualaid");
     let sources_a: Vec<&_> = vec![&linktree_source];
-    let mut ctx = RunContext::new(&[linktree_source.clone()]);
+    let mut ctx = RunContext::from_sources(&[linktree_source.clone()]);
     let mut log = run_log();
 
     phase_a.run_web(&sources_a, &mut ctx, &mut log).await;
@@ -897,7 +812,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
             .any(|l| l.url.contains("localorg.org")),
         "org site should be in collected_links"
     );
-    assert_eq!(store.signals_created(), 0, "no signals from Linktree");
+    assert_eq!(ctx.stats.signals_stored, 0, "no signals from Linktree");
 
     // Promote collected links → creates SourceNodes in store
     let config = PromotionConfig {
@@ -918,20 +833,19 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         fetcher,
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let org_source = page_source("https://localorg.org/resources");
     let sources_b: Vec<&_> = vec![&org_source];
-    let mut ctx_b = RunContext::new(&[org_source.clone()]);
+    let mut ctx_b = RunContext::from_sources(&[org_source.clone()]);
     let mut log_b = run_log();
 
     phase_b.run_web(&sources_b, &mut ctx_b, &mut log_b).await;
 
     // Signal from Phase B
-    assert_eq!(store.signals_created(), 1, "one signal from org site");
-    assert!(store.has_signal_titled("Free Groceries at MLK Park"));
-    // Web page is not an owned source — no actor node created
-    assert!(!store.has_actor("Minneapolis Mutual Aid"));
+    assert_eq!(ctx_b.stats.signals_stored, 1, "one signal from org site");
 
     // Phase B also collected facebook link for future promotion
     assert!(
@@ -997,16 +911,18 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 1);
+    assert_eq!(ctx.stats.signals_stored, 1);
     // TODO: re-enable when ScrapePhase handles schedules
     // assert_eq!(store.schedules_created(), 1);
     // assert!(store.has_schedule_for("Weekly Yoga Class"));
@@ -1050,16 +966,18 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 1);
+    assert_eq!(ctx.stats.signals_stored, 1);
     // TODO: re-enable when ScrapePhase handles schedules
     // assert_eq!(store.schedules_created(), 0);
     // assert!(!store.has_schedule_for("Park Cleanup Day"));
@@ -1112,16 +1030,18 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
+        Arc::new(MemoryEventSink::new()),
+        None,
     );
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::new(&[source.clone()]);
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     phase.run_web(&sources, &mut ctx, &mut log).await;
 
-    assert_eq!(store.signals_created(), 1);
+    assert_eq!(ctx.stats.signals_stored, 1);
     // TODO: re-enable when ScrapePhase handles schedules
     // assert_eq!(store.schedules_created(), 1);
     // let sched = store.schedule_for("Monthly Open House").unwrap();

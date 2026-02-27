@@ -1437,6 +1437,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
+            mentioned_actors: vec![],
         }
     }
 

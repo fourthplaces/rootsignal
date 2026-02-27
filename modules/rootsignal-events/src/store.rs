@@ -210,6 +210,42 @@ impl EventStore {
         Ok(rows)
     }
 
+    /// Append a child event with a known parent seq and return the full StoredEvent.
+    ///
+    /// Used by the engine dispatch loop where parent tracking is managed externally
+    /// (instead of via `EventHandle`). The `caused_by_seq` is set to the parent's
+    /// `caused_by_seq` if it exists, otherwise to the parent_seq itself (the parent
+    /// is a root event).
+    pub async fn append_child_and_read(
+        &self,
+        parent_seq: i64,
+        event: AppendEvent,
+    ) -> Result<StoredEvent> {
+        let stored = sqlx::query_as::<_, StoredEvent>(
+            r#"
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
+            VALUES (
+                $1, $2,
+                COALESCE((SELECT caused_by_seq FROM events WHERE seq = $2), $2),
+                $3, $4, $5, $6
+            )
+            RETURNING seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            "#,
+        )
+        .bind(&event.event_type)
+        .bind(parent_seq)
+        .bind(&event.run_id)
+        .bind(&event.actor)
+        .bind(&event.payload)
+        .bind(event.schema_v)
+        .fetch_one(&self.pool)
+        .await?;
+
+        notify_new_event(&self.pool, stored.seq).await;
+
+        Ok(stored)
+    }
+
     /// The latest committed sequence number, or 0 if the table is empty.
     pub async fn latest_seq(&self) -> Result<i64> {
         let row = sqlx::query_as::<_, (Option<i64>,)>("SELECT MAX(seq) FROM events")

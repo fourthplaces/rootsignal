@@ -707,7 +707,7 @@ async fn same_source_no_duplicate_evidence() {
 
     // Should have exactly 1 evidence node, not 3 (MERGE on source_url)
     let q = query(
-        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation)
          RETURN count(ev) AS cnt, ev.content_hash AS hash",
     )
     .param("id", signal_id.to_string());
@@ -807,7 +807,7 @@ async fn cross_source_creates_new_evidence() {
 
     // Should have 3 evidence nodes (one per source)
     let q = query(
-        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation)
          RETURN count(ev) AS cnt",
     )
     .param("id", signal_id.to_string());
@@ -919,7 +919,7 @@ async fn same_source_does_not_inflate_corroboration() {
 
     // Should still have exactly 1 evidence node
     let q = query(
-        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation)
          RETURN count(ev) AS cnt",
     )
     .param("id", signal_id.to_string());
@@ -966,7 +966,7 @@ async fn same_source_does_not_inflate_corroboration() {
     // Now corroboration_count should be 1, evidence count should be 2
     let q = query(
         "MATCH (n:Gathering {id: $id})
-         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
          RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
@@ -1021,7 +1021,7 @@ async fn deduplicate_evidence_migration() {
         let ev_id = Uuid::new_v4();
         let q = query(
             "MATCH (n:Gathering {id: $signal_id})
-             CREATE (ev:Evidence {
+             CREATE (ev:Citation {
                  id: $ev_id,
                  source_url: 'https://source-a.org',
                  retrieved_at: datetime($now),
@@ -1047,7 +1047,7 @@ async fn deduplicate_evidence_migration() {
     let cross_ev_id = Uuid::new_v4();
     let q = query(
         "MATCH (n:Gathering {id: $signal_id})
-         CREATE (ev:Evidence {
+         CREATE (ev:Citation {
              id: $ev_id,
              source_url: 'https://independent.org',
              retrieved_at: datetime($now),
@@ -1069,7 +1069,7 @@ async fn deduplicate_evidence_migration() {
 
     // Verify the mess: 15 evidence nodes, corroboration_count = 13
     let q = query(
-        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation)
          RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
@@ -1090,7 +1090,7 @@ async fn deduplicate_evidence_migration() {
     // and corroboration_count = 1 (2 evidence - 1 = 1 real corroboration)
     let q = query(
         "MATCH (n:Gathering {id: $id})
-         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+         OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
          RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
@@ -1110,7 +1110,7 @@ async fn deduplicate_evidence_migration() {
 
     // Verify the distinct source URLs are correct
     let q = query(
-        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Evidence)
+        "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation)
          RETURN ev.source_url AS url ORDER BY url",
     )
     .param("id", signal_id.to_string());

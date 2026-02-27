@@ -20,7 +20,7 @@ use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
     Post, ReviewStatus, ScoutScope, SourceNode,
 };
-use rootsignal_common::{canonical_value, EntityMappingOwned};
+use rootsignal_common::canonical_value;
 use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
@@ -351,6 +351,49 @@ impl MockSignalStore {
         }
     }
 
+    pub fn evidence_count(&self) -> usize {
+        self.inner.lock().unwrap().evidence.len()
+    }
+
+    pub fn actors_created(&self) -> usize {
+        self.inner.lock().unwrap().actors.len()
+    }
+
+    // --- Setup helpers (for dedup tests) ---
+
+    /// Pre-populate URL→titles mapping for URL-based title dedup (Layer 2).
+    pub fn add_url_titles(&self, url: &str, titles: Vec<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.url_titles.entry(url.to_string()).or_default().extend(titles);
+    }
+
+    /// Insert a signal directly into the mock store so `find_by_titles_and_types`
+    /// will find it. Returns the generated signal ID.
+    pub fn insert_signal(&self, title: &str, node_type: NodeType, source_url: &str) -> Uuid {
+        let mut inner = self.inner.lock().unwrap();
+        let id = Uuid::new_v4();
+        let normalized = title.trim().to_lowercase();
+        inner.signals.insert(
+            id,
+            StoredSignal {
+                id,
+                title: title.to_string(),
+                node_type,
+                source_url: source_url.to_string(),
+                corroboration_count: 0,
+                embedding: vec![],
+                about_location: None,
+                from_location: None,
+                published_at: None,
+                about_location_name: None,
+                confidence: 0.5,
+                extracted_at: Utc::now(),
+            },
+        );
+        inner.title_index.insert((normalized, node_type), id);
+        id
+    }
+
     pub fn sources_promoted(&self) -> usize {
         self.inner.lock().unwrap().sources.len()
     }
@@ -557,7 +600,7 @@ impl SignalStore for MockSignalStore {
         if inner.fail_on_create {
             bail!("MockSignalStore: create_node forced failure");
         }
-        let id = Uuid::new_v4();
+        let id = node.id();
         let title = node.title().to_string();
         let node_type = node.node_type();
         let source_url = node
@@ -610,20 +653,13 @@ impl SignalStore for MockSignalStore {
         Ok(0)
     }
 
-    async fn corroborate(
-        &self,
-        id: Uuid,
-        _node_type: NodeType,
-        _now: DateTime<Utc>,
-        _entity_mappings: &[EntityMappingOwned],
-        _source_url: &str,
-        _similarity: f64,
-    ) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(signal) = inner.signals.get_mut(&id) {
-            signal.corroboration_count += 1;
-        }
-        Ok(())
+    async fn read_corroboration_count(&self, id: Uuid, _node_type: NodeType) -> Result<u32> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner
+            .signals
+            .get(&id)
+            .map(|s| s.corroboration_count)
+            .unwrap_or(0))
     }
 
     async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
@@ -695,18 +731,6 @@ impl SignalStore for MockSignalStore {
             signal_id,
             role: role.to_string(),
         });
-        Ok(())
-    }
-
-    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.actor_sources.push((actor_id, source_id));
-        Ok(())
-    }
-
-    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.signal_sources.push((signal_id, source_id));
         Ok(())
     }
 
@@ -802,16 +826,6 @@ impl SignalStore for MockSignalStore {
         inner
             .sources
             .insert(source.canonical_value.clone(), source.clone());
-        Ok(())
-    }
-
-    async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .tags
-            .entry(signal_id)
-            .or_default()
-            .extend(tag_slugs.iter().cloned());
         Ok(())
     }
 
@@ -1600,44 +1614,6 @@ mod tests {
             .unwrap();
         assert_eq!(*found_id, id);
         assert_eq!(found_url, "https://example.com");
-    }
-
-    #[tokio::test]
-    async fn corroborate_increments_count() {
-        let store = MockSignalStore::new();
-        let node = tension_with_url("Bus Route Cut", "https://example.com");
-        let id = store
-            .create_node(&node, &[0.1, 0.2, 0.3], "test", "run-1")
-            .await
-            .unwrap();
-
-        assert_eq!(store.corroborations_for("Bus Route Cut"), 0);
-
-        store
-            .corroborate(
-                id,
-                NodeType::Tension,
-                Utc::now(),
-                &[],
-                "https://other.com",
-                0.92,
-            )
-            .await
-            .unwrap();
-        assert_eq!(store.corroborations_for("Bus Route Cut"), 1);
-
-        store
-            .corroborate(
-                id,
-                NodeType::Tension,
-                Utc::now(),
-                &[],
-                "https://third.com",
-                0.88,
-            )
-            .await
-            .unwrap();
-        assert_eq!(store.corroborations_for("Bus Route Cut"), 2);
     }
 
     #[tokio::test]

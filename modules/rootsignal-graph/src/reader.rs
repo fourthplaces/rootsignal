@@ -1340,8 +1340,7 @@ pub fn node_type_label(nt: NodeType) -> &'static str {
         NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
-        // Neo4j label is still "Evidence" — Rust type was renamed to Citation.
-        NodeType::Citation => "Evidence",
+        NodeType::Citation => "Citation",
     }
 }
 

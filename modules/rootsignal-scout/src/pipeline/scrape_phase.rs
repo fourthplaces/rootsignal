@@ -20,71 +20,21 @@ use crate::enrichment::quality;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
+use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
+use crate::pipeline::reducer::ScoutReducer;
+use crate::pipeline::router::ScoutRouter;
+use crate::pipeline::state::{ExtractedBatch, PipelineDeps, PipelineState};
 use crate::pipeline::stats::ScoutStats;
 use rootsignal_common::{
     canonical_value, channel_type, is_web_query, scraping_strategy, ActorContext, ActorNode,
     ActorType, CitationNode, DiscoveryMethod, Node, NodeType, Post, ReviewStatus, ScoutScope,
     ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
 };
+use rootsignal_engine::Engine;
 
-// ---------------------------------------------------------------------------
-// RunContext — shared mutable state for the entire scout run
-// ---------------------------------------------------------------------------
-
-/// Shared mutable state that flows across all pipeline stages within a single
-/// scout run. Analogous to a Redux store — single source of truth, every stage
-/// reads from and writes to it.
-pub(crate) struct RunContext {
-    pub embed_cache: EmbeddingCache,
-    pub url_to_canonical_key: HashMap<String, String>,
-    pub source_signal_counts: HashMap<String, u32>,
-    pub expansion_queries: Vec<String>,
-    pub social_expansion_topics: Vec<String>,
-    pub stats: ScoutStats,
-    pub query_api_errors: HashSet<String>,
-    /// Entity context keyed by source canonical_key. When a source is linked to
-    /// Actor context keyed by source canonical_key. When a source is linked to
-    /// a known actor via HAS_ACCOUNT, its context is stored here for location
-    /// fallback during signal extraction.
-    pub actor_contexts: HashMap<String, ActorContext>,
-    /// RSS/Atom pub_date keyed by article URL, used as fallback published_at.
-    pub url_to_pub_date: HashMap<String, DateTime<Utc>>,
-    /// Links collected during scraping, carrying the discovering source's coordinates.
-    pub collected_links: Vec<CollectedLink>,
-}
-
-impl RunContext {
-    pub fn new(sources: &[SourceNode]) -> Self {
-        let url_to_canonical_key = sources
-            .iter()
-            .filter_map(|s| {
-                s.url
-                    .as_ref()
-                    .map(|u| (sanitize_url(u), s.canonical_key.clone()))
-            })
-            .collect();
-        Self {
-            embed_cache: EmbeddingCache::new(),
-            url_to_canonical_key,
-            source_signal_counts: HashMap::new(),
-            expansion_queries: Vec::new(),
-            social_expansion_topics: Vec::new(),
-            stats: ScoutStats::default(),
-            query_api_errors: HashSet::new(),
-            actor_contexts: HashMap::new(),
-            url_to_pub_date: HashMap::new(),
-            collected_links: Vec::new(),
-        }
-    }
-
-    /// Rebuild known URLs from current URL map state.
-    /// Must be called before each social scrape to capture
-    /// URLs resolved during the preceding web scrape.
-    pub fn known_urls(&self) -> HashSet<String> {
-        self.url_to_canonical_key.keys().cloned().collect()
-    }
-}
+// RunContext retired — use PipelineState from crate::pipeline::state instead.
+pub(crate) use crate::pipeline::state::PipelineState as RunContext;
 
 // ---------------------------------------------------------------------------
 // EmbeddingCache — in-memory cross-batch dedup
@@ -112,7 +62,7 @@ impl EmbeddingCache {
     }
 
     /// Find the best match above threshold. Returns (node_id, node_type, source_url, similarity).
-    fn find_match(&self, embedding: &[f32], threshold: f64) -> Option<(Uuid, NodeType, &str, f64)> {
+    pub(crate) fn find_match(&self, embedding: &[f32], threshold: f64) -> Option<(Uuid, NodeType, &str, f64)> {
         let mut best: Option<(Uuid, NodeType, &str, f64)> = None;
         for entry in &self.entries {
             let sim = cosine_similarity_f32(embedding, &entry.embedding);
@@ -123,7 +73,7 @@ impl EmbeddingCache {
         best
     }
 
-    fn add(&mut self, embedding: Vec<f32>, node_id: Uuid, node_type: NodeType, source_url: String) {
+    pub(crate) fn add(&mut self, embedding: Vec<f32>, node_id: Uuid, node_type: NodeType, source_url: String) {
         self.entries.push(CacheEntry {
             embedding,
             node_id,
@@ -324,6 +274,10 @@ pub(crate) fn dedup_verdict(
 // ScrapePhase — the core scrape-extract-store-dedup pipeline
 // ---------------------------------------------------------------------------
 
+/// Type alias for the scout engine — persister is trait-erased so both
+/// EventStore (production) and MemoryEventSink (tests) work.
+type ScoutEngine = Engine<ScoutEvent, PipelineState, PipelineDeps, ScoutReducer, ScoutRouter, Arc<dyn rootsignal_engine::EventPersister>>;
+
 pub(crate) struct ScrapePhase {
     store: Arc<dyn crate::traits::SignalStore>,
     extractor: Arc<dyn SignalExtractor>,
@@ -331,6 +285,7 @@ pub(crate) struct ScrapePhase {
     fetcher: Arc<dyn crate::traits::ContentFetcher>,
     region: ScoutScope,
     run_id: String,
+    engine: ScoutEngine,
 }
 
 impl ScrapePhase {
@@ -341,7 +296,15 @@ impl ScrapePhase {
         fetcher: Arc<dyn crate::traits::ContentFetcher>,
         region: ScoutScope,
         run_id: String,
+        persister: Arc<dyn rootsignal_engine::EventPersister>,
+        projector: Option<rootsignal_graph::GraphProjector>,
     ) -> Self {
+        let engine = Engine::new(
+            ScoutReducer,
+            ScoutRouter::new(projector),
+            persister,
+            run_id.clone(),
+        );
         Self {
             store,
             extractor,
@@ -349,6 +312,7 @@ impl ScrapePhase {
             fetcher,
             region,
             run_id,
+            engine,
         }
     }
 
@@ -1473,16 +1437,7 @@ impl ScrapePhase {
         source_id: Option<Uuid>,
     ) -> Result<()> {
         let url = sanitize_url(url);
-        ctx.stats.signals_extracted += nodes.len() as u32;
-
-        // Build lookup map from node ID → resource tags
-        let resource_map: HashMap<Uuid, Vec<ResourceTag>> = resource_tags.into_iter().collect();
-
-        // Build lookup map from extraction-time node ID → tag slugs
-        let tag_map: HashMap<Uuid, Vec<String>> = signal_tags.into_iter().collect();
-
-        // Entity mappings for source diversity (domain-based fallback in resolve_entity handles it)
-        let entity_mappings: Vec<rootsignal_common::EntityMappingOwned> = Vec::new();
+        let raw_count = nodes.len() as u32;
 
         // Score quality, populate from/about locations, remove Evidence nodes
         let ck_for_fallback = ctx
@@ -1497,570 +1452,47 @@ impl ScrapePhase {
             return Ok(());
         }
 
-        // --- Layer 1: Within-batch dedup by (normalized_title, node_type) ---
+        // Layer 1: Within-batch dedup by (normalized_title, node_type)
         let nodes = batch_title_dedup(nodes);
 
-        // --- Layer 2: URL-based title dedup against existing database ---
-        let existing_titles: HashSet<String> = self
-            .store
-            .existing_titles_for_url(&url)
+        let canonical_key = ctx
+            .url_to_canonical_key
+            .get(&url)
+            .cloned()
+            .unwrap_or_else(|| url.clone());
+
+        // Stash extracted batch in state for the dedup handler to consume
+        ctx.extracted_batches.insert(
+            url.clone(),
+            ExtractedBatch {
+                content: content.to_string(),
+                nodes,
+                resource_tags: resource_tags.into_iter().collect(),
+                signal_tags: signal_tags.into_iter().collect(),
+                author_actors: author_actors.clone(),
+                source_id,
+            },
+        );
+
+        // Build deps from self fields and dispatch through the engine
+        let deps = PipelineDeps {
+            store: self.store.clone(),
+            embedder: self.embedder.clone(),
+            region: self.region.clone(),
+            run_id: self.run_id.clone(),
+        };
+
+        self.engine
+            .dispatch(
+                ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
+                    url,
+                    canonical_key,
+                    count: raw_count,
+                }),
+                ctx,
+                &deps,
+            )
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| normalize_title(&t))
-            .collect();
-
-        let before_url_dedup = nodes.len();
-        let nodes: Vec<_> = nodes
-            .into_iter()
-            .filter(|n| !existing_titles.contains(&normalize_title(n.title())))
-            .collect();
-        let url_deduped = before_url_dedup - nodes.len();
-        if url_deduped > 0 {
-            info!(
-                url = url.as_str(),
-                skipped = url_deduped,
-                "URL-based title dedup"
-            );
-            ctx.stats.signals_deduplicated += url_deduped as u32;
-        }
-
-        if nodes.is_empty() {
-            return Ok(());
-        }
-
-        // --- Layer 2.5: Global exact-title+type dedup (single batch query) ---
-        let now = Utc::now();
-        let content_hash_str = format!("{:x}", content_hash(content));
-
-        let title_type_pairs: Vec<(String, NodeType)> = nodes
-            .iter()
-            .map(|n| (normalize_title(n.title()), n.node_type()))
-            .collect();
-
-        let global_matches = self
-            .store
-            .find_by_titles_and_types(&title_type_pairs)
-            .await
-            .unwrap_or_default();
-
-        let mut remaining_nodes = Vec::new();
-        for node in nodes {
-            let key = (normalize_title(node.title()), node.node_type());
-            let global_hit = global_matches.get(&key).map(|(id, u)| (*id, u.as_str()));
-
-            match dedup_verdict(&url, node.node_type(), global_hit, None, None) {
-                DedupVerdict::Corroborate {
-                    existing_id,
-                    existing_type,
-                    similarity,
-                } => {
-                    run_log.log(EventKind::SignalCorroborated {
-                        existing_id: existing_id.to_string(),
-                        signal_type: format!("{}", node.node_type()),
-                        title: node.title().to_string(),
-                        new_source_url: url.clone(),
-                        similarity,
-                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
-                    });
-                    info!(
-                        existing_id = %existing_id,
-                        title = node.title(),
-                        new_source = url.as_str(),
-                        "Global title+type match from different source, corroborating"
-                    );
-                    self.store
-                        .corroborate(
-                            existing_id,
-                            existing_type,
-                            now,
-                            &entity_mappings,
-                            &url,
-                            similarity,
-                        )
-                        .await?;
-                    let evidence = CitationNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, existing_id).await?;
-                    ctx.stats.signals_deduplicated += 1;
-                }
-                DedupVerdict::Refresh {
-                    existing_id,
-                    existing_type,
-                    similarity,
-                } => {
-                    run_log.log(EventKind::SignalDeduplicated {
-                        signal_type: format!("{}", node.node_type()),
-                        title: node.title().to_string(),
-                        matched_id: existing_id.to_string(),
-                        similarity,
-                        action: "refresh".to_string(),
-                        source_url: url.clone(),
-                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
-                    });
-                    info!(
-                        existing_id = %existing_id,
-                        title = node.title(),
-                        source = url.as_str(),
-                        "Same-source title match, refreshing (no corroboration)"
-                    );
-                    self.store
-                        .refresh_signal(existing_id, existing_type, now)
-                        .await?;
-                    let evidence = CitationNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, existing_id).await?;
-                    ctx.stats.signals_deduplicated += 1;
-                }
-                DedupVerdict::Create => {
-                    remaining_nodes.push(node);
-                }
-            }
-        }
-        let nodes = remaining_nodes;
-
-        if nodes.is_empty() {
-            return Ok(());
-        }
-
-        // Batch embed remaining signals (1 API call instead of N)
-        let content_snippet = if content.len() > 500 {
-            let mut end = 500;
-            while !content.is_char_boundary(end) {
-                end -= 1;
-            }
-            &content[..end]
-        } else {
-            content
-        };
-        let embed_texts: Vec<String> = nodes
-            .iter()
-            .map(|n| format!("{} {}", n.title(), content_snippet))
-            .collect();
-
-        let embeddings = match self.embedder.embed_batch(embed_texts).await {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(url = url.as_str(), error = %e, "Batch embedding failed, skipping all signals");
-                return Ok(());
-            }
-        };
-
-        // Pre-compute resource tag embeddings in a single batch API call
-        let mut res_embed_texts: Vec<String> = Vec::new();
-        let mut res_embed_keys: Vec<(Uuid, usize)> = Vec::new(); // (meta_id, tag_index)
-        for node in &nodes {
-            if let Some(meta) = node.meta() {
-                if let Some(tags) = resource_map.get(&meta.id) {
-                    for (i, tag) in tags.iter().enumerate() {
-                        if tag.confidence >= 0.3 {
-                            res_embed_texts.push(format!(
-                                "{}: {}",
-                                tag.slug,
-                                tag.context.as_deref().unwrap_or("")
-                            ));
-                            res_embed_keys.push((meta.id, i));
-                        }
-                    }
-                }
-            }
-        }
-        let res_embeddings: HashMap<(Uuid, usize), Vec<f32>> = if !res_embed_texts.is_empty() {
-            match self.embedder.embed_batch(res_embed_texts).await {
-                Ok(embeds) => res_embed_keys.into_iter().zip(embeds).collect(),
-                Err(e) => {
-                    warn!(error = %e, "Resource tag batch embedding failed (non-fatal)");
-                    HashMap::new()
-                }
-            }
-        } else {
-            HashMap::new()
-        };
-
-        // --- Layer 3: Vector dedup (in-memory cache + graph) with URL-aware threshold ---
-
-        for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
-            let node_type = node.node_type();
-            let type_idx = match node_type {
-                NodeType::Gathering => 0,
-                NodeType::Aid => 1,
-                NodeType::Need => 2,
-                NodeType::Notice => 3,
-                NodeType::Tension => 4,
-                NodeType::Citation => continue,
-            };
-
-            // 3a: Check in-memory cache first (catches cross-batch dupes not yet indexed)
-            let cache_hit = ctx.embed_cache.find_match(&embedding, 0.85);
-
-            // 3b: Check graph index (catches dupes from previous runs, region-scoped)
-            let lat_delta = self.region.radius_km / 111.0;
-            let lng_delta =
-                self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
-            let graph_hit = match self
-                .store
-                .find_duplicate(
-                    &embedding,
-                    node_type,
-                    0.85,
-                    self.region.center_lat - lat_delta,
-                    self.region.center_lat + lat_delta,
-                    self.region.center_lng - lng_delta,
-                    self.region.center_lng + lng_delta,
-                )
-                .await
-            {
-                Ok(Some(dup)) => {
-                    let sanitized = sanitize_url(&dup.source_url);
-                    Some((dup.id, dup.node_type, sanitized, dup.similarity))
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    warn!(error = %e, "Dedup check failed, proceeding with creation");
-                    None
-                }
-            };
-
-            let cache_match = cache_hit
-                .as_ref()
-                .map(|(id, ty, u, s)| (*id, *ty, &**u, *s));
-            let graph_match = graph_hit
-                .as_ref()
-                .map(|(id, ty, u, s)| (*id, *ty, &**u, *s));
-
-            match dedup_verdict(&url, node_type, None, cache_match, graph_match) {
-                DedupVerdict::Refresh {
-                    existing_id,
-                    existing_type,
-                    similarity,
-                } => {
-                    let source_layer = if cache_hit.is_some() {
-                        "cache"
-                    } else {
-                        "graph"
-                    };
-                    run_log.log(EventKind::SignalDeduplicated {
-                        signal_type: format!("{}", existing_type),
-                        title: node.title().to_string(),
-                        matched_id: existing_id.to_string(),
-                        similarity,
-                        action: "refresh".to_string(),
-                        source_url: url.clone(),
-                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
-                    });
-                    info!(
-                        existing_id = %existing_id,
-                        similarity,
-                        title = node.title(),
-                        source = source_layer,
-                        "Same-source duplicate, refreshing (no corroboration)"
-                    );
-                    self.store
-                        .refresh_signal(existing_id, existing_type, now)
-                        .await?;
-                    let evidence = CitationNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, existing_id).await?;
-                    // Update embed cache if verdict came from graph
-                    if cache_hit.is_none() {
-                        if let Some((_, _, ref sanitized_url, _)) = graph_hit {
-                            ctx.embed_cache.add(
-                                embedding,
-                                existing_id,
-                                existing_type,
-                                sanitized_url.clone(),
-                            );
-                        }
-                    }
-                    ctx.stats.signals_deduplicated += 1;
-                    continue;
-                }
-                DedupVerdict::Corroborate {
-                    existing_id,
-                    existing_type,
-                    similarity,
-                } => {
-                    let source_layer = if cache_match.map(|c| c.0) == Some(existing_id) {
-                        "cache"
-                    } else {
-                        "graph"
-                    };
-                    run_log.log(EventKind::SignalCorroborated {
-                        existing_id: existing_id.to_string(),
-                        signal_type: format!("{}", existing_type),
-                        title: node.title().to_string(),
-                        new_source_url: url.clone(),
-                        similarity,
-                        summary: node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
-                    });
-                    info!(
-                        existing_id = %existing_id,
-                        similarity,
-                        title = node.title(),
-                        source = source_layer,
-                        "Cross-source duplicate, corroborating"
-                    );
-                    self.store
-                        .corroborate(
-                            existing_id,
-                            existing_type,
-                            now,
-                            &entity_mappings,
-                            &url,
-                            similarity,
-                        )
-                        .await?;
-                    let evidence = CitationNode {
-                        id: Uuid::new_v4(),
-                        source_url: url.clone(),
-                        retrieved_at: now,
-                        content_hash: content_hash_str.clone(),
-                        snippet: node.meta().map(|m| m.summary.clone()),
-                        relevance: None,
-                        confidence: None,
-                        channel_type: Some(channel_type(&url)),
-                    };
-                    self.store.create_evidence(&evidence, existing_id).await?;
-                    // Update embed cache if verdict came from graph
-                    if cache_hit.is_none() {
-                        if let Some((_, _, ref sanitized_url, _)) = graph_hit {
-                            ctx.embed_cache.add(
-                                embedding,
-                                existing_id,
-                                existing_type,
-                                sanitized_url.clone(),
-                            );
-                        }
-                    }
-                    ctx.stats.signals_deduplicated += 1;
-                    continue;
-                }
-                DedupVerdict::Create => {}
-            }
-
-            // Create new node
-            let node_id = self
-                .store
-                .create_node(&node, &embedding, "scraper", &self.run_id)
-                .await?;
-
-            run_log.log(EventKind::SignalCreated {
-                node_id: node_id.to_string(),
-                signal_type: format!("{}", node_type),
-                title: node.title().to_string(),
-                confidence: node.meta().map(|m| m.confidence as f64).unwrap_or(0.0),
-                source_url: url.clone(),
-            });
-
-            // Add to in-memory cache so subsequent batches can find it immediately
-            ctx.embed_cache
-                .add(embedding, node_id, node_type, url.clone());
-
-            let evidence = CitationNode {
-                id: Uuid::new_v4(),
-                source_url: url.clone(),
-                retrieved_at: now,
-                content_hash: content_hash_str.clone(),
-                snippet: node.meta().map(|m| m.summary.clone()),
-                relevance: None,
-                confidence: None,
-                channel_type: Some(channel_type(&url)),
-            };
-            self.store.create_evidence(&evidence, node_id).await?;
-
-            // Wire PRODUCED_BY edge (signal → source)
-            if let Some(sid) = source_id {
-                if let Err(e) = self.store.link_signal_to_source(node_id, sid).await {
-                    warn!(error = %e, "Failed to link signal to source (non-fatal)");
-                }
-            }
-
-            // Resolve author_actor → Actor node on owned sources only.
-            // Identity = source URL (canonical_value). Display name from LLM extraction.
-            let strategy = scraping_strategy(&url);
-            if is_owned_source(&strategy) {
-                // Use extraction-time node_id to look up author name.
-                // Nodes may have been assigned new IDs during dedup, so also check original meta.id.
-                let author_name = node
-                    .meta()
-                    .and_then(|m| author_actors.get(&m.id))
-                    .map(|s| s.as_str());
-                if let Some(author_name) = author_name {
-                    let canonical_key = canonical_value(&url);
-                    let actor_id = match self.store.find_actor_by_canonical_key(&canonical_key).await {
-                        Ok(Some(id)) => Some(id),
-                        Ok(None) => {
-                            let actor = ActorNode {
-                                id: Uuid::new_v4(),
-                                name: author_name.to_string(),
-                                actor_type: ActorType::Organization,
-                                canonical_key: canonical_key.clone(),
-                                domains: vec![],
-                                social_urls: vec![],
-                                description: String::new(),
-                                signal_count: 0,
-                                first_seen: Utc::now(),
-                                last_active: Utc::now(),
-                                typical_roles: vec![],
-                                bio: None,
-                                location_lat: None,
-                                location_lng: None,
-                                location_name: None,
-                                discovery_depth: actor_ctx
-                                    .map(|ac| ac.discovery_depth + 1)
-                                    .unwrap_or(0),
-                            };
-                            match self.store.upsert_actor(&actor).await {
-                                Ok(_) => {
-                                    if let Some(sid) = source_id {
-                                        if let Err(e) =
-                                            self.store.link_actor_to_source(actor.id, sid).await
-                                        {
-                                            warn!(error = %e, actor = author_name, "Failed to link actor to source (non-fatal)");
-                                        }
-                                    }
-                                    Some(actor.id)
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, actor = author_name, "Failed to create author actor (non-fatal)");
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, actor = author_name, "Actor canonical_key lookup failed (non-fatal)");
-                            None
-                        }
-                    };
-                    if let Some(actor_id) = actor_id {
-                        if let Err(e) = self
-                            .store
-                            .link_actor_to_signal(actor_id, node_id, "authored")
-                            .await
-                        {
-                            warn!(error = %e, actor = author_name, "Failed to link author actor to signal (non-fatal)");
-                        }
-                    }
-                }
-            }
-
-            // Wire resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
-            if let Some(meta) = node.meta() {
-                if let Some(tags) = resource_map.get(&meta.id) {
-                    for (i, tag) in tags.iter().enumerate().filter(|(_, t)| t.confidence >= 0.3) {
-                        let slug = rootsignal_common::slugify(&tag.slug);
-                        let res_embedding = match res_embeddings.get(&(meta.id, i)) {
-                            Some(e) => e.clone(),
-                            None => continue, // Embedding failed in batch, skip
-                        };
-                        let resource_id = match self
-                            .store
-                            .find_or_create_resource(
-                                &tag.slug,
-                                &slug,
-                                tag.context.as_deref().unwrap_or(""),
-                                &res_embedding,
-                            )
-                            .await
-                        {
-                            Ok(id) => id,
-                            Err(e) => {
-                                warn!(error = %e, slug = slug.as_str(), "Resource creation failed (non-fatal)");
-                                continue;
-                            }
-                        };
-                        let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-                        let edge_result = match tag.role.as_str() {
-                            "requires" => {
-                                self.store
-                                    .create_requires_edge(
-                                        node_id,
-                                        resource_id,
-                                        confidence,
-                                        tag.context.as_deref(),
-                                        None,
-                                    )
-                                    .await
-                            }
-                            "prefers" => {
-                                self.store
-                                    .create_prefers_edge(node_id, resource_id, confidence)
-                                    .await
-                            }
-                            "offers" => {
-                                self.store
-                                    .create_offers_edge(
-                                        node_id,
-                                        resource_id,
-                                        confidence,
-                                        tag.context.as_deref(),
-                                    )
-                                    .await
-                            }
-                            other => {
-                                warn!(role = other, slug = slug.as_str(), "Unknown resource role");
-                                continue;
-                            }
-                        };
-                        if let Err(e) = edge_result {
-                            warn!(error = %e, slug = slug.as_str(), "Resource edge creation failed (non-fatal)");
-                        }
-                    }
-                }
-            }
-
-            // Wire signal tags (Tag nodes + TAGGED edges)
-            if let Some(meta) = node.meta() {
-                if let Some(slugs) = tag_map.get(&meta.id) {
-                    if !slugs.is_empty() {
-                        if let Err(e) = self.store.batch_tag_signals(node_id, slugs).await {
-                            warn!(error = %e, "Signal tag creation failed (non-fatal)");
-                        }
-                    }
-                }
-            }
-
-            // Update stats
-            ctx.stats.signals_stored += 1;
-            ctx.stats.by_type[type_idx] += 1;
-
-            if let Some(meta) = node.meta() {
-                let age = now - meta.extracted_at;
-                if age.num_days() < 7 {
-                    ctx.stats.fresh_7d += 1;
-                } else if age.num_days() < 30 {
-                    ctx.stats.fresh_30d += 1;
-                } else if age.num_days() < 90 {
-                    ctx.stats.fresh_90d += 1;
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Enrich actor locations by triangulating from their authored signals.

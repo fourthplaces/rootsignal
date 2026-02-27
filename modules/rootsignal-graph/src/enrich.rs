@@ -122,7 +122,7 @@ async fn compute_diversity(
         // Batch-load: each signal with its source_url and all evidence (url + channel_type)
         let q = query(&format!(
             "MATCH (n:{label})
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              RETURN n.id AS id, n.source_url AS self_url,
                     collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
         ));

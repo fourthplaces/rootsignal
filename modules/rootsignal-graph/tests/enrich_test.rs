@@ -58,7 +58,7 @@ async fn create_evidence(
     let ev_id = Uuid::new_v4();
     let cypher = format!(
         "MATCH (n:{label} {{id: $signal_id}})
-         CREATE (ev:Evidence {{
+         CREATE (ev:Citation {{
              id: $ev_id,
              source_url: $url,
              channel_type: $channel

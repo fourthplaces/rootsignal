@@ -21,7 +21,7 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::types::{ActorNode, CitationNode, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
-    EntityMappingOwned, FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
+    FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS,
     NOTICE_EXPIRE_DAYS,
 };
 use rootsignal_events::{AppendEvent, EventStore};
@@ -82,7 +82,7 @@ fn meta_to_from_location(meta: &rootsignal_common::types::NodeMeta) -> Option<Lo
 }
 
 /// Build the world-fact event for a discovery — no sensitivity or implied_queries.
-fn node_to_world_event(node: &Node) -> WorldEvent {
+pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
     match node {
         Node::Gathering(n) => WorldEvent::GatheringDiscovered {
             id: n.meta.id,
@@ -178,7 +178,7 @@ fn node_to_world_event(node: &Node) -> WorldEvent {
 
 /// Build system decision events paired with a discovery.
 /// Returns SensitivityClassified (always) + ImpliedQueriesExtracted (if non-empty).
-fn node_system_events(node: &Node) -> Vec<SystemEvent> {
+pub(crate) fn node_system_events(node: &Node) -> Vec<SystemEvent> {
     let meta = node.meta().expect("discovery nodes always have meta");
     let mut events = vec![SystemEvent::SensitivityClassified {
         signal_id: meta.id,
@@ -224,11 +224,27 @@ fn evidence_to_event(evidence: &CitationNode, signal_id: Uuid) -> Event {
 // ---------------------------------------------------------------------------
 
 impl EventSourcedStore {
-    /// Read the current corroboration count from the graph for idempotent projection.
-    ///
-    /// NOTE: This is a read-then-write pattern. Two concurrent corroborations of the
-    /// same signal could both read count=N and write count=N+1, losing an increment.
-    /// Acceptable for a single-writer system; revisit if we move to concurrent writers.
+    /// Append an event and project it to the graph.
+    async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
+        let mut append =
+            AppendEvent::new(event.event_type(), event.to_payload()).with_run_id(&self.run_id);
+        if let Some(a) = actor {
+            append = append.with_actor(a);
+        }
+        let stored = self.event_store.append_and_read(append).await?;
+        self.projector.project(&stored).await?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SignalStore implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl SignalStore for EventSourcedStore {
+    // --- Corroboration reads ---
+
     async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
@@ -256,25 +272,6 @@ impl EventSourcedStore {
         }
     }
 
-    /// Append an event and project it to the graph.
-    async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
-        let mut append =
-            AppendEvent::new(event.event_type(), event.to_payload()).with_run_id(&self.run_id);
-        if let Some(a) = actor {
-            append = append.with_actor(a);
-        }
-        let stored = self.event_store.append_and_read(append).await?;
-        self.projector.project(&stored).await?;
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SignalStore implementation
-// ---------------------------------------------------------------------------
-
-#[async_trait]
-impl SignalStore for EventSourcedStore {
     // --- URL/content guards (read-only, delegate to writer) ---
 
     async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>> {
@@ -372,35 +369,6 @@ impl SignalStore for EventSourcedStore {
         Ok(total)
     }
 
-    async fn corroborate(
-        &self,
-        id: Uuid,
-        node_type: NodeType,
-        _now: DateTime<Utc>,
-        _entity_mappings: &[EntityMappingOwned],
-        source_url: &str,
-        similarity: f64,
-    ) -> Result<()> {
-        let current_count = self.read_corroboration_count(id, node_type).await?;
-
-        // World fact: observation was corroborated from a new source
-        let world_event = Event::World(WorldEvent::ObservationCorroborated {
-            signal_id: id,
-            node_type,
-            new_source_url: source_url.to_string(),
-            summary: None,
-        });
-        self.append_and_project(&world_event, None).await?;
-
-        // System decision: corroboration scoring
-        let system_event = Event::System(SystemEvent::CorroborationScored {
-            signal_id: id,
-            similarity,
-            new_corroboration_count: current_count + 1,
-        });
-        self.append_and_project(&system_event, None).await
-    }
-
     // --- Dedup queries (read-only, delegate to writer) ---
 
     async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
@@ -471,22 +439,6 @@ impl SignalStore for EventSourcedStore {
             actor_id,
             signal_id: signal_id,
             role: role.to_string(),
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn link_actor_to_source(&self, actor_id: Uuid, source_id: Uuid) -> Result<()> {
-        let event = Event::System(SystemEvent::ActorLinkedToSource {
-            actor_id,
-            source_id,
-        });
-        self.append_and_project(&event, None).await
-    }
-
-    async fn link_signal_to_source(&self, signal_id: Uuid, source_id: Uuid) -> Result<()> {
-        let event = Event::System(SystemEvent::SignalLinkedToSource {
-            signal_id,
-            source_id,
         });
         self.append_and_project(&event, None).await
     }
@@ -759,17 +711,6 @@ impl SignalStore for EventSourcedStore {
         }
 
         Ok(stats)
-    }
-
-    async fn batch_tag_signals(&self, signal_id: Uuid, tag_slugs: &[String]) -> Result<()> {
-        if tag_slugs.is_empty() {
-            return Ok(());
-        }
-        let event = Event::System(SystemEvent::SignalTagged {
-            signal_id,
-            tag_slugs: tag_slugs.to_vec(),
-        });
-        self.append_and_project(&event, None).await
     }
 
     // --- Actor location enrichment (pass through) ---

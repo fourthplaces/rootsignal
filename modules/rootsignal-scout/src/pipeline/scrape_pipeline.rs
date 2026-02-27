@@ -321,7 +321,7 @@ impl<'a> ScrapePipeline<'a> {
             .collect();
 
         // Create shared run context and scrape phase
-        let mut ctx = RunContext::new(&all_sources);
+        let mut ctx = RunContext::from_sources(&all_sources);
 
         // Populate actor contexts for location fallback during extraction
         for (actor, sources) in &actor_pairs {
@@ -339,6 +339,8 @@ impl<'a> ScrapePipeline<'a> {
             }
         }
 
+        let projector = GraphProjector::new(self.graph_client.clone());
+        let event_store = EventStore::new(self.pg_pool.clone());
         let phase = ScrapePhase::new(
             self.store.clone() as Arc<dyn crate::traits::SignalStore>,
             self.extractor.clone(),
@@ -346,6 +348,8 @@ impl<'a> ScrapePipeline<'a> {
             self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>,
             self.region.clone(),
             self.run_id.clone(),
+            Arc::new(event_store),
+            Some(projector),
         );
 
         let run = ScheduledRun {

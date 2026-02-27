@@ -312,15 +312,15 @@ async fn test_region_signal_assessment() {
             }
         }
 
-        // Stories
+        // Situations
         let sq = query(
-            "MATCH (s:Story)-[:CONTAINS]->(n)
+            "MATCH (n)-[:PART_OF]->(s:Situation)
              WHERE n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
              WITH DISTINCT s
-             RETURN s.id AS id, s.headline AS headline, s.status AS status,
+             RETURN s.id AS id, s.headline AS headline, s.review_status AS status,
                     s.arc AS arc, s.category AS category, s.signal_count AS sig_count
-             ORDER BY s.energy DESC",
+             ORDER BY s.temperature DESC",
         )
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -336,7 +336,7 @@ async fn test_region_signal_assessment() {
             let sig_count: i64 = row.get("sig_count").unwrap_or(0);
             story_count += 1;
             println!(
-                "  Story: '{}' [{}/{}] {} signals, {}",
+                "  Situation: '{}' [{}/{}] {} signals, {}",
                 headline.chars().take(70).collect::<String>(),
                 status,
                 arc,

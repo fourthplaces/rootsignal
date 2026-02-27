@@ -148,7 +148,7 @@ impl GraphWriter {
         source_url: &str,
     ) -> Result<bool, neo4rs::Error> {
         let q = query(
-            "MATCH (ev:Evidence {content_hash: $hash, source_url: $url})
+            "MATCH (ev:Citation {content_hash: $hash, source_url: $url})
              RETURN ev LIMIT 1",
         )
         .param("hash", content_hash)
@@ -258,7 +258,7 @@ impl GraphWriter {
 
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}})
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              RETURN collect(ev.source_url) AS evidence_urls"
         ))
         .param("id", node_id.to_string());
@@ -299,7 +299,7 @@ impl GraphWriter {
 
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}})
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              RETURN n.source_url AS self_url,
                     collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
         ))
@@ -355,7 +355,7 @@ impl GraphWriter {
                    THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
                    ELSE datetime(n.starts_at) < datetime() - duration('PT{}H')
                END
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
             GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
@@ -368,7 +368,7 @@ impl GraphWriter {
         let q = query(&format!(
             "MATCH (n:Need)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
             NEED_EXPIRE_DAYS
@@ -381,7 +381,7 @@ impl GraphWriter {
         let q = query(&format!(
             "MATCH (n:Notice)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
             NOTICE_EXPIRE_DAYS
@@ -395,7 +395,7 @@ impl GraphWriter {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
-                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
                  DETACH DELETE n, ev
                  RETURN count(DISTINCT n) AS deleted",
                 label = label,
@@ -423,7 +423,7 @@ impl GraphWriter {
     pub async fn delete_by_source_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
         // Delete evidence nodes linked to signals from this URL, then the signals themselves
         let q = query(
-            "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+            "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WHERE n.source_url = $url
              DETACH DELETE n, ev
              RETURN count(*) AS deleted",
@@ -1883,7 +1883,7 @@ impl GraphWriter {
         factor: f64,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation {headline: $headline})
+            "MATCH (sig)-[:PART_OF]->(s:Situation {headline: $headline})
              WITH collect(DISTINCT sig.source_url) AS urls
              UNWIND urls AS url
              MATCH (src:Source {active: true})
@@ -1902,7 +1902,7 @@ impl GraphWriter {
     pub async fn trigger_situation_curiosity(&self) -> Result<u32, neo4rs::Error> {
         // Find situations that are emerging or fuzzy, haven't been curiosity-triggered in 7 days
         let q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
              WHERE (s.arc = 'emerging' OR s.clarity = 'Fuzzy')
                AND s.temperature >= 0.3
                AND s.sensitivity <> 'SENSITIVE' AND s.sensitivity <> 'RESTRICTED'
@@ -2155,7 +2155,7 @@ impl GraphWriter {
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
                AND (t.investigated_at IS NULL OR datetime(t.investigated_at) < datetime() - duration('P7D'))
-             OPTIONAL MATCH (t)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (t)-[:SOURCED_FROM]->(ev:Citation)
              WITH t, count(ev) AS ev_count
              WHERE ev_count < 2
              RETURN t.id AS id, 'Tension' AS label, t.title AS title, t.summary AS summary,
@@ -2176,7 +2176,7 @@ impl GraphWriter {
                AND a.lat >= $min_lat AND a.lat <= $max_lat
                AND a.lng >= $min_lng AND a.lng <= $max_lng
                AND (a.investigated_at IS NULL OR datetime(a.investigated_at) < datetime() - duration('P7D'))
-             OPTIONAL MATCH (a)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (a)-[:SOURCED_FROM]->(ev:Citation)
              WITH a, count(ev) AS ev_count
              WHERE ev_count < 2
              RETURN a.id AS id, 'Need' AS label, a.title AS title, a.summary AS summary,
@@ -2190,14 +2190,14 @@ impl GraphWriter {
         self.collect_investigation_targets(&mut targets, &mut seen_domains, q)
             .await?;
 
-        // Priority 3: Thin-story signals (from emerging stories, < 2 evidence nodes)
+        // Priority 3: Thin-story signals (from emerging situations, < 2 citation nodes)
         let q = query(
-            "MATCH (s:Story {status: 'emerging'})-[:CONTAINS]->(n)
+            "MATCH (n)-[:PART_OF]->(s:Situation {arc: 'emerging'})
              WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                AND n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
                AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count,
                   CASE WHEN n:Gathering THEN 'Gathering'
                        WHEN n:Aid THEN 'Aid'
@@ -2448,7 +2448,7 @@ impl GraphWriter {
     ) -> Result<Vec<TensionHub>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Tension)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
-             WHERE NOT (t)<-[:CONTAINS]-(:Story)
+             WHERE NOT (t)-[:PART_OF]->(:Situation)
                AND sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
              WITH t, collect({
@@ -2748,7 +2748,7 @@ impl GraphWriter {
         };
 
         let q = query(&format!(
-            "MATCH (n:{} {{id: $id}})-[:SOURCED_FROM]->(ev:Evidence)
+            "MATCH (n:{} {{id: $id}})-[:SOURCED_FROM]->(ev:Citation)
              RETURN ev.relevance AS relevance, ev.evidence_confidence AS confidence",
             label
         ))
@@ -2890,7 +2890,7 @@ impl GraphWriter {
             if !urls.is_empty() {
                 for url in urls {
                     let q = query(
-                        "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence {relevance: 'CONTRADICTING'})
+                        "MATCH (n)-[:SOURCED_FROM]->(ev:Citation {relevance: 'CONTRADICTING'})
                          WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
                            AND n.source_url = $url
                          RETURN count(DISTINCT n) AS cnt",
@@ -3658,7 +3658,7 @@ impl GraphWriter {
         let now = format_datetime(&Utc::now());
 
         let q = query(
-            "MATCH (s:Situation {id: $sid})<-[:EVIDENCES]-(sig)-[:TAGGED]->(t:Tag)
+            "MATCH (s:Situation {id: $sid})<-[:PART_OF]-(sig)-[:TAGGED]->(t:Tag)
              WITH s, t, count(sig) AS freq
              WHERE freq >= 2
                AND NOT (s)-[:SUPPRESSED_TAG]->(t)
@@ -4399,7 +4399,7 @@ impl GraphWriter {
         Ok(dispatch.id)
     }
 
-    /// Create or update an EVIDENCES edge (signal → situation, many-to-many).
+    /// Create or update a PART_OF edge (signal → situation, many-to-many).
     pub async fn merge_evidence_edge(
         &self,
         signal_id: &Uuid,
@@ -4412,7 +4412,7 @@ impl GraphWriter {
         let q = query(&format!(
             "MATCH (sig:{signal_label} {{id: $signal_id}})
              MATCH (sit:Situation {{id: $situation_id}})
-             MERGE (sig)-[e:EVIDENCES]->(sit)
+             MERGE (sig)-[e:PART_OF]->(sit)
              SET e.assigned_at = datetime(),
                  e.match_confidence = $confidence,
                  e.debunked = false"
@@ -4563,7 +4563,7 @@ impl GraphWriter {
         for label in &labels {
             let q = query(&format!(
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
-                 WHERE NOT (n)-[:EVIDENCES]->(:Situation)
+                 WHERE NOT (n)-[:PART_OF]->(:Situation)
                  RETURN n.id AS id"
             ))
             .param("run_id", scout_run_id);

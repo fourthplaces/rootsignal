@@ -50,6 +50,12 @@ impl GraphProjector {
 
     /// Project a single fact to the graph. Idempotent.
     pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
+        // Pipeline events are internal bookkeeping — no graph projection needed.
+        if event.event_type.starts_with("pipeline:") {
+            debug!(seq = event.seq, event_type = %event.event_type, "No-op (pipeline)");
+            return Ok(ApplyResult::NoOp);
+        }
+
         let parsed = match Event::from_payload(&event.payload) {
             Ok(e) => e,
             Err(e) => {
@@ -305,7 +311,7 @@ impl GraphProjector {
                      OPTIONAL MATCH (t:Tension {id: $signal_id})
                      WITH coalesce(g, a, n, nc, t) AS node
                      WHERE node IS NOT NULL
-                     MERGE (node)-[:SOURCED_FROM]->(ev:Evidence {source_url: $url})
+                     MERGE (node)-[:SOURCED_FROM]->(ev:Citation {source_url: $url})
                      ON CREATE SET
                          ev.id = $ev_id,
                          ev.retrieved_at = datetime($ts),
@@ -695,7 +701,7 @@ impl GraphProjector {
                 let label = node_type_label(node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
-                     OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+                     OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
                      DETACH DELETE n, ev"
                 ))
                 .param("id", signal_id.to_string());
@@ -1067,12 +1073,12 @@ impl GraphProjector {
                 structured_state,
             } => {
                 let q = query(
-                    "MERGE (s:Story {id: $id})
+                    "MERGE (s:Situation {id: $id})
                      ON CREATE SET
                          s.headline = $headline,
                          s.lede = $lede,
                          s.arc = $arc,
-                         s.energy = $temperature,
+                         s.temperature = $temperature,
                          s.centroid_lat = $centroid_lat,
                          s.centroid_lng = $centroid_lng,
                          s.location_name = $location_name,
@@ -1108,44 +1114,44 @@ impl GraphProjector {
                 let ts = format_dt_from_stored(event);
                 match change {
                     SituationChange::Headline { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_str()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Lede { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.lede = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.lede = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_str()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Arc { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.arc = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.arc = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.to_string()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Temperature { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.energy = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.temperature = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Location { new, .. } => {
                         let (lat, lng) = location_lat_lng(&new);
                         let name = location_name_str(&new);
-                        let q = query("MATCH (s:Story {id: $id}) SET s.centroid_lat = $lat, s.centroid_lng = $lng, s.location_name = $name, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.centroid_lat = $lat, s.centroid_lng = $lng, s.location_name = $name, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("lat", lat).param("lng", lng).param("name", name).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Sensitivity { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.sensitivity = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.sensitivity = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_str()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::Category { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.category = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.category = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_deref().unwrap_or("")).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
                     SituationChange::StructuredState { new, .. } => {
-                        let q = query("MATCH (s:Story {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
+                        let q = query("MATCH (s:Situation {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_str()).param("ts", ts);
                         self.client.graph.run(q).await?;
                     }
@@ -1157,7 +1163,7 @@ impl GraphProjector {
                 let ids: Vec<String> = situation_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
-                     MATCH (s:Story {id: id})
+                     MATCH (s:Situation {id: id})
                      SET s.review_status = 'live'",
                 )
                 .param("ids", ids);
@@ -1203,7 +1209,7 @@ impl GraphProjector {
                 tag_slug,
             } => {
                 let q = query(
-                    "MATCH (s:Story {id: $situation_id})-[r:TAGGED]->(t:Tag {slug: $slug})
+                    "MATCH (s:Situation {id: $situation_id})-[r:TAGGED]->(t:Tag {slug: $slug})
                      DELETE r",
                 )
                 .param("situation_id", situation_id.to_string())
@@ -1247,7 +1253,7 @@ impl GraphProjector {
                      OPTIONAL MATCH (t:Tension {id: id})
                      WITH coalesce(g, a, n, nc, t) AS node
                      WHERE node IS NOT NULL
-                     OPTIONAL MATCH (node)-[:SOURCED_FROM]->(ev:Evidence)
+                     OPTIONAL MATCH (node)-[:SOURCED_FROM]->(ev:Citation)
                      DETACH DELETE node, ev",
                 )
                 .param("ids", ids);
@@ -1279,7 +1285,7 @@ impl GraphProjector {
                 let ids: Vec<String> = citation_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
                     "UNWIND $ids AS id
-                     MATCH (ev:Evidence {id: id})
+                     MATCH (ev:Citation {id: id})
                      DETACH DELETE ev",
                 )
                 .param("ids", ids);
@@ -1687,7 +1693,7 @@ fn node_type_label(node_type: NodeType) -> &'static str {
         NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
-        NodeType::Citation => "Evidence",
+        NodeType::Citation => "Citation",
     }
 }
 
