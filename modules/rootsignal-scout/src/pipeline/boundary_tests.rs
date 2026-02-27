@@ -497,8 +497,6 @@ async fn outbound_links_on_page_are_collected() {
 async fn discovered_links_become_new_sources() {
     use crate::enrichment::link_promoter::{self, PromotionConfig};
 
-    let store = Arc::new(MockSignalStore::new());
-
     let links = vec![
         link("https://localorg.org/events", "https://linktree.org"),
         link("https://foodshelf.org/volunteer", "https://linktree.org"),
@@ -509,21 +507,17 @@ async fn discovered_links_become_new_sources() {
         max_per_run: 50,
     };
 
-    let promoted = link_promoter::promote_links(&links, store.as_ref(), &config)
-        .await
-        .unwrap();
+    let sources = link_promoter::promote_links(&links, &config);
 
-    assert_eq!(promoted, 2);
-    assert_eq!(store.sources_promoted(), 2);
-    assert!(store.has_source_url("https://localorg.org/events"));
-    assert!(store.has_source_url("https://foodshelf.org/volunteer"));
+    assert_eq!(sources.len(), 2);
+    let urls: Vec<_> = sources.iter().filter_map(|s| s.url.as_deref()).collect();
+    assert!(urls.contains(&"https://localorg.org/events"));
+    assert!(urls.contains(&"https://foodshelf.org/volunteer"));
 }
 
 #[tokio::test]
 async fn same_link_from_two_pages_becomes_one_source() {
     use crate::enrichment::link_promoter::{self, PromotionConfig};
-
-    let store = Arc::new(MockSignalStore::new());
 
     let links = vec![
         link("https://localorg.org/events", "https://page-a.org"),
@@ -536,12 +530,10 @@ async fn same_link_from_two_pages_becomes_one_source() {
         max_per_run: 50,
     };
 
-    let promoted = link_promoter::promote_links(&links, store.as_ref(), &config)
-        .await
-        .unwrap();
+    let sources = link_promoter::promote_links(&links, &config);
 
     assert_eq!(
-        promoted, 2,
+        sources.len(), 2,
         "duplicate URLs should be deduped to 2 unique sources"
     );
 }
@@ -549,8 +541,6 @@ async fn same_link_from_two_pages_becomes_one_source() {
 #[tokio::test]
 async fn link_promotion_stops_at_configured_cap() {
     use crate::enrichment::link_promoter::{self, PromotionConfig};
-
-    let store = Arc::new(MockSignalStore::new());
 
     let links: Vec<CollectedLink> = (0..10)
         .map(|i| link(&format!("https://site-{i}.org"), "https://source.org"))
@@ -561,11 +551,9 @@ async fn link_promotion_stops_at_configured_cap() {
         max_per_run: 3,
     };
 
-    let promoted = link_promoter::promote_links(&links, store.as_ref(), &config)
-        .await
-        .unwrap();
+    let sources = link_promoter::promote_links(&links, &config);
 
-    assert_eq!(promoted, 3, "should respect max_per_run cap");
+    assert_eq!(sources.len(), 3, "should respect max_per_run cap");
 }
 
 #[tokio::test]
@@ -623,13 +611,12 @@ async fn scrape_then_promote_creates_new_sources() {
         max_per_source: 10,
         max_per_run: 50,
     };
-    let promoted = link_promoter::promote_links(&ctx.collected_links, store.as_ref(), &config)
-        .await
-        .unwrap();
+    let sources = link_promoter::promote_links(&ctx.collected_links, &config);
 
-    assert!(promoted >= 2, "at least 2 links should be promoted");
-    assert!(store.has_source_url("https://partner-a.org/programs"));
-    assert!(store.has_source_url("https://partner-b.org/events"));
+    assert!(sources.len() >= 2, "at least 2 links should be promoted");
+    let urls: Vec<_> = sources.iter().filter_map(|s| s.url.as_deref()).collect();
+    assert!(urls.contains(&"https://partner-a.org/programs"));
+    assert!(urls.contains(&"https://partner-b.org/events"));
 }
 
 // ---------------------------------------------------------------------------

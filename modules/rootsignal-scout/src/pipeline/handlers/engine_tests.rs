@@ -403,3 +403,51 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
         .iter()
         .any(|e| e.event_type == "freshness_confirmed"));
 }
+
+// ---------------------------------------------------------------------------
+// SourceDiscovered dispatch — reducer increments stat
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn source_discovered_increments_stat() {
+    let store = Arc::new(MockSignalStore::new());
+    let sink = Arc::new(MemoryEventSink::new());
+    let deps = test_deps(store);
+
+    let engine = Engine::new(
+        ScoutReducer,
+        TestRouter,
+        sink.clone() as Arc<dyn rootsignal_engine::EventPersister>,
+        "test-run".to_string(),
+    );
+
+    let source = rootsignal_common::SourceNode::new(
+        "example.org".into(),
+        "example.org".into(),
+        Some("https://example.org".into()),
+        rootsignal_common::DiscoveryMethod::LinkedFrom,
+        0.25,
+        rootsignal_common::SourceRole::Mixed,
+        None,
+    );
+
+    let mut ctx = PipelineState::new(HashMap::new());
+
+    engine
+        .dispatch(
+            ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+                source,
+                discovered_by: "link_promoter".into(),
+            }),
+            &mut ctx,
+            &deps,
+        )
+        .await
+        .expect("dispatch should succeed");
+
+    assert_eq!(ctx.stats.sources_discovered, 1);
+
+    let events = sink.events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "pipeline:source_discovered");
+}

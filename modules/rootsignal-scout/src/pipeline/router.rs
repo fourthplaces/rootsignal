@@ -32,14 +32,15 @@ impl Router<ScoutEvent, PipelineState, PipelineDeps> for ScoutRouter {
         state: &PipelineState,
         deps: &PipelineDeps,
     ) -> Result<Vec<ScoutEvent>> {
+        if event.is_projectable() {
+            if let Some(proj) = &self.projector {
+                proj.project(stored).await?;
+            }
+        }
+
         match event {
             ScoutEvent::Pipeline(pe) => handlers::route_pipeline(pe, stored, state, deps).await,
-            ScoutEvent::World(_) | ScoutEvent::System(_) => {
-                if let Some(proj) = &self.projector {
-                    proj.project(stored).await?;
-                }
-                Ok(vec![])
-            }
+            ScoutEvent::World(_) | ScoutEvent::System(_) => Ok(vec![]),
         }
     }
 }

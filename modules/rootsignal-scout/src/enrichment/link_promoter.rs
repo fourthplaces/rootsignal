@@ -7,13 +7,9 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
-use tracing::{info, warn};
-use url::Url;
+use tracing::info;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
-
-use crate::traits::SignalStore;
 
 /// A link discovered during scraping, used by `promote_links` to create new sources.
 pub struct CollectedLink {
@@ -81,19 +77,18 @@ pub fn extract_links(page_links: &[String]) -> Vec<String> {
     results
 }
 
-/// Promote discovered links to SourceNodes in the graph.
+/// Build SourceNodes from discovered links.
 ///
 /// Each `CollectedLink` carries the discovering source's coordinates. The promoted
 /// source inherits those coordinates — not the region center.
 ///
-/// Returns the count of newly created sources.
-pub async fn promote_links(
+/// Returns the SourceNodes to be registered through the engine.
+pub fn promote_links(
     links: &[CollectedLink],
-    writer: &dyn SignalStore,
     config: &PromotionConfig,
-) -> Result<u32> {
+) -> Vec<SourceNode> {
     if links.is_empty() {
-        return Ok(0);
+        return Vec::new();
     }
 
     // Deduplicate by canonical_value, keeping the first occurrence's coords
@@ -104,11 +99,11 @@ pub async fn promote_links(
         .take(config.max_per_run)
         .collect();
 
-    let mut created = 0u32;
+    let mut sources = Vec::new();
     for link in unique {
         let cv = canonical_value(&link.url);
 
-        let mut source = SourceNode::new(
+        let source = SourceNode::new(
             cv.clone(),
             canonical_value(&link.url),
             Some(link.url.clone()),
@@ -117,28 +112,23 @@ pub async fn promote_links(
             SourceRole::Mixed,
             Some(format!("Linked from {}", link.discovered_on)),
         );
-        match writer.upsert_source(&source).await {
-            Ok(_) => {
-                created += 1;
-                info!(
-                    canonical_key = cv,
-                    discovered_on = link.discovered_on,
-                    "Promoted linked URL"
-                );
-            }
-            Err(e) => warn!(canonical_key = cv, error = %e, "Failed to promote linked URL"),
-        }
+        sources.push(source);
+        info!(
+            canonical_key = cv,
+            discovered_on = link.discovered_on,
+            "Promoted linked URL"
+        );
     }
 
-    if created > 0 {
+    if !sources.is_empty() {
         info!(
-            created,
+            created = sources.len(),
             total_links = links.len(),
             "Link promotion complete"
         );
     }
 
-    Ok(created)
+    sources
 }
 
 // ---------------------------------------------------------------------------

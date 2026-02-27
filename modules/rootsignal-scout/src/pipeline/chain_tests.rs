@@ -819,11 +819,10 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         max_per_source: 10,
         max_per_run: 50,
     };
-    let promoted = link_promoter::promote_links(&ctx.collected_links, store.as_ref(), &config)
-        .await
-        .unwrap();
-    assert!(promoted >= 1, "at least 1 link promoted");
-    assert!(store.has_source_url("https://localorg.org/resources"));
+    let promoted_sources = link_promoter::promote_links(&ctx.collected_links, &config);
+    assert!(!promoted_sources.is_empty(), "at least 1 link promoted");
+    let promoted_urls: Vec<_> = promoted_sources.iter().filter_map(|s| s.url.as_deref()).collect();
+    assert!(promoted_urls.contains(&"https://localorg.org/resources"));
 
     // --- Phase B: scrape the discovered org site ---
     let phase_b = ScrapePhase::new(

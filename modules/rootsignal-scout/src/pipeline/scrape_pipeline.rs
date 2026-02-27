@@ -69,7 +69,7 @@ pub(crate) struct ScheduledRun {
     tension_phase_keys: HashSet<String>,
     response_phase_keys: HashSet<String>,
     scheduled_keys: HashSet<String>,
-    phase: ScrapePhase,
+    pub(crate) phase: ScrapePhase,
     consumed_pin_ids: Vec<uuid::Uuid>,
 }
 
@@ -367,21 +367,19 @@ impl<'a> ScrapePipeline<'a> {
 
     /// Promote any links collected during scraping into new SourceNodes.
     /// Clears the collected_links buffer after processing.
-    async fn promote_collected_links(&self, ctx: &mut RunContext) {
+    async fn promote_collected_links(&self, run: &ScheduledRun, ctx: &mut RunContext) {
         if ctx.collected_links.is_empty() {
             return;
         }
         let config = PromotionConfig::default();
-        match link_promoter::promote_links(
-            &ctx.collected_links,
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
-            &config,
-        )
-        .await
-        {
-            Ok(n) if n > 0 => info!(promoted = n, "Promoted linked URLs"),
-            Ok(_) => {}
-            Err(e) => warn!(error = %e, "Link promotion failed"),
+        let sources = link_promoter::promote_links(&ctx.collected_links, &config);
+        if !sources.is_empty() {
+            let count = sources.len();
+            if let Err(e) = run.phase.register_sources(sources, "link_promoter", ctx).await {
+                warn!(error = %e, "Failed to register promoted links");
+            } else {
+                info!(promoted = count, "Promoted linked URLs");
+            }
         }
         ctx.collected_links.clear();
     }
@@ -416,27 +414,26 @@ impl<'a> ScrapePipeline<'a> {
             run.phase.run_social(&phase_a_social, ctx, run_log).await;
         }
 
-        self.promote_collected_links(ctx).await;
+        self.promote_collected_links(run, ctx).await;
     }
 
     /// Find new sources from graph analysis (actor-linked accounts, coverage gaps).
-    /// Returns discovery stats and social topics discovered for later topic-based searching.
-    pub(crate) async fn discover_mid_run_sources(&self) -> (SourceFinderStats, Vec<String>) {
+    /// Returns discovery stats, social topics, and discovered sources.
+    pub(crate) async fn discover_mid_run_sources(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>) {
         info!("=== Mid-Run Discovery ===");
         let discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
         )
         .with_embedder(&*self.embedder);
-        let (stats, social_topics) = discoverer.run().await;
+        let (stats, social_topics, sources) = discoverer.run().await;
         if stats.actor_sources + stats.gap_sources > 0 {
             info!("{stats}");
         }
-        (stats, social_topics)
+        (stats, social_topics, sources)
     }
 
     /// Scrape response + fresh discovery sources (web + social), then search
@@ -506,7 +503,7 @@ impl<'a> ScrapePipeline<'a> {
             run.phase.run_social(&phase_b_social, ctx, run_log).await;
         }
 
-        self.promote_collected_links(ctx).await;
+        self.promote_collected_links(run, ctx).await;
 
         check_cancelled_flag(&self.cancelled)?;
 
@@ -518,7 +515,7 @@ impl<'a> ScrapePipeline<'a> {
             .discover_from_topics(&all_social_topics, ctx, run_log)
             .await;
 
-        self.promote_collected_links(ctx).await;
+        self.promote_collected_links(run, ctx).await;
 
         Ok(())
     }
@@ -553,25 +550,29 @@ impl<'a> ScrapePipeline<'a> {
         // Signal Expansion — create sources from implied queries
         let expansion = Expansion::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &*self.embedder,
             &self.region.name,
         );
-        expansion.run(ctx, run_log).await;
+        let expansion_sources = expansion.run(ctx, run_log).await;
+        if !expansion_sources.is_empty() {
+            run.phase.register_sources(expansion_sources, "signal_expansion", ctx).await?;
+        }
 
         check_cancelled_flag(&self.cancelled)?;
 
         // End-of-run discovery — find new sources for next run
         let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
             &self.writer,
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
             &self.region.name,
             &self.region.name,
             Some(&self.anthropic_api_key),
             self.budget,
         )
         .with_embedder(&*self.embedder);
-        let (end_discovery_stats, end_social_topics) = end_discoverer.run().await;
+        let (end_discovery_stats, end_social_topics, end_discovery_sources) = end_discoverer.run().await;
+        if !end_discovery_sources.is_empty() {
+            run.phase.register_sources(end_discovery_sources, "source_finder", ctx).await?;
+        }
         if end_discovery_stats.actor_sources + end_discovery_stats.gap_sources > 0 {
             info!("{end_discovery_stats}");
         }
@@ -583,7 +584,7 @@ impl<'a> ScrapePipeline<'a> {
             run.phase
                 .discover_from_topics(&end_social_topics, ctx, run_log)
                 .await;
-            self.promote_collected_links(ctx).await;
+            self.promote_collected_links(run, ctx).await;
         }
 
         Ok(())
@@ -619,7 +620,10 @@ impl<'a> ScrapePipeline<'a> {
         self.scrape_tension_sources(&run, &mut ctx, &run_log).await;
         check_cancelled_flag(&self.cancelled)?;
 
-        let (_, social_topics) = self.discover_mid_run_sources().await;
+        let (_, social_topics, mid_run_sources) = self.discover_mid_run_sources().await;
+        if !mid_run_sources.is_empty() {
+            run.phase.register_sources(mid_run_sources, "source_finder", &mut ctx).await?;
+        }
         check_cancelled_flag(&self.cancelled)?;
 
         self.scrape_response_sources(&run, social_topics, &mut ctx, &run_log)

@@ -124,8 +124,11 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
             // Phase lifecycle — no state changes
             PipelineEvent::PhaseStarted { .. }
             | PipelineEvent::PhaseCompleted { .. }
-            | PipelineEvent::ExtractionFailed { .. }
-            | PipelineEvent::SourceDiscovered { .. } => {}
+            | PipelineEvent::ExtractionFailed { .. } => {}
+
+            PipelineEvent::SourceDiscovered { .. } => {
+                state.stats.sources_discovered += 1;
+            }
         }
     }
 }

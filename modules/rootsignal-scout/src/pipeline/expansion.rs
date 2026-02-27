@@ -24,7 +24,6 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 
 pub(crate) struct Expansion<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::traits::SignalStore,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
@@ -32,13 +31,11 @@ pub(crate) struct Expansion<'a> {
 impl<'a> Expansion<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::traits::SignalStore,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
-            store,
             embedder,
             region_slug,
         }
@@ -47,8 +44,8 @@ impl<'a> Expansion<'a> {
     /// Run the expansion stage:
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
-    /// 3. Create new WebQuery sources for surviving queries
-    pub async fn run(&self, ctx: &mut RunContext, run_log: &RunLogger) {
+    /// 3. Return new WebQuery SourceNodes for surviving queries
+    pub async fn run(&self, ctx: &mut RunContext, run_log: &RunLogger) -> Vec<SourceNode> {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         match self.writer.get_recently_linked_signals_with_queries().await {
@@ -69,7 +66,7 @@ impl<'a> Expansion<'a> {
         ctx.stats.expansion_queries_collected = ctx.expansion_queries.len() as u32;
 
         if ctx.expansion_queries.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let existing = self
@@ -89,7 +86,7 @@ impl<'a> Expansion<'a> {
             .take(MAX_EXPANSION_QUERIES_PER_RUN)
             .collect();
 
-        let mut created = 0u32;
+        let mut sources = Vec::new();
         let mut expansion_dupes_skipped = 0u32;
         for query_text in &deduped {
             // Embedding-based dedup for expansion queries
@@ -114,7 +111,7 @@ impl<'a> Expansion<'a> {
 
             let cv = query_text.clone();
             let ck = canonical_value(&cv);
-            let mut source = SourceNode::new(
+            let source = SourceNode::new(
                 ck.clone(),
                 cv,
                 None,
@@ -126,27 +123,20 @@ impl<'a> Expansion<'a> {
                 rootsignal_common::SourceRole::Response,
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );
-            match self.store.upsert_source(&source).await {
-                Ok(_) => {
-                    run_log.log(EventKind::ExpansionSourceCreated {
-                        canonical_key: ck.clone(),
-                        query: query_text.clone(),
-                        source_url: ck.clone(),
-                    });
-                    created += 1;
-                    // Store embedding for future dedup
-                    if let Ok(embedding) = self.embedder.embed(query_text).await {
-                        if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
-                            warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, query = query_text.as_str(), "Failed to create expansion source")
+            run_log.log(EventKind::ExpansionSourceCreated {
+                canonical_key: ck.clone(),
+                query: query_text.clone(),
+                source_url: ck.clone(),
+            });
+            sources.push(source);
+            // Store embedding for future dedup
+            if let Ok(embedding) = self.embedder.embed(query_text).await {
+                if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                    warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
                 }
             }
         }
-        ctx.stats.expansion_sources_created = created;
+        ctx.stats.expansion_sources_created = sources.len() as u32;
 
         // Social expansion: route deduped queries as social topics too.
         // This creates the social flywheel — expansion from social-sourced
@@ -158,12 +148,14 @@ impl<'a> Expansion<'a> {
 
         info!(
             collected = ctx.expansion_queries.len(),
-            created,
+            created = sources.len(),
             deferred = ctx.stats.expansion_deferred_expanded,
             embedding_dupes = expansion_dupes_skipped,
             social_topics = social_count,
             "Signal expansion complete"
         );
+
+        sources
     }
 }
 

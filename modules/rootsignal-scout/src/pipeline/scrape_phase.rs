@@ -317,6 +317,34 @@ impl ScrapePhase {
         }
     }
 
+    /// Register discovered sources through the engine dispatch loop.
+    pub async fn register_sources(
+        &self,
+        sources: Vec<SourceNode>,
+        discovered_by: &str,
+        ctx: &mut RunContext,
+    ) -> Result<()> {
+        let deps = PipelineDeps {
+            store: self.store.clone(),
+            embedder: self.embedder.clone(),
+            region: self.region.clone(),
+            run_id: self.run_id.clone(),
+        };
+        for source in sources {
+            self.engine
+                .dispatch(
+                    ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+                        source,
+                        discovered_by: discovered_by.into(),
+                    }),
+                    ctx,
+                    &deps,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals, store results.
     /// Used by both Phase A (tension/mixed sources) and Phase B (response/discovery sources).
     ///

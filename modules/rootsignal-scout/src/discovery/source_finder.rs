@@ -17,6 +17,10 @@ const MAX_CURIOSITY_QUERIES: usize = 12;
 const MAX_DISCOVERY_DEPTH: u32 = 2;
 
 /// Stats from a discovery run.
+///
+/// Counts reflect discovery intent (sources added to the output vec),
+/// not persistence outcome. The reducer's `sources_discovered` stat
+/// is the authoritative count of sources that reached the event store.
 #[derive(Debug, Default)]
 pub struct SourceFinderStats {
     pub actor_sources: u32,
@@ -427,7 +431,6 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
     writer: &'a GraphWriter,
-    store: &'a dyn crate::traits::SignalStore,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -443,7 +446,6 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 impl<'a> SourceFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        store: &'a dyn crate::traits::SignalStore,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,
@@ -454,7 +456,6 @@ impl<'a> SourceFinder<'a> {
             .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
             writer,
-            store,
             region_slug: region_slug.to_string(),
             region_name: region_name.to_string(),
             claude,
@@ -472,16 +473,17 @@ impl<'a> SourceFinder<'a> {
         self
     }
 
-    /// Run all discovery triggers. Returns stats and social topics for topic discovery.
-    pub async fn run(&self) -> (SourceFinderStats, Vec<String>) {
+    /// Run all discovery triggers. Returns stats, social topics, and discovered sources.
+    pub async fn run(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>) {
         let mut stats = SourceFinderStats::default();
         let mut social_topics = Vec::new();
+        let mut sources = Vec::new();
 
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
-        self.discover_from_actors(&mut stats).await;
+        self.discover_from_actors(&mut stats, &mut sources).await;
 
         // 2. LLM-driven curiosity engine (with mechanical fallback)
-        self.discover_from_curiosity(&mut stats, &mut social_topics)
+        self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources)
             .await;
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
@@ -495,11 +497,11 @@ impl<'a> SourceFinder<'a> {
             );
         }
 
-        (stats, social_topics)
+        (stats, social_topics, sources)
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
-    async fn discover_from_actors(&self, stats: &mut SourceFinderStats) {
+    async fn discover_from_actors(&self, stats: &mut SourceFinderStats, sources: &mut Vec<SourceNode>) {
         let actors = match self
             .writer
             .get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH))
@@ -549,7 +551,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let mut source = SourceNode::new(
+                let source = SourceNode::new(
                     ck,
                     cv,
                     Some(url.clone()),
@@ -558,16 +560,12 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                match self.store.upsert_source(&source).await {
-                    Ok(_) => {
-                        stats.actor_sources += 1;
-                        info!(
-                            actor = actor_name.as_str(),
-                            url, "Discovered source from actor domain"
-                        );
-                    }
-                    Err(e) => warn!(url, error = %e, "Failed to create actor-derived source"),
-                }
+                stats.actor_sources += 1;
+                info!(
+                    actor = actor_name.as_str(),
+                    url, "Discovered source from actor domain"
+                );
+                sources.push(source);
             }
 
             // Check social URLs as potential sources
@@ -584,7 +582,7 @@ impl<'a> SourceFinder<'a> {
                     continue;
                 }
 
-                let mut source = SourceNode::new(
+                let source = SourceNode::new(
                     ck,
                     cv,
                     Some(social_url.clone()),
@@ -593,19 +591,13 @@ impl<'a> SourceFinder<'a> {
                     source_role,
                     Some(format!("Actor: {actor_name}")),
                 );
-                match self.store.upsert_source(&source).await {
-                    Ok(_) => {
-                        stats.actor_sources += 1;
-                        info!(
-                            actor = actor_name.as_str(),
-                            url = social_url.as_str(),
-                            "Discovered source from actor social"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(url = social_url.as_str(), error = %e, "Failed to create actor social source")
-                    }
-                }
+                stats.actor_sources += 1;
+                info!(
+                    actor = actor_name.as_str(),
+                    url = social_url.as_str(),
+                    "Discovered source from actor social"
+                );
+                sources.push(source);
             }
         }
     }
@@ -615,12 +607,13 @@ impl<'a> SourceFinder<'a> {
         &self,
         stats: &mut SourceFinderStats,
         social_topics: &mut Vec<String>,
+        sources: &mut Vec<SourceNode>,
     ) {
         // Guard: no Claude client → mechanical fallback
         let claude = match &self.claude {
             Some(c) => c,
             None => {
-                self.discover_from_gaps_mechanical(stats, social_topics)
+                self.discover_from_gaps_mechanical(stats, social_topics, sources)
                     .await;
                 return;
             }
@@ -633,7 +626,7 @@ impl<'a> SourceFinder<'a> {
                 .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
         {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
-            self.discover_from_gaps_mechanical(stats, social_topics)
+            self.discover_from_gaps_mechanical(stats, social_topics, sources)
                 .await;
             return;
         }
@@ -643,7 +636,7 @@ impl<'a> SourceFinder<'a> {
             Ok(b) => b,
             Err(e) => {
                 warn!(error = %e, "Failed to build discovery briefing, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats, social_topics)
+                self.discover_from_gaps_mechanical(stats, social_topics, sources)
                     .await;
                 return;
             }
@@ -652,7 +645,7 @@ impl<'a> SourceFinder<'a> {
         // Cold-start check
         if briefing.is_cold_start() {
             info!("Cold start detected (< 3 tensions, 0 situations), using mechanical discovery");
-            self.discover_from_gaps_mechanical(stats, social_topics)
+            self.discover_from_gaps_mechanical(stats, social_topics, sources)
                 .await;
             return;
         }
@@ -666,7 +659,7 @@ impl<'a> SourceFinder<'a> {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");
-                self.discover_from_gaps_mechanical(stats, social_topics)
+                self.discover_from_gaps_mechanical(stats, social_topics, sources)
                     .await;
                 return;
             }
@@ -760,7 +753,7 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some(dq.gap_type.as_str()));
 
-            let mut source = SourceNode::new(
+            let source = SourceNode::new(
                 ck.clone(),
                 cv,
                 None,
@@ -769,26 +762,22 @@ impl<'a> SourceFinder<'a> {
                 source_role,
                 Some(gap_context),
             );
-            match self.store.upsert_source(&source).await {
-                Ok(_) => {
-                    stats.gap_sources += 1;
-                    info!(
-                        query = dq.query.as_str(),
-                        reasoning = dq.reasoning.as_str(),
-                        gap_type = dq.gap_type.as_str(),
-                        weight,
-                        "LLM discovery: created query source"
-                    );
-                    // Store query embedding so future runs can dedup against it
-                    if let Some(embedder) = self.embedder {
-                        if let Ok(embedding) = embedder.embed(&dq.query).await {
-                            if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
-                                warn!(error = %e, "Failed to store query embedding (non-fatal)");
-                            }
-                        }
+            stats.gap_sources += 1;
+            info!(
+                query = dq.query.as_str(),
+                reasoning = dq.reasoning.as_str(),
+                gap_type = dq.gap_type.as_str(),
+                weight,
+                "LLM discovery: created query source"
+            );
+            sources.push(source);
+            // Store query embedding so future runs can dedup against it
+            if let Some(embedder) = self.embedder {
+                if let Ok(embedding) = embedder.embed(&dq.query).await {
+                    if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                        warn!(error = %e, "Failed to store query embedding (non-fatal)");
                     }
                 }
-                Err(e) => warn!(error = %e, "Failed to create LLM discovery source"),
             }
         }
     }
@@ -872,6 +861,7 @@ impl<'a> SourceFinder<'a> {
         &self,
         stats: &mut SourceFinderStats,
         social_topics: &mut Vec<String>,
+        sources: &mut Vec<SourceNode>,
     ) {
         // Get tensions with engagement data, sorted by engagement within unmet-first grouping
         let mut tensions = match self.writer.get_unmet_tensions(20).await {
@@ -938,7 +928,7 @@ impl<'a> SourceFinder<'a> {
             let weight =
                 initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension"));
 
-            let mut source = SourceNode::new(
+            let source = SourceNode::new(
                 ck,
                 cv,
                 None,
@@ -948,18 +938,14 @@ impl<'a> SourceFinder<'a> {
                 SourceRole::Response,
                 Some(format!("Tension: {}", t.title)),
             );
-            match self.store.upsert_source(&source).await {
-                Ok(_) => {
-                    gap_count += 1;
-                    stats.gap_sources += 1;
-                    info!(
-                        tension = t.title.as_str(),
-                        query = source.canonical_value.as_str(),
-                        "Created gap analysis query"
-                    );
-                }
-                Err(e) => warn!(error = %e, "Failed to create gap analysis source"),
-            }
+            gap_count += 1;
+            stats.gap_sources += 1;
+            info!(
+                tension = t.title.as_str(),
+                query = source.canonical_value.as_str(),
+                "Created gap analysis query"
+            );
+            sources.push(source);
         }
 
         // Generate social topics from the same tensions — mechanical fallback parity

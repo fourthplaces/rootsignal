@@ -20,6 +20,7 @@ pub struct ScoutStats {
     pub expansion_sources_created: u32,
     pub expansion_deferred_expanded: u32,
     pub expansion_social_topics_queued: u32,
+    pub sources_discovered: u32,
     pub link_failures: u32,
 }
 
@@ -45,6 +46,7 @@ impl ScoutStats {
         self.expansion_sources_created += other.expansion_sources_created;
         self.expansion_deferred_expanded += other.expansion_deferred_expanded;
         self.expansion_social_topics_queued += other.expansion_social_topics_queued;
+        self.sources_discovered += other.sources_discovered;
         self.link_failures += other.link_failures;
     }
 }
@@ -87,6 +89,9 @@ impl std::fmt::Display for ScoutStats {
             self.fresh_90d,
             self.fresh_90d as f64 / total as f64 * 100.0
         )?;
+        if self.sources_discovered > 0 {
+            writeln!(f, "Sources discovered: {}", self.sources_discovered)?;
+        }
         if self.link_failures > 0 {
             writeln!(f, "Link failures:      {}", self.link_failures)?;
         }

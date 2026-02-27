@@ -10,7 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
-use rootsignal_common::types::NodeType;
+use rootsignal_common::types::{NodeType, SourceNode};
 use rootsignal_engine::EventLike;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -25,6 +25,16 @@ pub enum ScoutEvent {
     Pipeline(PipelineEvent),
     World(WorldEvent),
     System(SystemEvent),
+}
+
+impl ScoutEvent {
+    /// Whether this event needs graph projection.
+    pub fn is_projectable(&self) -> bool {
+        match self {
+            ScoutEvent::World(_) | ScoutEvent::System(_) => true,
+            ScoutEvent::Pipeline(pe) => pe.is_projectable(),
+        }
+    }
 }
 
 impl EventLike for ScoutEvent {
@@ -153,8 +163,8 @@ pub enum PipelineEvent {
 
     // Source discovery
     SourceDiscovered {
-        canonical_key: String,
-        discovery_method: String,
+        source: SourceNode,
+        discovered_by: String,
     },
 
     // Social
@@ -173,6 +183,11 @@ pub enum PipelineEvent {
 }
 
 impl PipelineEvent {
+    /// Whether this pipeline event needs graph projection.
+    pub fn is_projectable(&self) -> bool {
+        matches!(self, PipelineEvent::SourceDiscovered { .. })
+    }
+
     pub fn variant_name(&self) -> &'static str {
         match self {
             PipelineEvent::PhaseStarted { .. } => "phase_started",
@@ -223,4 +238,96 @@ pub enum FreshnessBucket {
     Within90d,
     Older,
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
+
+    #[test]
+    fn source_discovered_round_trips_through_persist_payload() {
+        let source = SourceNode::new(
+            canonical_value("https://example.org"),
+            canonical_value("https://example.org"),
+            Some("https://example.org".into()),
+            DiscoveryMethod::LinkedFrom,
+            0.25,
+            SourceRole::Mixed,
+            Some("test context".into()),
+        );
+
+        let event = ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+            source: source.clone(),
+            discovered_by: "link_promoter".into(),
+        });
+
+        let payload = event.to_persist_payload();
+
+        // Deserialize through the same path the GraphProjector uses
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            source: SourceNode,
+            discovered_by: String,
+        }
+        let round_tripped: Payload =
+            serde_json::from_value(payload).expect("SourceDiscovered should round-trip");
+
+        assert_eq!(round_tripped.source.id, source.id);
+        assert_eq!(round_tripped.source.canonical_key, source.canonical_key);
+        assert_eq!(round_tripped.source.url, source.url);
+        assert_eq!(round_tripped.source.weight, source.weight);
+        assert_eq!(round_tripped.source.gap_context, source.gap_context);
+        assert_eq!(round_tripped.discovered_by, "link_promoter");
+    }
+
+    #[test]
+    fn source_discovered_is_projectable() {
+        let source = SourceNode::new(
+            "key".into(),
+            "val".into(),
+            None,
+            DiscoveryMethod::GapAnalysis,
+            0.5,
+            SourceRole::Response,
+            None,
+        );
+        let pe = PipelineEvent::SourceDiscovered {
+            source,
+            discovered_by: "test".into(),
+        };
+        assert!(pe.is_projectable());
+
+        let non_projectable = PipelineEvent::ContentFetched {
+            url: "x".into(),
+            canonical_key: "x".into(),
+            content_hash: "x".into(),
+            link_count: 0,
+        };
+        assert!(!non_projectable.is_projectable());
+    }
+
+    #[test]
+    fn scout_event_projectable_delegates_correctly() {
+        let source = SourceNode::new(
+            "key".into(),
+            "val".into(),
+            None,
+            DiscoveryMethod::GapAnalysis,
+            0.5,
+            SourceRole::Response,
+            None,
+        );
+        let pipeline_projectable =
+            ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+                source,
+                discovered_by: "test".into(),
+            });
+        assert!(pipeline_projectable.is_projectable());
+
+        let pipeline_not = ScoutEvent::Pipeline(PipelineEvent::PhaseStarted {
+            phase: PipelinePhase::Expansion,
+        });
+        assert!(!pipeline_not.is_projectable());
+    }
 }

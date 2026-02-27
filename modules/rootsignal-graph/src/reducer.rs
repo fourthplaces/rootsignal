@@ -18,7 +18,7 @@ use rootsignal_common::events::{
     Schedule, SituationChange, SourceChange, SystemEvent, SystemSourceChange, TensionCorrection,
     WorldEvent,
 };
-use rootsignal_common::types::NodeType;
+use rootsignal_common::types::{NodeType, SourceNode};
 use rootsignal_events::StoredEvent;
 
 use crate::GraphClient;
@@ -50,10 +50,9 @@ impl GraphProjector {
 
     /// Project a single fact to the graph. Idempotent.
     pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
-        // Pipeline events are internal bookkeeping — no graph projection needed.
+        // Pipeline events: only source_discovered needs projection.
         if event.event_type.starts_with("pipeline:") {
-            debug!(seq = event.seq, event_type = %event.event_type, "No-op (pipeline)");
-            return Ok(ApplyResult::NoOp);
+            return self.project_pipeline(event).await;
         }
 
         let parsed = match Event::from_payload(&event.payload) {
@@ -75,6 +74,65 @@ impl GraphProjector {
             }
             Event::World(world) => self.project_world(world, event).await,
             Event::System(system) => self.project_system(system, event).await,
+        }
+    }
+
+    // =================================================================
+    // Pipeline events — only projectable variants
+    // =================================================================
+
+    async fn project_pipeline(&self, event: &StoredEvent) -> Result<ApplyResult> {
+        match event.event_type.as_str() {
+            "pipeline:source_discovered" => {
+                #[derive(serde::Deserialize)]
+                struct Payload {
+                    source: SourceNode,
+                    #[allow(dead_code)]
+                    discovered_by: String,
+                }
+                let payload: Payload = serde_json::from_value(event.payload.clone())
+                    .map_err(|e| anyhow::anyhow!("source_discovered deser: {e}"))?;
+                let s = &payload.source;
+
+                let q = query(
+                    "MERGE (s:Source {canonical_key: $canonical_key})
+                     ON CREATE SET
+                         s.id = $id,
+                         s.canonical_value = $canonical_value,
+                         s.url = $url,
+                         s.discovery_method = $discovery_method,
+                         s.created_at = datetime($ts),
+                         s.signals_produced = 0,
+                         s.signals_corroborated = 0,
+                         s.consecutive_empty_runs = 0,
+                         s.active = true,
+                         s.gap_context = $gap_context,
+                         s.weight = $weight,
+                         s.avg_signals_per_scrape = 0.0,
+                         s.quality_penalty = 1.0,
+                         s.source_role = $source_role,
+                         s.scrape_count = 0
+                     ON MATCH SET
+                         s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
+                         s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END",
+                )
+                .param("id", s.id.to_string())
+                .param("canonical_key", s.canonical_key.as_str())
+                .param("canonical_value", s.canonical_value.as_str())
+                .param("url", s.url.as_deref().unwrap_or(""))
+                .param("discovery_method", s.discovery_method.to_string())
+                .param("ts", format_dt_from_stored(event))
+                .param("weight", s.weight)
+                .param("source_role", s.source_role.to_string())
+                .param("gap_context", s.gap_context.clone().unwrap_or_default());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+            _ => {
+                debug!(seq = event.seq, event_type = %event.event_type, "No-op (pipeline)");
+                Ok(ApplyResult::NoOp)
+            }
         }
     }
 
