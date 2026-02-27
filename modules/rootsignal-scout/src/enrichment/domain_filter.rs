@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use rootsignal_common::extract_domain;
 
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 
 #[derive(Deserialize, JsonSchema)]
 struct DomainFilterResponse {
@@ -63,7 +63,7 @@ pub async fn filter_domains_batch(
     urls: &[String],
     region_name: &str,
     anthropic_api_key: &str,
-    _store: &dyn SignalStore,
+    _store: &dyn SignalReader,
 ) -> Vec<String> {
     if urls.is_empty() {
         return Vec::new();
@@ -84,7 +84,7 @@ pub async fn filter_domains_batch(
     }
 
     // 2. Check cache for existing verdicts
-    // TODO: Add cached_domain_verdicts / cache_domain_verdicts to SignalStore trait
+    // TODO: Add cached_domain_verdicts / cache_domain_verdicts to SignalReader trait
     // to avoid re-evaluating domains across runs.
     let cached: HashMap<String, bool> = HashMap::new();
 
@@ -136,7 +136,7 @@ pub async fn filter_domains_batch(
                         new_verdicts.push((d.clone(), true));
                     }
                 }
-                // TODO: Cache new verdicts once SignalStore trait has cache_domain_verdicts
+                // TODO: Cache new verdicts once SignalReader trait has cache_domain_verdicts
                 let _ = &new_verdicts;
             }
             Err(e) => {

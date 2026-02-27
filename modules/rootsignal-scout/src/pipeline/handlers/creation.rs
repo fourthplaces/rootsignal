@@ -3,7 +3,7 @@
 //! NewSignalAccepted → construct World + System events for the new signal.
 //! CrossSourceMatchDetected → construct corroboration events.
 //! SameSourceReencountered → construct freshness confirmation event.
-//! SignalStored → wire edges (source, actor, resources, tags) via events.
+//! SignalReaderd → wire edges (source, actor, resources, tags) via events.
 //!
 //! All graph writes flow through events → engine → EventStore → GraphProjector.
 //! Handlers only emit events — no direct store writes.
@@ -19,7 +19,7 @@ use crate::pipeline::state::{PipelineDeps, PipelineState};
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
 /// NewSignalAccepted: a new signal passed all dedup layers.
-/// Emits World + System + Citation events, then triggers edge wiring via SignalStored.
+/// Emits World + System + Citation events, then triggers edge wiring via SignalReaderd.
 ///
 /// Reads PendingNode from state (stashed by reducer). Pure — no state mutations.
 pub async fn handle_create(
@@ -69,7 +69,7 @@ pub async fn handle_create(
         .get(scrape_url)
         .cloned()
         .unwrap_or_else(|| scrape_url.to_string());
-    events.push(ScoutEvent::Pipeline(PipelineEvent::SignalStored {
+    events.push(ScoutEvent::Pipeline(PipelineEvent::SignalReaderd {
         node_id: stored_id,
         node_type: pending.node.node_type(),
         source_url: scrape_url.to_string(),
@@ -148,7 +148,7 @@ pub async fn handle_refresh(
     ])
 }
 
-/// SignalStored: wire edges (source, actor, resources, tags) via events.
+/// SignalReaderd: wire edges (source, actor, resources, tags) via events.
 /// Reads WiringContext from state (stashed by reducer). Pure — no state mutations.
 pub async fn handle_signal_stored(
     node_id: Uuid,

@@ -276,7 +276,7 @@ pub(crate) fn dedup_verdict(
 use crate::pipeline::ScoutEngine;
 
 pub(crate) struct ScrapePhase {
-    store: Arc<dyn crate::traits::SignalStore>,
+    store: Arc<dyn crate::traits::SignalReader>,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
     fetcher: Arc<dyn crate::traits::ContentFetcher>,
@@ -287,7 +287,7 @@ pub(crate) struct ScrapePhase {
 
 impl ScrapePhase {
     pub fn new(
-        store: Arc<dyn crate::traits::SignalStore>,
+        store: Arc<dyn crate::traits::SignalReader>,
         extractor: Arc<dyn SignalExtractor>,
         embedder: Arc<dyn TextEmbedder>,
         fetcher: Arc<dyn crate::traits::ContentFetcher>,

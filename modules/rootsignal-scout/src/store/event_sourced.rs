@@ -1,13 +1,10 @@
-//! EventSourcedStore — events are the source of truth, projector writes the graph.
-//!
-//! Every write method does exactly two things:
-//!   1. Build an Event from the method args → append to EventStore (Postgres)
-//!   2. Project the stored event to the graph via GraphProjector (Neo4j)
+//! EventSourcedReader — read-only graph queries backed by Neo4j.
 //!
 //! The events table is the single source of truth. The graph is a projection.
+//! All domain writes flow through the engine dispatch loop.
 //!
 //! Read methods delegate to GraphWriter (graph is always current).
-//! Resource/edge methods pass through to GraphWriter (no event variants yet).
+//! Infrastructure ops (reap_expired, delete_pins) remain here as direct writes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,17 +24,17 @@ use rootsignal_common::{
 use rootsignal_events::{AppendEvent, EventStore};
 use rootsignal_graph::{DuplicateMatch, GraphProjector, GraphWriter, ReapStats};
 
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 
-/// SignalStore that appends events then projects them to the graph.
-pub struct EventSourcedStore {
-    writer: GraphWriter,       // kept for READ methods + resource/edge pass-through
-    projector: GraphProjector, // sole write path for signal lifecycle
+/// SignalReader backed by Neo4j via GraphWriter. Infra ops use projector.
+pub struct EventSourcedReader {
+    writer: GraphWriter,       // read methods delegate here
+    projector: GraphProjector, // infra ops (reap, delete) project here
     event_store: EventStore,
     run_id: String,
 }
 
-impl EventSourcedStore {
+impl EventSourcedReader {
     pub fn new(
         writer: GraphWriter,
         projector: GraphProjector,
@@ -210,7 +207,7 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
 // Helpers
 // ---------------------------------------------------------------------------
 
-impl EventSourcedStore {
+impl EventSourcedReader {
     /// Append an event and project it to the graph.
     async fn append_and_project(&self, event: &Event, actor: Option<&str>) -> Result<()> {
         let mut append =
@@ -225,11 +222,11 @@ impl EventSourcedStore {
 }
 
 // ---------------------------------------------------------------------------
-// SignalStore implementation
+// SignalReader implementation
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl SignalStore for EventSourcedStore {
+impl SignalReader for EventSourcedReader {
     // --- Corroboration reads ---
 
     async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32> {

@@ -7,18 +7,18 @@ use rootsignal_graph::{GraphClient, GraphProjector, GraphWriter};
 use sqlx::PgPool;
 
 use crate::pipeline::ScoutEngine;
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 
-/// Build the production SignalStore: events → Postgres, projections → Neo4j.
+/// Build the production SignalReader: events → Postgres, projections → Neo4j.
 ///
 /// Pure assembly — no logic, no side effects. Caller owns the run_id and
 /// decides when to construct.
-pub fn build_signal_store(
+pub fn build_signal_reader(
     graph_client: GraphClient,
     pg_pool: PgPool,
     run_id: String,
-) -> event_sourced::EventSourcedStore {
-    event_sourced::EventSourcedStore::new(
+) -> event_sourced::EventSourcedReader {
+    event_sourced::EventSourcedReader::new(
         GraphWriter::new(graph_client.clone()),
         GraphProjector::new(graph_client),
         EventStore::new(pg_pool),
@@ -26,24 +26,24 @@ pub fn build_signal_store(
     )
 }
 
-/// Factory for creating per-operation SignalStore instances.
+/// Factory for creating per-operation SignalReader instances.
 ///
-/// Production: each call creates a new EventSourcedStore with a unique run_id,
+/// Production: each call creates a new EventSourcedReader with a unique run_id,
 /// giving proper event correlation per API mutation.
 ///
-/// Tests: wraps a shared MockSignalStore via `fixed()`.
-pub struct SignalStoreFactory {
-    create_fn: Box<dyn Fn() -> Arc<dyn SignalStore> + Send + Sync>,
+/// Tests: wraps a shared MockSignalReader via `fixed()`.
+pub struct SignalReaderFactory {
+    create_fn: Box<dyn Fn() -> Arc<dyn SignalReader> + Send + Sync>,
 }
 
-impl SignalStoreFactory {
-    /// Production factory: each `create()` yields a new EventSourcedStore
+impl SignalReaderFactory {
+    /// Production factory: each `create()` yields a new EventSourcedReader
     /// with a unique run_id.
     pub fn new(graph_client: GraphClient, pg_pool: PgPool) -> Self {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("api-{}", uuid::Uuid::new_v4());
-                Arc::new(build_signal_store(
+                Arc::new(build_signal_reader(
                     graph_client.clone(),
                     pg_pool.clone(),
                     run_id,
@@ -53,15 +53,15 @@ impl SignalStoreFactory {
     }
 
     /// Wrap a fixed store instance. Every `create()` returns the same Arc.
-    /// Useful for tests with MockSignalStore.
-    pub fn fixed(store: Arc<dyn SignalStore>) -> Self {
+    /// Useful for tests with MockSignalReader.
+    pub fn fixed(store: Arc<dyn SignalReader>) -> Self {
         Self {
             create_fn: Box::new(move || store.clone()),
         }
     }
 
-    /// Create a SignalStore for a single operation.
-    pub fn create(&self) -> Arc<dyn SignalStore> {
+    /// Create a SignalReader for a single operation.
+    pub fn create(&self) -> Arc<dyn SignalReader> {
         (self.create_fn)()
     }
 }
@@ -88,11 +88,11 @@ impl EngineFactory {
                     Arc::new(event_store) as Arc<dyn rootsignal_engine::EventPersister>,
                     run_id.clone(),
                 );
-                let store = Arc::new(build_signal_store(
+                let store = Arc::new(build_signal_reader(
                     graph_client.clone(),
                     pg_pool.clone(),
                     run_id.clone(),
-                )) as Arc<dyn SignalStore>;
+                )) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
                 let deps = crate::pipeline::state::PipelineDeps {
@@ -109,7 +109,7 @@ impl EngineFactory {
     }
 
     /// Test factory: engine with MemoryEventSink and no projector, mock store in deps.
-    pub fn fixed(store: Arc<dyn SignalStore>) -> Self {
+    pub fn fixed(store: Arc<dyn SignalReader>) -> Self {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("test-{}", uuid::Uuid::new_v4());

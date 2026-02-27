@@ -49,12 +49,12 @@ pub struct ScoutDeps {
 }
 
 impl ScoutDeps {
-    /// Build the production SignalStore from these deps.
+    /// Build the production SignalReader from these deps.
     pub fn build_store(
         &self,
         run_id: String,
-    ) -> crate::store::event_sourced::EventSourcedStore {
-        crate::store::build_signal_store(self.graph_client.clone(), self.pg_pool.clone(), run_id)
+    ) -> crate::store::event_sourced::EventSourcedReader {
+        crate::store::build_signal_reader(self.graph_client.clone(), self.pg_pool.clone(), run_id)
     }
 
     /// Build a ScoutEngine wired to the event store and graph projector.
@@ -72,7 +72,7 @@ impl ScoutDeps {
     /// Build PipelineDeps from the shared deps, wired to the given store/embedder.
     pub fn build_pipeline_deps(
         &self,
-        store: std::sync::Arc<dyn crate::traits::SignalStore>,
+        store: std::sync::Arc<dyn crate::traits::SignalReader>,
         embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
         fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
         region: rootsignal_common::ScoutScope,

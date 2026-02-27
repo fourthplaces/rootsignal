@@ -86,7 +86,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
                     Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
                 let pipe_deps = deps.build_pipeline_deps(
-                    Arc::new(store) as Arc<dyn crate::traits::SignalStore>,
+                    Arc::new(store) as Arc<dyn crate::traits::SignalReader>,
                     embedder,
                     Some(archive as Arc<dyn crate::traits::ContentFetcher>),
                     scope,

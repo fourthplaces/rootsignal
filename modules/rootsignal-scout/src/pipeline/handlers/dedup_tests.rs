@@ -12,7 +12,7 @@ use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::state::{ExtractedBatch, PipelineDeps, PipelineState};
 use crate::testing::*;
 
-fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
+fn test_deps(store: Arc<MockSignalReader>) -> PipelineDeps {
     PipelineDeps {
         store,
         embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
@@ -44,7 +44,7 @@ async fn run_dedup(
 
 #[tokio::test]
 async fn url_title_dedup_filters_existing_titles() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     store.add_url_titles(
         "https://example.org/events",
         vec!["Free Legal Clinic".to_string()],
@@ -85,7 +85,7 @@ async fn url_title_dedup_filters_existing_titles() {
 
 #[tokio::test]
 async fn all_titles_deduped_returns_no_events() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     store.add_url_titles(
         "https://example.org/events",
         vec!["Free Legal Clinic".to_string()],
@@ -122,7 +122,7 @@ async fn all_titles_deduped_returns_no_events() {
 
 #[tokio::test]
 async fn global_title_match_same_source_emits_reencountered() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
         rootsignal_common::types::NodeType::Tension,
@@ -163,7 +163,7 @@ async fn global_title_match_same_source_emits_reencountered() {
 
 #[tokio::test]
 async fn global_title_match_different_source_emits_cross_source_match() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
         rootsignal_common::types::NodeType::Tension,
@@ -208,7 +208,7 @@ async fn global_title_match_different_source_emits_cross_source_match() {
 
 #[tokio::test]
 async fn new_signal_emits_accepted_and_stashes_pending_node() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let mut state = PipelineState::new(HashMap::new());
 
@@ -256,7 +256,7 @@ async fn new_signal_emits_accepted_and_stashes_pending_node() {
 
 #[tokio::test]
 async fn create_stashes_tags_and_author_from_extraction_id() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let mut state = PipelineState::new(HashMap::new());
 
@@ -309,7 +309,7 @@ async fn create_stashes_tags_and_author_from_extraction_id() {
 
 #[tokio::test]
 async fn mixed_batch_emits_correct_verdicts() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Existing Event",
         rootsignal_common::types::NodeType::Tension,
@@ -361,7 +361,7 @@ async fn mixed_batch_emits_correct_verdicts() {
 
 #[tokio::test]
 async fn empty_batch_emits_only_dedup_completed() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let mut state = PipelineState::new(HashMap::new());
 
@@ -389,7 +389,7 @@ async fn empty_batch_emits_only_dedup_completed() {
 
 #[tokio::test]
 async fn missing_batch_returns_no_events() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let mut state = PipelineState::new(HashMap::new());
 
@@ -407,7 +407,7 @@ async fn missing_batch_returns_no_events() {
 
 #[tokio::test]
 async fn extracted_batch_consumed_after_dedup() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let mut state = PipelineState::new(HashMap::new());
 

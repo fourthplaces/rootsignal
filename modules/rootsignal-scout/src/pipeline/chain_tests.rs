@@ -80,7 +80,7 @@ async fn linktree_page_discovers_outbound_links() {
             },
         );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -173,7 +173,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -226,7 +226,7 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -290,7 +290,7 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
         vec![0.5f32; TEST_EMBEDDING_DIM],
     ));
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -359,7 +359,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -437,7 +437,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -505,7 +505,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -591,7 +591,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -675,7 +675,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
 
     // run_web sanitizes the URL before checking — pre-populate with sanitized URL
     let clean_url = crate::infra::util::sanitize_url(url);
-    let store = Arc::new(MockSignalStore::new().with_processed_hash(&hash, &clean_url));
+    let store = Arc::new(MockSignalReader::new().with_processed_hash(&hash, &clean_url));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -773,7 +773,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
             ),
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     // --- Phase A: scrape the Linktree ---
@@ -888,7 +888,7 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -942,7 +942,7 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1005,7 +1005,7 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(

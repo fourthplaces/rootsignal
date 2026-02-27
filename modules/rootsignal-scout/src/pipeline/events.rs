@@ -126,7 +126,7 @@ pub enum PipelineEvent {
     },
 
     // Signal stored (after world + system events emitted)
-    SignalStored {
+    SignalReaderd {
         node_id: Uuid,
         node_type: NodeType,
         source_url: String,
@@ -205,7 +205,7 @@ impl PipelineEvent {
             PipelineEvent::NewSignalAccepted { .. } => "new_signal_accepted",
             PipelineEvent::CrossSourceMatchDetected { .. } => "cross_source_match_detected",
             PipelineEvent::SameSourceReencountered { .. } => "same_source_reencountered",
-            PipelineEvent::SignalStored { .. } => "signal_stored",
+            PipelineEvent::SignalReaderd { .. } => "signal_stored",
             PipelineEvent::DedupCompleted { .. } => "dedup_completed",
             PipelineEvent::UrlProcessed { .. } => "url_processed",
             PipelineEvent::LinkCollected { .. } => "link_collected",

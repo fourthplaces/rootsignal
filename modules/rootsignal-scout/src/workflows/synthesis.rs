@@ -120,7 +120,7 @@ pub async fn run_synthesis_from_deps(
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
-    let store: Arc<dyn crate::traits::SignalStore> =
+    let store: Arc<dyn crate::traits::SignalReader> =
         Arc::new(deps.build_store(run_id.clone()));
     let engine = deps.build_engine(&run_id);
     let pipe_deps = deps.build_pipeline_deps(

@@ -111,8 +111,8 @@ impl Reducer<ScoutEvent, PipelineState> for ScoutReducer {
                 FreshnessBucket::Older | FreshnessBucket::Unknown => {}
             },
 
-            // SignalStored — clean up PendingNode (WiringContext stays until end of run)
-            PipelineEvent::SignalStored { node_id, .. } => {
+            // SignalReaderd — clean up PendingNode (WiringContext stays until end of run)
+            PipelineEvent::SignalReaderd { node_id, .. } => {
                 state.pending_nodes.remove(node_id);
             }
 

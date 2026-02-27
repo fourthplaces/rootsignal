@@ -12,7 +12,7 @@ use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphWriter;
-use rootsignal_scout::store::{EngineFactory, SignalStoreFactory};
+use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
 
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -741,19 +741,19 @@ async fn geocode_location(location: &str) -> anyhow::Result<(f64, f64, String)> 
 mod tests {
     use super::*;
     use async_graphql::{EmptySubscription, Schema};
-    use rootsignal_scout::traits::SignalStore;
-    use rootsignal_scout::store::{EngineFactory, SignalStoreFactory};
-    use rootsignal_scout::testing::MockSignalStore;
+    use rootsignal_scout::traits::SignalReader;
+    use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
+    use rootsignal_scout::testing::MockSignalReader;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
 
     use super::super::schema::QueryRoot;
 
-    /// Build a test schema with MockSignalStore, engine factory, RateLimiter, and ClientIp.
+    /// Build a test schema with MockSignalReader, engine factory, RateLimiter, and ClientIp.
     fn test_schema() -> Schema<QueryRoot, MutationRoot, EmptySubscription> {
-        let store = Arc::new(MockSignalStore::new());
-        let store_factory = SignalStoreFactory::fixed(store.clone() as Arc<dyn SignalStore>);
-        let engine_factory = EngineFactory::fixed(store.clone() as Arc<dyn SignalStore>);
+        let store = Arc::new(MockSignalReader::new());
+        let store_factory = SignalReaderFactory::fixed(store.clone() as Arc<dyn SignalReader>);
+        let engine_factory = EngineFactory::fixed(store.clone() as Arc<dyn SignalReader>);
         Schema::build(QueryRoot, MutationRoot, EmptySubscription)
             .data(Some(store_factory))
             .data(Some(engine_factory))

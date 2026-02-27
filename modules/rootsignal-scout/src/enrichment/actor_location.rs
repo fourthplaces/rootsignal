@@ -115,7 +115,7 @@ const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 ///
 /// Returns the count of actors whose location was updated.
 pub async fn enrich_actor_locations(
-    store: &dyn crate::traits::SignalStore,
+    store: &dyn crate::traits::SignalReader,
     engine: &crate::pipeline::ScoutEngine,
     deps: &crate::pipeline::state::PipelineDeps,
     actors: &[(

@@ -2,7 +2,7 @@
 //
 // Four mocks matching the four trait boundaries:
 // - MockFetcher (ContentFetcher) — HashMap-based URL→response
-// - MockSignalStore (SignalStore) — stateful in-memory graph
+// - MockSignalReader (SignalReader) — stateful in-memory graph
 // - FixedEmbedder (TextEmbedder) — deterministic hash-based vectors
 // - MockExtractor (SignalExtractor) — HashMap-based URL→ExtractionResult
 //
@@ -24,7 +24,7 @@ use rootsignal_common::canonical_value;
 use rootsignal_graph::{DuplicateMatch, ReapStats};
 
 use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
-use crate::traits::{ContentFetcher, SignalStore};
+use crate::traits::{ContentFetcher, SignalReader};
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -155,7 +155,7 @@ impl ContentFetcher for MockFetcher {
 }
 
 // ---------------------------------------------------------------------------
-// MockSignalStore
+// MockSignalReader
 // ---------------------------------------------------------------------------
 
 /// Stored signal entry in the mock graph.
@@ -183,8 +183,8 @@ pub struct ActorLink {
     pub role: String,
 }
 
-/// Inner mutable state for MockSignalStore.
-struct MockSignalStoreInner {
+/// Inner mutable state for MockSignalReader.
+struct MockSignalReaderInner {
     signals: HashMap<Uuid, StoredSignal>,
     /// (normalized_title, node_type) → signal_id for dedup lookups
     title_index: HashMap<(String, NodeType), Uuid>,
@@ -211,14 +211,14 @@ struct MockSignalStoreInner {
 
 /// Stateful in-memory graph mock. Thread-safe via interior Mutex.
 /// `create_node` inserts, `find_by_titles_and_types` queries, `corroborate` increments.
-pub struct MockSignalStore {
-    inner: Mutex<MockSignalStoreInner>,
+pub struct MockSignalReader {
+    inner: Mutex<MockSignalReaderInner>,
 }
 
-impl MockSignalStore {
+impl MockSignalReader {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(MockSignalStoreInner {
+            inner: Mutex::new(MockSignalReaderInner {
                 signals: HashMap::new(),
                 title_index: HashMap::new(),
                 url_titles: HashMap::new(),
@@ -402,7 +402,7 @@ impl MockSignalStore {
     ) -> Result<Uuid> {
         let mut inner = self.inner.lock().unwrap();
         if inner.fail_on_create {
-            bail!("MockSignalStore: create_node forced failure");
+            bail!("MockSignalReader: create_node forced failure");
         }
         let id = node.id();
         let title = node.title().to_string();
@@ -638,7 +638,7 @@ impl MockSignalStore {
 }
 
 #[async_trait]
-impl SignalStore for MockSignalStore {
+impl SignalReader for MockSignalReader {
     async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>> {
         let inner = self.inner.lock().unwrap();
         let blocked: HashSet<String> = urls
@@ -701,7 +701,7 @@ impl SignalStore for MockSignalStore {
         _min_lng: f64,
         _max_lng: f64,
     ) -> Result<Option<DuplicateMatch>> {
-        // MockSignalStore doesn't do vector similarity by default.
+        // MockSignalReader doesn't do vector similarity by default.
         // Chain tests that need dedup behavior should pre-populate via create_node
         // and rely on title-based dedup (find_by_titles_and_types).
         Ok(None)
@@ -1437,7 +1437,7 @@ pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
 }
 
 /// Create test PipelineDeps with a given store.
-pub fn test_pipeline_deps(store: std::sync::Arc<dyn crate::traits::SignalStore>) -> crate::pipeline::state::PipelineDeps {
+pub fn test_pipeline_deps(store: std::sync::Arc<dyn crate::traits::SignalReader>) -> crate::pipeline::state::PipelineDeps {
     crate::pipeline::state::PipelineDeps {
         store,
         embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
@@ -1468,7 +1468,7 @@ pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
 }
 
 // ---------------------------------------------------------------------------
-// MockSignalStore self-tests
+// MockSignalReader self-tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1485,7 +1485,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_then_find_returns_created_signal() {
-        let store = MockSignalStore::new();
+        let store = MockSignalReader::new();
         let node = tension_with_url("Housing Crisis Downtown", "https://example.com");
         let id = store
             .create_node(&node, &[0.1, 0.2, 0.3], "test", "run-1")
@@ -1509,7 +1509,7 @@ mod tests {
 
     #[tokio::test]
     async fn find_by_titles_returns_empty_for_unknown() {
-        let store = MockSignalStore::new();
+        let store = MockSignalReader::new();
         let results = store
             .find_by_titles_and_types(&[("nonexistent signal".to_string(), NodeType::Tension)])
             .await
@@ -1519,7 +1519,7 @@ mod tests {
 
     #[tokio::test]
     async fn actor_lifecycle() {
-        let store = MockSignalStore::new();
+        let store = MockSignalReader::new();
         let node = tension_with_url("Free Legal Clinic", "https://example.com");
         let signal_id = store
             .create_node(&node, &[0.1, 0.2], "test", "run-1")

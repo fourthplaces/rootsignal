@@ -54,7 +54,7 @@ pub async fn route_pipeline(
         } => creation::handle_refresh(*existing_id, *node_type, source_url, deps).await,
 
         // Signal stored → wire edges (tags, source, actor)
-        PipelineEvent::SignalStored {
+        PipelineEvent::SignalReaderd {
             node_id,
             node_type,
             source_url,

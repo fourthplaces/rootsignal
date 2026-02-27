@@ -56,7 +56,7 @@ async fn page_with_content_produces_signal() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -97,7 +97,7 @@ async fn empty_page_produces_nothing() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -126,7 +126,7 @@ async fn unreachable_page_does_not_crash() {
     let fetcher = MockFetcher::new();
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -183,7 +183,7 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -236,7 +236,7 @@ async fn same_title_extracted_twice_produces_one_signal() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -298,7 +298,7 @@ async fn all_signals_stored_regardless_of_region() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -346,7 +346,7 @@ async fn blocked_url_produces_nothing() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new().block_url("blocked.org"));
+    let store = Arc::new(MockSignalReader::new().block_url("blocked.org"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -391,7 +391,7 @@ async fn unchanged_content_is_not_re_extracted() {
     let extractor = MockExtractor::new();
 
     let store =
-        Arc::new(MockSignalStore::new().with_processed_hash(&hash, "https://news.org/same"));
+        Arc::new(MockSignalReader::new().with_processed_hash(&hash, "https://news.org/same"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -448,7 +448,7 @@ async fn outbound_links_on_page_are_collected() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -573,7 +573,7 @@ async fn scrape_then_promote_creates_new_sources() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -621,7 +621,7 @@ async fn unreachable_page_produces_no_signals() {
     let fetcher = MockFetcher::new();
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -665,7 +665,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -715,7 +715,7 @@ async fn database_write_failure_does_not_crash() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new().failing_creates());
+    let store = Arc::new(MockSignalReader::new().failing_creates());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -766,7 +766,7 @@ async fn blocked_url_produces_no_signals() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new().block_url("spam-site.org"));
+    let store = Arc::new(MockSignalReader::new().block_url("spam-site.org"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -818,7 +818,7 @@ async fn all_signal_types_are_stored() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -873,7 +873,7 @@ async fn unicode_and_emoji_titles_are_preserved() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -918,7 +918,7 @@ async fn signal_at_zero_zero_is_still_stored() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -956,7 +956,7 @@ async fn broken_extraction_skips_page_gracefully() {
     // MockExtractor has no URL registered → returns Err
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1007,7 +1007,7 @@ async fn blank_author_name_does_not_create_actor() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1065,7 +1065,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1093,7 +1093,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
 async fn zero_sources_produces_nothing() {
     let fetcher = MockFetcher::new();
     let extractor = MockExtractor::new();
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1130,7 +1130,7 @@ async fn outbound_links_collected_despite_extraction_failure() {
     // No extractor mapping → returns Err
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1176,7 +1176,7 @@ async fn empty_social_account_produces_nothing() {
 
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1211,7 +1211,7 @@ async fn image_only_posts_produce_no_signals() {
 
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1253,7 +1253,7 @@ async fn empty_markdown_page_still_collects_outbound_links() {
 
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1311,7 +1311,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1350,7 +1350,7 @@ async fn social_scrape_failure_does_not_crash() {
     let fetcher = MockFetcher::new();
     let extractor = MockExtractor::new();
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1404,7 +1404,7 @@ async fn batch_title_dedup_is_case_insensitive() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1457,7 +1457,7 @@ async fn web_source_without_actor_stores_content_location_only() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1502,7 +1502,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1558,7 +1558,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1624,7 +1624,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1682,7 +1682,7 @@ async fn bootstrap_actor_gets_depth_zero() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1753,7 +1753,7 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1820,7 +1820,7 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1870,7 +1870,7 @@ async fn social_published_at_becomes_published_at_fallback() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1926,7 +1926,7 @@ async fn ocean_coordinates_store_ecological_signal() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -1981,7 +1981,7 @@ async fn antarctic_coordinates_store_signal() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2038,7 +2038,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2104,7 +2104,7 @@ async fn environmental_disaster_produces_all_signal_types() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2171,7 +2171,7 @@ async fn hallucinated_future_date_does_not_crash() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2225,7 +2225,7 @@ async fn epoch_zero_date_does_not_crash() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2281,7 +2281,7 @@ async fn extremely_long_title_survives_pipeline() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2354,7 +2354,7 @@ async fn same_signal_from_two_sources_corroborates() {
             },
         );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2445,7 +2445,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2501,7 +2501,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2558,7 +2558,7 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2603,7 +2603,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2651,7 +2651,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2702,7 +2702,7 @@ async fn signal_has_produced_by_edge_to_its_source() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2745,7 +2745,7 @@ async fn social_signal_has_produced_by_edge() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -2776,7 +2776,7 @@ async fn social_signal_has_produced_by_edge() {
 // ---------------------------------------------------------------------------
 
 use crate::enrichment::actor_location::enrich_actor_locations;
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
@@ -2784,11 +2784,11 @@ use uuid::Uuid;
 /// Wrapper that creates test engine+deps and calls enrich_actor_locations,
 /// returning the event sink so tests can inspect dispatched events.
 async fn enrich_with_sink(
-    store: &dyn SignalStore,
+    store: &dyn SignalReader,
     actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
 ) -> (u32, std::sync::Arc<rootsignal_engine::MemoryEventSink>) {
-    let dummy_store: std::sync::Arc<dyn SignalStore> =
-        std::sync::Arc::new(crate::testing::MockSignalStore::new());
+    let dummy_store: std::sync::Arc<dyn SignalReader> =
+        std::sync::Arc::new(crate::testing::MockSignalReader::new());
     let sink = std::sync::Arc::new(rootsignal_engine::MemoryEventSink::new());
     let engine = std::sync::Arc::new(rootsignal_engine::Engine::new(
         crate::pipeline::reducer::ScoutReducer,
@@ -2803,7 +2803,7 @@ async fn enrich_with_sink(
 
 /// Wrapper for tests that only need the updated count.
 async fn enrich_with_engine(
-    store: &dyn SignalStore,
+    store: &dyn SignalReader,
     actors: &[(rootsignal_common::ActorNode, Vec<rootsignal_common::SourceNode>)],
 ) -> u32 {
     let (updated, _) = enrich_with_sink(store, actors).await;
@@ -2902,7 +2902,7 @@ fn tension_at_named(title: &str, lat: f64, lng: f64, loc_name: &str) -> rootsign
 
 /// Seed a signal linked to an actor and return the signal ID.
 async fn seed_signal(
-    store: &MockSignalStore,
+    store: &MockSignalReader,
     actor_id: Uuid,
     title: &str,
     lat: f64,
@@ -2927,7 +2927,7 @@ async fn seed_signal(
 
 #[tokio::test]
 async fn enrichment_updates_actor_to_signal_mode_location() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Northside Collective");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -2968,7 +2968,7 @@ async fn enrichment_updates_actor_to_signal_mode_location() {
 
 #[tokio::test]
 async fn enrichment_single_signal_insufficient_to_set_location() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Lone Signal Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3002,7 +3002,7 @@ async fn enrichment_single_signal_insufficient_to_set_location() {
 
 #[tokio::test]
 async fn enrichment_no_signals_leaves_actor_unchanged() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor_at("Rooted Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3024,7 +3024,7 @@ async fn enrichment_no_signals_leaves_actor_unchanged() {
 
 #[tokio::test]
 async fn enrichment_empty_actor_list_returns_zero() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     let updated = enrich_with_engine(&*store, &[]).await;
 
@@ -3037,7 +3037,7 @@ async fn enrichment_empty_actor_list_returns_zero() {
 
 #[tokio::test]
 async fn enrichment_tie_preserves_current_location() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor_at("Tied Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3080,7 +3080,7 @@ async fn enrichment_tie_preserves_current_location() {
 
 #[tokio::test]
 async fn enrichment_does_not_update_when_location_already_matches() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor_at("Stable Org", PHILLIPS.0, PHILLIPS.1, "Phillips");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3101,7 +3101,7 @@ async fn enrichment_does_not_update_when_location_already_matches() {
 
 #[tokio::test]
 async fn enrichment_processes_each_actor_independently() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     let actor_a = test_actor("Actor Alpha");
     let actor_b = test_actor("Actor Beta");
@@ -3163,7 +3163,7 @@ async fn enrichment_processes_each_actor_independently() {
 
 #[tokio::test]
 async fn enrichment_counts_only_actors_whose_location_changed() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     // Actor 1: no location → will be updated
     let actor_1 = test_actor("Updatable Org");
@@ -3211,7 +3211,7 @@ async fn enrichment_counts_only_actors_whose_location_changed() {
 
 #[tokio::test]
 async fn enrichment_overwrites_wrong_location_with_signal_mode() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     // Actor thinks they're in Powderhorn, but signals say Phillips
     let actor = test_actor_at("Mislocated Org", POWDERHORN.0, POWDERHORN.1, "Powderhorn");
     store.upsert_actor(&actor).await.unwrap();
@@ -3238,7 +3238,7 @@ async fn enrichment_overwrites_wrong_location_with_signal_mode() {
 
 #[tokio::test]
 async fn enrichment_three_neighborhoods_plurality_wins() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Spread Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3284,7 +3284,7 @@ async fn enrichment_three_neighborhoods_plurality_wins() {
 
 #[tokio::test]
 async fn enrichment_sets_coordinates_not_just_name() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Coord Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3314,7 +3314,7 @@ async fn enrichment_sets_coordinates_not_just_name() {
 
 #[tokio::test]
 async fn enrichment_blank_actor_with_no_signals_stays_blank() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Ghost Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3332,7 +3332,7 @@ async fn enrichment_blank_actor_with_no_signals_stays_blank() {
 
 #[tokio::test]
 async fn enrichment_ignores_mentioned_signals() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Mentioned Only");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3373,7 +3373,7 @@ async fn enrichment_ignores_mentioned_signals() {
 
 #[tokio::test]
 async fn enrichment_only_authored_signals_count_for_location() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Mixed Roles Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3412,7 +3412,7 @@ async fn enrichment_only_authored_signals_count_for_location() {
 
 #[tokio::test]
 async fn enrichment_exactly_two_signals_is_sufficient() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let actor = test_actor("Bare Minimum Org");
     store.upsert_actor(&actor).await.unwrap();
 
@@ -3484,7 +3484,7 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -3552,7 +3552,7 @@ async fn resource_roles_wire_to_correct_edge_types() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -3622,7 +3622,7 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
         },
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -3718,7 +3718,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
             .on_text("New Food Shelf Launch Beta content", vec_b),
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -3807,7 +3807,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
             .on_text("Pantry Schedule Info Beta info", vec_b),
     );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
 
     let phase = ScrapePhase::new(
         store.clone(),
@@ -3886,7 +3886,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
             },
         );
 
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     let phase = ScrapePhase::new(
@@ -3932,7 +3932,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
 
 #[tokio::test]
 async fn actor_bio_location_corroborated_by_signal_wins() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let mut actor = test_actor("Phillips Pantry");
     actor.bio = Some("Based in Phillips, Minneapolis".to_string());
     store.upsert_actor(&actor).await.unwrap();

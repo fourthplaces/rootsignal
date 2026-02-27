@@ -13,7 +13,7 @@ use crate::pipeline::state::{PendingNode, PipelineDeps, PipelineState, WiringCon
 use crate::testing::*;
 
 /// Build test PipelineDeps with a mock store.
-fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
+fn test_deps(store: Arc<MockSignalReader>) -> PipelineDeps {
     PipelineDeps {
         store,
         embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
@@ -30,7 +30,7 @@ fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
 
 #[tokio::test]
 async fn new_signal_emits_world_system_citation_and_signal_stored() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
 
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
@@ -55,7 +55,7 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         .unwrap();
 
     // Should emit: World(discovery) + System(sensitivity) + World(CitationRecorded)
-    //            + Pipeline(SignalStored)
+    //            + Pipeline(SignalReaderd)
     // May also emit System(ImpliedQueries) if the node has implied queries.
     assert!(events.len() >= 4, "expected at least 4 events, got {}", events.len());
 
@@ -76,16 +76,16 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
     ));
     assert!(has_citation, "expected CitationRecorded event");
 
-    // Last event: SignalStored pipeline event
+    // Last event: SignalReaderd pipeline event
     let last = events.last().unwrap();
     match last {
-        ScoutEvent::Pipeline(PipelineEvent::SignalStored { node_id: stored_id, .. }) => {
+        ScoutEvent::Pipeline(PipelineEvent::SignalReaderd { node_id: stored_id, .. }) => {
             assert_eq!(*stored_id, node_id);
         }
-        other => panic!("expected SignalStored, got {:?}", other),
+        other => panic!("expected SignalReaderd, got {:?}", other),
     }
 
-    // PendingNode still in state (handler reads, reducer cleans up on SignalStored)
+    // PendingNode still in state (handler reads, reducer cleans up on SignalReaderd)
     assert!(
         state.pending_nodes.contains_key(&node_id),
         "pending node should still be in state (handler reads, reducer cleans up)"
@@ -94,7 +94,7 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
 
 #[tokio::test]
 async fn missing_pending_node_returns_empty_events() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
 
     let mut state = PipelineState::new(HashMap::new());
@@ -113,7 +113,7 @@ async fn missing_pending_node_returns_empty_events() {
 
 #[tokio::test]
 async fn corroboration_emits_citation_world_and_system_events() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
 
     let existing_id = Uuid::new_v4();
@@ -175,7 +175,7 @@ async fn corroboration_emits_citation_world_and_system_events() {
 
 #[tokio::test]
 async fn refresh_emits_citation_and_freshness_confirmed() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
 
     let existing_id = Uuid::new_v4();
@@ -210,7 +210,7 @@ async fn refresh_emits_citation_and_freshness_confirmed() {
 
 #[tokio::test]
 async fn signal_stored_wires_tags_and_source_link() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store.clone());
 
     let node = tension_at("Community Dinner", 44.95, -93.27);
@@ -271,7 +271,7 @@ async fn signal_stored_wires_tags_and_source_link() {
 
 #[tokio::test]
 async fn signal_stored_with_author_emits_actor_linked() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store.clone());
 
     let node = tension_at("Food Distribution", 44.95, -93.27);
@@ -325,7 +325,7 @@ async fn signal_stored_with_author_emits_actor_linked() {
 
 #[tokio::test]
 async fn blank_author_name_does_not_create_actor() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store.clone());
 
     let node_id = Uuid::new_v4();

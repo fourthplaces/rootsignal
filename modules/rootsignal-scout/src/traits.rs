@@ -1,9 +1,10 @@
 // Trait abstractions for ScrapePhase dependencies.
 //
 // ContentFetcher replaces Arc<Archive> — all content fetching behind one trait.
-// SignalStore replaces GraphWriter — all graph writes behind one trait.
+// SignalReader — read-only graph queries (dedup, actors, sources) plus infra ops.
+//   All domain writes flow through the engine dispatch loop.
 //
-// These enable deterministic testing with MockFetcher and MockSignalStore:
+// These enable deterministic testing with MockFetcher and MockSignalReader:
 // no network, no database, no Docker. `cargo test` in seconds.
 
 use std::collections::{HashMap, HashSet};
@@ -85,11 +86,11 @@ impl ContentFetcher for rootsignal_archive::Archive {
 }
 
 // ---------------------------------------------------------------------------
-// SignalStore — replaces GraphWriter
+// SignalReader — read-only graph queries + infrastructure ops
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-pub trait SignalStore: Send + Sync {
+pub trait SignalReader: Send + Sync {
     // --- URL/content guards ---
 
     /// Return the subset of `urls` that match a blocked source pattern.

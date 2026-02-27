@@ -15,7 +15,7 @@ use rootsignal_graph::{query, GraphClient};
 use crate::pipeline::events::ScoutEvent;
 use crate::pipeline::state::{PipelineDeps, PipelineState};
 use crate::pipeline::ScoutEngine;
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -72,7 +72,7 @@ If a signal mentions no extractable actors, simply omit it. Return an empty acto
 
 /// Find signals with no ACTED_IN edges and extract actors from their text via LLM.
 pub async fn run_actor_extraction(
-    store: &dyn SignalStore,
+    store: &dyn SignalReader,
     client: &GraphClient,
     anthropic_api_key: &str,
     engine: &ScoutEngine,
@@ -104,7 +104,7 @@ pub async fn run_actor_extraction(
 }
 
 async fn run_actor_extraction_inner(
-    store: &dyn SignalStore,
+    store: &dyn SignalReader,
     client: &GraphClient,
     anthropic_api_key: &str,
     engine: &ScoutEngine,

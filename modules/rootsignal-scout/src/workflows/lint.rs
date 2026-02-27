@@ -13,7 +13,7 @@ use rootsignal_graph::GraphWriter;
 
 use crate::infra::run_log::RunLogger;
 use crate::lint::signal_lint::SignalLinter;
-use crate::traits::{ContentFetcher, SignalStore};
+use crate::traits::{ContentFetcher, SignalReader};
 
 use super::types::{EmptyRequest, SignalLintResult, TaskRequest};
 use super::ScoutDeps;
@@ -108,7 +108,7 @@ pub async fn run_signal_lint_from_deps(
     scope: &rootsignal_common::ScoutScope,
     task_id: &str,
 ) -> anyhow::Result<SignalLintResult> {
-    let store: Arc<dyn SignalStore> = Arc::new(GraphWriter::new(deps.graph_client.clone()));
+    let store: Arc<dyn SignalReader> = Arc::new(GraphWriter::new(deps.graph_client.clone()));
     let archive = super::create_archive(deps);
     let fetcher: Arc<dyn ContentFetcher> = archive;
     let logger = RunLogger::new(

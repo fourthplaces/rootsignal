@@ -42,7 +42,7 @@ impl Router<ScoutEvent, PipelineState, PipelineDeps> for TestRouter {
 }
 
 /// Build test PipelineDeps.
-fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
+fn test_deps(store: Arc<MockSignalReader>) -> PipelineDeps {
     PipelineDeps {
         store,
         embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
@@ -59,7 +59,7 @@ fn test_deps(store: Arc<MockSignalStore>) -> PipelineDeps {
 
 #[tokio::test]
 async fn new_signal_accepted_dispatches_full_event_chain() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store.clone());
     let sink = Arc::new(MemoryEventSink::new());
 
@@ -112,13 +112,13 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         "expected ActorIdentified event in sink"
     );
 
-    // PendingNode consumed by reducer on SignalStored, wiring contexts stay until end of run
+    // PendingNode consumed by reducer on SignalReaderd, wiring contexts stay until end of run
     assert!(!state.pending_nodes.contains_key(&node_id));
 }
 
 #[tokio::test]
 async fn new_signal_accepted_persists_causal_chain() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let sink = Arc::new(MemoryEventSink::new());
 
@@ -160,7 +160,7 @@ async fn new_signal_accepted_persists_causal_chain() {
     assert_eq!(events[0].event_type, "pipeline:new_signal_accepted");
     assert!(events[0].caused_by_seq.is_none());
 
-    // Children: World discovery + System + CitationRecorded + SignalStored
+    // Children: World discovery + System + CitationRecorded + SignalReaderd
     let children: Vec<_> = events
         .iter()
         .filter(|e| e.caused_by_seq == Some(events[0].seq))
@@ -185,7 +185,7 @@ async fn new_signal_accepted_persists_causal_chain() {
 
 #[tokio::test]
 async fn cross_source_match_dispatches_citation_and_scoring_events() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let sink = Arc::new(MemoryEventSink::new());
 
@@ -228,7 +228,7 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
 
 #[tokio::test]
 async fn same_source_reencountered_dispatches_citation_and_freshness() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let sink = Arc::new(MemoryEventSink::new());
 
@@ -270,7 +270,7 @@ async fn same_source_reencountered_dispatches_citation_and_freshness() {
 
 #[tokio::test]
 async fn signals_extracted_dispatches_dedup_and_creation_chain() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store.clone());
     let sink = Arc::new(MemoryEventSink::new());
 
@@ -315,7 +315,7 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
     // Extracted batch cleaned up by reducer on DedupCompleted
     assert!(state.extracted_batches.is_empty());
 
-    // Pending nodes cleaned up by reducer on SignalStored
+    // Pending nodes cleaned up by reducer on SignalReaderd
     assert!(state.pending_nodes.is_empty());
 
     // Wiring contexts stay until end of run (handler reads, not consumes)
@@ -335,7 +335,7 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
         .expect("expected NewSignalAccepted event");
     assert_eq!(new_signal.caused_by_seq, Some(events[0].seq));
 
-    // Grandchildren: World discovery + System + CitationRecorded + SignalStored
+    // Grandchildren: World discovery + System + CitationRecorded + SignalReaderd
     let grandchildren: Vec<_> = events
         .iter()
         .filter(|e| e.caused_by_seq == Some(new_signal.seq))
@@ -349,7 +349,7 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
 
 #[tokio::test]
 async fn signals_extracted_with_existing_title_emits_reencounter() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     // Pre-populate: "Community Dinner" exists at same URL
     let existing_id = store.insert_signal(
         "Community Dinner",
@@ -412,7 +412,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
 
 #[tokio::test]
 async fn source_discovered_increments_stat() {
-    let store = Arc::new(MockSignalStore::new());
+    let store = Arc::new(MockSignalReader::new());
     let sink = Arc::new(MemoryEventSink::new());
     let deps = test_deps(store);
 

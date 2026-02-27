@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::pipeline::ScoutEngine;
-use crate::traits::SignalStore;
+use crate::traits::SignalReader;
 
 use rootsignal_common::{
     is_web_query, scraping_strategy, DiscoveryMethod, ScoutScope, ScrapingStrategy, SourceNode,
@@ -24,7 +24,7 @@ use rootsignal_graph::{enrich, enrich_embeddings, GraphClient, GraphProjector, G
 
 use rootsignal_archive::Archive;
 
-use crate::store::event_sourced::EventSourcedStore;
+use crate::store::event_sourced::EventSourcedReader;
 
 use crate::discovery::source_finder::SourceFinderStats;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
@@ -51,7 +51,7 @@ pub(crate) fn check_cancelled_flag(cancelled: &AtomicBool) -> Result<()> {
 pub struct ScrapePipeline<'a> {
     writer: GraphWriter,
     graph_client: GraphClient,
-    store: Arc<EventSourcedStore>,
+    store: Arc<EventSourcedReader>,
     extractor: Arc<dyn SignalExtractor>,
     embedder: Arc<dyn TextEmbedder>,
     archive: Arc<Archive>,
@@ -91,7 +91,7 @@ impl<'a> ScrapePipeline<'a> {
         pg_pool: PgPool,
     ) -> Self {
         let store_projector = GraphProjector::new(graph_client.clone());
-        let store = Arc::new(EventSourcedStore::new(
+        let store = Arc::new(EventSourcedReader::new(
             writer.clone(),
             store_projector,
             event_store.clone(),
@@ -180,7 +180,7 @@ impl<'a> ScrapePipeline<'a> {
         // Ensure sources exist — EngineStarted handler seeds if empty.
         {
             let pipe_deps = crate::pipeline::state::PipelineDeps {
-                store: self.store.clone() as Arc<dyn SignalStore>,
+                store: self.store.clone() as Arc<dyn SignalReader>,
                 embedder: self.embedder.clone(),
                 region: Some(self.region.clone()),
                 run_id: self.run_id.clone(),
@@ -365,7 +365,7 @@ impl<'a> ScrapePipeline<'a> {
         }
 
         let phase = ScrapePhase::new(
-            self.store.clone() as Arc<dyn crate::traits::SignalStore>,
+            self.store.clone() as Arc<dyn crate::traits::SignalReader>,
             self.extractor.clone(),
             self.embedder.clone(),
             self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>,
@@ -545,7 +545,7 @@ impl<'a> ScrapePipeline<'a> {
     /// Record source metrics, update weights/cadence, deactivate dead sources.
     pub(crate) async fn update_source_metrics(&self, run: &ScheduledRun, ctx: &RunContext) {
         let pipe_deps = crate::pipeline::state::PipelineDeps {
-            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalStore>,
+            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>,
             embedder: self.embedder.clone(),
             region: Some(self.region.clone()),
             run_id: self.run_id.clone(),
@@ -677,7 +677,7 @@ impl<'a> ScrapePipeline<'a> {
         // Actor extraction — extract actors from signals that have none
         info!("=== Actor Extraction ===");
         let actor_deps = crate::pipeline::state::PipelineDeps {
-            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalStore>,
+            store: self.store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>,
             embedder: self.embedder.clone(),
             region: Some(self.region.clone()),
             run_id: self.run_id.clone(),
@@ -685,7 +685,7 @@ impl<'a> ScrapePipeline<'a> {
             anthropic_api_key: Some(self.anthropic_api_key.clone()),
         };
         let actor_stats = crate::enrichment::actor_extractor::run_actor_extraction(
-            self.store.as_ref() as &dyn crate::traits::SignalStore,
+            self.store.as_ref() as &dyn crate::traits::SignalReader,
             &self.graph_client,
             &self.anthropic_api_key,
             &*self.engine,

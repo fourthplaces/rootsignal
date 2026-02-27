@@ -15,7 +15,7 @@ use crate::lint::lint_tools::{
     CorrectSignalTool, LintState, LintVerdict, PassSignalTool, RejectSignalTool,
     ReadSourceTool,
 };
-use crate::traits::{ContentFetcher, SignalStore};
+use crate::traits::{ContentFetcher, SignalReader};
 
 const MAX_TOOL_TURNS: usize = 30;
 const MAX_SIGNALS_PER_BATCH: usize = 15;
@@ -42,7 +42,7 @@ Rules:
 "#;
 
 pub struct SignalLinter<L: EventLogger> {
-    store: Arc<dyn SignalStore>,
+    store: Arc<dyn SignalReader>,
     fetcher: Arc<dyn ContentFetcher>,
     anthropic_api_key: String,
     region: ScoutScope,
@@ -59,7 +59,7 @@ pub struct LintResult {
 
 impl<L: EventLogger> SignalLinter<L> {
     pub fn new(
-        store: Arc<dyn SignalStore>,
+        store: Arc<dyn SignalReader>,
         fetcher: Arc<dyn ContentFetcher>,
         anthropic_api_key: String,
         region: ScoutScope,

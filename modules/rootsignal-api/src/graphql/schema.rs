@@ -1304,7 +1304,7 @@ fn source_label_from_value(value: &str) -> String {
 pub fn build_schema(
     reader: Arc<CachedReader>,
     writer: Arc<GraphWriter>,
-    store_factory: Option<rootsignal_scout::store::SignalStoreFactory>,
+    store_factory: Option<rootsignal_scout::store::SignalReaderFactory>,
     engine_factory: Option<rootsignal_scout::store::EngineFactory>,
     jwt_service: JwtService,
     config: Arc<Config>,

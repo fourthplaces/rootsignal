@@ -21,7 +21,7 @@ use crate::infra::util::sanitize_url;
 use crate::pipeline::extractor::ResourceTag;
 use crate::pipeline::scrape_phase::EmbeddingCache;
 use crate::pipeline::stats::ScoutStats;
-use crate::traits::{ContentFetcher, SignalStore};
+use crate::traits::{ContentFetcher, SignalReader};
 
 /// Mutable state for a scout run, updated by the reducer.
 pub struct PipelineState {
@@ -113,7 +113,7 @@ pub struct WiringContext {
 /// since only the router (not individual handlers) needs to project
 /// World/System events to Neo4j.
 pub struct PipelineDeps {
-    pub store: Arc<dyn SignalStore>,
+    pub store: Arc<dyn SignalReader>,
     pub embedder: Arc<dyn TextEmbedder>,
     pub region: Option<ScoutScope>,
     pub run_id: String,
