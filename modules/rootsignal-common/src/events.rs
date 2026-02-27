@@ -1,44 +1,37 @@
-//! Unified event enum — facts about what happened in the world.
+//! Three-layer event wrapper — dispatches to WorldEvent, SystemDecision, TelemetryEvent.
 //!
-//! Every variant describes something the system observed or decided.
-//! No embeddings, no derived metrics, no infrastructure artifacts.
-//! Events serialize to `serde_json::Value` for the generic EventStore.
-//!
-//! Naming convention: events describe observations, not domain concepts.
-//! "Signal" is graph language — events don't know about it.
+//! The wrapper uses `#[serde(untagged)]` so deserialization tries each inner enum
+//! in order (world → system → telemetry). Each inner enum uses `#[serde(tag = "type")]`
+//! with distinct type tags, so exactly one will match.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use crate::safety::SensitivityLevel;
-use crate::types::{
-    ActorType, ChannelType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc,
-    SourceRole, Urgency,
-};
+use rootsignal_world::Eventlike;
 
 // ---------------------------------------------------------------------------
-// Value types — re-exported from rootsignal-world
+// Re-exports — value types from rootsignal-world
 // ---------------------------------------------------------------------------
 
 pub use rootsignal_world::values::{Location, Schedule, TagFact};
 
 // ---------------------------------------------------------------------------
+// Re-exports — the three event layers
+// ---------------------------------------------------------------------------
+
+pub use rootsignal_world::events::WorldEvent;
+pub use crate::system_events::SystemDecision;
+pub use crate::telemetry_events::TelemetryEvent;
+
+// ---------------------------------------------------------------------------
 // Nested change enums — typed field mutations
 // ---------------------------------------------------------------------------
 
-/// A typed change to a Source entity (legacy — includes both world + system fields).
-/// Kept for backward compat with existing events in Postgres.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum SourceChange {
-    Weight { old: f64, new: f64 },
-    Url { old: String, new: String },
-    Role { old: SourceRole, new: SourceRole },
-    QualityPenalty { old: f64, new: f64 },
-    GapContext { old: Option<String>, new: Option<String> },
-    Active { old: bool, new: bool },
-}
+use chrono::{DateTime, Utc};
+
+use crate::safety::SensitivityLevel;
+use crate::types::{
+    Severity, SituationArc, Urgency,
+};
 
 /// System-layer source changes — editorial decisions about a source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,661 +125,84 @@ pub enum TensionCorrection {
 }
 
 // ---------------------------------------------------------------------------
-// The Event enum — facts about what happened
+// The Event wrapper — thin dispatch to three layers
 // ---------------------------------------------------------------------------
 
-/// A fact about what happened. Infrastructure-agnostic, human-readable.
+/// Wrapper event that delegates to the three event layers.
 ///
-/// The `type` tag becomes the `event_type` column in the events table.
-/// The rest serializes to the `payload` JSONB column.
+/// Serialization preserves the inner enum's `#[serde(tag = "type")]` format.
+/// Deserialization uses `untagged` — tries WorldEvent first (most common),
+/// then SystemDecision, then TelemetryEvent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum Event {
-    // -----------------------------------------------------------------------
-    // Observability facts (migrated from scout_run_events)
-    // Graph reducer: no-op on all of these.
-    // -----------------------------------------------------------------------
-    UrlScraped {
-        url: String,
-        strategy: String,
-        success: bool,
-        content_bytes: usize,
-    },
-
-    FeedScraped {
-        url: String,
-        items: u32,
-    },
-
-    SocialScraped {
-        platform: String,
-        identifier: String,
-        post_count: u32,
-    },
-
-    SocialTopicsSearched {
-        platform: String,
-        topics: Vec<String>,
-        posts_found: u32,
-    },
-
-    SearchPerformed {
-        query: String,
-        provider: String,
-        result_count: u32,
-        canonical_key: String,
-    },
-
-    LlmExtractionCompleted {
-        source_url: String,
-        content_chars: usize,
-        entities_extracted: u32,
-        implied_queries: u32,
-    },
-
-    BudgetCheckpoint {
-        spent_cents: u64,
-        remaining_cents: u64,
-    },
-
-    BootstrapCompleted {
-        sources_created: u64,
-    },
-
-    AgentWebSearched {
-        provider: String,
-        query: String,
-        result_count: u32,
-        title: String,
-    },
-
-    AgentPageRead {
-        provider: String,
-        url: String,
-        content_chars: usize,
-        title: String,
-    },
-
-    AgentFutureQuery {
-        provider: String,
-        query: String,
-        title: String,
-    },
-
-    // -----------------------------------------------------------------------
-    // Discovery facts — 5 typed variants, each owns all its fields
-    // -----------------------------------------------------------------------
-    GatheringDiscovered {
-        id: Uuid,
-        title: String,
-        summary: String,
-        sensitivity: SensitivityLevel,
-        confidence: f32,
-        source_url: String,
-        extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
-        location: Option<Location>,
-        from_location: Option<Location>,
-        implied_queries: Vec<String>,
-        mentioned_actors: Vec<String>,
-        author_actor: Option<String>,
-        // Gathering-specific
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        schedule: Option<Schedule>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        action_url: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        organizer: Option<String>,
-    },
-
-    AidDiscovered {
-        id: Uuid,
-        title: String,
-        summary: String,
-        sensitivity: SensitivityLevel,
-        confidence: f32,
-        source_url: String,
-        extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
-        location: Option<Location>,
-        from_location: Option<Location>,
-        implied_queries: Vec<String>,
-        mentioned_actors: Vec<String>,
-        author_actor: Option<String>,
-        // Aid-specific
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        action_url: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        availability: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        is_ongoing: Option<bool>,
-    },
-
-    NeedDiscovered {
-        id: Uuid,
-        title: String,
-        summary: String,
-        sensitivity: SensitivityLevel,
-        confidence: f32,
-        source_url: String,
-        extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
-        location: Option<Location>,
-        from_location: Option<Location>,
-        implied_queries: Vec<String>,
-        mentioned_actors: Vec<String>,
-        author_actor: Option<String>,
-        // Need-specific
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        urgency: Option<Urgency>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        what_needed: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        goal: Option<String>,
-    },
-
-    NoticeDiscovered {
-        id: Uuid,
-        title: String,
-        summary: String,
-        sensitivity: SensitivityLevel,
-        confidence: f32,
-        source_url: String,
-        extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
-        location: Option<Location>,
-        from_location: Option<Location>,
-        implied_queries: Vec<String>,
-        mentioned_actors: Vec<String>,
-        author_actor: Option<String>,
-        // Notice-specific
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        severity: Option<Severity>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        category: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effective_date: Option<DateTime<Utc>>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_authority: Option<String>,
-    },
-
-    TensionDiscovered {
-        id: Uuid,
-        title: String,
-        summary: String,
-        sensitivity: SensitivityLevel,
-        confidence: f32,
-        source_url: String,
-        extracted_at: DateTime<Utc>,
-        content_date: Option<DateTime<Utc>>,
-        location: Option<Location>,
-        from_location: Option<Location>,
-        implied_queries: Vec<String>,
-        mentioned_actors: Vec<String>,
-        author_actor: Option<String>,
-        // Tension-specific
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        severity: Option<Severity>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        what_would_help: Option<String>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Observation lifecycle facts
-    // -----------------------------------------------------------------------
-    ObservationCorroborated {
-        entity_id: Uuid,
-        node_type: NodeType,
-        new_source_url: String,
-        similarity: f64,
-        new_corroboration_count: u32,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        summary: Option<String>,
-    },
-
-    FreshnessConfirmed {
-        entity_ids: Vec<Uuid>,
-        node_type: NodeType,
-        confirmed_at: DateTime<Utc>,
-    },
-
-    ConfidenceScored {
-        entity_id: Uuid,
-        old_confidence: f32,
-        new_confidence: f32,
-    },
-
-    ObservationRejected {
-        entity_id: Option<Uuid>,
-        title: String,
-        source_url: String,
-        reason: String,
-    },
-
-    EntityExpired {
-        entity_id: Uuid,
-        node_type: NodeType,
-        reason: String,
-    },
-
-    EntityPurged {
-        entity_id: Uuid,
-        node_type: NodeType,
-        reason: String,
-        context: Option<String>,
-    },
-
-    DuplicateDetected {
-        node_type: NodeType,
-        title: String,
-        matched_id: Uuid,
-        similarity: f64,
-        action: String,
-        source_url: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        summary: Option<String>,
-    },
-
-    ExtractionDroppedNoDate {
-        title: String,
-        source_url: String,
-    },
-
-    ReviewVerdictReached {
-        entity_id: Uuid,
-        old_status: String,
-        new_status: String,
-        reason: String,
-    },
-
-    ImpliedQueriesConsumed {
-        entity_ids: Vec<Uuid>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Correction facts — one event per entity type, typed inner enum
-    // -----------------------------------------------------------------------
-    GatheringCorrected {
-        entity_id: Uuid,
-        correction: GatheringCorrection,
-        reason: String,
-    },
-
-    AidCorrected {
-        entity_id: Uuid,
-        correction: AidCorrection,
-        reason: String,
-    },
-
-    NeedCorrected {
-        entity_id: Uuid,
-        correction: NeedCorrection,
-        reason: String,
-    },
-
-    NoticeCorrected {
-        entity_id: Uuid,
-        correction: NoticeCorrection,
-        reason: String,
-    },
-
-    TensionCorrected {
-        entity_id: Uuid,
-        correction: TensionCorrection,
-        reason: String,
-    },
-
-    // -----------------------------------------------------------------------
-    // Citation facts
-    // -----------------------------------------------------------------------
-    CitationRecorded {
-        citation_id: Uuid,
-        entity_id: Uuid,
-        url: String,
-        content_hash: String,
-        snippet: Option<String>,
-        relevance: Option<String>,
-        channel_type: Option<ChannelType>,
-        evidence_confidence: Option<f32>,
-    },
-
-    OrphanedCitationsCleaned {
-        citation_ids: Vec<Uuid>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Source facts
-    // -----------------------------------------------------------------------
-    SourceRegistered {
-        source_id: Uuid,
-        canonical_key: String,
-        canonical_value: String,
-        url: Option<String>,
-        discovery_method: DiscoveryMethod,
-        weight: f64,
-        source_role: SourceRole,
-        gap_context: Option<String>,
-    },
-
-    SourceChanged {
-        source_id: Uuid,
-        canonical_key: String,
-        change: SourceChange,
-    },
-
-    SourceDeactivated {
-        source_ids: Vec<Uuid>,
-        reason: String,
-    },
-
-    SourceLinkDiscovered {
-        child_id: Uuid,
-        parent_canonical_key: String,
-    },
-
-    ExpansionQueryCollected {
-        query: String,
-        source_url: String,
-    },
-
-    // -----------------------------------------------------------------------
-    // Actor facts
-    // -----------------------------------------------------------------------
-    ActorIdentified {
-        actor_id: Uuid,
-        name: String,
-        actor_type: ActorType,
-        entity_id: String,
-        domains: Vec<String>,
-        social_urls: Vec<String>,
-        description: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bio: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        location_lat: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        location_lng: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        location_name: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        discovery_depth: Option<u32>,
-    },
-
-    ActorLinkedToEntity {
-        actor_id: Uuid,
-        entity_id: Uuid,
-        role: String,
-    },
-
-    ActorLinkedToSource {
-        actor_id: Uuid,
-        source_id: Uuid,
-    },
-
-    ActorLocationIdentified {
-        actor_id: Uuid,
-        location_lat: f64,
-        location_lng: f64,
-        location_name: Option<String>,
-    },
-
-    DuplicateActorsMerged {
-        kept_id: Uuid,
-        merged_ids: Vec<Uuid>,
-    },
-
-    OrphanedActorsCleaned {
-        actor_ids: Vec<Uuid>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Situation / dispatch facts
-    // -----------------------------------------------------------------------
-    SituationIdentified {
-        situation_id: Uuid,
-        headline: String,
-        lede: String,
-        arc: SituationArc,
-        temperature: f64,
-        centroid_lat: Option<f64>,
-        centroid_lng: Option<f64>,
-        location_name: Option<String>,
-        sensitivity: SensitivityLevel,
-        category: Option<String>,
-        structured_state: String,
-    },
-
-    SituationChanged {
-        situation_id: Uuid,
-        change: SituationChange,
-    },
-
-    SituationPromoted {
-        situation_ids: Vec<Uuid>,
-    },
-
-    DispatchCreated {
-        dispatch_id: Uuid,
-        situation_id: Uuid,
-        body: String,
-        entity_ids: Vec<Uuid>,
-        dispatch_type: DispatchType,
-        supersedes: Option<Uuid>,
-        fidelity_score: Option<f64>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Tag facts
-    // -----------------------------------------------------------------------
-    TagSuppressed {
-        situation_id: Uuid,
-        tag_slug: String,
-    },
-
-    TagsMerged {
-        source_slug: String,
-        target_slug: String,
-    },
-
-    // -----------------------------------------------------------------------
-    // Quality / lint facts
-    // -----------------------------------------------------------------------
-    EmptyEntitiesCleaned {
-        entity_ids: Vec<Uuid>,
-    },
-
-    FakeCoordinatesNulled {
-        entity_ids: Vec<Uuid>,
-        old_coords: Vec<(f64, f64)>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Pin / demand / submission facts
-    // -----------------------------------------------------------------------
-    PinCreated {
-        pin_id: Uuid,
-        location_lat: f64,
-        location_lng: f64,
-        source_id: Uuid,
-        created_by: String,
-    },
-
-    PinsRemoved {
-        pin_ids: Vec<Uuid>,
-    },
-
-    DemandReceived {
-        demand_id: Uuid,
-        query: String,
-        center_lat: f64,
-        center_lng: f64,
-        radius_km: f64,
-    },
-
-    DemandAggregated {
-        created_task_ids: Vec<Uuid>,
-        consumed_demand_ids: Vec<Uuid>,
-    },
-
-    SubmissionReceived {
-        submission_id: Uuid,
-        url: String,
-        reason: Option<String>,
-        source_canonical_key: Option<String>,
-    },
-
-    // -----------------------------------------------------------------------
-    // Edge facts — resource and relationship edges
-    // -----------------------------------------------------------------------
-    ResourceEdgeCreated {
-        signal_id: Uuid,
-        resource_id: Uuid,
-        role: String,
-        confidence: f32,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        quantity: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        notes: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        capacity: Option<String>,
-    },
-
-    ResponseLinked {
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: String,
-    },
-
-    GravityLinked {
-        signal_id: Uuid,
-        tension_id: Uuid,
-        strength: f64,
-        explanation: String,
-        gathering_type: String,
-    },
+    World(WorldEvent),
+    System(SystemDecision),
+    Telemetry(TelemetryEvent),
 }
-
-// ---------------------------------------------------------------------------
-// Event → event_type string (for the events table column)
-// ---------------------------------------------------------------------------
 
 impl Event {
     /// The snake_case event type string for this variant.
     pub fn event_type(&self) -> &'static str {
         match self {
-            // Observability
-            Event::UrlScraped { .. } => "url_scraped",
-            Event::FeedScraped { .. } => "feed_scraped",
-            Event::SocialScraped { .. } => "social_scraped",
-            Event::SocialTopicsSearched { .. } => "social_topics_searched",
-            Event::SearchPerformed { .. } => "search_performed",
-            Event::LlmExtractionCompleted { .. } => "llm_extraction_completed",
-            Event::BudgetCheckpoint { .. } => "budget_checkpoint",
-            Event::BootstrapCompleted { .. } => "bootstrap_completed",
-            Event::AgentWebSearched { .. } => "agent_web_searched",
-            Event::AgentPageRead { .. } => "agent_page_read",
-            Event::AgentFutureQuery { .. } => "agent_future_query",
-            // Discovery
-            Event::GatheringDiscovered { .. } => "gathering_discovered",
-            Event::AidDiscovered { .. } => "aid_discovered",
-            Event::NeedDiscovered { .. } => "need_discovered",
-            Event::NoticeDiscovered { .. } => "notice_discovered",
-            Event::TensionDiscovered { .. } => "tension_discovered",
-            // Observation lifecycle
-            Event::ObservationCorroborated { .. } => "observation_corroborated",
-            Event::FreshnessConfirmed { .. } => "freshness_confirmed",
-            Event::ConfidenceScored { .. } => "confidence_scored",
-            Event::ObservationRejected { .. } => "observation_rejected",
-            Event::EntityExpired { .. } => "entity_expired",
-            Event::EntityPurged { .. } => "entity_purged",
-            Event::DuplicateDetected { .. } => "duplicate_detected",
-            Event::ExtractionDroppedNoDate { .. } => "extraction_dropped_no_date",
-            Event::ReviewVerdictReached { .. } => "review_verdict_reached",
-            Event::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
-            // Corrections
-            Event::GatheringCorrected { .. } => "gathering_corrected",
-            Event::AidCorrected { .. } => "aid_corrected",
-            Event::NeedCorrected { .. } => "need_corrected",
-            Event::NoticeCorrected { .. } => "notice_corrected",
-            Event::TensionCorrected { .. } => "tension_corrected",
-            // Citations
-            Event::CitationRecorded { .. } => "citation_recorded",
-            Event::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
-            // Sources
-            Event::SourceRegistered { .. } => "source_registered",
-            Event::SourceChanged { .. } => "source_changed",
-            Event::SourceDeactivated { .. } => "source_deactivated",
-            Event::SourceLinkDiscovered { .. } => "source_link_discovered",
-            Event::ExpansionQueryCollected { .. } => "expansion_query_collected",
-            // Actors
-            Event::ActorIdentified { .. } => "actor_identified",
-            Event::ActorLinkedToEntity { .. } => "actor_linked_to_entity",
-            Event::ActorLinkedToSource { .. } => "actor_linked_to_source",
-            Event::ActorLocationIdentified { .. } => "actor_location_identified",
-            Event::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
-            Event::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
-            // Situations / dispatches
-            Event::SituationIdentified { .. } => "situation_identified",
-            Event::SituationChanged { .. } => "situation_changed",
-            Event::SituationPromoted { .. } => "situation_promoted",
-            Event::DispatchCreated { .. } => "dispatch_created",
-            // Tags
-            Event::TagSuppressed { .. } => "tag_suppressed",
-            Event::TagsMerged { .. } => "tags_merged",
-            // Quality / lint
-            Event::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
-            Event::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
-            // Pins / demand / submissions
-            Event::PinCreated { .. } => "pin_created",
-            Event::PinsRemoved { .. } => "pins_removed",
-            Event::DemandReceived { .. } => "demand_received",
-            Event::DemandAggregated { .. } => "demand_aggregated",
-            Event::SubmissionReceived { .. } => "submission_received",
-            // Signal-source linkage
-            // Edge facts
-            Event::ResourceEdgeCreated { .. } => "resource_edge_created",
-            Event::ResponseLinked { .. } => "response_linked",
-            Event::GravityLinked { .. } => "gravity_linked",
+            Event::World(w) => w.event_type(),
+            Event::System(s) => s.event_type(),
+            Event::Telemetry(t) => t.event_type(),
         }
     }
 
     /// Serialize this event to a JSON Value for the EventStore payload.
     pub fn to_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("Event serialization should never fail")
+        match self {
+            Event::World(w) => w.to_payload(),
+            Event::System(s) => s.to_payload(),
+            Event::Telemetry(t) => t.to_payload(),
+        }
     }
 
-    /// Deserialize an event from a JSON payload + event_type.
+    /// Deserialize an event from a JSON payload.
+    ///
+    /// Tries WorldEvent → SystemDecision → TelemetryEvent (via `#[serde(untagged)]`).
     pub fn from_payload(payload: &serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(payload.clone())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Convenience constructors for ergonomic wrapping
+// ---------------------------------------------------------------------------
+
+impl From<WorldEvent> for Event {
+    fn from(w: WorldEvent) -> Self {
+        Event::World(w)
+    }
+}
+
+impl From<SystemDecision> for Event {
+    fn from(s: SystemDecision) -> Self {
+        Event::System(s)
+    }
+}
+
+impl From<TelemetryEvent> for Event {
+    fn from(t: TelemetryEvent) -> Self {
+        Event::Telemetry(t)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+    use chrono::Utc;
+    use crate::safety::SensitivityLevel;
 
     #[test]
-    fn event_type_matches_serde_tag() {
-        let event = Event::UrlScraped {
-            url: "https://example.com".into(),
-            strategy: "web_page".into(),
-            success: true,
-            content_bytes: 1024,
-        };
-        assert_eq!(event.event_type(), "url_scraped");
-
-        let json = event.to_payload();
-        assert_eq!(json["type"].as_str().unwrap(), "url_scraped");
-    }
-
-    #[test]
-    fn gathering_discovered_roundtrip() {
-        let event = Event::GatheringDiscovered {
+    fn world_event_roundtrips_through_wrapper() {
+        let world = WorldEvent::GatheringDiscovered {
             id: Uuid::new_v4(),
             title: "Community Cleanup".into(),
             summary: "Monthly neighborhood cleanup".into(),
-            sensitivity: SensitivityLevel::General,
             confidence: 0.85,
             source_url: "https://example.com/cleanup".into(),
             extracted_at: Utc::now(),
@@ -801,7 +217,6 @@ mod tests {
                 address: None,
             }),
             from_location: None,
-            implied_queries: vec!["cleanup Minneapolis".into()],
             mentioned_actors: vec!["Lake Street Council".into()],
             author_actor: None,
             schedule: Some(Schedule {
@@ -815,123 +230,126 @@ mod tests {
             organizer: Some("Lake Street Council".into()),
         };
 
+        let event = Event::World(world);
         let payload = event.to_payload();
+        assert_eq!(payload["type"].as_str().unwrap(), "gathering_discovered");
+
         let roundtripped = Event::from_payload(&payload).unwrap();
+        assert_eq!(roundtripped.event_type(), "gathering_discovered");
 
         match roundtripped {
-            Event::GatheringDiscovered { title, confidence, schedule, .. } => {
+            Event::World(WorldEvent::GatheringDiscovered { title, confidence, schedule, .. }) => {
                 assert_eq!(title, "Community Cleanup");
                 assert!((confidence - 0.85).abs() < f32::EPSILON);
                 assert!(schedule.is_some());
                 assert_eq!(schedule.unwrap().rrule.unwrap(), "FREQ=MONTHLY;BYDAY=1SA");
             }
-            _ => panic!("Expected GatheringDiscovered"),
+            _ => panic!("Expected Event::World(WorldEvent::GatheringDiscovered)"),
         }
     }
 
     #[test]
-    fn aid_discovered_roundtrip() {
-        let event = Event::AidDiscovered {
-            id: Uuid::new_v4(),
-            title: "Food Shelf".into(),
-            summary: "Free groceries".into(),
-            sensitivity: SensitivityLevel::General,
-            confidence: 0.9,
-            source_url: "https://example.com/food".into(),
-            extracted_at: Utc::now(),
-            content_date: None,
-            location: None,
-            from_location: None,
-            implied_queries: vec![],
-            mentioned_actors: vec![],
-            author_actor: None,
-            action_url: Some("https://example.com/food".into()),
-            availability: Some("Monday-Friday 9am-5pm".into()),
-            is_ongoing: Some(true),
+    fn system_decision_roundtrips_through_wrapper() {
+        let system = SystemDecision::SensitivityClassified {
+            entity_id: Uuid::new_v4(),
+            level: SensitivityLevel::Sensitive,
         };
 
+        let event = Event::System(system);
         let payload = event.to_payload();
-        let roundtripped = Event::from_payload(&payload).unwrap();
+        assert_eq!(payload["type"].as_str().unwrap(), "sensitivity_classified");
 
+        let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::AidDiscovered { title, availability, .. } => {
-                assert_eq!(title, "Food Shelf");
-                assert_eq!(availability.unwrap(), "Monday-Friday 9am-5pm");
+            Event::System(SystemDecision::SensitivityClassified { level, .. }) => {
+                assert_eq!(level, SensitivityLevel::Sensitive);
             }
-            _ => panic!("Expected AidDiscovered"),
+            _ => panic!("Expected Event::System(SystemDecision::SensitivityClassified)"),
         }
     }
 
     #[test]
-    fn tension_discovered_roundtrip() {
-        let event = Event::TensionDiscovered {
-            id: Uuid::new_v4(),
-            title: "Housing Shortage".into(),
-            summary: "Affordable units declining".into(),
-            sensitivity: SensitivityLevel::General,
-            confidence: 0.75,
-            source_url: "https://example.com/housing".into(),
-            extracted_at: Utc::now(),
-            content_date: None,
-            location: None,
-            from_location: None,
-            implied_queries: vec![],
-            mentioned_actors: vec![],
-            author_actor: None,
-            severity: Some(Severity::High),
-            what_would_help: Some("More affordable housing construction".into()),
+    fn telemetry_event_roundtrips_through_wrapper() {
+        let telemetry = TelemetryEvent::UrlScraped {
+            url: "https://example.com".into(),
+            strategy: "web_page".into(),
+            success: true,
+            content_bytes: 1024,
         };
 
+        let event = Event::Telemetry(telemetry);
+        let payload = event.to_payload();
+        assert_eq!(payload["type"].as_str().unwrap(), "url_scraped");
+
+        let roundtripped = Event::from_payload(&payload).unwrap();
+        assert_eq!(roundtripped.event_type(), "url_scraped");
+    }
+
+    #[test]
+    fn implied_queries_extracted_roundtrips() {
+        let system = SystemDecision::ImpliedQueriesExtracted {
+            entity_id: Uuid::new_v4(),
+            queries: vec!["cleanup Minneapolis".into(), "volunteer events".into()],
+        };
+
+        let event = Event::System(system);
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
-
         match roundtripped {
-            Event::TensionDiscovered { title, severity, .. } => {
-                assert_eq!(title, "Housing Shortage");
-                assert_eq!(severity.unwrap(), Severity::High);
+            Event::System(SystemDecision::ImpliedQueriesExtracted { queries, .. }) => {
+                assert_eq!(queries.len(), 2);
+                assert_eq!(queries[0], "cleanup Minneapolis");
             }
-            _ => panic!("Expected TensionDiscovered"),
+            _ => panic!("Expected ImpliedQueriesExtracted"),
         }
     }
 
     #[test]
     fn source_change_nested_enum_roundtrip() {
-        let event = Event::SourceChanged {
+        // Legacy SourceChange still roundtrips via WorldEvent::SourceChanged (WorldSourceChange)
+        let world = WorldEvent::SourceChanged {
             source_id: Uuid::new_v4(),
             canonical_key: "web:example.com".into(),
-            change: SourceChange::Weight { old: 0.5, new: 0.8 },
+            change: rootsignal_world::values::WorldSourceChange::Weight { old: 0.5, new: 0.8 },
         };
 
+        let event = Event::World(world);
         let payload = event.to_payload();
         let json_change = &payload["change"];
         assert_eq!(json_change["field"].as_str().unwrap(), "weight");
 
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::SourceChanged { change: SourceChange::Weight { old, new }, .. } => {
-                assert!((old - 0.5).abs() < f64::EPSILON);
-                assert!((new - 0.8).abs() < f64::EPSILON);
+            Event::World(WorldEvent::SourceChanged { change, .. }) => {
+                match change {
+                    rootsignal_world::values::WorldSourceChange::Weight { old, new } => {
+                        assert!((old - 0.5).abs() < f64::EPSILON);
+                        assert!((new - 0.8).abs() < f64::EPSILON);
+                    }
+                    _ => panic!("Expected WorldSourceChange::Weight"),
+                }
             }
-            _ => panic!("Expected SourceChanged::Weight"),
+            _ => panic!("Expected Event::World(WorldEvent::SourceChanged)"),
         }
     }
 
     #[test]
     fn situation_change_nested_enum_roundtrip() {
-        let event = Event::SituationChanged {
+        let system = SystemDecision::SituationChanged {
             situation_id: Uuid::new_v4(),
             change: SituationChange::Arc {
-                old: SituationArc::Emerging,
-                new: SituationArc::Developing,
+                old: crate::types::SituationArc::Emerging,
+                new: crate::types::SituationArc::Developing,
             },
         };
 
+        let event = Event::System(system);
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::SituationChanged { change: SituationChange::Arc { old, new }, .. } => {
-                assert_eq!(old, SituationArc::Emerging);
-                assert_eq!(new, SituationArc::Developing);
+            Event::System(SystemDecision::SituationChanged { change: SituationChange::Arc { old, new }, .. }) => {
+                assert_eq!(old, crate::types::SituationArc::Emerging);
+                assert_eq!(new, crate::types::SituationArc::Developing);
             }
             _ => panic!("Expected SituationChanged::Arc"),
         }
@@ -939,7 +357,7 @@ mod tests {
 
     #[test]
     fn gathering_correction_roundtrip() {
-        let event = Event::GatheringCorrected {
+        let system = SystemDecision::GatheringCorrected {
             entity_id: Uuid::new_v4(),
             correction: GatheringCorrection::Title {
                 old: "Commuinty Cleanup".into(),
@@ -948,10 +366,11 @@ mod tests {
             reason: "Typo in title".into(),
         };
 
+        let event = Event::System(system);
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
         match roundtripped {
-            Event::GatheringCorrected { correction: GatheringCorrection::Title { old, new }, reason, .. } => {
+            Event::System(SystemDecision::GatheringCorrected { correction: GatheringCorrection::Title { old, new }, reason, .. }) => {
                 assert_eq!(old, "Commuinty Cleanup");
                 assert_eq!(new, "Community Cleanup");
                 assert_eq!(reason, "Typo in title");
@@ -961,50 +380,25 @@ mod tests {
     }
 
     #[test]
-    fn all_event_types_are_unique() {
-        let types = vec![
-            Event::UrlScraped { url: String::new(), strategy: String::new(), success: true, content_bytes: 0 }.event_type(),
-            Event::GatheringDiscovered {
-                id: Uuid::nil(), title: String::new(), summary: String::new(),
-                sensitivity: SensitivityLevel::General, confidence: 0.0,
-                source_url: String::new(), extracted_at: Utc::now(),
-                content_date: None, location: None, from_location: None,
-                implied_queries: vec![], mentioned_actors: vec![],
-                author_actor: None, schedule: None, action_url: None, organizer: None,
-            }.event_type(),
-            Event::AidDiscovered {
-                id: Uuid::nil(), title: String::new(), summary: String::new(),
-                sensitivity: SensitivityLevel::General, confidence: 0.0,
-                source_url: String::new(), extracted_at: Utc::now(),
-                content_date: None, location: None, from_location: None,
-                implied_queries: vec![], mentioned_actors: vec![],
-                author_actor: None, action_url: None, availability: None, is_ongoing: None,
-            }.event_type(),
-            Event::TensionDiscovered {
-                id: Uuid::nil(), title: String::new(), summary: String::new(),
-                sensitivity: SensitivityLevel::General, confidence: 0.0,
-                source_url: String::new(), extracted_at: Utc::now(),
-                content_date: None, location: None, from_location: None,
-                implied_queries: vec![], mentioned_actors: vec![],
-                author_actor: None, severity: None, what_would_help: None,
-            }.event_type(),
-            Event::CitationRecorded {
-                citation_id: Uuid::nil(), entity_id: Uuid::nil(),
-                url: String::new(), content_hash: String::new(),
-                snippet: None, relevance: None, channel_type: None, evidence_confidence: None,
-            }.event_type(),
-            Event::SourceChanged {
-                source_id: Uuid::nil(), canonical_key: String::new(),
-                change: SourceChange::Weight { old: 0.0, new: 0.0 },
-            }.event_type(),
-            Event::GatheringCorrected {
-                entity_id: Uuid::nil(),
-                correction: GatheringCorrection::Title { old: String::new(), new: String::new() },
-                reason: String::new(),
-            }.event_type(),
-        ];
-        let unique: std::collections::HashSet<&str> = types.iter().copied().collect();
-        assert_eq!(types.len(), unique.len(), "Duplicate event_type strings found");
+    fn from_impls_work() {
+        let w: Event = WorldEvent::SourceDeactivated {
+            source_ids: vec![],
+            reason: "test".into(),
+        }.into();
+        assert_eq!(w.event_type(), "source_deactivated");
+
+        let s: Event = SystemDecision::EntityExpired {
+            entity_id: Uuid::new_v4(),
+            node_type: crate::types::NodeType::Gathering,
+            reason: "test".into(),
+        }.into();
+        assert_eq!(s.event_type(), "entity_expired");
+
+        let t: Event = TelemetryEvent::BudgetCheckpoint {
+            spent_cents: 100,
+            remaining_cents: 900,
+        }.into();
+        assert_eq!(t.event_type(), "budget_checkpoint");
     }
 
     #[test]

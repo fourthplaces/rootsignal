@@ -99,6 +99,11 @@ pub enum SystemDecision {
         level: SensitivityLevel,
     },
 
+    ImpliedQueriesExtracted {
+        entity_id: Uuid,
+        queries: Vec<String>,
+    },
+
     // -----------------------------------------------------------------------
     // Correction decisions
     // -----------------------------------------------------------------------
@@ -233,6 +238,7 @@ impl Eventlike for SystemDecision {
             SystemDecision::ReviewVerdictReached { .. } => "review_verdict_reached",
             SystemDecision::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
             SystemDecision::SensitivityClassified { .. } => "sensitivity_classified",
+            SystemDecision::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
             SystemDecision::GatheringCorrected { .. } => "gathering_corrected",
             SystemDecision::AidCorrected { .. } => "aid_corrected",
             SystemDecision::NeedCorrected { .. } => "need_corrected",

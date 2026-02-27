@@ -5,7 +5,8 @@
 //! Integration tests with Neo4j would live in a separate file using testcontainers.
 
 use rootsignal_common::events::{
-    Event, GatheringCorrection, SourceChange, SituationChange,
+    Event, WorldEvent, SystemDecision, TelemetryEvent,
+    GatheringCorrection, SituationChange, SystemSourceChange,
 };
 use rootsignal_common::types::*;
 use rootsignal_common::safety::SensitivityLevel;
@@ -32,8 +33,9 @@ fn stored_event(event: &Event) -> rootsignal_events::StoredEvent {
 // Classification: which events are no-ops?
 // =========================================================================
 
-/// All observability events produce no Cypher.
+/// All telemetry + informational events produce no Cypher.
 const NOOP_EVENT_TYPES: &[&str] = &[
+    // Telemetry
     "url_scraped",
     "feed_scraped",
     "social_scraped",
@@ -45,72 +47,80 @@ const NOOP_EVENT_TYPES: &[&str] = &[
     "agent_web_searched",
     "agent_page_read",
     "agent_future_query",
-    // Informational — no graph mutation
+    "pins_removed",
+    "demand_aggregated",
+    // World informational — no graph mutation
+    "expansion_query_collected",
+    "source_link_discovered",
+    // System informational — no graph mutation
     "observation_rejected",
     "extraction_dropped_no_date",
     "duplicate_detected",
-    "expansion_query_collected",
-    "source_link_discovered",
-    // Non-graph artifact
     "dispatch_created",
 ];
 
 /// All graph-mutating events produce Cypher.
 const APPLIED_EVENT_TYPES: &[&str] = &[
-    // Discovery (5 typed variants)
+    // World: Discovery (5 typed variants)
     "gathering_discovered",
     "aid_discovered",
     "need_discovered",
     "notice_discovered",
     "tension_discovered",
-    // Observation lifecycle
+    // World: Corroboration fact
     "observation_corroborated",
+    // World: Citations
+    "citation_recorded",
+    // World: Sources
+    "source_registered",
+    "source_changed",
+    "source_deactivated",
+    // World: Actors
+    "actor_identified",
+    "actor_linked_to_entity",
+    "actor_linked_to_source",
+    "actor_location_identified",
+    // World: Community input
+    "pin_created",
+    "demand_received",
+    "submission_received",
+    // World: Relationship edges
+    "resource_edge_created",
+    "response_linked",
+    "gravity_linked",
+    // System: Observation lifecycle
     "freshness_confirmed",
     "confidence_scored",
+    "corroboration_scored",
     "entity_expired",
     "entity_purged",
     "review_verdict_reached",
     "implied_queries_consumed",
-    // Corrections (5 typed variants)
+    // System: Classifications
+    "sensitivity_classified",
+    "implied_queries_extracted",
+    // System: Corrections (5 typed variants)
     "gathering_corrected",
     "aid_corrected",
     "need_corrected",
     "notice_corrected",
     "tension_corrected",
-    // Citations
-    "citation_recorded",
-    "orphaned_citations_cleaned",
-    // Sources
-    "source_registered",
-    "source_changed",
-    "source_deactivated",
-    // Actors
-    "actor_identified",
-    "actor_linked_to_entity",
-    "actor_linked_to_source",
-    "actor_location_identified",
+    // System: Actors
     "duplicate_actors_merged",
     "orphaned_actors_cleaned",
-    // Situations
+    // System: Situations
     "situation_identified",
     "situation_changed",
     "situation_promoted",
-    // Tags
+    // System: Tags
     "tag_suppressed",
     "tags_merged",
-    // Quality / lint
+    // System: Quality / lint
     "empty_entities_cleaned",
     "fake_coordinates_nulled",
-    // Pins / demand / submissions
-    "pin_created",
-    "pins_removed",
-    "demand_received",
-    "demand_aggregated",
-    "submission_received",
-    // Edge facts
-    "resource_edge_created",
-    "response_linked",
-    "gravity_linked",
+    "orphaned_citations_cleaned",
+    // System: Source editorial
+    "source_system_changed",
 ];
 
 #[test]
@@ -261,12 +271,12 @@ fn malformed_payload_returns_deserialize_error() {
 
 #[test]
 fn noop_event_stored_event_deserializes_cleanly() {
-    let event = Event::UrlScraped {
+    let event = Event::Telemetry(TelemetryEvent::UrlScraped {
         url: "https://example.com".into(),
         strategy: "web_page".into(),
         success: true,
         content_bytes: 1024,
-    };
+    });
     let stored = stored_event(&event);
 
     let parsed = Event::from_payload(&stored.payload).unwrap();
@@ -275,29 +285,29 @@ fn noop_event_stored_event_deserializes_cleanly() {
 
 #[test]
 fn discovery_payload_has_no_enrichment_fields() {
-    let event = Event::GatheringDiscovered {
+    let event = Event::World(WorldEvent::GatheringDiscovered {
         id: Uuid::new_v4(),
         title: "Test".into(),
         summary: "Test".into(),
-        sensitivity: SensitivityLevel::General,
         confidence: 0.8,
         source_url: "https://example.com".into(),
         extracted_at: Utc::now(),
         content_date: None,
         location: None,
         from_location: None,
-        implied_queries: vec![],
         mentioned_actors: vec![],
         author_actor: None,
         schedule: None,
         action_url: None,
         organizer: None,
-    };
+    });
 
     let payload = event.to_payload();
     assert!(payload.get("embedding").is_none(), "Discovery must not carry an embedding field");
     assert!(payload.get("freshness_score").is_none(), "Discovery must not carry freshness_score");
     assert!(payload.get("source_diversity").is_none(), "Discovery must not carry source_diversity");
+    assert!(payload.get("sensitivity").is_none(), "Discovery must not carry sensitivity (system classification)");
+    assert!(payload.get("implied_queries").is_none(), "Discovery must not carry implied_queries (system artifact)");
 }
 
 // =========================================================================
@@ -309,103 +319,120 @@ fn build_all_events() -> Vec<Event> {
     let now = Utc::now();
 
     vec![
-        // Observability
-        Event::UrlScraped { url: "".into(), strategy: "".into(), success: true, content_bytes: 0 },
-        Event::FeedScraped { url: "".into(), items: 0 },
-        Event::SocialScraped { platform: "".into(), identifier: "".into(), post_count: 0 },
-        Event::SocialTopicsSearched { platform: "".into(), topics: vec![], posts_found: 0 },
-        Event::SearchPerformed { query: "".into(), provider: "".into(), result_count: 0, canonical_key: "".into() },
-        Event::LlmExtractionCompleted { source_url: "".into(), content_chars: 0, entities_extracted: 0, implied_queries: 0 },
-        Event::BudgetCheckpoint { spent_cents: 0, remaining_cents: 0 },
-        Event::BootstrapCompleted { sources_created: 0 },
-        Event::AgentWebSearched { provider: "".into(), query: "".into(), result_count: 0, title: "".into() },
-        Event::AgentPageRead { provider: "".into(), url: "".into(), content_chars: 0, title: "".into() },
-        Event::AgentFutureQuery { provider: "".into(), query: "".into(), title: "".into() },
-        // Discovery (5 typed variants)
-        Event::GatheringDiscovered {
-            id, title: "".into(), summary: "".into(), sensitivity: SensitivityLevel::General,
+        // =====================================================================
+        // Telemetry (13 variants)
+        // =====================================================================
+        Event::Telemetry(TelemetryEvent::UrlScraped { url: "".into(), strategy: "".into(), success: true, content_bytes: 0 }),
+        Event::Telemetry(TelemetryEvent::FeedScraped { url: "".into(), items: 0 }),
+        Event::Telemetry(TelemetryEvent::SocialScraped { platform: "".into(), identifier: "".into(), post_count: 0 }),
+        Event::Telemetry(TelemetryEvent::SocialTopicsSearched { platform: "".into(), topics: vec![], posts_found: 0 }),
+        Event::Telemetry(TelemetryEvent::SearchPerformed { query: "".into(), provider: "".into(), result_count: 0, canonical_key: "".into() }),
+        Event::Telemetry(TelemetryEvent::LlmExtractionCompleted { source_url: "".into(), content_chars: 0, entities_extracted: 0, implied_queries: 0 }),
+        Event::Telemetry(TelemetryEvent::BudgetCheckpoint { spent_cents: 0, remaining_cents: 0 }),
+        Event::Telemetry(TelemetryEvent::BootstrapCompleted { sources_created: 0 }),
+        Event::Telemetry(TelemetryEvent::AgentWebSearched { provider: "".into(), query: "".into(), result_count: 0, title: "".into() }),
+        Event::Telemetry(TelemetryEvent::AgentPageRead { provider: "".into(), url: "".into(), content_chars: 0, title: "".into() }),
+        Event::Telemetry(TelemetryEvent::AgentFutureQuery { provider: "".into(), query: "".into(), title: "".into() }),
+        Event::Telemetry(TelemetryEvent::PinsRemoved { pin_ids: vec![] }),
+        Event::Telemetry(TelemetryEvent::DemandAggregated { created_task_ids: vec![], consumed_demand_ids: vec![] }),
+        // =====================================================================
+        // World (22 variants)
+        // =====================================================================
+        // Discovery (5 typed variants) — no sensitivity or implied_queries
+        Event::World(WorldEvent::GatheringDiscovered {
+            id, title: "".into(), summary: "".into(),
             confidence: 0.0, source_url: "".into(), extracted_at: now, content_date: None,
-            location: None, from_location: None, implied_queries: vec![],
+            location: None, from_location: None,
             mentioned_actors: vec![], author_actor: None, schedule: None, action_url: None, organizer: None,
-        },
-        Event::AidDiscovered {
-            id, title: "".into(), summary: "".into(), sensitivity: SensitivityLevel::General,
+        }),
+        Event::World(WorldEvent::AidDiscovered {
+            id, title: "".into(), summary: "".into(),
             confidence: 0.0, source_url: "".into(), extracted_at: now, content_date: None,
-            location: None, from_location: None, implied_queries: vec![],
+            location: None, from_location: None,
             mentioned_actors: vec![], author_actor: None, action_url: None, availability: None, is_ongoing: None,
-        },
-        Event::NeedDiscovered {
-            id, title: "".into(), summary: "".into(), sensitivity: SensitivityLevel::General,
+        }),
+        Event::World(WorldEvent::NeedDiscovered {
+            id, title: "".into(), summary: "".into(),
             confidence: 0.0, source_url: "".into(), extracted_at: now, content_date: None,
-            location: None, from_location: None, implied_queries: vec![],
+            location: None, from_location: None,
             mentioned_actors: vec![], author_actor: None, urgency: None, what_needed: None, goal: None,
-        },
-        Event::NoticeDiscovered {
-            id, title: "".into(), summary: "".into(), sensitivity: SensitivityLevel::General,
+        }),
+        Event::World(WorldEvent::NoticeDiscovered {
+            id, title: "".into(), summary: "".into(),
             confidence: 0.0, source_url: "".into(), extracted_at: now, content_date: None,
-            location: None, from_location: None, implied_queries: vec![],
+            location: None, from_location: None,
             mentioned_actors: vec![], author_actor: None, severity: None, category: None,
             effective_date: None, source_authority: None,
-        },
-        Event::TensionDiscovered {
-            id, title: "".into(), summary: "".into(), sensitivity: SensitivityLevel::General,
+        }),
+        Event::World(WorldEvent::TensionDiscovered {
+            id, title: "".into(), summary: "".into(),
             confidence: 0.0, source_url: "".into(), extracted_at: now, content_date: None,
-            location: None, from_location: None, implied_queries: vec![],
+            location: None, from_location: None,
             mentioned_actors: vec![], author_actor: None, severity: None, what_would_help: None,
-        },
-        // Observation lifecycle
-        Event::ObservationCorroborated { entity_id: id, node_type: NodeType::Gathering, new_source_url: "".into(), similarity: 0.0, new_corroboration_count: 1, summary: None },
-        Event::FreshnessConfirmed { entity_ids: vec![id], node_type: NodeType::Gathering, confirmed_at: now },
-        Event::ConfidenceScored { entity_id: id, old_confidence: 0.5, new_confidence: 0.8 },
-        Event::ObservationRejected { entity_id: None, title: "".into(), source_url: "".into(), reason: "".into() },
-        Event::EntityExpired { entity_id: id, node_type: NodeType::Gathering, reason: "".into() },
-        Event::EntityPurged { entity_id: id, node_type: NodeType::Gathering, reason: "".into(), context: None },
-        Event::DuplicateDetected { node_type: NodeType::Gathering, title: "".into(), matched_id: id, similarity: 0.0, action: "".into(), source_url: "".into(), summary: None },
-        Event::ExtractionDroppedNoDate { title: "".into(), source_url: "".into() },
-        Event::ReviewVerdictReached { entity_id: id, old_status: "staged".into(), new_status: "live".into(), reason: "".into() },
-        Event::ImpliedQueriesConsumed { entity_ids: vec![id] },
-        // Corrections (5 typed variants)
-        Event::GatheringCorrected { entity_id: id, correction: GatheringCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() },
-        Event::AidCorrected { entity_id: id, correction: rootsignal_common::events::AidCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() },
-        Event::NeedCorrected { entity_id: id, correction: rootsignal_common::events::NeedCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() },
-        Event::NoticeCorrected { entity_id: id, correction: rootsignal_common::events::NoticeCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() },
-        Event::TensionCorrected { entity_id: id, correction: rootsignal_common::events::TensionCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() },
+        }),
+        // Corroboration (world fact only — no similarity or count)
+        Event::World(WorldEvent::ObservationCorroborated { entity_id: id, node_type: NodeType::Gathering, new_source_url: "".into(), summary: None }),
         // Citations
-        Event::CitationRecorded { citation_id: id, entity_id: id, url: "".into(), content_hash: "".into(), snippet: None, relevance: None, channel_type: None, evidence_confidence: None },
-        Event::OrphanedCitationsCleaned { citation_ids: vec![id] },
+        Event::World(WorldEvent::CitationRecorded { citation_id: id, entity_id: id, url: "".into(), content_hash: "".into(), snippet: None, relevance: None, channel_type: None, evidence_confidence: None }),
         // Sources
-        Event::SourceRegistered { source_id: id, canonical_key: "".into(), canonical_value: "".into(), url: None, discovery_method: DiscoveryMethod::Curated, weight: 0.5, source_role: SourceRole::Mixed, gap_context: None },
-        Event::SourceChanged { source_id: id, canonical_key: "".into(), change: SourceChange::Weight { old: 0.0, new: 0.0 } },
-        Event::SourceDeactivated { source_ids: vec![id], reason: "".into() },
-        Event::SourceLinkDiscovered { child_id: id, parent_canonical_key: "".into() },
-        Event::ExpansionQueryCollected { query: "".into(), source_url: "".into() },
+        Event::World(WorldEvent::SourceRegistered { source_id: id, canonical_key: "".into(), canonical_value: "".into(), url: None, discovery_method: DiscoveryMethod::Curated, weight: 0.5, source_role: SourceRole::Mixed, gap_context: None }),
+        Event::World(WorldEvent::SourceChanged { source_id: id, canonical_key: "".into(), change: rootsignal_world::values::WorldSourceChange::Weight { old: 0.0, new: 0.0 } }),
+        Event::World(WorldEvent::SourceDeactivated { source_ids: vec![id], reason: "".into() }),
+        Event::World(WorldEvent::SourceLinkDiscovered { child_id: id, parent_canonical_key: "".into() }),
+        // Actors (no discovery_depth)
+        Event::World(WorldEvent::ActorIdentified { actor_id: id, name: "".into(), actor_type: ActorType::Organization, entity_id: "".into(), domains: vec![], social_urls: vec![], description: "".into(), bio: None, location_lat: None, location_lng: None, location_name: None }),
+        Event::World(WorldEvent::ActorLinkedToEntity { actor_id: id, entity_id: id, role: "".into() }),
+        Event::World(WorldEvent::ActorLinkedToSource { actor_id: id, source_id: id }),
+        Event::World(WorldEvent::ActorLocationIdentified { actor_id: id, location_lat: 0.0, location_lng: 0.0, location_name: None }),
+        // Community input
+        Event::World(WorldEvent::PinCreated { pin_id: id, location_lat: 0.0, location_lng: 0.0, source_id: id, created_by: "".into() }),
+        Event::World(WorldEvent::DemandReceived { demand_id: id, query: "".into(), center_lat: 0.0, center_lng: 0.0, radius_km: 0.0 }),
+        Event::World(WorldEvent::SubmissionReceived { submission_id: id, url: "".into(), reason: None, source_canonical_key: None }),
+        // Relationship edges
+        Event::World(WorldEvent::ResourceEdgeCreated { signal_id: id, resource_id: id, role: "requires".into(), confidence: 0.8, quantity: None, notes: None, capacity: None }),
+        Event::World(WorldEvent::ResponseLinked { signal_id: id, tension_id: id, strength: 0.7, explanation: "".into() }),
+        Event::World(WorldEvent::GravityLinked { signal_id: id, tension_id: id, strength: 0.6, explanation: "".into(), gathering_type: "community".into() }),
+        // Expansion provenance
+        Event::World(WorldEvent::ExpansionQueryCollected { query: "".into(), source_url: "".into() }),
+        // =====================================================================
+        // System (29 variants)
+        // =====================================================================
+        // Observation lifecycle
+        Event::System(SystemDecision::FreshnessConfirmed { entity_ids: vec![id], node_type: NodeType::Gathering, confirmed_at: now }),
+        Event::System(SystemDecision::ConfidenceScored { entity_id: id, old_confidence: 0.5, new_confidence: 0.8 }),
+        Event::System(SystemDecision::CorroborationScored { entity_id: id, similarity: 0.0, new_corroboration_count: 1 }),
+        Event::System(SystemDecision::ObservationRejected { entity_id: None, title: "".into(), source_url: "".into(), reason: "".into() }),
+        Event::System(SystemDecision::EntityExpired { entity_id: id, node_type: NodeType::Gathering, reason: "".into() }),
+        Event::System(SystemDecision::EntityPurged { entity_id: id, node_type: NodeType::Gathering, reason: "".into(), context: None }),
+        Event::System(SystemDecision::DuplicateDetected { node_type: NodeType::Gathering, title: "".into(), matched_id: id, similarity: 0.0, action: "".into(), source_url: "".into(), summary: None }),
+        Event::System(SystemDecision::ExtractionDroppedNoDate { title: "".into(), source_url: "".into() }),
+        Event::System(SystemDecision::ReviewVerdictReached { entity_id: id, old_status: "staged".into(), new_status: "live".into(), reason: "".into() }),
+        Event::System(SystemDecision::ImpliedQueriesConsumed { entity_ids: vec![id] }),
+        // Classifications
+        Event::System(SystemDecision::SensitivityClassified { entity_id: id, level: SensitivityLevel::General }),
+        Event::System(SystemDecision::ImpliedQueriesExtracted { entity_id: id, queries: vec![] }),
+        // Corrections (5 typed variants)
+        Event::System(SystemDecision::GatheringCorrected { entity_id: id, correction: GatheringCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() }),
+        Event::System(SystemDecision::AidCorrected { entity_id: id, correction: rootsignal_common::events::AidCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() }),
+        Event::System(SystemDecision::NeedCorrected { entity_id: id, correction: rootsignal_common::events::NeedCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() }),
+        Event::System(SystemDecision::NoticeCorrected { entity_id: id, correction: rootsignal_common::events::NoticeCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() }),
+        Event::System(SystemDecision::TensionCorrected { entity_id: id, correction: rootsignal_common::events::TensionCorrection::Title { old: "".into(), new: "".into() }, reason: "".into() }),
         // Actors
-        Event::ActorIdentified { actor_id: id, name: "".into(), actor_type: ActorType::Organization, entity_id: "".into(), domains: vec![], social_urls: vec![], description: "".into(), bio: None, location_lat: None, location_lng: None, location_name: None, discovery_depth: None },
-        Event::ActorLinkedToEntity { actor_id: id, entity_id: id, role: "".into() },
-        Event::ActorLinkedToSource { actor_id: id, source_id: id },
-        Event::ActorLocationIdentified { actor_id: id, location_lat: 0.0, location_lng: 0.0, location_name: None },
-        Event::DuplicateActorsMerged { kept_id: id, merged_ids: vec![] },
-        Event::OrphanedActorsCleaned { actor_ids: vec![] },
+        Event::System(SystemDecision::DuplicateActorsMerged { kept_id: id, merged_ids: vec![] }),
+        Event::System(SystemDecision::OrphanedActorsCleaned { actor_ids: vec![] }),
         // Situations
-        Event::SituationIdentified { situation_id: id, headline: "".into(), lede: "".into(), arc: SituationArc::Emerging, temperature: 0.0, centroid_lat: None, centroid_lng: None, location_name: None, sensitivity: SensitivityLevel::General, category: None, structured_state: "".into() },
-        Event::SituationChanged { situation_id: id, change: SituationChange::Headline { old: "".into(), new: "".into() } },
-        Event::SituationPromoted { situation_ids: vec![id] },
-        Event::DispatchCreated { dispatch_id: id, situation_id: id, body: "".into(), entity_ids: vec![], dispatch_type: DispatchType::Update, supersedes: None, fidelity_score: None },
+        Event::System(SystemDecision::SituationIdentified { situation_id: id, headline: "".into(), lede: "".into(), arc: SituationArc::Emerging, temperature: 0.0, centroid_lat: None, centroid_lng: None, location_name: None, sensitivity: SensitivityLevel::General, category: None, structured_state: "".into() }),
+        Event::System(SystemDecision::SituationChanged { situation_id: id, change: SituationChange::Headline { old: "".into(), new: "".into() } }),
+        Event::System(SystemDecision::SituationPromoted { situation_ids: vec![id] }),
+        Event::System(SystemDecision::DispatchCreated { dispatch_id: id, situation_id: id, body: "".into(), entity_ids: vec![], dispatch_type: DispatchType::Update, supersedes: None, fidelity_score: None }),
         // Tags
-        Event::TagSuppressed { situation_id: id, tag_slug: "".into() },
-        Event::TagsMerged { source_slug: "".into(), target_slug: "".into() },
+        Event::System(SystemDecision::TagSuppressed { situation_id: id, tag_slug: "".into() }),
+        Event::System(SystemDecision::TagsMerged { source_slug: "".into(), target_slug: "".into() }),
         // Quality / lint
-        Event::EmptyEntitiesCleaned { entity_ids: vec![] },
-        Event::FakeCoordinatesNulled { entity_ids: vec![], old_coords: vec![] },
-        // Pins / demand / submissions
-        Event::PinCreated { pin_id: id, location_lat: 0.0, location_lng: 0.0, source_id: id, created_by: "".into() },
-        Event::PinsRemoved { pin_ids: vec![] },
-        Event::DemandReceived { demand_id: id, query: "".into(), center_lat: 0.0, center_lng: 0.0, radius_km: 0.0 },
-        Event::DemandAggregated { created_task_ids: vec![], consumed_demand_ids: vec![] },
-        Event::SubmissionReceived { submission_id: id, url: "".into(), reason: None, source_canonical_key: None },
-        // Edge facts
-        Event::ResourceEdgeCreated { signal_id: id, resource_id: id, role: "requires".into(), confidence: 0.8, quantity: None, notes: None, capacity: None },
-        Event::ResponseLinked { signal_id: id, tension_id: id, strength: 0.7, explanation: "".into() },
-        Event::GravityLinked { signal_id: id, tension_id: id, strength: 0.6, explanation: "".into(), gathering_type: "community".into() },
+        Event::System(SystemDecision::EmptyEntitiesCleaned { entity_ids: vec![] }),
+        Event::System(SystemDecision::FakeCoordinatesNulled { entity_ids: vec![], old_coords: vec![] }),
+        Event::System(SystemDecision::OrphanedCitationsCleaned { citation_ids: vec![id] }),
+        // Source editorial
+        Event::System(SystemDecision::SourceSystemChanged { source_id: id, canonical_key: "".into(), change: SystemSourceChange::QualityPenalty { old: 0.0, new: 0.0 } }),
     ]
 }
