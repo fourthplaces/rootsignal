@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     AidNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta,
-    NoticeNode, SensitivityLevel, Severity, TensionNode, Urgency,
+    NoticeNode, ReviewStatus, SensitivityLevel, Severity, TensionNode, Urgency,
 };
 use rootsignal_scout::enrichment::quality;
 
@@ -38,11 +38,10 @@ fn test_meta() -> NodeMeta {
         cause_heat: 0.0,
         implied_queries: vec![],
         channel_diversity: 1,
-        review_status: "staged".to_string(),
+        review_status: ReviewStatus::Staged,
         was_corrected: false,
         corrections: None,
         rejection_reason: None,
-        author_actor: None,
     }
 }
 

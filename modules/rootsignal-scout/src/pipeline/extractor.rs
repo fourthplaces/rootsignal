@@ -870,7 +870,7 @@ mod tests {
 
     #[test]
     fn missing_availability_is_none_not_placeholder() {
-        use rootsignal_common::{AidNode, NodeMeta, SensitivityLevel};
+        use rootsignal_common::{AidNode, NodeMeta, ReviewStatus, SensitivityLevel};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Food pantry".to_string(),
@@ -889,11 +889,10 @@ mod tests {
             cause_heat: 0.0,
             channel_diversity: 1,
             implied_queries: vec![],
-            review_status: "staged".to_string(),
+            review_status: ReviewStatus::Staged,
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            author_actor: None,
         };
         let aid = AidNode {
             meta,
@@ -906,7 +905,7 @@ mod tests {
 
     #[test]
     fn missing_what_needed_is_none_not_placeholder() {
-        use rootsignal_common::{NeedNode, NodeMeta, SensitivityLevel, Urgency};
+        use rootsignal_common::{NeedNode, NodeMeta, ReviewStatus, SensitivityLevel, Urgency};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Volunteers needed".to_string(),
@@ -925,11 +924,10 @@ mod tests {
             cause_heat: 0.0,
             channel_diversity: 1,
             implied_queries: vec![],
-            review_status: "staged".to_string(),
+            review_status: ReviewStatus::Staged,
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            author_actor: None,
         };
         let need = NeedNode {
             meta,

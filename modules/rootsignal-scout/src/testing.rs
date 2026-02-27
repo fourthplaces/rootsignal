@@ -513,6 +513,17 @@ impl MockSignalStore {
             .any(|(sid, src)| *sid == signal_id && *src == source_id)
     }
 
+    pub fn schedules_created(&self) -> usize {
+        0
+    }
+
+    pub fn has_schedule_for(&self, _signal_title: &str) -> bool {
+        false
+    }
+
+    pub fn schedule_for(&self, _signal_title: &str) -> Option<rootsignal_common::ScheduleNode> {
+        None
+    }
 }
 
 #[async_trait]
@@ -994,6 +1005,8 @@ impl SignalExtractor for MockExtractor {
                 implied_queries: result.implied_queries.clone(),
                 resource_tags: result.resource_tags.clone(),
                 signal_tags: result.signal_tags.clone(),
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             });
         }
         if let Some(ref default) = self.default_result {
@@ -1002,6 +1015,8 @@ impl SignalExtractor for MockExtractor {
                 implied_queries: default.implied_queries.clone(),
                 resource_tags: default.resource_tags.clone(),
                 signal_tags: default.signal_tags.clone(),
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             });
         }
         bail!("MockExtractor: no result registered for {source_url}")
@@ -1498,6 +1513,7 @@ pub fn archived_page(url: &str, markdown: &str) -> ArchivedPage {
         markdown: markdown.to_string(),
         title: None,
         links: Vec::new(),
+        published_at: None,
     }
 }
 

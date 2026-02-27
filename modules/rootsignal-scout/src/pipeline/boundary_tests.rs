@@ -41,7 +41,7 @@ async fn page_with_content_produces_signal() {
                 nodes: vec![tension_at("Community Dinner at Powderhorn", 44.9489, -93.2583)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -83,7 +83,7 @@ async fn empty_page_produces_nothing() {
                 nodes: vec![],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -163,7 +163,7 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -211,7 +211,7 @@ async fn same_title_extracted_twice_produces_one_signal() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -268,7 +268,7 @@ async fn all_signals_stored_regardless_of_region() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -311,7 +311,7 @@ async fn blocked_url_produces_nothing() {
                 nodes: vec![tension_at("Should not appear", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -405,7 +405,7 @@ async fn outbound_links_on_page_are_collected() {
                 nodes: vec![tension_at("Community Links", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -540,7 +540,7 @@ async fn scrape_then_promote_creates_new_sources() {
                 nodes: vec![tension_at("Hub Signal", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -631,7 +631,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
                 nodes: vec![],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -672,7 +672,7 @@ async fn database_write_failure_does_not_crash() {
                 nodes: vec![tension_at("Signal That Fails To Store", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -717,7 +717,7 @@ async fn blocked_url_produces_no_signals() {
                 nodes: vec![tension_at("Spam Signal", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -768,7 +768,7 @@ async fn all_signal_types_are_stored() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -815,7 +815,7 @@ async fn unicode_and_emoji_titles_are_preserved() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -859,7 +859,7 @@ async fn signal_at_zero_zero_is_still_stored() {
                 nodes: vec![tension_at("Null Island Signal", 0.0, 0.0)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -938,7 +938,7 @@ async fn blank_author_name_does_not_create_actor() {
                 nodes: vec![node],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -997,6 +997,8 @@ async fn signal_with_resource_needs_gets_resource_edge() {
                     node_id,
                     vec!["mutual-aid".to_string(), "transportation".to_string()],
                 )],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -1240,7 +1242,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
                 nodes: vec![tension_at("Community Dinner", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1323,7 +1325,7 @@ async fn batch_title_dedup_is_case_insensitive() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1371,7 +1373,7 @@ async fn web_source_without_actor_stores_content_location_only() {
                 nodes: vec![tension_at("Powderhorn Cleanup", 44.9489, -93.2583)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1415,7 +1417,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
             nodes: vec![tension("Community Organizing Thoughts")],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1469,7 +1471,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
             nodes: vec![tension_at("St Paul Event", ST_PAUL.0, ST_PAUL.1)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1533,7 +1535,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1587,7 +1589,7 @@ async fn bootstrap_actor_gets_depth_zero() {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1653,7 +1655,7 @@ async fn rss_pub_date_becomes_content_date_when_llm_omits_it() {
             nodes: vec![tension_at("Community Event Recap", 44.975, -93.270)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1717,7 +1719,7 @@ async fn llm_content_date_not_overwritten_by_rss_pub_date() {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1763,7 +1765,7 @@ async fn social_published_at_becomes_content_date_fallback() {
             nodes: vec![tension("Big Community Event")],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -1816,7 +1818,7 @@ async fn ocean_coordinates_store_ecological_signal() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1862,7 +1864,7 @@ async fn antarctic_coordinates_store_signal() {
                 nodes: vec![tension_at("Ice Shelf Collapse Accelerating", -77.85, 166.67)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1912,7 +1914,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
                 nodes: vec![tension_at("Signal With Impossible Coords", 999.0, -999.0)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -1969,7 +1971,7 @@ async fn environmental_disaster_produces_all_signal_types() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2040,7 +2042,7 @@ async fn hallucinated_future_date_does_not_crash() {
                 nodes: vec![node],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2090,7 +2092,7 @@ async fn epoch_zero_date_does_not_crash() {
                 nodes: vec![node],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2142,7 +2144,7 @@ async fn extremely_long_title_survives_pipeline() {
                 nodes: vec![tension_at(&long_title, 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2196,7 +2198,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 nodes: vec![tension_at("Housing Crisis in Uptown", 44.948, -93.298)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         )
         .on_url(
@@ -2205,7 +2207,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 nodes: vec![tension_at("Housing Crisis in Uptown", 44.949, -93.297)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2283,7 +2285,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
                 ],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2334,7 +2336,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
                 nodes: vec![tension("Community Tension Without Details")],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2386,7 +2388,7 @@ async fn owned_source_author_creates_actor_with_url_entity_id() {
             nodes: vec![node],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -2437,7 +2439,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
                 nodes: vec![node],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2485,7 +2487,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
                 nodes: vec![node],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2532,7 +2534,7 @@ async fn signal_has_produced_by_edge_to_its_source() {
                 nodes: vec![tension_at("Community Dinner", 44.975, -93.270)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 
@@ -2574,7 +2576,7 @@ async fn social_signal_has_produced_by_edge() {
             nodes: vec![tension_at("Park Cleanup", 44.95, -93.26)],
             implied_queries: vec![],
             resource_tags: Vec::new(),
-            signal_tags: Vec::new(),
+            signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
         });
 
     let store = Arc::new(MockSignalStore::new());
@@ -3095,6 +3097,8 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
                     }],
                 )],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -3166,6 +3170,8 @@ async fn resource_roles_wire_to_correct_edge_types() {
                     ],
                 )],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -3245,6 +3251,8 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
                     ],
                 )],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -3310,6 +3318,8 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 implied_queries: vec![],
                 resource_tags: vec![],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         )
         .on_url(
@@ -3319,6 +3329,8 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 implied_queries: vec![],
                 resource_tags: vec![],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -3397,6 +3409,8 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 implied_queries: vec![],
                 resource_tags: vec![],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         )
         .on_url(
@@ -3406,6 +3420,8 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 implied_queries: vec![],
                 resource_tags: vec![],
                 signal_tags: vec![],
+                rejected: Vec::new(),
+                schedules: Vec::new(),
             },
         );
 
@@ -3493,7 +3509,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 nodes: vec![tension_at("Free Legal Clinic Phillips", 44.9489, -93.2583)],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         )
         .on_url(
@@ -3502,7 +3518,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 nodes: vec![],
                 implied_queries: vec![],
                 resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
+                signal_tags: Vec::new(), rejected: Vec::new(), schedules: Vec::new(),
             },
         );
 

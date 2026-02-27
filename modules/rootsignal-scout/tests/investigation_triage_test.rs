@@ -69,9 +69,31 @@ fn save_snapshot(path: &Path, response: &InvestigationQueries) {
     std::fs::write(path, json).expect("write snapshot");
 }
 
+fn load_env() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(".env");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                if std::env::var(key.trim()).is_err() {
+                    std::env::set_var(key.trim(), value.trim());
+                }
+            }
+        }
+    }
+}
+
 /// Generate investigation queries for a signal, using snapshot replay.
 async fn generate_queries(name: &str, signal_type: &str, description: &str) -> InvestigationQueries {
-    rootsignal_scout::testing::load_env();
+    load_env();
 
     let snap_path = snapshots_dir().join(format!("{name}.json"));
 

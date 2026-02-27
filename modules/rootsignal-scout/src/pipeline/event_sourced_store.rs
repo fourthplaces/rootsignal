@@ -869,11 +869,11 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::GatheringDiscovered { id: eid, title, organizer, action_url, schedule, .. } => {
+            WorldEvent::GatheringDiscovered { id: eid, ref title, ref organizer, ref action_url, ref schedule, .. } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Community Dinner");
-                assert_eq!(organizer, Some("Lake Street Council".to_string()));
-                assert_eq!(action_url, Some("https://example.com/signup".to_string()));
+                assert_eq!(*organizer, Some("Lake Street Council".to_string()));
+                assert_eq!(*action_url, Some("https://example.com/signup".to_string()));
                 assert!(schedule.is_some());
             }
             _ => panic!("Expected GatheringDiscovered"),
