@@ -173,29 +173,29 @@ pub trait SignalStore: Send + Sync {
         embedding: &[f32],
     ) -> Result<Uuid>;
 
-    /// Create a REQUIRES edge from a signal to a resource.
+    /// Create a REQUIRES edge from a signal to a resource (by slug).
     async fn create_requires_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
         quantity: Option<&str>,
         notes: Option<&str>,
     ) -> Result<()>;
 
-    /// Create a PREFERS edge from a signal to a resource.
+    /// Create a PREFERS edge from a signal to a resource (by slug).
     async fn create_prefers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
     ) -> Result<()>;
 
-    /// Create an OFFERS edge from a signal to a resource.
+    /// Create an OFFERS edge from a signal to a resource (by slug).
     async fn create_offers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
         capacity: Option<&str>,
     ) -> Result<()>;

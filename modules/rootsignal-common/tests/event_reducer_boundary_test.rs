@@ -717,7 +717,7 @@ fn build_all_events() -> Vec<Event> {
         // Relationship edges
         Event::World(WorldEvent::ResourceEdgeCreated {
             signal_id: id,
-            resource_id: id,
+            resource_slug: "test-resource".into(),
             role: "requires".into(),
             confidence: 0.8,
             quantity: None,

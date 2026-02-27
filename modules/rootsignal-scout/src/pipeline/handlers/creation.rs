@@ -189,62 +189,42 @@ pub async fn handle_signal_stored(
         }));
     }
 
-    // Resource edges (Resource nodes + REQUIRES/PREFERS/OFFERS edges)
-    let eligible_tags: Vec<_> = ctx
-        .resource_tags
-        .iter()
-        .filter(|t| t.confidence >= 0.3)
-        .collect();
-    if !eligible_tags.is_empty() {
-        let embed_texts: Vec<String> = eligible_tags
-            .iter()
-            .map(|t| format!("{}: {}", t.slug, t.context.as_deref().unwrap_or("")))
-            .collect();
-        let tag_embeddings = deps.embedder.embed_batch(embed_texts).await.unwrap_or_default();
+    // Resource edges — pure event emission, no store calls.
+    // ResourceIdentified creates the node (MERGE on slug), ResourceEdgeCreated wires the edge.
+    for tag in ctx.resource_tags.iter().filter(|t| t.confidence >= 0.3) {
+        let slug = rootsignal_common::slugify(&tag.slug);
+        let description = tag.context.as_deref().unwrap_or("").to_string();
 
-        for (tag, emb) in eligible_tags.iter().zip(tag_embeddings.into_iter()) {
-            let slug = rootsignal_common::slugify(&tag.slug);
-            // find_or_create_resource is a read+write utility — keep direct call
-            let resource_id = match deps
-                .store
-                .find_or_create_resource(
-                    &tag.slug,
-                    &slug,
-                    tag.context.as_deref().unwrap_or(""),
-                    &emb,
-                )
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!(error = %e, slug = slug.as_str(), "Resource creation failed (non-fatal)");
-                    continue;
-                }
-            };
-            let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-            match tag.role.as_str() {
-                "requires" | "prefers" | "offers" => {
-                    events.push(ScoutEvent::World(WorldEvent::ResourceEdgeCreated {
-                        signal_id: node_id,
-                        resource_id,
-                        role: tag.role.clone(),
-                        confidence,
-                        quantity: if tag.role == "requires" {
-                            tag.context.clone()
-                        } else {
-                            None
-                        },
-                        notes: None,
-                        capacity: if tag.role == "offers" {
-                            tag.context.clone()
-                        } else {
-                            None
-                        },
-                    }));
-                }
-                other => {
-                    tracing::warn!(role = other, slug = slug.as_str(), "Unknown resource role");
-                }
+        events.push(ScoutEvent::World(WorldEvent::ResourceIdentified {
+            resource_id: Uuid::new_v4(),
+            name: tag.slug.clone(),
+            slug: slug.clone(),
+            description: description.clone(),
+        }));
+
+        let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
+        match tag.role.as_str() {
+            "requires" | "prefers" | "offers" => {
+                events.push(ScoutEvent::World(WorldEvent::ResourceEdgeCreated {
+                    signal_id: node_id,
+                    resource_slug: slug,
+                    role: tag.role.clone(),
+                    confidence,
+                    quantity: if tag.role == "requires" {
+                        tag.context.clone()
+                    } else {
+                        None
+                    },
+                    notes: None,
+                    capacity: if tag.role == "offers" {
+                        tag.context.clone()
+                    } else {
+                        None
+                    },
+                }));
+            }
+            other => {
+                tracing::warn!(role = other, slug = slug.as_str(), "Unknown resource role");
             }
         }
     }

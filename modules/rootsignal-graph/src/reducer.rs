@@ -437,11 +437,42 @@ impl GraphProjector {
             }
 
             // ---------------------------------------------------------
+            // Resource identification (replay-safe MERGE)
+            // ---------------------------------------------------------
+            WorldEvent::ResourceIdentified {
+                resource_id,
+                name,
+                slug,
+                description,
+            } => {
+                let q = query(
+                    "MERGE (r:Resource {slug: $slug})
+                     ON CREATE SET
+                         r.id = $id,
+                         r.name = $name,
+                         r.description = $description,
+                         r.signal_count = 1,
+                         r.created_at = datetime(),
+                         r.last_seen = datetime()
+                     ON MATCH SET
+                         r.signal_count = r.signal_count + 1,
+                         r.last_seen = datetime()",
+                )
+                .param("slug", slug.as_str())
+                .param("id", resource_id.to_string())
+                .param("name", name.as_str())
+                .param("description", description.as_str());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
             // Edge facts
             // ---------------------------------------------------------
             WorldEvent::ResourceEdgeCreated {
                 signal_id,
-                resource_id,
+                resource_slug,
                 role,
                 confidence,
                 quantity,
@@ -452,13 +483,13 @@ impl GraphProjector {
                     "requires" => {
                         query(
                             "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
-                             MATCH (r:Resource {id: $rid})
+                             MATCH (r:Resource {slug: $slug})
                              MERGE (s)-[e:REQUIRES]->(r)
                              ON CREATE SET e.confidence = $confidence, e.quantity = $quantity, e.notes = $notes
                              ON MATCH SET e.confidence = $confidence, e.quantity = $quantity, e.notes = $notes"
                         )
                         .param("sid", signal_id.to_string())
-                        .param("rid", resource_id.to_string())
+                        .param("slug", resource_slug.as_str())
                         .param("confidence", confidence as f64)
                         .param("quantity", quantity.unwrap_or_default())
                         .param("notes", notes.unwrap_or_default())
@@ -466,25 +497,25 @@ impl GraphProjector {
                     "prefers" => {
                         query(
                             "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
-                             MATCH (r:Resource {id: $rid})
+                             MATCH (r:Resource {slug: $slug})
                              MERGE (s)-[e:PREFERS]->(r)
                              ON CREATE SET e.confidence = $confidence
                              ON MATCH SET e.confidence = $confidence"
                         )
                         .param("sid", signal_id.to_string())
-                        .param("rid", resource_id.to_string())
+                        .param("slug", resource_slug.as_str())
                         .param("confidence", confidence as f64)
                     }
                     "offers" => {
                         query(
                             "MATCH (s:Aid {id: $sid})
-                             MATCH (r:Resource {id: $rid})
+                             MATCH (r:Resource {slug: $slug})
                              MERGE (s)-[e:OFFERS]->(r)
                              ON CREATE SET e.confidence = $confidence, e.capacity = $capacity
                              ON MATCH SET e.confidence = $confidence, e.capacity = $capacity"
                         )
                         .param("sid", signal_id.to_string())
-                        .param("rid", resource_id.to_string())
+                        .param("slug", resource_slug.as_str())
                         .param("confidence", confidence as f64)
                         .param("capacity", capacity.unwrap_or_default())
                     }
@@ -1558,6 +1589,42 @@ impl GraphProjector {
             SystemEvent::ExpansionQueryCollected { .. } => {
                 debug!(seq = event.seq, "No-op (expansion query — informational)");
                 Ok(ApplyResult::NoOp)
+            }
+
+            // ---------------------------------------------------------
+            // Source scrape recording
+            // ---------------------------------------------------------
+            SystemEvent::SourceScraped {
+                canonical_key,
+                signals_produced,
+                scraped_at,
+            } => {
+                let now = format_dt(&scraped_at);
+                if signals_produced > 0 {
+                    let q = query(
+                        "MATCH (s:Source {canonical_key: $key})
+                         SET s.last_scraped = datetime($now),
+                             s.last_produced_signal = datetime($now),
+                             s.signals_produced = s.signals_produced + $count,
+                             s.consecutive_empty_runs = 0,
+                             s.scrape_count = coalesce(s.scrape_count, 0) + 1",
+                    )
+                    .param("key", canonical_key.as_str())
+                    .param("now", now.as_str())
+                    .param("count", signals_produced as i64);
+                    self.client.graph.run(q).await?;
+                } else {
+                    let q = query(
+                        "MATCH (s:Source {canonical_key: $key})
+                         SET s.last_scraped = datetime($now),
+                             s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
+                             s.scrape_count = coalesce(s.scrape_count, 0) + 1",
+                    )
+                    .param("key", canonical_key.as_str())
+                    .param("now", now.as_str());
+                    self.client.graph.run(q).await?;
+                }
+                Ok(ApplyResult::Applied)
             }
         }
     }

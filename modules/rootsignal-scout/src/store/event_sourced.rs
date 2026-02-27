@@ -456,23 +456,37 @@ impl SignalStore for EventSourcedStore {
         description: &str,
         embedding: &[f32],
     ) -> Result<Uuid> {
-        Ok(self
+        // GraphWriter does the MERGE (with embedding) and returns the real ID.
+        let resource_id = self
             .writer
             .find_or_create_resource(name, slug, description, embedding)
-            .await?)
+            .await?;
+
+        // Emit ResourceIdentified so the event log contains the resource creation
+        // fact — needed for replay. The handler path doesn't call this method
+        // (it emits ResourceIdentified directly), so no double-emit.
+        let event = Event::World(WorldEvent::ResourceIdentified {
+            resource_id,
+            name: name.to_string(),
+            slug: slug.to_string(),
+            description: description.to_string(),
+        });
+        self.append_and_project(&event, None).await?;
+
+        Ok(resource_id)
     }
 
     async fn create_requires_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
         quantity: Option<&str>,
         notes: Option<&str>,
     ) -> Result<()> {
         let event = Event::World(WorldEvent::ResourceEdgeCreated {
             signal_id,
-            resource_id,
+            resource_slug: resource_slug.to_string(),
             role: "requires".to_string(),
             confidence,
             quantity: quantity.map(|s| s.to_string()),
@@ -485,12 +499,12 @@ impl SignalStore for EventSourcedStore {
     async fn create_prefers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
     ) -> Result<()> {
         let event = Event::World(WorldEvent::ResourceEdgeCreated {
             signal_id,
-            resource_id,
+            resource_slug: resource_slug.to_string(),
             role: "prefers".to_string(),
             confidence,
             quantity: None,
@@ -503,13 +517,13 @@ impl SignalStore for EventSourcedStore {
     async fn create_offers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         confidence: f32,
         capacity: Option<&str>,
     ) -> Result<()> {
         let event = Event::World(WorldEvent::ResourceEdgeCreated {
             signal_id,
-            resource_id,
+            resource_slug: resource_slug.to_string(),
             role: "offers".to_string(),
             confidence,
             quantity: None,
@@ -581,10 +595,12 @@ impl SignalStore for EventSourcedStore {
         signals_produced: u32,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Ok(self
-            .writer
-            .record_source_scrape(canonical_key, signals_produced, now)
-            .await?)
+        let event = Event::System(SystemEvent::SourceScraped {
+            canonical_key: canonical_key.to_string(),
+            signals_produced,
+            scraped_at: now,
+        });
+        self.append_and_project(&event, None).await
     }
 
     async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<()> {

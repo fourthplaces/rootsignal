@@ -638,7 +638,9 @@ impl<'a> ResponseFinder<'a> {
             let embed_text = format!("{}: {}", tag.slug, tag.context.as_deref().unwrap_or(""));
             let embedding = self.embedder.embed(&embed_text).await?;
 
-            let resource_id = self
+            // find_or_create_resource handles the GraphWriter MERGE (with embedding).
+            // Edge methods use slug to match the resource — no UUID needed.
+            let _resource_id = self
                 .store
                 .find_or_create_resource(
                     &tag.slug,
@@ -654,7 +656,7 @@ impl<'a> ResponseFinder<'a> {
                     self.store
                         .create_requires_edge(
                             signal_id,
-                            resource_id,
+                            &slug,
                             confidence,
                             tag.context.as_deref(),
                             None,
@@ -663,14 +665,14 @@ impl<'a> ResponseFinder<'a> {
                 }
                 "prefers" => {
                     self.store
-                        .create_prefers_edge(signal_id, resource_id, confidence)
+                        .create_prefers_edge(signal_id, &slug, confidence)
                         .await?;
                 }
                 "offers" => {
                     self.store
                         .create_offers_edge(
                             signal_id,
-                            resource_id,
+                            &slug,
                             confidence,
                             tag.context.as_deref(),
                         )
@@ -687,7 +689,6 @@ impl<'a> ResponseFinder<'a> {
 
             info!(
                 signal_id = %signal_id,
-                resource_id = %resource_id,
                 slug = slug.as_str(),
                 role = tag.role.as_str(),
                 "Wired resource edge"

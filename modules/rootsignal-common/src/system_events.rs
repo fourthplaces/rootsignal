@@ -305,6 +305,15 @@ pub enum SystemEvent {
         query: String,
         source_url: String,
     },
+
+    // -----------------------------------------------------------------------
+    // Source scrape telemetry (event-sourced, not a direct GraphWriter write)
+    // -----------------------------------------------------------------------
+    SourceScraped {
+        canonical_key: String,
+        signals_produced: u32,
+        scraped_at: DateTime<Utc>,
+    },
 }
 
 impl Eventlike for SystemEvent {
@@ -350,6 +359,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::DemandReceived { .. } => "demand_received",
             SystemEvent::SubmissionReceived { .. } => "submission_received",
             SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
+            SystemEvent::SourceScraped { .. } => "source_scraped",
         }
     }
 

@@ -196,7 +196,7 @@ struct MockSignalStoreInner {
     actor_links: Vec<ActorLink>,
     sources: HashMap<String, SourceNode>,
     resources: HashMap<String, Uuid>,
-    resource_edges: Vec<(Uuid, Uuid, String)>,
+    resource_edges: Vec<(Uuid, String, String)>,
     tags: HashMap<Uuid, Vec<String>>,
     blocked: HashSet<String>,
     processed_hashes: HashSet<(String, String)>,
@@ -415,14 +415,10 @@ impl MockSignalStore {
             Some(s) => s.id,
             None => return false,
         };
-        let resource_id = match inner.resources.get(resource_slug) {
-            Some(id) => *id,
-            None => return false,
-        };
         inner
             .resource_edges
             .iter()
-            .any(|(sid, rid, _)| *sid == signal_id && *rid == resource_id)
+            .any(|(sid, slug, _)| *sid == signal_id && slug == resource_slug)
     }
 
     /// Check that a specific resource edge exists with an expected role (requires/prefers/offers).
@@ -442,12 +438,8 @@ impl MockSignalStore {
             Some(s) => s.id,
             None => return false,
         };
-        let resource_id = match inner.resources.get(resource_slug) {
-            Some(id) => *id,
-            None => return false,
-        };
-        inner.resource_edges.iter().any(|(sid, rid, role)| {
-            *sid == signal_id && *rid == resource_id && role == expected_role
+        inner.resource_edges.iter().any(|(sid, slug, role)| {
+            *sid == signal_id && slug == resource_slug && role == expected_role
         })
     }
 
@@ -757,7 +749,7 @@ impl SignalStore for MockSignalStore {
     async fn create_requires_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         _confidence: f32,
         _quantity: Option<&str>,
         _notes: Option<&str>,
@@ -765,34 +757,34 @@ impl SignalStore for MockSignalStore {
         let mut inner = self.inner.lock().unwrap();
         inner
             .resource_edges
-            .push((signal_id, resource_id, "requires".to_string()));
+            .push((signal_id, resource_slug.to_string(), "requires".to_string()));
         Ok(())
     }
 
     async fn create_prefers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         _confidence: f32,
     ) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner
             .resource_edges
-            .push((signal_id, resource_id, "prefers".to_string()));
+            .push((signal_id, resource_slug.to_string(), "prefers".to_string()));
         Ok(())
     }
 
     async fn create_offers_edge(
         &self,
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: &str,
         _confidence: f32,
         _capacity: Option<&str>,
     ) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner
             .resource_edges
-            .push((signal_id, resource_id, "offers".to_string()));
+            .push((signal_id, resource_slug.to_string(), "offers".to_string()));
         Ok(())
     }
 

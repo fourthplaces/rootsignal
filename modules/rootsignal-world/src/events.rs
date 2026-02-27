@@ -186,7 +186,7 @@ pub enum WorldEvent {
     // -----------------------------------------------------------------------
     ResourceEdgeCreated {
         signal_id: Uuid,
-        resource_id: Uuid,
+        resource_slug: String,
         role: String,
         confidence: f32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,6 +214,16 @@ pub enum WorldEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_url: Option<String>,
     },
+
+    // -----------------------------------------------------------------------
+    // Resource identification — replay-safe resource creation
+    // -----------------------------------------------------------------------
+    ResourceIdentified {
+        resource_id: Uuid,
+        name: String,
+        slug: String,
+        description: String,
+    },
 }
 
 impl Eventlike for WorldEvent {
@@ -232,6 +242,7 @@ impl Eventlike for WorldEvent {
             WorldEvent::ResourceEdgeCreated { .. } => "resource_edge_created",
             WorldEvent::ResponseLinked { .. } => "response_linked",
             WorldEvent::TensionLinked { .. } => "tension_linked",
+            WorldEvent::ResourceIdentified { .. } => "resource_identified",
         }
     }
 
