@@ -187,10 +187,11 @@ async fn main() -> Result<()> {
         info!("Postgres migrations applied");
     }
 
+    let restate_admin_url = std::env::var("RESTATE_ADMIN_URL").ok().filter(|s| !s.is_empty());
     let restate_client = std::env::var("RESTATE_INGRESS_URL")
         .ok()
         .filter(|s| !s.is_empty())
-        .map(RestateClient::new);
+        .map(|ingress| RestateClient::new(ingress, restate_admin_url.clone()));
     if restate_client.is_some() {
         info!("Restate ingress configured — runScout will dispatch via Restate");
     }

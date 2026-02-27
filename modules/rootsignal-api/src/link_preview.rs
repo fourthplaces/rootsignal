@@ -177,11 +177,23 @@ pub async fn link_preview_handler(
     }
 
     // Validate URL: scheme, length, SSRF protection
-    let parsed = match rootsignal_common::validate_external_url(&params.url) {
+    let url_str = params.url.trim().to_string();
+    if url_str.len() > 2048 {
+        return (StatusCode::BAD_REQUEST, "URL too long").into_response();
+    }
+    let parsed = match url::Url::parse(&url_str) {
         Ok(u) => u,
-        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid URL").into_response(),
     };
-
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return (StatusCode::BAD_REQUEST, "URL must use http or https").into_response();
+    }
+    if let Some(host) = parsed.host_str() {
+        let lower = host.to_lowercase();
+        if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") {
+            return (StatusCode::BAD_REQUEST, "Internal URLs not allowed").into_response();
+        }
+    }
     let url_str = parsed.to_string();
 
     // Check cache

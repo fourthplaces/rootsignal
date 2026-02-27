@@ -211,7 +211,7 @@ impl GqlCitation {
         self.0.relevance.as_deref()
     }
     async fn evidence_confidence(&self) -> Option<f32> {
-        self.0.evidence_confidence
+        self.0.confidence
     }
 }
 
