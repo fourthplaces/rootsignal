@@ -12,7 +12,8 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::events::{Event, Location, SystemDecision, WorldEvent};
+use rootsignal_common::events::{Event, Location, WorldEvent};
+use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
 use rootsignal_events::StoredEvent;
 use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
@@ -662,7 +663,7 @@ async fn same_source_no_duplicate_evidence() {
             2,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev1_id,
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-a.org".into(),
                 content_hash: "hash_v1".into(),
                 snippet: Some("First scrape".into()),
@@ -675,7 +676,7 @@ async fn same_source_no_duplicate_evidence() {
             3,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev2_id,
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-a.org".into(),
                 content_hash: "hash_v2".into(),
                 snippet: Some("Second scrape".into()),
@@ -688,7 +689,7 @@ async fn same_source_no_duplicate_evidence() {
             4,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: ev3_id,
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-a.org".into(),
                 content_hash: "hash_v3".into(),
                 snippet: Some("Third scrape".into()),
@@ -762,7 +763,7 @@ async fn cross_source_creates_new_evidence() {
             2,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-a.org".into(),
                 content_hash: "hash_a".into(),
                 snippet: Some("Source A".into()),
@@ -775,7 +776,7 @@ async fn cross_source_creates_new_evidence() {
             3,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-b.org".into(),
                 content_hash: "hash_b".into(),
                 snippet: Some("Source B".into()),
@@ -788,7 +789,7 @@ async fn cross_source_creates_new_evidence() {
             4,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://source-c.org".into(),
                 content_hash: "hash_c".into(),
                 snippet: Some("Source C".into()),
@@ -857,7 +858,7 @@ async fn same_source_does_not_inflate_corroboration() {
             2,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://parade.org".into(),
                 content_hash: "hash_v1".into(),
                 snippet: None,
@@ -874,8 +875,8 @@ async fn same_source_does_not_inflate_corroboration() {
         events.push(stored(
             seq,
             &Event::System(
-                rootsignal_common::system_events::SystemDecision::FreshnessConfirmed {
-                    entity_ids: vec![signal_id],
+                SystemEvent::FreshnessConfirmed {
+                    signal_ids: vec![signal_id],
                     node_type: rootsignal_common::NodeType::Gathering,
                     confirmed_at: Utc::now(),
                 },
@@ -885,7 +886,7 @@ async fn same_source_does_not_inflate_corroboration() {
             seq + 1,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://parade.org".into(),
                 content_hash: format!("hash_v{}", i + 2),
                 snippet: None,
@@ -936,7 +937,7 @@ async fn same_source_does_not_inflate_corroboration() {
         stored(
             13,
             &Event::World(WorldEvent::ObservationCorroborated {
-                entity_id: signal_id,
+                signal_id,
                 node_type: rootsignal_common::NodeType::Gathering,
                 new_source_url: "https://independent-news.org".into(),
                 summary: None,
@@ -946,7 +947,7 @@ async fn same_source_does_not_inflate_corroboration() {
             14,
             &Event::World(WorldEvent::CitationRecorded {
                 citation_id: Uuid::new_v4(),
-                entity_id: signal_id,
+                signal_id,
                 url: "https://independent-news.org".into(),
                 content_hash: "cross_hash".into(),
                 snippet: None,
@@ -1286,7 +1287,7 @@ async fn source_last_scraped_round_trip() {
     let source_id = Uuid::new_v4();
     let events = vec![stored(
         1,
-        &Event::System(SystemDecision::SourceRegistered {
+        &Event::System(SystemEvent::SourceRegistered {
             source_id,
             canonical_key: "https://example.org".into(),
             canonical_value: "https://example.org".into(),
@@ -1618,6 +1619,109 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 2, "Both region tensions should survive");
+}
+
+#[tokio::test]
+async fn merge_duplicate_tensions_repoints_situation_edges() {
+    let (_container, client) = setup().await;
+    let writer = GraphWriter::new(client.clone());
+
+    // Two near-identical tensions (cosine >0.85)
+    let mut base_emb = vec![0.0f64; 1024];
+    base_emb[0] = 1.0;
+    base_emb[1] = 0.5;
+
+    let mut dup_emb = base_emb.clone();
+    dup_emb[2] = 0.05; // tiny perturbation
+
+    let survivor_id = Uuid::new_v4();
+    let dup_id = Uuid::new_v4();
+
+    create_tension_with_embedding(
+        &client,
+        survivor_id,
+        "Youth Violence in North Minneapolis",
+        &base_emb,
+    )
+    .await;
+    create_tension_with_embedding(
+        &client,
+        dup_id,
+        "Youth Violence Spike in North Minneapolis",
+        &dup_emb,
+    )
+    .await;
+
+    // Create a Situation and link the duplicate to it via PART_OF
+    let situation_id = Uuid::new_v4();
+    let now = neo4j_dt(&Utc::now());
+    let q = query(
+        "CREATE (s:Situation {
+            id: $id,
+            headline: 'Youth Violence Situation',
+            lede: 'test',
+            arc: 'escalating',
+            temperature: 0.5,
+            tension_heat: 0.5,
+            entity_velocity: 0.0,
+            amplification: 0.0,
+            response_coverage: 0.0,
+            clarity_need: 0.5,
+            clarity: 'murky',
+            centroid_lat: 44.9778,
+            centroid_lng: -93.2650,
+            location_name: 'Minneapolis',
+            structured_state: '{}',
+            signal_count: 1,
+            tension_count: 1,
+            dispatch_count: 0,
+            first_seen: datetime($now),
+            last_updated: datetime($now),
+            sensitivity: 'general',
+            category: 'safety'
+        })",
+    )
+    .param("id", situation_id.to_string())
+    .param("now", now);
+    client.inner().run(q).await.expect("Create situation");
+
+    let q = query(
+        "MATCH (t:Tension {id: $tid}), (s:Situation {id: $sid})
+         CREATE (t)-[:PART_OF]->(s)",
+    )
+    .param("tid", dup_id.to_string())
+    .param("sid", situation_id.to_string());
+    client.inner().run(q).await.expect("Create PART_OF edge");
+
+    // Run merge
+    let merged = writer
+        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+        .await
+        .expect("merge failed");
+    assert_eq!(merged, 1, "Should merge 1 duplicate");
+
+    // Survivor now has PART_OF edge to Situation
+    let q = query(
+        "MATCH (t:Tension {id: $tid})-[:PART_OF]->(s:Situation {id: $sid})
+         RETURN t.id AS tid",
+    )
+    .param("tid", survivor_id.to_string())
+    .param("sid", situation_id.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream
+        .next()
+        .await
+        .unwrap()
+        .expect("Survivor should have PART_OF edge to Situation");
+    let tid: String = row.get("tid").unwrap();
+    assert_eq!(tid, survivor_id.to_string());
+
+    // Duplicate is deleted
+    let q = query("MATCH (t:Tension {id: $id}) RETURN t.id AS id")
+        .param("id", dup_id.to_string());
+    let mut stream = client.inner().execute(q).await.unwrap();
+    let row = stream.next().await.unwrap();
+    assert!(row.is_none(), "Duplicate tension should be deleted");
 }
 
 // =============================================================================
@@ -2967,7 +3071,7 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let events = vec![stored(
         1,
-        &Event::System(SystemDecision::SourceRegistered {
+        &Event::System(SystemEvent::SourceRegistered {
             source_id,
             canonical_key: canonical_key.into(),
             canonical_value: "emergency housing Minneapolis".into(),

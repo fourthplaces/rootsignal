@@ -138,7 +138,17 @@ pub async fn run_supervisor_pipeline(
         }
     };
 
-    // 2. Compute cause heat
+    // 2. Merge duplicate tensions (before heat computation)
+    match writer
+        .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
+        .await
+    {
+        Ok(merged) if merged > 0 => info!(merged, "Duplicate tensions merged"),
+        Ok(_) => {}
+        Err(e) => warn!(error = %e, "Failed to merge duplicate tensions"),
+    }
+
+    // 3. Compute cause heat
     match rootsignal_graph::cause_heat::compute_cause_heat(
         &deps.graph_client,
         0.7,
@@ -153,7 +163,7 @@ pub async fn run_supervisor_pipeline(
         Err(e) => warn!(error = %e, "Failed to compute cause heat"),
     }
 
-    // 3. Detect beacons (geographic signal clusters → new ScoutTasks)
+    // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
     match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &writer).await {
         Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
         Ok(_) => {}

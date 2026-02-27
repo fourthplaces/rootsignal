@@ -1403,7 +1403,7 @@ impl GraphWriter {
                 "coalition" => rootsignal_common::ActorType::Coalition,
                 _ => rootsignal_common::ActorType::Organization,
             };
-            let entity_id: String = actor_node.get("entity_id").unwrap_or_default();
+            let canonical_key: String = actor_node.get("canonical_key").unwrap_or_default();
             let bio: Option<String> = actor_node.get("bio").ok();
             let location_lat: Option<f64> = actor_node.get("location_lat").ok();
             let location_lng: Option<f64> = actor_node.get("location_lng").ok();
@@ -1413,7 +1413,7 @@ impl GraphWriter {
                 id,
                 name,
                 actor_type,
-                entity_id,
+                canonical_key,
                 domains: actor_node.get("domains").unwrap_or_default(),
                 social_urls: actor_node.get("social_urls").unwrap_or_default(),
                 description: actor_node.get("description").unwrap_or_default(),
@@ -1487,16 +1487,16 @@ impl GraphWriter {
         Ok(results)
     }
 
-    /// Lookup an actor by entity_id. Returns the actor's UUID if found.
-    pub async fn find_actor_by_entity_id(
+    /// Lookup an actor by canonical_key. Returns the actor's UUID if found.
+    pub async fn find_actor_by_canonical_key(
         &self,
-        entity_id: &str,
+        canonical_key: &str,
     ) -> Result<Option<Uuid>, neo4rs::Error> {
         let q = query(
-            "MATCH (a:Actor {entity_id: $entity_id})
+            "MATCH (a:Actor {canonical_key: $canonical_key})
              RETURN a.id AS id LIMIT 1",
         )
-        .param("entity_id", entity_id);
+        .param("canonical_key", canonical_key);
 
         let mut stream = self.client.graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -2636,12 +2636,12 @@ impl GraphWriter {
             .param("survivor_id", survivor_id.as_str());
             self.client.graph.run(q).await?;
 
-            // Re-point CONTAINS edges from stories
+            // Re-point PART_OF edges to situations
             let q = query(
-                "MATCH (s:Story)-[r:CONTAINS]->(dup:Tension {id: $dup_id})
+                "MATCH (dup:Tension {id: $dup_id})-[r:PART_OF]->(s:Situation)
                  MATCH (survivor:Tension {id: $survivor_id})
-                 WHERE NOT (s)-[:CONTAINS]->(survivor)
-                 CREATE (s)-[:CONTAINS]->(survivor)
+                 WHERE NOT (survivor)-[:PART_OF]->(s)
+                 CREATE (survivor)-[:PART_OF]->(s)
                  WITH r
                  DELETE r",
             )
