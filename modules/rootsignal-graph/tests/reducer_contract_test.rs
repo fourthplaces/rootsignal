@@ -63,24 +63,36 @@ const NOOP_EVENT_TYPES: &[&str] = &[
 
 /// All graph-mutating events produce Cypher.
 const APPLIED_EVENT_TYPES: &[&str] = &[
-    // World: Discovery (5 typed variants)
-    "gathering_discovered",
-    "aid_discovered",
-    "need_discovered",
-    "notice_discovered",
-    "tension_discovered",
+    // World: Discovery (7 typed variants)
+    "gathering_announced",
+    "resource_offered",
+    "help_requested",
+    "announcement_shared",
+    "concern_raised",
+    "condition_observed",
+    "incident_reported",
     // World: Corroboration fact
     "observation_corroborated",
     // World: Citations
-    "citation_recorded",
+    "citation_published",
     // World: Actors
     "actor_identified",
     "actor_linked_to_signal",
     "actor_location_identified",
     // World: Relationship edges
-    "resource_edge_created",
+    "resource_linked",
     "response_linked",
     "tension_linked",
+    // World: Lifecycle
+    "gathering_cancelled",
+    "resource_depleted",
+    "announcement_retracted",
+    "citation_retracted",
+    "details_changed",
+    // World: Resource identification
+    "resource_identified",
+    // World: Signal-source links
+    "signal_linked_to_source",
     // System: Observation lifecycle
     "freshness_confirmed",
     "confidence_scored",
@@ -91,13 +103,16 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "implied_queries_consumed",
     // System: Classifications
     "sensitivity_classified",
+    "tone_classified",
+    "severity_classified",
+    "urgency_classified",
     "implied_queries_extracted",
     // System: Corrections (5 typed variants)
     "gathering_corrected",
-    "aid_corrected",
-    "need_corrected",
-    "notice_corrected",
-    "tension_corrected",
+    "resource_corrected",
+    "help_request_corrected",
+    "announcement_corrected",
+    "concern_corrected",
     // System: Actors
     "duplicate_actors_merged",
     "orphaned_actors_cleaned",
@@ -106,6 +121,7 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "situation_changed",
     "situation_promoted",
     // System: Tags
+    "signal_tagged",
     "tag_suppressed",
     "tags_merged",
     // System: Quality / lint
@@ -122,8 +138,11 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "actor_linked_to_source",
     // System: App user actions
     "pin_created",
+    "pins_consumed",
     "demand_received",
     "submission_received",
+    // System: Source scrape telemetry
+    "source_scraped",
 ];
 
 #[test]
@@ -260,12 +279,12 @@ fn malformed_payload_returns_deserialize_error() {
     let stored = rootsignal_events::StoredEvent {
         seq: 1,
         ts: Utc::now(),
-        event_type: "gathering_discovered".to_string(),
+        event_type: "gathering_announced".to_string(),
         parent_seq: None,
         caused_by_seq: None,
         run_id: None,
         actor: None,
-        payload: json!({"type": "gathering_discovered", "bogus": true}),
+        payload: json!({"type": "gathering_announced", "bogus": true}),
         schema_v: 1,
         id: None,
         parent_id: None,
@@ -274,7 +293,7 @@ fn malformed_payload_returns_deserialize_error() {
     let result = Event::from_payload(&stored.payload);
     assert!(
         result.is_err(),
-        "Malformed GatheringDiscovered payload should fail deserialization"
+        "Malformed GatheringAnnounced payload should fail deserialization"
     );
 }
 
@@ -294,21 +313,18 @@ fn noop_event_stored_event_deserializes_cleanly() {
 
 #[test]
 fn discovery_payload_has_no_enrichment_fields() {
-    let event = Event::World(WorldEvent::GatheringDiscovered {
+    let event = Event::World(WorldEvent::GatheringAnnounced {
         id: Uuid::new_v4(),
         title: "Test".into(),
         summary: "Test".into(),
-        confidence: 0.8,
         source_url: "https://example.com".into(),
-        extracted_at: Utc::now(),
         published_at: None,
-        location: None,
-        from_location: None,
-        mentioned_actors: vec![],
-        author_actor: None,
+        extraction_id: None,
+        locations: vec![],
+        mentioned_entities: vec![],
+        references: vec![],
         schedule: None,
         action_url: None,
-        organizer: None,
     });
 
     let payload = event.to_payload();
@@ -409,95 +425,107 @@ fn build_all_events() -> Vec<Event> {
         // World (22 variants)
         // =====================================================================
         // Discovery (5 typed variants) — no sensitivity or implied_queries
-        Event::World(WorldEvent::GatheringDiscovered {
+        Event::World(WorldEvent::GatheringAnnounced {
             id,
             title: "".into(),
             summary: "".into(),
-            confidence: 0.0,
             source_url: "".into(),
-            extracted_at: now,
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec![],
-            author_actor: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
             schedule: None,
             action_url: None,
-            organizer: None,
         }),
-        Event::World(WorldEvent::AidDiscovered {
+        Event::World(WorldEvent::ResourceOffered {
             id,
             title: "".into(),
             summary: "".into(),
-            confidence: 0.0,
             source_url: "".into(),
-            extracted_at: now,
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec![],
-            author_actor: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
             action_url: None,
             availability: None,
-            is_ongoing: None,
         }),
-        Event::World(WorldEvent::NeedDiscovered {
+        Event::World(WorldEvent::HelpRequested {
             id,
             title: "".into(),
             summary: "".into(),
-            confidence: 0.0,
             source_url: "".into(),
-            extracted_at: now,
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec![],
-            author_actor: None,
-            urgency: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
             what_needed: None,
             goal: None,
         }),
-        Event::World(WorldEvent::NoticeDiscovered {
+        Event::World(WorldEvent::AnnouncementShared {
             id,
             title: "".into(),
             summary: "".into(),
-            confidence: 0.0,
             source_url: "".into(),
-            extracted_at: now,
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec![],
-            author_actor: None,
-            severity: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
             category: None,
             effective_date: None,
-            source_authority: None,
         }),
-        Event::World(WorldEvent::TensionDiscovered {
+        Event::World(WorldEvent::ConcernRaised {
             id,
             title: "".into(),
             summary: "".into(),
-            confidence: 0.0,
             source_url: "".into(),
-            extracted_at: now,
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec![],
-            author_actor: None,
-            severity: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
             what_would_help: None,
         }),
+        Event::World(WorldEvent::ConditionObserved {
+            id,
+            title: "".into(),
+            summary: "".into(),
+            source_url: "".into(),
+            published_at: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
+        }),
+        Event::World(WorldEvent::IncidentReported {
+            id,
+            title: "".into(),
+            summary: "".into(),
+            source_url: "".into(),
+            published_at: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![],
+            references: vec![],
+            schedule: None,
+        }),
         // Corroboration (world fact only — no similarity or count)
-        Event::World(WorldEvent::ObservationCorroborated {
+        Event::System(SystemEvent::ObservationCorroborated {
             signal_id: id,
             node_type: NodeType::Gathering,
             new_source_url: "".into(),
             summary: None,
         }),
         // Citations
-        Event::World(WorldEvent::CitationRecorded {
+        Event::World(WorldEvent::CitationPublished {
             citation_id: id,
             signal_id: id,
             url: "".into(),
@@ -508,7 +536,7 @@ fn build_all_events() -> Vec<Event> {
             evidence_confidence: None,
         }),
         // Actors (no discovery_depth)
-        Event::World(WorldEvent::ActorIdentified {
+        Event::System(SystemEvent::ActorIdentified {
             actor_id: id,
             name: "".into(),
             actor_type: ActorType::Organization,
@@ -521,40 +549,78 @@ fn build_all_events() -> Vec<Event> {
             location_lng: None,
             location_name: None,
         }),
-        Event::World(WorldEvent::ActorLinkedToSignal {
+        Event::System(SystemEvent::ActorLinkedToSignal {
             actor_id: id,
             signal_id: id,
             role: "".into(),
         }),
-        Event::World(WorldEvent::ActorLocationIdentified {
+        Event::System(SystemEvent::ActorLocationIdentified {
             actor_id: id,
             location_lat: 0.0,
             location_lng: 0.0,
             location_name: None,
         }),
         // Relationship edges
-        Event::World(WorldEvent::ResourceEdgeCreated {
+        Event::World(WorldEvent::ResourceLinked {
             signal_id: id,
-            resource_id: id,
+            resource_slug: "".into(),
             role: "requires".into(),
             confidence: 0.8,
             quantity: None,
             notes: None,
             capacity: None,
         }),
-        Event::World(WorldEvent::ResponseLinked {
+        Event::System(SystemEvent::ResponseLinked {
             signal_id: id,
             tension_id: id,
             strength: 0.7,
             explanation: "".into(),
             source_url: None,
         }),
-        Event::World(WorldEvent::TensionLinked {
+        Event::System(SystemEvent::TensionLinked {
             signal_id: id,
             tension_id: id,
             strength: 0.6,
             explanation: "".into(),
             source_url: None,
+        }),
+        // Lifecycle events
+        Event::World(WorldEvent::GatheringCancelled {
+            signal_id: id,
+            reason: "".into(),
+            source_url: "".into(),
+        }),
+        Event::World(WorldEvent::ResourceDepleted {
+            signal_id: id,
+            reason: "".into(),
+            source_url: "".into(),
+        }),
+        Event::World(WorldEvent::AnnouncementRetracted {
+            signal_id: id,
+            reason: "".into(),
+            source_url: "".into(),
+        }),
+        Event::World(WorldEvent::CitationRetracted {
+            citation_id: id,
+            reason: "".into(),
+            source_url: "".into(),
+        }),
+        Event::World(WorldEvent::DetailsChanged {
+            signal_id: id,
+            summary: "".into(),
+            source_url: "".into(),
+        }),
+        // Resource identification
+        Event::World(WorldEvent::ResourceIdentified {
+            resource_id: id,
+            name: "".into(),
+            slug: "".into(),
+            description: "".into(),
+        }),
+        // Signal-source links
+        Event::World(WorldEvent::SignalLinkedToSource {
+            signal_id: id,
+            source_id: id,
         }),
         // =====================================================================
         // System (38 variants)
@@ -619,6 +685,18 @@ fn build_all_events() -> Vec<Event> {
             signal_id: id,
             level: SensitivityLevel::General,
         }),
+        Event::System(SystemEvent::ToneClassified {
+            signal_id: id,
+            tone: rootsignal_common::types::Tone::Hopeful,
+        }),
+        Event::System(SystemEvent::SeverityClassified {
+            signal_id: id,
+            severity: rootsignal_common::types::Severity::Medium,
+        }),
+        Event::System(SystemEvent::UrgencyClassified {
+            signal_id: id,
+            urgency: rootsignal_common::types::Urgency::Low,
+        }),
         Event::System(SystemEvent::ImpliedQueriesExtracted {
             signal_id: id,
             queries: vec![],
@@ -632,33 +710,33 @@ fn build_all_events() -> Vec<Event> {
             },
             reason: "".into(),
         }),
-        Event::System(SystemEvent::AidCorrected {
+        Event::System(SystemEvent::ResourceCorrected {
             signal_id: id,
-            correction: rootsignal_common::events::AidCorrection::Title {
+            correction: rootsignal_common::events::ResourceCorrection::Title {
                 old: "".into(),
                 new: "".into(),
             },
             reason: "".into(),
         }),
-        Event::System(SystemEvent::NeedCorrected {
+        Event::System(SystemEvent::HelpRequestCorrected {
             signal_id: id,
-            correction: rootsignal_common::events::NeedCorrection::Title {
+            correction: rootsignal_common::events::HelpRequestCorrection::Title {
                 old: "".into(),
                 new: "".into(),
             },
             reason: "".into(),
         }),
-        Event::System(SystemEvent::NoticeCorrected {
+        Event::System(SystemEvent::AnnouncementCorrected {
             signal_id: id,
-            correction: rootsignal_common::events::NoticeCorrection::Title {
+            correction: rootsignal_common::events::AnnouncementCorrection::Title {
                 old: "".into(),
                 new: "".into(),
             },
             reason: "".into(),
         }),
-        Event::System(SystemEvent::TensionCorrected {
+        Event::System(SystemEvent::ConcernCorrected {
             signal_id: id,
-            correction: rootsignal_common::events::TensionCorrection::Title {
+            correction: rootsignal_common::events::ConcernCorrection::Title {
                 old: "".into(),
                 new: "".into(),
             },
@@ -704,6 +782,10 @@ fn build_all_events() -> Vec<Event> {
             fidelity_score: None,
         }),
         // Tags
+        Event::System(SystemEvent::SignalTagged {
+            signal_id: id,
+            tag_slugs: vec!["test-tag".into()],
+        }),
         Event::System(SystemEvent::TagSuppressed {
             situation_id: id,
             tag_slug: "".into(),
@@ -747,12 +829,12 @@ fn build_all_events() -> Vec<Event> {
             source_ids: vec![id],
             reason: "".into(),
         }),
-        Event::System(SystemEvent::SourceLinkDiscovered {
+        Event::World(WorldEvent::SourceLinkDiscovered {
             child_id: id,
             parent_canonical_key: "".into(),
         }),
         // Actor-source links
-        Event::System(SystemEvent::ActorLinkedToSource {
+        Event::World(WorldEvent::ActorLinkedToSource {
             actor_id: id,
             source_id: id,
         }),
@@ -763,6 +845,9 @@ fn build_all_events() -> Vec<Event> {
             location_lng: 0.0,
             source_id: id,
             created_by: "".into(),
+        }),
+        Event::System(SystemEvent::PinsConsumed {
+            pin_ids: vec![id],
         }),
         Event::System(SystemEvent::DemandReceived {
             demand_id: id,
@@ -777,10 +862,27 @@ fn build_all_events() -> Vec<Event> {
             reason: None,
             source_canonical_key: None,
         }),
+        // Source scrape telemetry
+        Event::System(SystemEvent::SourceScraped {
+            canonical_key: "".into(),
+            signals_produced: 0,
+            scraped_at: now,
+        }),
         // System curiosity
         Event::System(SystemEvent::ExpansionQueryCollected {
             query: "".into(),
             source_url: "".into(),
         }),
     ]
+}
+
+#[test]
+fn classification_lists_cover_expected_count() {
+    let total = NOOP_EVENT_TYPES.len() + APPLIED_EVENT_TYPES.len();
+    let built = build_all_events().len();
+    assert_eq!(
+        total, built,
+        "Classification lists ({total}) don't match build_all_events ({built}). \
+         Did you add a new event variant without updating both?"
+    );
 }

@@ -11,11 +11,14 @@ use uuid::Uuid;
 use rootsignal_world::Eventlike;
 
 use crate::events::{
-    AidCorrection, GatheringCorrection, NeedCorrection, NoticeCorrection, SituationChange,
-    SourceChange, SystemSourceChange, TensionCorrection,
+    AnnouncementCorrection, ConcernCorrection, GatheringCorrection, HelpRequestCorrection,
+    ResourceCorrection, SituationChange, SourceChange, SystemSourceChange,
 };
 use crate::safety::SensitivityLevel;
-use crate::types::{DiscoveryMethod, DispatchType, NodeType, SituationArc, SourceRole};
+use crate::types::{
+    ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
+    Urgency,
+};
 
 /// A system event — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,9 +102,93 @@ pub enum SystemEvent {
         level: SensitivityLevel,
     },
 
+    // TODO: wire producer when extraction pipeline supports tone classification
+    ToneClassified {
+        signal_id: Uuid,
+        tone: Tone,
+    },
+
+    // TODO: wire producer when extraction pipeline supports severity classification
+    SeverityClassified {
+        signal_id: Uuid,
+        severity: Severity,
+    },
+
+    // TODO: wire producer when extraction pipeline supports urgency classification
+    UrgencyClassified {
+        signal_id: Uuid,
+        urgency: Urgency,
+    },
+
     ImpliedQueriesExtracted {
         signal_id: Uuid,
         queries: Vec<String>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Corroboration — system judgment that two sources are about the same thing
+    // -----------------------------------------------------------------------
+    ObservationCorroborated {
+        signal_id: Uuid,
+        node_type: NodeType,
+        new_source_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Actor identification — system extraction, not a world event
+    // -----------------------------------------------------------------------
+    ActorIdentified {
+        actor_id: Uuid,
+        name: String,
+        actor_type: ActorType,
+        canonical_key: String,
+        domains: Vec<String>,
+        social_urls: Vec<String>,
+        description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bio: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_lat: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_lng: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location_name: Option<String>,
+    },
+
+    ActorLinkedToSignal {
+        actor_id: Uuid,
+        signal_id: Uuid,
+        role: String,
+    },
+
+    ActorLocationIdentified {
+        actor_id: Uuid,
+        location_lat: f64,
+        location_lng: f64,
+        location_name: Option<String>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Relationship linking — system judgments about signal relationships
+    // -----------------------------------------------------------------------
+    ResponseLinked {
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_url: Option<String>,
+    },
+
+    TensionLinked {
+        signal_id: Uuid,
+        tension_id: Uuid,
+        strength: f64,
+        explanation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_url: Option<String>,
     },
 
     // -----------------------------------------------------------------------
@@ -113,27 +200,31 @@ pub enum SystemEvent {
         reason: String,
     },
 
-    AidCorrected {
+    #[serde(alias = "aid_corrected")]
+    ResourceCorrected {
         signal_id: Uuid,
-        correction: AidCorrection,
+        correction: ResourceCorrection,
         reason: String,
     },
 
-    NeedCorrected {
+    #[serde(alias = "need_corrected")]
+    HelpRequestCorrected {
         signal_id: Uuid,
-        correction: NeedCorrection,
+        correction: HelpRequestCorrection,
         reason: String,
     },
 
-    NoticeCorrected {
+    #[serde(alias = "notice_corrected")]
+    AnnouncementCorrected {
         signal_id: Uuid,
-        correction: NoticeCorrection,
+        correction: AnnouncementCorrection,
         reason: String,
     },
 
-    TensionCorrected {
+    #[serde(alias = "tension_corrected")]
+    ConcernCorrected {
         signal_id: Uuid,
-        correction: TensionCorrection,
+        correction: ConcernCorrection,
         reason: String,
     },
 
@@ -254,24 +345,6 @@ pub enum SystemEvent {
         reason: String,
     },
 
-    SourceLinkDiscovered {
-        child_id: Uuid,
-        parent_canonical_key: String,
-    },
-
-    // -----------------------------------------------------------------------
-    // Actor-source links (links actor to a system entity)
-    // -----------------------------------------------------------------------
-    ActorLinkedToSource {
-        actor_id: Uuid,
-        source_id: Uuid,
-    },
-
-    SignalLinkedToSource {
-        signal_id: Uuid,
-        source_id: Uuid,
-    },
-
     // -----------------------------------------------------------------------
     // App user actions
     // -----------------------------------------------------------------------
@@ -334,12 +407,21 @@ impl Eventlike for SystemEvent {
             SystemEvent::ReviewVerdictReached { .. } => "review_verdict_reached",
             SystemEvent::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
             SystemEvent::SensitivityClassified { .. } => "sensitivity_classified",
+            SystemEvent::ToneClassified { .. } => "tone_classified",
+            SystemEvent::SeverityClassified { .. } => "severity_classified",
+            SystemEvent::UrgencyClassified { .. } => "urgency_classified",
             SystemEvent::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
+            SystemEvent::ObservationCorroborated { .. } => "observation_corroborated",
+            SystemEvent::ActorIdentified { .. } => "actor_identified",
+            SystemEvent::ActorLinkedToSignal { .. } => "actor_linked_to_signal",
+            SystemEvent::ActorLocationIdentified { .. } => "actor_location_identified",
+            SystemEvent::ResponseLinked { .. } => "response_linked",
+            SystemEvent::TensionLinked { .. } => "tension_linked",
             SystemEvent::GatheringCorrected { .. } => "gathering_corrected",
-            SystemEvent::AidCorrected { .. } => "aid_corrected",
-            SystemEvent::NeedCorrected { .. } => "need_corrected",
-            SystemEvent::NoticeCorrected { .. } => "notice_corrected",
-            SystemEvent::TensionCorrected { .. } => "tension_corrected",
+            SystemEvent::ResourceCorrected { .. } => "resource_corrected",
+            SystemEvent::HelpRequestCorrected { .. } => "help_request_corrected",
+            SystemEvent::AnnouncementCorrected { .. } => "announcement_corrected",
+            SystemEvent::ConcernCorrected { .. } => "concern_corrected",
             SystemEvent::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
             SystemEvent::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
             SystemEvent::SituationIdentified { .. } => "situation_identified",
@@ -356,9 +438,6 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourceRegistered { .. } => "source_registered",
             SystemEvent::SourceChanged { .. } => "source_changed",
             SystemEvent::SourceDeactivated { .. } => "source_deactivated",
-            SystemEvent::SourceLinkDiscovered { .. } => "source_link_discovered",
-            SystemEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
-            SystemEvent::SignalLinkedToSource { .. } => "signal_linked_to_source",
             SystemEvent::PinCreated { .. } => "pin_created",
             SystemEvent::PinsConsumed { .. } => "pins_consumed",
             SystemEvent::DemandReceived { .. } => "demand_received",

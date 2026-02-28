@@ -127,10 +127,6 @@ pub enum GatheringCorrection {
         old: String,
         new: String,
     },
-    Confidence {
-        old: f32,
-        new: f32,
-    },
     Sensitivity {
         old: SensitivityLevel,
         new: SensitivityLevel,
@@ -151,11 +147,15 @@ pub enum GatheringCorrection {
         old: Option<String>,
         new: Option<String>,
     },
+    /// Absorbs unknown/removed correction fields during deserialization (e.g. historical
+    /// "confidence", "severity", "source_authority" variants removed in the taxonomy refactor).
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum AidCorrection {
+pub enum ResourceCorrection {
     Title {
         old: String,
         new: String,
@@ -163,10 +163,6 @@ pub enum AidCorrection {
     Summary {
         old: String,
         new: String,
-    },
-    Confidence {
-        old: f32,
-        new: f32,
     },
     Sensitivity {
         old: SensitivityLevel,
@@ -188,11 +184,14 @@ pub enum AidCorrection {
         old: Option<bool>,
         new: Option<bool>,
     },
+    /// Absorbs unknown/removed correction fields during deserialization.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum NeedCorrection {
+pub enum HelpRequestCorrection {
     Title {
         old: String,
         new: String,
@@ -200,10 +199,6 @@ pub enum NeedCorrection {
     Summary {
         old: String,
         new: String,
-    },
-    Confidence {
-        old: f32,
-        new: f32,
     },
     Sensitivity {
         old: SensitivityLevel,
@@ -225,11 +220,14 @@ pub enum NeedCorrection {
         old: Option<String>,
         new: Option<String>,
     },
+    /// Absorbs unknown/removed correction fields during deserialization.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum NoticeCorrection {
+pub enum AnnouncementCorrection {
     Title {
         old: String,
         new: String,
@@ -238,10 +236,6 @@ pub enum NoticeCorrection {
         old: String,
         new: String,
     },
-    Confidence {
-        old: f32,
-        new: f32,
-    },
     Sensitivity {
         old: SensitivityLevel,
         new: SensitivityLevel,
@@ -249,10 +243,6 @@ pub enum NoticeCorrection {
     Location {
         old: Option<Location>,
         new: Option<Location>,
-    },
-    Severity {
-        old: Option<Severity>,
-        new: Option<Severity>,
     },
     Category {
         old: Option<String>,
@@ -262,15 +252,14 @@ pub enum NoticeCorrection {
         old: Option<DateTime<Utc>>,
         new: Option<DateTime<Utc>>,
     },
-    SourceAuthority {
-        old: Option<String>,
-        new: Option<String>,
-    },
+    /// Absorbs unknown/removed correction fields during deserialization.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "field", content = "value", rename_all = "snake_case")]
-pub enum TensionCorrection {
+pub enum ConcernCorrection {
     Title {
         old: String,
         new: String,
@@ -278,10 +267,6 @@ pub enum TensionCorrection {
     Summary {
         old: String,
         new: String,
-    },
-    Confidence {
-        old: f32,
-        new: f32,
     },
     Sensitivity {
         old: SensitivityLevel,
@@ -291,14 +276,13 @@ pub enum TensionCorrection {
         old: Option<Location>,
         new: Option<Location>,
     },
-    Severity {
-        old: Option<Severity>,
-        new: Option<Severity>,
-    },
     WhatWouldHelp {
         old: Option<String>,
         new: Option<String>,
     },
+    /// Absorbs unknown/removed correction fields during deserialization.
+    #[serde(other)]
+    Unknown,
 }
 
 // ---------------------------------------------------------------------------
@@ -371,20 +355,20 @@ impl From<TelemetryEvent> for Event {
 mod tests {
     use super::*;
     use crate::safety::SensitivityLevel;
+    use crate::types::{Entity, EntityType};
     use chrono::Utc;
     use uuid::Uuid;
 
     #[test]
     fn world_event_roundtrips_through_wrapper() {
-        let world = WorldEvent::GatheringDiscovered {
+        let world = WorldEvent::GatheringAnnounced {
             id: Uuid::new_v4(),
             title: "Community Cleanup".into(),
             summary: "Monthly neighborhood cleanup".into(),
-            confidence: 0.85,
             source_url: "https://example.com/cleanup".into(),
-            extracted_at: Utc::now(),
             published_at: Some(Utc::now()),
-            location: Some(Location {
+            extraction_id: None,
+            locations: vec![Location {
                 point: Some(crate::types::GeoPoint {
                     lat: 44.9778,
                     lng: -93.265,
@@ -392,10 +376,14 @@ mod tests {
                 }),
                 name: Some("Minneapolis".into()),
                 address: None,
-            }),
-            from_location: None,
-            mentioned_actors: vec!["Lake Street Council".into()],
-            author_actor: None,
+                role: None,
+            }],
+            mentioned_entities: vec![Entity {
+                name: "Lake Street Council".into(),
+                entity_type: EntityType::Organization,
+                role: None,
+            }],
+            references: vec![],
             schedule: Some(Schedule {
                 starts_at: Some(Utc::now()),
                 ends_at: None,
@@ -404,29 +392,26 @@ mod tests {
                 timezone: Some("America/Chicago".into()),
             }),
             action_url: Some("https://example.com/signup".into()),
-            organizer: Some("Lake Street Council".into()),
         };
 
         let event = Event::World(world);
         let payload = event.to_payload();
-        assert_eq!(payload["type"].as_str().unwrap(), "gathering_discovered");
+        assert_eq!(payload["type"].as_str().unwrap(), "gathering_announced");
 
         let roundtripped = Event::from_payload(&payload).unwrap();
-        assert_eq!(roundtripped.event_type(), "gathering_discovered");
+        assert_eq!(roundtripped.event_type(), "gathering_announced");
 
         match roundtripped {
-            Event::World(WorldEvent::GatheringDiscovered {
+            Event::World(WorldEvent::GatheringAnnounced {
                 title,
-                confidence,
                 schedule,
                 ..
             }) => {
                 assert_eq!(title, "Community Cleanup");
-                assert!((confidence - 0.85).abs() < f32::EPSILON);
                 assert!(schedule.is_some());
                 assert_eq!(schedule.unwrap().rrule.unwrap(), "FREQ=MONTHLY;BYDAY=1SA");
             }
-            _ => panic!("Expected Event::World(WorldEvent::GatheringDiscovered)"),
+            _ => panic!("Expected Event::World(WorldEvent::GatheringAnnounced)"),
         }
     }
 
@@ -567,7 +552,7 @@ mod tests {
 
     #[test]
     fn from_impls_work() {
-        let w: Event = WorldEvent::ObservationCorroborated {
+        let w: Event = SystemEvent::ObservationCorroborated {
             signal_id: Uuid::new_v4(),
             node_type: crate::types::NodeType::Gathering,
             new_source_url: "test".into(),

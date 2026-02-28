@@ -1340,6 +1340,8 @@ pub fn node_type_label(nt: NodeType) -> &'static str {
         NodeType::Need => "Need",
         NodeType::Notice => "Notice",
         NodeType::Tension => "Tension",
+        NodeType::Condition => "Condition",
+        NodeType::Incident => "Incident",
         NodeType::Citation => "Citation",
     }
 }
@@ -1352,6 +1354,8 @@ fn label_to_node_type(label: &str) -> Option<NodeType> {
         "Need" => Some(NodeType::Need),
         "Notice" => Some(NodeType::Notice),
         "Tension" => Some(NodeType::Tension),
+        "Condition" => Some(NodeType::Condition),
+        "Incident" => Some(NodeType::Incident),
         "Citation" => Some(NodeType::Citation),
         _ => None,
     }
@@ -1403,6 +1407,14 @@ pub(crate) fn expiry_clause(nt: NodeType) -> String {
             days = NOTICE_EXPIRE_DAYS,
         ),
         NodeType::Tension => format!(
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
+            days = FRESHNESS_MAX_DAYS,
+        ),
+        NodeType::Condition => format!(
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
+            days = FRESHNESS_MAX_DAYS,
+        ),
+        NodeType::Incident => format!(
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
@@ -1662,6 +1674,8 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                             .map(|naive| naive.and_utc())
                     })
             };
+            // Legacy property from pre-refactor correction events — no active write path,
+            // but historical data may still carry it. Gracefully defaults to empty.
             let source_authority: String = n.get("source_authority").unwrap_or_default();
 
             Some(Node::Notice(NoticeNode {
@@ -1706,6 +1720,8 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 },
             }))
         }
+        // Condition and Incident don't have Node variants yet — skip for now.
+        NodeType::Condition | NodeType::Incident => None,
         NodeType::Citation => None,
     }
 }
