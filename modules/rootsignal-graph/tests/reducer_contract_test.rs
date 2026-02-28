@@ -26,6 +26,8 @@ fn stored_event(event: &Event) -> rootsignal_events::StoredEvent {
         actor: Some("test-actor".to_string()),
         payload: event.to_payload(),
         schema_v: 1,
+        id: None,
+        parent_id: None,
     }
 }
 
@@ -265,6 +267,8 @@ fn malformed_payload_returns_deserialize_error() {
         actor: None,
         payload: json!({"type": "gathering_discovered", "bogus": true}),
         schema_v: 1,
+        id: None,
+        parent_id: None,
     };
 
     let result = Event::from_payload(&stored.payload);

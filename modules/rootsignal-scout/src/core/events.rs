@@ -194,6 +194,20 @@ pub enum PipelineEvent {
     EngineStarted {
         run_id: String,
     },
+
+    // Scheduling
+    SourcesScheduled {
+        tension_count: u32,
+        response_count: u32,
+    },
+
+    // Metrics
+    MetricsCompleted,
+
+    // Run lifecycle
+    RunCompleted {
+        stats: crate::core::stats::ScoutStats,
+    },
 }
 
 impl PipelineEvent {
@@ -226,6 +240,9 @@ impl PipelineEvent {
             PipelineEvent::LinksPromoted { .. } => "links_promoted",
             PipelineEvent::ActorEnrichmentCompleted { .. } => "actor_enrichment_completed",
             PipelineEvent::EngineStarted { .. } => "engine_started",
+            PipelineEvent::SourcesScheduled { .. } => "sources_scheduled",
+            PipelineEvent::MetricsCompleted => "metrics_completed",
+            PipelineEvent::RunCompleted { .. } => "run_completed",
         }
     }
 }
@@ -258,7 +275,7 @@ pub enum FreshnessBucket {
 }
 
 // Seesaw event upcasting — version 1, no schema migrations needed yet.
-seesaw_core::impl_upcast!(ScoutEvent);
+// impl_upcast! removed in seesaw_core 0.13.0 (no longer needed for in-memory engine).
 
 #[cfg(test)]
 mod tests {

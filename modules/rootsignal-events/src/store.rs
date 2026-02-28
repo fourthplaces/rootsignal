@@ -11,6 +11,9 @@ use tracing::warn;
 
 use crate::types::{AppendEvent, StoredEvent};
 
+/// Column list used by all SELECT queries.
+const COLUMNS: &str = "seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id";
+
 // ---------------------------------------------------------------------------
 // EventStore
 // ---------------------------------------------------------------------------
@@ -30,8 +33,8 @@ impl EventStore {
     pub async fn append(&self, event: AppendEvent) -> Result<EventHandle> {
         let row = sqlx::query_as::<_, (i64,)>(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
-            VALUES ($1, NULL, NULL, $2, $3, $4, $5)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
+            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7)
             RETURNING seq
             "#,
         )
@@ -40,6 +43,8 @@ impl EventStore {
         .bind(&event.actor)
         .bind(&event.payload)
         .bind(event.schema_v)
+        .bind(event.id)
+        .bind(event.parent_id)
         .fetch_one(&self.pool)
         .await?;
 
@@ -60,20 +65,23 @@ impl EventStore {
     /// Append a root fact and return the full StoredEvent (with ts from Postgres).
     /// Used by the projector path where we need the complete event for projection.
     pub async fn append_and_read(&self, event: AppendEvent) -> Result<StoredEvent> {
-        let stored = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
-            VALUES ($1, NULL, NULL, $2, $3, $4, $5)
-            RETURNING seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
-            "#,
-        )
-        .bind(&event.event_type)
-        .bind(&event.run_id)
-        .bind(&event.actor)
-        .bind(&event.payload)
-        .bind(event.schema_v)
-        .fetch_one(&self.pool)
-        .await?;
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
+            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7)
+            RETURNING {COLUMNS}
+            "#
+        );
+        let stored = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(&event.event_type)
+            .bind(&event.run_id)
+            .bind(&event.actor)
+            .bind(&event.payload)
+            .bind(event.schema_v)
+            .bind(event.id)
+            .bind(event.parent_id)
+            .fetch_one(&self.pool)
+            .await?;
 
         notify_new_event(&self.pool, stored.seq).await;
 
@@ -86,20 +94,20 @@ impl EventStore {
     /// this returns events only up to the gap boundary. The next call picks up
     /// where it left off once the gap closes. Consumers never see gaps.
     pub async fn read_from(&self, seq_start: i64, limit: usize) -> Result<Vec<StoredEvent>> {
-        // Fetch the candidate rows
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE seq >= $1
             ORDER BY seq ASC
             LIMIT $2
-            "#,
-        )
-        .bind(seq_start)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(seq_start)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?;
 
         // Enforce gap-free: stop at the first gap in the sequence.
         let mut result = Vec::with_capacity(rows.len());
@@ -120,16 +128,17 @@ impl EventStore {
 
     /// Read a single event by sequence number.
     pub async fn read_event(&self, seq: i64) -> Result<Option<StoredEvent>> {
-        let row = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE seq = $1
-            "#,
-        )
-        .bind(seq)
-        .fetch_optional(&self.pool)
-        .await?;
+            "#
+        );
+        let row = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(seq)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row)
     }
@@ -141,71 +150,75 @@ impl EventStore {
         seq_start: i64,
         limit: usize,
     ) -> Result<Vec<StoredEvent>> {
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE event_type = $1 AND seq >= $2
             ORDER BY seq ASC
             LIMIT $3
-            "#,
-        )
-        .bind(event_type)
-        .bind(seq_start)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(event_type)
+            .bind(seq_start)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows)
     }
 
     /// Read all facts for a given run, in sequence order.
     pub async fn read_by_run(&self, run_id: &str) -> Result<Vec<StoredEvent>> {
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE run_id = $1
             ORDER BY seq ASC
-            "#,
-        )
-        .bind(run_id)
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(run_id)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows)
     }
 
     /// Read the full causal tree rooted at an event (recursive).
     pub async fn read_tree(&self, root_seq: i64) -> Result<Vec<StoredEvent>> {
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE caused_by_seq = $1 OR seq = $1
             ORDER BY seq ASC
-            "#,
-        )
-        .bind(root_seq)
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(root_seq)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows)
     }
 
     /// Read direct children of an event.
     pub async fn read_children(&self, parent_seq: i64) -> Result<Vec<StoredEvent>> {
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             WHERE parent_seq = $1
             ORDER BY seq ASC
-            "#,
-        )
-        .bind(parent_seq)
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(parent_seq)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows)
     }
@@ -221,25 +234,28 @@ impl EventStore {
         parent_seq: i64,
         event: AppendEvent,
     ) -> Result<StoredEvent> {
-        let stored = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
             VALUES (
                 $1, $2,
                 COALESCE((SELECT caused_by_seq FROM events WHERE seq = $2), $2),
-                $3, $4, $5, $6
+                $3, $4, $5, $6, $7, $8
             )
-            RETURNING seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
-            "#,
-        )
-        .bind(&event.event_type)
-        .bind(parent_seq)
-        .bind(&event.run_id)
-        .bind(&event.actor)
-        .bind(&event.payload)
-        .bind(event.schema_v)
-        .fetch_one(&self.pool)
-        .await?;
+            RETURNING {COLUMNS}
+            "#
+        );
+        let stored = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(&event.event_type)
+            .bind(parent_seq)
+            .bind(&event.run_id)
+            .bind(&event.actor)
+            .bind(&event.payload)
+            .bind(event.schema_v)
+            .bind(event.id)
+            .bind(event.parent_id)
+            .fetch_one(&self.pool)
+            .await?;
 
         notify_new_event(&self.pool, stored.seq).await;
 
@@ -306,8 +322,8 @@ impl EventHandle {
 
         let row = sqlx::query_as::<_, (i64,)>(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING seq
             "#,
         )
@@ -318,6 +334,8 @@ impl EventHandle {
         .bind(&event_with_context.actor)
         .bind(&event_with_context.payload)
         .bind(event_with_context.schema_v)
+        .bind(event_with_context.id)
+        .bind(event_with_context.parent_id)
         .fetch_one(&self.store.pool)
         .await?;
 
@@ -350,8 +368,8 @@ impl EventHandle {
         tokio::spawn(async move {
             let result = sqlx::query(
                 r#"
-                INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 "#,
             )
             .bind(&event_with_context.event_type)
@@ -361,6 +379,8 @@ impl EventHandle {
             .bind(&event_with_context.actor)
             .bind(&event_with_context.payload)
             .bind(event_with_context.schema_v)
+            .bind(event_with_context.id)
+            .bind(event_with_context.parent_id)
             .execute(&pool)
             .await;
 
@@ -435,6 +455,8 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredEvent {
             actor: row.try_get("actor")?,
             payload: row.try_get("payload")?,
             schema_v: row.try_get("schema_v")?,
+            id: row.try_get("id")?,
+            parent_id: row.try_get("parent_id")?,
         })
     }
 }
@@ -447,15 +469,16 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredEvent {
 impl EventStore {
     /// Read all events (for tests). No gap-free enforcement.
     pub async fn read_all(&self) -> Result<Vec<StoredEvent>> {
-        let rows = sqlx::query_as::<_, StoredEvent>(
+        let query = format!(
             r#"
-            SELECT seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v
+            SELECT {COLUMNS}
             FROM events
             ORDER BY seq ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 }

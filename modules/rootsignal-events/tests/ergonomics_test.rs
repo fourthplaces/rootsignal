@@ -57,6 +57,8 @@ fn stored_event_is_serializable() {
         actor: Some("scout".to_string()),
         payload: json!({"title": "Test Signal"}),
         schema_v: 1,
+        id: None,
+        parent_id: None,
     };
 
     let json = serde_json::to_string(&stored).unwrap();

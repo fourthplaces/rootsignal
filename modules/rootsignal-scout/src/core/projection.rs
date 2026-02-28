@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rootsignal_events::AppendEvent;
-use seesaw_core::{on, Aggregate, Context, Handler};
+use seesaw_core::{on, Context, Handler};
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::ScoutEvent;
@@ -25,9 +25,14 @@ pub fn persist_handler() -> Handler<ScoutEngineDeps> {
             |event: Arc<ScoutEvent>, ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
                 if let Some(ref event_store) = deps.event_store {
-                    let append =
+                    let mut append =
                         AppendEvent::new(event.event_type_str(), event.to_persist_payload())
-                            .with_run_id(&deps.run_id);
+                            .with_run_id(&deps.run_id)
+                            .with_id(ctx.current_event_id());
+
+                    if let Some(parent_id) = ctx.parent_event_id() {
+                        append = append.with_parent_id(parent_id);
+                    }
 
                     event_store.append(append).await.map_err(|e| {
                         anyhow::anyhow!("Event persist failed: {e}")
@@ -97,6 +102,8 @@ pub fn neo4j_handler() -> Handler<ScoutEngineDeps> {
                         actor: None,
                         payload: event.to_persist_payload(),
                         schema_v: 1,
+                        id: Some(ctx.current_event_id()),
+                        parent_id: ctx.parent_event_id(),
                     };
                     projector.project(&stored).await?;
                 }

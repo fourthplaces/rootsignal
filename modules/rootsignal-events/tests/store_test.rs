@@ -22,7 +22,9 @@ async fn test_pool() -> Option<PgPool> {
             run_id        TEXT,
             actor         TEXT,
             payload       JSONB        NOT NULL,
-            schema_v      SMALLINT     NOT NULL DEFAULT 1
+            schema_v      SMALLINT     NOT NULL DEFAULT 1,
+            id            UUID,
+            parent_id     UUID
         )
         "#,
     )

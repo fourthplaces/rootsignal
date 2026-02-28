@@ -7,19 +7,20 @@
 //! `CompatEngine` wraps the seesaw engine with the same `dispatch()` signature
 //! as the old `rootsignal_engine::Engine`, so existing call sites need no changes.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
 use rootsignal_events::EventStore as RsEventStore;
 use rootsignal_graph::GraphProjector;
-use seesaw_core::Aggregate;
+use sqlx::PgPool;
 use tokio::sync::RwLock;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::deps::PipelineDeps;
 use crate::core::events::ScoutEvent;
 use crate::core::projection;
-use crate::domains::{discovery, enrichment, signals};
+use crate::domains::{discovery, enrichment, expansion, lifecycle, scrape, signals};
 
 /// Dependencies shared by all seesaw handlers.
 pub struct ScoutEngineDeps {
@@ -38,10 +39,16 @@ pub struct ScoutEngineDeps {
     /// Test-only: capture all dispatched events for inspection.
     /// None in production, Some in tests that need event inspection.
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<ScoutEvent>>>>,
+    /// Budget tracker for LLM/API cost tracking.
+    pub budget: Option<Arc<crate::scheduling::budget::BudgetTracker>>,
+    /// Cancellation flag — checked by handlers between phases.
+    pub cancelled: Option<Arc<AtomicBool>>,
+    /// Postgres connection pool — used by finalize handler to save run stats.
+    pub pg_pool: Option<PgPool>,
 }
 
 /// The seesaw-backed scout engine type.
-pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps, seesaw_memory::MemoryBackend>;
+pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
 
 /// Build a fully-wired seesaw engine for a scout run.
 ///
@@ -51,10 +58,9 @@ pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps, seesaw_memory::Memo
 /// 3. **neo4j_projection** (priority 2) — project to graph (projectable events only)
 /// 4. **domain handlers** (default priority) — react to events, emit children
 pub(crate) fn build_seesaw_engine(deps: ScoutEngineDeps) -> SeesawEngine {
-    let backend = seesaw_memory::MemoryBackend::new();
     let capture_sink = deps.captured_events.clone();
 
-    let mut engine = seesaw_core::Engine::new(deps, backend)
+    let mut engine = seesaw_core::Engine::new(deps)
         // Infrastructure handlers (priority 0–2)
         .with_handler(projection::persist_handler())
         .with_handler(projection::state_updater())
@@ -65,11 +71,23 @@ pub(crate) fn build_seesaw_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handler(signals::handlers::corroborate_handler())
         .with_handler(signals::handlers::refresh_handler())
         .with_handler(signals::handlers::signal_stored_handler())
+        // Lifecycle domain handlers
+        .with_handler(lifecycle::handlers::reap_handler())
+        .with_handler(lifecycle::handlers::schedule_handler())
+        .with_handler(lifecycle::handlers::finalize_handler())
+        // Scrape domain handlers
+        .with_handler(scrape::handlers::tension_scrape_handler())
+        .with_handler(scrape::handlers::response_scrape_handler())
         // Discovery domain handlers
         .with_handler(discovery::handlers::bootstrap_handler())
         .with_handler(discovery::handlers::link_promotion_handler())
+        .with_handler(discovery::handlers::mid_run_handler())
         // Enrichment domain handlers
-        .with_handler(enrichment::handlers::actor_location_handler());
+        .with_handler(enrichment::handlers::actor_location_handler())
+        .with_handler(enrichment::handlers::post_scrape_handler())
+        .with_handler(enrichment::handlers::metrics_handler())
+        // Expansion domain handlers
+        .with_handler(expansion::handlers::expansion_handler());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -133,7 +151,7 @@ impl CompatEngine {
         }
 
         // Process through seesaw — settled() drives the full causal tree
-        let result = self.seesaw.process(event).settled().await;
+        let result: Result<_> = self.seesaw.dispatch(event).settled().await;
 
         // Move shared state back to caller (even on error, so caller has latest state)
         {

@@ -32,6 +32,8 @@ fn stored(seq: i64, event: &Event) -> StoredEvent {
         actor: None,
         payload: serde_json::to_value(event).expect("serialize event"),
         schema_v: 1,
+        id: None,
+        parent_id: None,
     }
 }
 

@@ -6,11 +6,10 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use rootsignal_common::types::{ActorContext, NodeType};
+use rootsignal_common::types::{ActorContext, NodeType, SourceNode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rootsignal_common::types::SourceNode;
 use rootsignal_common::Node;
 
 use crate::enrichment::link_promoter::CollectedLink;
@@ -19,6 +18,16 @@ use crate::pipeline::extractor::ResourceTag;
 use crate::pipeline::scrape_phase::EmbeddingCache;
 use crate::core::events::{FreshnessBucket, PipelineEvent, ScoutEvent};
 use crate::core::stats::ScoutStats;
+
+/// Scheduling data passed between schedule_handler and scrape handlers.
+pub struct ScheduledData {
+    pub all_sources: Vec<SourceNode>,
+    pub scheduled_sources: Vec<SourceNode>,
+    pub tension_phase_keys: HashSet<String>,
+    pub response_phase_keys: HashSet<String>,
+    pub scheduled_keys: HashSet<String>,
+    pub consumed_pin_ids: Vec<Uuid>,
+}
 
 /// Mutable state for a scout run, updated by the reducer.
 pub struct PipelineState {
@@ -65,6 +74,12 @@ pub struct PipelineState {
     /// Separate from `pending_nodes` so each handler has a clear lifecycle:
     /// dedup stashes → create consumes + stashes wiring → signal_stored consumes.
     pub wiring_contexts: HashMap<Uuid, WiringContext>,
+
+    /// Scheduling data stashed by schedule_handler, consumed by scrape handlers.
+    pub scheduled: Option<ScheduledData>,
+
+    /// Social topics collected during mid-run discovery, consumed by response scrape.
+    pub social_topics: Vec<String>,
 }
 
 /// A batch of extracted nodes for a single URL, awaiting dedup.
@@ -116,6 +131,8 @@ impl PipelineState {
             extracted_batches: HashMap::new(),
             pending_nodes: HashMap::new(),
             wiring_contexts: HashMap::new(),
+            scheduled: None,
+            social_topics: Vec::new(),
         }
     }
 
@@ -144,14 +161,11 @@ impl Default for PipelineState {
     }
 }
 
-impl seesaw_core::Aggregate for PipelineState {
-    type Event = ScoutEvent;
-
-    fn aggregate_type() -> &'static str {
-        "scout_pipeline"
-    }
-
-    fn apply(&mut self, event: ScoutEvent) {
+impl PipelineState {
+    /// Apply a scout event to pipeline state (reducer).
+    ///
+    /// Only Pipeline events mutate state; World and System events are no-ops.
+    pub fn apply(&mut self, event: ScoutEvent) {
         let ScoutEvent::Pipeline(ref pe) = event else {
             // World and System events don't update pipeline state.
             return;
@@ -264,7 +278,10 @@ impl seesaw_core::Aggregate for PipelineState {
             | PipelineEvent::PhaseCompleted { .. }
             | PipelineEvent::ExtractionFailed { .. }
             | PipelineEvent::ActorEnrichmentCompleted { .. }
-            | PipelineEvent::EngineStarted { .. } => {}
+            | PipelineEvent::EngineStarted { .. }
+            | PipelineEvent::SourcesScheduled { .. }
+            | PipelineEvent::MetricsCompleted
+            | PipelineEvent::RunCompleted { .. } => {}
 
             PipelineEvent::SourceDiscovered { .. } => {
                 self.stats.sources_discovered += 1;

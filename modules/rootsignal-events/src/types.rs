@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// An event as stored in Postgres. Returned by all read methods.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,10 @@ pub struct StoredEvent {
     pub actor: Option<String>,
     pub payload: serde_json::Value,
     pub schema_v: i16,
+    /// Seesaw event UUID — the causal identity of this event.
+    pub id: Option<Uuid>,
+    /// Seesaw parent event UUID — which event caused this one.
+    pub parent_id: Option<Uuid>,
 }
 
 /// An event to be appended. The caller builds this; the store assigns seq/ts.
@@ -25,6 +30,10 @@ pub struct AppendEvent {
     pub run_id: Option<String>,
     pub actor: Option<String>,
     pub schema_v: i16,
+    /// Seesaw event UUID.
+    pub id: Option<Uuid>,
+    /// Seesaw parent event UUID.
+    pub parent_id: Option<Uuid>,
 }
 
 impl AppendEvent {
@@ -37,6 +46,8 @@ impl AppendEvent {
             run_id: None,
             actor: None,
             schema_v: 1,
+            id: None,
+            parent_id: None,
         }
     }
 
@@ -52,6 +63,16 @@ impl AppendEvent {
 
     pub fn with_schema_v(mut self, v: i16) -> Self {
         self.schema_v = v;
+        self
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    pub fn with_parent_id(mut self, parent_id: Uuid) -> Self {
+        self.parent_id = Some(parent_id);
         self
     }
 }
