@@ -10,12 +10,13 @@ use tracing::{info, warn};
 use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
-use crate::pipeline::state::{PipelineDeps, PipelineState};
+use crate::core::engine::ScoutEngineDeps;
+use crate::pipeline::state::PipelineState;
 
 /// Handle the EngineStarted event: seed sources if region is empty.
 pub async fn handle_engine_started(
     _state: &PipelineState,
-    deps: &PipelineDeps,
+    deps: &ScoutEngineDeps,
 ) -> Result<Vec<ScoutEvent>> {
     let sources = deps.store.get_active_sources().await?;
     if !sources.is_empty() {

@@ -43,6 +43,17 @@ pub enum Urgency {
     Critical,
 }
 
+impl std::fmt::Display for Urgency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Urgency::Low => write!(f, "low"),
+            Urgency::Medium => write!(f, "medium"),
+            Urgency::High => write!(f, "high"),
+            Urgency::Critical => write!(f, "critical"),
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -54,6 +65,17 @@ pub enum Severity {
     Critical,
 }
 
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Low => write!(f, "low"),
+            Severity::Medium => write!(f, "medium"),
+            Severity::High => write!(f, "high"),
+            Severity::Critical => write!(f, "critical"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
@@ -62,6 +84,8 @@ pub enum NodeType {
     Need,
     Notice,
     Tension,
+    Condition,
+    Incident,
     Citation,
 }
 
@@ -73,6 +97,8 @@ impl std::fmt::Display for NodeType {
             NodeType::Need => write!(f, "Need"),
             NodeType::Notice => write!(f, "Notice"),
             NodeType::Tension => write!(f, "Tension"),
+            NodeType::Condition => write!(f, "Condition"),
+            NodeType::Incident => write!(f, "Incident"),
             NodeType::Citation => write!(f, "Citation"),
         }
     }
@@ -220,6 +246,138 @@ impl SourceRole {
             "tension" => SourceRole::Tension,
             "response" => SourceRole::Response,
             _ => SourceRole::Mixed,
+        }
+    }
+}
+
+// --- Entity Types ---
+
+/// What kind of entity is referenced in a world event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    /// Individual humans.
+    Person,
+    /// Named, structured groups of people.
+    Organization,
+    /// Unnamed or loosely defined collections of people ("displaced families", "long-time renters").
+    Group,
+    /// Geographic — natural or built.
+    Place,
+    /// Everything else — species, legislation, infrastructure, programs.
+    Thing,
+}
+
+impl std::fmt::Display for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EntityType::Person => write!(f, "person"),
+            EntityType::Organization => write!(f, "organization"),
+            EntityType::Group => write!(f, "group"),
+            EntityType::Place => write!(f, "place"),
+            EntityType::Thing => write!(f, "thing"),
+        }
+    }
+}
+
+/// A reference to an entity mentioned in a world event.
+///
+/// Replaces the flat `mentioned_actors: Vec<String>` and `author_actor: Option<String>`.
+/// The author is just an entity with `role: Some("author")`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Entity {
+    pub name: String,
+    pub entity_type: EntityType,
+    /// Role this entity plays in the event: "author", "organizer", "subject", etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+}
+
+// --- Reference Types ---
+
+/// The kind of stated relationship between world facts.
+///
+/// These are relationships as described by the source — world facts, not system inferences.
+/// The system can match reference descriptions to existing signals, but the reference
+/// itself records what the source stated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Relationship {
+    /// "This cleanup was organized because of the spill."
+    RespondsTo,
+    /// "The encampment appeared after the shelter closed."
+    CausedBy,
+    /// "New information about the same situation."
+    Updates,
+    /// "This data says the opposite."
+    Contradicts,
+    /// "This report backs up the claim."
+    Supports,
+    /// "This replaces the previous announcement."
+    Supersedes,
+}
+
+impl std::fmt::Display for Relationship {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Relationship::RespondsTo => write!(f, "responds_to"),
+            Relationship::CausedBy => write!(f, "caused_by"),
+            Relationship::Updates => write!(f, "updates"),
+            Relationship::Contradicts => write!(f, "contradicts"),
+            Relationship::Supports => write!(f, "supports"),
+            Relationship::Supersedes => write!(f, "supersedes"),
+        }
+    }
+}
+
+/// A stated relationship to another world fact, as described by the source.
+///
+/// When a source says "this cleanup was organized because of the oil spill,"
+/// that's a world fact captured here. The system can later match the description
+/// to an existing signal, but the reference itself is what the source said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Reference {
+    /// What the source described: "the recent oil spill on Minnehaha Creek".
+    pub description: String,
+    /// The type of relationship stated.
+    pub relationship: Relationship,
+}
+
+// --- Tone (used by SystemEvent for classification) ---
+
+/// Emotional register classification — a system judgment, not a world fact.
+///
+/// Lives here as a shared type but only used in SystemEvent::ToneClassified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Tone {
+    Urgent,
+    Distressed,
+    Fearful,
+    Grieving,
+    Angry,
+    Defiant,
+    Hopeful,
+    Supportive,
+    Celebratory,
+    Analytical,
+    Neutral,
+}
+
+impl std::fmt::Display for Tone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Tone::Urgent => write!(f, "urgent"),
+            Tone::Distressed => write!(f, "distressed"),
+            Tone::Fearful => write!(f, "fearful"),
+            Tone::Grieving => write!(f, "grieving"),
+            Tone::Angry => write!(f, "angry"),
+            Tone::Defiant => write!(f, "defiant"),
+            Tone::Hopeful => write!(f, "hopeful"),
+            Tone::Supportive => write!(f, "supportive"),
+            Tone::Celebratory => write!(f, "celebratory"),
+            Tone::Analytical => write!(f, "analytical"),
+            Tone::Neutral => write!(f, "neutral"),
         }
     }
 }

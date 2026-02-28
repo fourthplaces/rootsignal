@@ -49,6 +49,8 @@ pub enum SignalType {
     Need,
     Notice,
     Tension,
+    Condition,
+    Incident,
 }
 
 impl From<rootsignal_common::NodeType> for SignalType {
@@ -59,6 +61,8 @@ impl From<rootsignal_common::NodeType> for SignalType {
             rootsignal_common::NodeType::Need => SignalType::Need,
             rootsignal_common::NodeType::Notice => SignalType::Notice,
             rootsignal_common::NodeType::Tension => SignalType::Tension,
+            rootsignal_common::NodeType::Condition => SignalType::Condition,
+            rootsignal_common::NodeType::Incident => SignalType::Incident,
             rootsignal_common::NodeType::Citation => SignalType::Notice, // shouldn't happen
         }
     }
@@ -72,6 +76,8 @@ impl SignalType {
             SignalType::Need => rootsignal_common::NodeType::Need,
             SignalType::Notice => rootsignal_common::NodeType::Notice,
             SignalType::Tension => rootsignal_common::NodeType::Tension,
+            SignalType::Condition => rootsignal_common::NodeType::Condition,
+            SignalType::Incident => rootsignal_common::NodeType::Incident,
         }
     }
 }

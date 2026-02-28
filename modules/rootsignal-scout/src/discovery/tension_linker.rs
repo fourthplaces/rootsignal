@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::WorldEvent;
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, TensionNode,
@@ -22,8 +22,6 @@ use rootsignal_archive::Archive;
 use super::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::events::ScoutEvent;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
@@ -177,8 +175,6 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 
 pub struct TensionLinker<'a> {
     writer: &'a GraphWriter,
-    engine: &'a ScoutEngine,
-    deps: &'a PipelineDeps,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -193,8 +189,6 @@ pub struct TensionLinker<'a> {
 impl<'a> TensionLinker<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        engine: &'a ScoutEngine,
-        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -222,8 +216,6 @@ impl<'a> TensionLinker<'a> {
 
         Self {
             writer,
-            engine,
-            deps,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -236,7 +228,7 @@ impl<'a> TensionLinker<'a> {
         }
     }
 
-    pub async fn run(&self) -> TensionLinkerStats {
+    pub async fn run(&self, events: &mut seesaw_core::Events) -> TensionLinkerStats {
         let mut stats = TensionLinkerStats::default();
 
         let targets = match self
@@ -323,7 +315,7 @@ impl<'a> TensionLinker<'a> {
                         let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
                         let mut any_tension_failed = false;
                         for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
-                            if let Err(e) = self.process_tension(target, &tension, &mut stats).await
+                            if let Err(e) = self.process_tension(target, &tension, &mut stats, events).await
                             {
                                 any_tension_failed = true;
                                 warn!(
@@ -418,6 +410,7 @@ impl<'a> TensionLinker<'a> {
         target: &TensionLinkerTarget,
         tension: &DiscoveredTension,
         stats: &mut TensionLinkerStats,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -451,19 +444,17 @@ impl<'a> TensionLinker<'a> {
                 if let Err(ref e) = existing {
                     warn!(error = %e, "Tension dedup check failed, creating new");
                 }
-                self.create_tension_node(tension).await?
+                self.create_tension_node(tension, events).await?
             }
         };
 
-        let event = ScoutEvent::World(WorldEvent::ResponseLinked {
+        events.push(ScoutEvent::System(SystemEvent::ResponseLinked {
             signal_id: target.signal_id,
             tension_id,
             strength: tension.match_strength.clamp(0.0, 1.0),
             explanation: tension.explanation.clone(),
             source_url: None,
-        });
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine.dispatch(event, &mut state, self.deps).await?;
+        }));
         stats.edges_created += 1;
 
         Ok(())
@@ -472,6 +463,7 @@ impl<'a> TensionLinker<'a> {
     async fn create_tension_node(
         &self,
         tension: &DiscoveredTension,
+        events: &mut seesaw_core::Events,
     ) -> Result<Uuid, anyhow::Error> {
         let severity = match tension.severity.to_lowercase().as_str() {
             "low" => Severity::Low,
@@ -521,18 +513,13 @@ impl<'a> TensionLinker<'a> {
         let tension_id = tension_node.meta.id;
         let node = Node::Tension(tension_node);
 
-        // Dispatch world event + system events through engine
+        // Collect world event + system events for causal chain dispatch
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
-            .await?;
+        events.push(ScoutEvent::World(world_event));
         for se in system_events {
-            self.engine
-                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
-                .await?;
+            events.push(ScoutEvent::System(se));
         }
 
         info!(

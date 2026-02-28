@@ -54,15 +54,30 @@ impl ScoutDeps {
         crate::store::build_signal_reader(self.graph_client.clone())
     }
 
-    /// Build a ScoutEngine wired to the event store and graph projector.
+    /// Build a ScoutEngine with all deps baked in.
     ///
-    /// Pipeline deps are set on each `dispatch()` call via the compat layer,
-    /// so the engine starts with a placeholder.
-    pub fn build_engine(&self, run_id: &str) -> crate::pipeline::ScoutEngine {
+    /// Caller provides per-invocation resources (store, embedder, fetcher, region);
+    /// shared resources (graph_client, anthropic_api_key, event_store, projector)
+    /// come from ScoutDeps.
+    pub fn build_engine(
+        &self,
+        store: std::sync::Arc<dyn crate::traits::SignalReader>,
+        embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
+        fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
+        region: Option<rootsignal_common::ScoutScope>,
+        run_id: &str,
+    ) -> crate::pipeline::ScoutEngine {
         let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
         let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
-        crate::core::engine::CompatEngine::new(crate::core::engine::ScoutEngineDeps {
-            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        let archive = create_archive(self);
+        crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
+            store,
+            embedder,
+            region,
+            fetcher,
+            anthropic_api_key: Some(self.anthropic_api_key.clone()),
+            graph_client: Some(self.graph_client.clone()),
+            extractor: None,
             state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::core::aggregate::PipelineState::default(),
             )),
@@ -70,27 +85,11 @@ impl ScoutDeps {
             event_store: Some(event_store),
             run_id: run_id.into(),
             captured_events: None,
+            budget: None,
+            cancelled: None,
+            pg_pool: None,
+            archive: Some(archive),
         })
-    }
-
-    /// Build PipelineDeps from the shared deps, wired to the given store/embedder.
-    pub fn build_pipeline_deps(
-        &self,
-        store: std::sync::Arc<dyn crate::traits::SignalReader>,
-        embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
-        fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
-        region: rootsignal_common::ScoutScope,
-        run_id: &str,
-    ) -> crate::pipeline::state::PipelineDeps {
-        crate::pipeline::state::PipelineDeps {
-            store,
-            embedder,
-            region: Some(region),
-            run_id: run_id.into(),
-            fetcher,
-            anthropic_api_key: Some(self.anthropic_api_key.clone()),
-            graph_client: Some(self.graph_client.clone()),
-        }
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

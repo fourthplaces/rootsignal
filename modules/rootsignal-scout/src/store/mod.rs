@@ -46,14 +46,12 @@ impl SignalReaderFactory {
     }
 }
 
-/// Factory for creating per-operation engine + deps pairs.
+/// Factory for creating per-operation engines.
 ///
 /// Used by API mutations to dispatch `SourceDiscovered` through the engine
 /// instead of calling `upsert_source` directly.
 pub struct EngineFactory {
-    create_fn: Box<
-        dyn Fn() -> (crate::pipeline::ScoutEngine, crate::core::deps::PipelineDeps) + Send + Sync,
-    >,
+    create_fn: Box<dyn Fn() -> crate::pipeline::ScoutEngine + Send + Sync>,
 }
 
 impl EngineFactory {
@@ -64,32 +62,30 @@ impl EngineFactory {
                 let run_id = format!("api-{}", uuid::Uuid::new_v4());
                 let event_store = EventStore::new(pg_pool.clone());
                 let projector = GraphProjector::new(graph_client.clone());
-                let engine = crate::core::engine::CompatEngine::new(
-                    crate::core::engine::ScoutEngineDeps {
-                        pipeline_deps: Arc::new(tokio::sync::RwLock::new(None)),
-                        state: Arc::new(tokio::sync::RwLock::new(
-                            crate::core::aggregate::PipelineState::default(),
-                        )),
-                        graph_projector: Some(projector),
-                        event_store: Some(event_store),
-                        run_id: run_id.clone(),
-                        captured_events: None,
-                    },
-                );
                 let store =
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                let deps = crate::core::deps::PipelineDeps {
+                crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
                     store,
                     embedder,
                     region: None,
-                    run_id,
                     fetcher: None,
                     anthropic_api_key: None,
                     graph_client: Some(graph_client.clone()),
-                };
-                (engine, deps)
+                    extractor: None,
+                    state: Arc::new(tokio::sync::RwLock::new(
+                        crate::core::aggregate::PipelineState::default(),
+                    )),
+                    graph_projector: Some(projector),
+                    event_store: Some(event_store),
+                    run_id,
+                    captured_events: None,
+                    budget: None,
+                    cancelled: None,
+                    pg_pool: None,
+                    archive: None,
+                })
             }),
         }
     }
@@ -99,36 +95,34 @@ impl EngineFactory {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("test-{}", uuid::Uuid::new_v4());
-                let engine = crate::core::engine::CompatEngine::new(
-                    crate::core::engine::ScoutEngineDeps {
-                        pipeline_deps: Arc::new(tokio::sync::RwLock::new(None)),
-                        state: Arc::new(tokio::sync::RwLock::new(
-                            crate::core::aggregate::PipelineState::default(),
-                        )),
-                        graph_projector: None,
-                        event_store: None,
-                        run_id: run_id.clone(),
-                        captured_events: None,
-                    },
-                );
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                let deps = crate::core::deps::PipelineDeps {
+                crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
                     store: store.clone(),
                     embedder,
                     region: None,
-                    run_id,
                     fetcher: None,
                     anthropic_api_key: None,
                     graph_client: None,
-                };
-                (engine, deps)
+                    extractor: None,
+                    state: Arc::new(tokio::sync::RwLock::new(
+                        crate::core::aggregate::PipelineState::default(),
+                    )),
+                    graph_projector: None,
+                    event_store: None,
+                    run_id,
+                    captured_events: None,
+                    budget: None,
+                    cancelled: None,
+                    pg_pool: None,
+                    archive: None,
+                })
             }),
         }
     }
 
-    /// Create an engine + minimal PipelineDeps for a single operation.
-    pub fn create(&self) -> (crate::pipeline::ScoutEngine, crate::core::deps::PipelineDeps) {
+    /// Create an engine for a single operation.
+    pub fn create(&self) -> crate::pipeline::ScoutEngine {
         (self.create_fn)()
     }
 }

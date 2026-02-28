@@ -14,8 +14,6 @@ use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
 use crate::pipeline::events::ScoutEvent;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 
 use rootsignal_archive::Archive;
 
@@ -25,8 +23,6 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
     writer: &'a GraphWriter,
-    engine: &'a ScoutEngine,
-    deps: &'a PipelineDeps,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -121,8 +117,6 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 impl<'a> Investigator<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        engine: &'a ScoutEngine,
-        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
@@ -132,8 +126,6 @@ impl<'a> Investigator<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
             writer,
-            engine,
-            deps,
             archive,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             region: region.name.clone(),
@@ -146,7 +138,7 @@ impl<'a> Investigator<'a> {
     }
 
     /// Run one investigation cycle. Non-fatal — individual failures are logged.
-    pub async fn run(&self) -> InvestigationStats {
+    pub async fn run(&self, events: &mut seesaw_core::Events) -> InvestigationStats {
         let mut stats = InvestigationStats::default();
 
         let targets = match self
@@ -182,7 +174,7 @@ impl<'a> Investigator<'a> {
                 break;
             }
 
-            match self.investigate_signal(target, &mut stats).await {
+            match self.investigate_signal(target, &mut stats, events).await {
                 Ok(evidence_count) => {
                     stats.targets_investigated += 1;
                     stats.evidence_created += evidence_count;
@@ -227,6 +219,7 @@ impl<'a> Investigator<'a> {
         &self,
         target: &InvestigationTarget,
         stats: &mut InvestigationStats,
+        events: &mut seesaw_core::Events,
     ) -> Result<u32> {
         // 1. Generate search queries via LLM
         let system_prompt = if target.is_sensitive {
@@ -347,7 +340,7 @@ impl<'a> Investigator<'a> {
                 channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 
-            let event = ScoutEvent::World(WorldEvent::CitationRecorded {
+            events.push(ScoutEvent::World(WorldEvent::CitationPublished {
                 citation_id: evidence.id,
                 signal_id: target.signal_id,
                 url: evidence.source_url.clone(),
@@ -356,28 +349,15 @@ impl<'a> Investigator<'a> {
                 relevance: evidence.relevance.clone(),
                 channel_type: evidence.channel_type,
                 evidence_confidence: evidence.confidence,
-            });
-            let mut state = PipelineState::new(std::collections::HashMap::new());
-            match self.engine.dispatch(event, &mut state, self.deps).await {
-                Ok(_) => {
-                    evidence_count += 1;
-                    info!(
-                        signal_id = %target.signal_id,
-                        evidence_url = item.source_url.as_str(),
-                        relevance = relevance.as_str(),
-                        confidence = item.confidence,
-                        "Evidence created"
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        signal_id = %target.signal_id,
-                        evidence_url = item.source_url.as_str(),
-                        error = %e,
-                        "Failed to create evidence node"
-                    );
-                }
-            }
+            }));
+            evidence_count += 1;
+            info!(
+                signal_id = %target.signal_id,
+                evidence_url = item.source_url.as_str(),
+                relevance = relevance.as_str(),
+                confidence = item.confidence,
+                "Evidence created"
+            );
         }
 
         Ok(evidence_count)

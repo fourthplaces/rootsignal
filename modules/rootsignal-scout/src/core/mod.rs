@@ -1,7 +1,6 @@
-// Core engine types: aggregate, events, deps, stats, engine, projection.
+// Core engine types: aggregate, events, stats, engine, projection.
 
 pub mod aggregate;
-pub mod deps;
 pub mod engine;
 pub mod events;
 pub mod projection;
@@ -13,21 +12,31 @@ mod engine_tests {
     use tokio::sync::RwLock;
 
     use super::aggregate::PipelineState;
-    use super::engine::{build_seesaw_engine, ScoutEngineDeps};
+    use super::engine::{build_engine, ScoutEngineDeps};
     use super::events::{PipelineEvent, ScoutEvent};
 
     #[tokio::test]
     async fn seesaw_engine_applies_state_via_state_updater() {
         let state = Arc::new(RwLock::new(PipelineState::default()));
         let deps = ScoutEngineDeps {
-            pipeline_deps: Arc::new(RwLock::new(None)),
+            store: Arc::new(crate::testing::MockSignalReader::new()),
+            embedder: Arc::new(crate::infra::embedder::NoOpEmbedder),
+            region: None,
+            fetcher: None,
+            anthropic_api_key: None,
+            graph_client: None,
+            extractor: None,
             state: state.clone(),
             graph_projector: None,
             event_store: None,
             run_id: "test".into(),
             captured_events: None,
+            budget: None,
+            cancelled: None,
+            pg_pool: None,
+            archive: None,
         };
-        let engine = build_seesaw_engine(deps);
+        let engine = build_engine(deps);
 
         let event = ScoutEvent::Pipeline(PipelineEvent::ContentFetched {
             url: "https://test.com".into(),
@@ -35,8 +44,8 @@ mod engine_tests {
             content_hash: "abc123".into(),
             link_count: 0,
         });
-        // process().settled() drives the full settlement loop (dispatch is fire-and-forget)
-        let result = engine.process(event).settled().await;
+        // dispatch().settled() drives the full settlement loop
+        let result = engine.dispatch(event).settled().await;
         assert!(result.is_ok(), "settled should succeed: {:?}", result.err());
 
         let s = state.read().await;

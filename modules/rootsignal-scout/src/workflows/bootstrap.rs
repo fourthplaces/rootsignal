@@ -3,7 +3,6 @@
 //! Dispatches `EngineStarted` — the handler checks whether the region has
 //! sources and seeds them if empty.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
@@ -11,8 +10,7 @@ use tracing::info;
 
 use rootsignal_graph::GraphWriter;
 
-use crate::pipeline::events::{PipelineEvent, ScoutEvent};
-use crate::pipeline::state::PipelineState;
+use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{BootstrapResult, EmptyRequest, TaskRequest};
 use super::{create_archive, ScoutDeps};
@@ -81,38 +79,34 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let sources_created = match ctx
             .run(|| async {
                 let run_id = uuid::Uuid::new_v4().to_string();
-                let engine = deps.build_engine(&run_id);
-                let store = deps.build_store();
+                let store: Arc<dyn crate::traits::SignalReader> = Arc::new(deps.build_store());
                 let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
                     Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
-                let pipe_deps = deps.build_pipeline_deps(
-                    Arc::new(store) as Arc<dyn crate::traits::SignalReader>,
+                let engine = deps.build_engine(
+                    store,
                     embedder,
                     Some(archive as Arc<dyn crate::traits::ContentFetcher>),
-                    scope,
+                    Some(scope),
                     &run_id,
                 );
-                let mut state = PipelineState::new(HashMap::new());
-
                 engine
-                    .dispatch(
-                        ScoutEvent::Pipeline(PipelineEvent::EngineStarted {
-                            run_id: run_id.clone(),
-                        }),
-                        &mut state,
-                        &pipe_deps,
-                    )
+                    .emit(LifecycleEvent::EngineStarted {
+                        run_id: run_id.clone(),
+                    })
+                    .settled()
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
 
-                Ok(state.stats.sources_discovered)
+                let sources = engine.deps().state.read().await.stats.sources_discovered;
+                Ok(sources)
             })
             .await
         {
             Ok(v) => v,
             Err(e) => {
                 super::write_task_phase_status(&self.deps, &task_id, "idle").await;
-                return Err(e.into());
+                let err: HandlerError = e.into();
+                return Err(err);
             }
         };
 

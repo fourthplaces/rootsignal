@@ -120,7 +120,7 @@ pub async fn collect_actor_location_events(
     )],
 ) -> Vec<crate::core::events::ScoutEvent> {
     use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::WorldEvent;
+    use rootsignal_common::events::SystemEvent;
 
     let mut events = Vec::new();
     for (actor, _sources) in actors {
@@ -177,7 +177,7 @@ pub async fn collect_actor_location_events(
         if let Some(new_loc) = result {
             let changed = current.as_ref().map_or(true, |c| c.name != new_loc.name);
             if changed {
-                events.push(ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+                events.push(ScoutEvent::System(SystemEvent::ActorLocationIdentified {
                     actor_id: actor.id,
                     location_lat: new_loc.lat,
                     location_lng: new_loc.lng,
@@ -200,7 +200,6 @@ pub async fn collect_actor_location_events(
 pub async fn enrich_actor_locations(
     store: &dyn crate::traits::SignalReader,
     engine: &crate::pipeline::ScoutEngine,
-    deps: &crate::pipeline::state::PipelineDeps,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
@@ -208,9 +207,8 @@ pub async fn enrich_actor_locations(
 ) -> u32 {
     let events = collect_actor_location_events(store, actors).await;
     let mut updated = 0u32;
-    let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
     for event in events {
-        if engine.dispatch(event, &mut state, deps).await.is_ok() {
+        if engine.emit(event).settled().await.is_ok() {
             updated += 1;
         }
     }

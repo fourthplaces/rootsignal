@@ -390,6 +390,8 @@ impl CachedReader {
                     NodeType::Need => "Need",
                     NodeType::Notice => "Notice",
                     NodeType::Tension => "Tension",
+                    NodeType::Condition => "Condition",
+                    NodeType::Incident => "Incident",
                     NodeType::Citation => continue,
                 };
 

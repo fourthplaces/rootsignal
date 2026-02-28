@@ -1425,11 +1425,26 @@ pub fn run_log() -> crate::infra::run_log::RunLogger {
     crate::infra::run_log::RunLogger::noop()
 }
 
-/// Create a test engine with no event store and no projector.
+/// Create a test engine with a dummy store, no event store, no projector.
 pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
-    std::sync::Arc::new(crate::core::engine::CompatEngine::new(
+    test_engine_for_store(
+        std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
+    )
+}
+
+/// Create a test engine wired to the given store.
+pub fn test_engine_for_store(
+    store: std::sync::Arc<dyn crate::traits::SignalReader>,
+) -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+    std::sync::Arc::new(crate::core::engine::build_engine(
         crate::core::engine::ScoutEngineDeps {
-            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            store,
+            embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+            region: None,
+            fetcher: None,
+            anthropic_api_key: None,
+            graph_client: None,
+            extractor: None,
             state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::core::aggregate::PipelineState::default(),
             )),
@@ -1437,6 +1452,10 @@ pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
             event_store: None,
             run_id: "test-run".to_string(),
             captured_events: None,
+            budget: None,
+            cancelled: None,
+            pg_pool: None,
+            archive: None,
         },
     ))
 }
@@ -1446,10 +1465,30 @@ pub fn test_engine_with_capture() -> (
     std::sync::Arc<crate::pipeline::ScoutEngine>,
     std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
 ) {
+    test_engine_with_capture_for_store(
+        std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
+        None,
+    )
+}
+
+/// Create a test engine with capture, wired to the given store and optional region.
+pub fn test_engine_with_capture_for_store(
+    store: std::sync::Arc<dyn crate::traits::SignalReader>,
+    region: Option<rootsignal_common::ScoutScope>,
+) -> (
+    std::sync::Arc<crate::pipeline::ScoutEngine>,
+    std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
+) {
     let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let engine = std::sync::Arc::new(crate::core::engine::CompatEngine::new(
+    let engine = std::sync::Arc::new(crate::core::engine::build_engine(
         crate::core::engine::ScoutEngineDeps {
-            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            store,
+            embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+            region,
+            fetcher: None,
+            anthropic_api_key: None,
+            graph_client: None,
+            extractor: None,
             state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::core::aggregate::PipelineState::default(),
             )),
@@ -1457,23 +1496,38 @@ pub fn test_engine_with_capture() -> (
             event_store: None,
             run_id: "test-run".to_string(),
             captured_events: Some(captured.clone()),
+            budget: None,
+            cancelled: None,
+            pg_pool: None,
+            archive: None,
         },
     ));
     (engine, captured)
 }
 
-/// Create test PipelineDeps with a given store.
-pub fn test_pipeline_deps(
+/// Create a test ScoutEngineDeps with a given store (for activity-level tests).
+pub fn test_scout_deps(
     store: std::sync::Arc<dyn crate::traits::SignalReader>,
-) -> crate::pipeline::state::PipelineDeps {
-    crate::pipeline::state::PipelineDeps {
+) -> crate::core::engine::ScoutEngineDeps {
+    crate::core::engine::ScoutEngineDeps {
         store,
         embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         region: None,
-        run_id: "test-run".to_string(),
         fetcher: None,
         anthropic_api_key: None,
         graph_client: None,
+        extractor: None,
+        state: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::core::aggregate::PipelineState::default(),
+        )),
+        graph_projector: None,
+        event_store: None,
+        run_id: "test-run".to_string(),
+        captured_events: None,
+        budget: None,
+        cancelled: None,
+        pg_pool: None,
+        archive: None,
     }
 }
 

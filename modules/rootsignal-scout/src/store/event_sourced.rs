@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::events::{Location, Schedule, SystemEvent, WorldEvent};
-use rootsignal_common::types::{ActorNode, GeoPoint, Node, NodeType, SourceNode};
+use rootsignal_common::types::{ActorNode, Entity, EntityType, GeoPoint, Node, NodeType, SourceNode};
 use rootsignal_common::{
     FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
@@ -45,6 +45,7 @@ fn meta_to_location(meta: &rootsignal_common::types::NodeMeta) -> Option<Locatio
         }),
         name: meta.about_location_name.clone(),
         address: None,
+        role: None,
     })
 }
 
@@ -57,98 +58,109 @@ fn meta_to_from_location(meta: &rootsignal_common::types::NodeMeta) -> Option<Lo
         }),
         name: None,
         address: None,
+        role: Some("origin".into()),
     })
+}
+
+fn meta_to_locations(meta: &rootsignal_common::types::NodeMeta) -> Vec<Location> {
+    let mut locs = Vec::new();
+    if let Some(loc) = meta_to_location(meta) {
+        locs.push(loc);
+    }
+    if let Some(loc) = meta_to_from_location(meta) {
+        locs.push(loc);
+    }
+    locs
+}
+
+fn meta_to_mentioned_entities(meta: &rootsignal_common::types::NodeMeta) -> Vec<Entity> {
+    meta.mentioned_actors
+        .iter()
+        .map(|name| Entity {
+            name: name.clone(),
+            entity_type: EntityType::Organization,
+            role: None,
+        })
+        .collect()
 }
 
 /// Build the world-fact event for a discovery — no sensitivity or implied_queries.
 pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
     match node {
-        Node::Gathering(n) => WorldEvent::GatheringDiscovered {
+        Node::Gathering(n) => WorldEvent::GatheringAnnounced {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
-            extracted_at: n.meta.extracted_at,
             published_at: n.meta.published_at,
-            location: meta_to_location(&n.meta),
-            from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: None,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
             schedule: schedule_from_gathering(n),
             action_url: if n.action_url.is_empty() {
                 None
             } else {
                 Some(n.action_url.clone())
             },
-            organizer: n.organizer.clone(),
         },
-        Node::Aid(n) => WorldEvent::AidDiscovered {
+        Node::Aid(n) => WorldEvent::ResourceOffered {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
-            extracted_at: n.meta.extracted_at,
             published_at: n.meta.published_at,
-            location: meta_to_location(&n.meta),
-            from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: None,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
+            schedule: None,
             action_url: if n.action_url.is_empty() {
                 None
             } else {
                 Some(n.action_url.clone())
             },
             availability: n.availability.clone(),
-            is_ongoing: Some(n.is_ongoing),
         },
-        Node::Need(n) => WorldEvent::NeedDiscovered {
+        Node::Need(n) => WorldEvent::HelpRequested {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
-            extracted_at: n.meta.extracted_at,
             published_at: n.meta.published_at,
-            location: meta_to_location(&n.meta),
-            from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: None,
-            urgency: Some(n.urgency),
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
+            schedule: None,
             what_needed: n.what_needed.clone(),
             goal: n.goal.clone(),
         },
-        Node::Notice(n) => WorldEvent::NoticeDiscovered {
+        Node::Notice(n) => WorldEvent::AnnouncementShared {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
-            extracted_at: n.meta.extracted_at,
             published_at: n.meta.published_at,
-            location: meta_to_location(&n.meta),
-            from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: None,
-            severity: Some(n.severity),
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
+            schedule: None,
             category: n.category.clone(),
             effective_date: n.effective_date,
-            source_authority: n.source_authority.clone(),
         },
-        Node::Tension(n) => WorldEvent::TensionDiscovered {
+        Node::Tension(n) => WorldEvent::ConcernRaised {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            confidence: n.meta.confidence,
             source_url: n.meta.source_url.clone(),
-            extracted_at: n.meta.extracted_at,
             published_at: n.meta.published_at,
-            location: meta_to_location(&n.meta),
-            from_location: meta_to_from_location(&n.meta),
-            mentioned_actors: n.meta.mentioned_actors.clone(),
-            author_actor: None,
-            severity: Some(n.severity),
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
+            schedule: None,
             what_would_help: n.what_would_help.clone(),
         },
         Node::Citation(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
@@ -200,6 +212,8 @@ impl SignalReader for EventSourcedReader {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => "Evidence",
         };
         let q = rootsignal_graph::query(&format!(
@@ -459,21 +473,19 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::GatheringDiscovered {
+            WorldEvent::GatheringAnnounced {
                 id: eid,
                 ref title,
-                ref organizer,
                 ref action_url,
                 ref schedule,
                 ..
             } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Community Dinner");
-                assert_eq!(*organizer, Some("Lake Street Council".to_string()));
                 assert_eq!(*action_url, Some("https://example.com/signup".to_string()));
                 assert!(schedule.is_some());
             }
-            _ => panic!("Expected GatheringDiscovered"),
+            _ => panic!("Expected GatheringAnnounced"),
         }
 
         // Verify no sensitivity field in serialized payload
@@ -552,19 +564,17 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::AidDiscovered {
+            WorldEvent::ResourceOffered {
                 id: eid,
                 title,
                 availability,
-                is_ongoing,
                 ..
             } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Food Shelf");
                 assert_eq!(availability, Some("Mon-Fri".to_string()));
-                assert_eq!(is_ongoing, Some(true));
             }
-            _ => panic!("Expected AidDiscovered"),
+            _ => panic!("Expected ResourceOffered"),
         }
     }
 
@@ -582,21 +592,19 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::NeedDiscovered {
+            WorldEvent::HelpRequested {
                 id: eid,
                 title,
-                urgency,
                 what_needed,
                 goal,
                 ..
             } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Volunteers Needed");
-                assert_eq!(urgency, Some(Urgency::High));
                 assert_eq!(what_needed, Some("20 volunteers".to_string()));
                 assert_eq!(goal, Some("clean up after storm".to_string()));
             }
-            _ => panic!("Expected NeedDiscovered"),
+            _ => panic!("Expected HelpRequested"),
         }
     }
 
@@ -614,7 +622,7 @@ mod tests {
             channel_type: Some(ChannelType::Press),
         };
 
-        let event = Event::World(WorldEvent::CitationRecorded {
+        let event = Event::World(WorldEvent::CitationPublished {
             citation_id: evidence.id,
             signal_id,
             url: evidence.source_url.clone(),
@@ -625,7 +633,7 @@ mod tests {
             evidence_confidence: evidence.confidence,
         });
         match event {
-            Event::World(WorldEvent::CitationRecorded {
+            Event::World(WorldEvent::CitationPublished {
                 citation_id,
                 signal_id,
                 url,
@@ -639,7 +647,7 @@ mod tests {
                 assert_eq!(content_hash, "abc123");
                 assert_eq!(snippet, Some("relevant text".to_string()));
             }
-            _ => panic!("Expected CitationRecorded"),
+            _ => panic!("Expected CitationPublished"),
         }
     }
 
@@ -661,10 +669,10 @@ mod tests {
         let roundtripped = Event::from_payload(&payload).unwrap();
 
         match roundtripped {
-            Event::World(WorldEvent::GatheringDiscovered { title, .. }) => {
+            Event::World(WorldEvent::GatheringAnnounced { title, .. }) => {
                 assert_eq!(title, "Roundtrip Test");
             }
-            _ => panic!("Expected GatheringDiscovered after roundtrip"),
+            _ => panic!("Expected GatheringAnnounced after roundtrip"),
         }
     }
 
@@ -695,7 +703,7 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::GatheringDiscovered {
+            WorldEvent::GatheringAnnounced {
                 action_url,
                 schedule,
                 ..
@@ -703,25 +711,27 @@ mod tests {
                 assert!(action_url.is_none());
                 assert!(schedule.is_none());
             }
-            _ => panic!("Expected GatheringDiscovered"),
+            _ => panic!("Expected GatheringAnnounced"),
         }
     }
 
     #[test]
     fn all_three_event_layers_roundtrip_through_payload() {
-        let world_event = Event::World(WorldEvent::NeedDiscovered {
+        let world_event = Event::World(WorldEvent::HelpRequested {
             id: Uuid::new_v4(),
             title: "Warming Center Needed".to_string(),
             summary: "Residents need warming center".to_string(),
-            confidence: 0.8,
             source_url: "https://example.com".to_string(),
-            extracted_at: Utc::now(),
             published_at: None,
-            location: None,
-            from_location: None,
-            mentioned_actors: vec!["Red Cross".to_string()],
-            author_actor: None,
-            urgency: Some(rootsignal_common::Urgency::High),
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![Entity {
+                name: "Red Cross".to_string(),
+                entity_type: EntityType::Organization,
+                role: None,
+            }],
+            references: vec![],
+            schedule: None,
             what_needed: Some("Warming center".to_string()),
             goal: None,
         });
@@ -761,7 +771,7 @@ mod tests {
     fn signal_linked_to_source_roundtrips() {
         let signal_id = Uuid::new_v4();
         let source_id = Uuid::new_v4();
-        let event = Event::System(SystemEvent::SignalLinkedToSource {
+        let event = Event::World(WorldEvent::SignalLinkedToSource {
             signal_id,
             source_id,
         });
@@ -769,7 +779,7 @@ mod tests {
         let roundtripped = Event::from_payload(&payload).unwrap();
 
         match roundtripped {
-            Event::System(SystemEvent::SignalLinkedToSource {
+            Event::World(WorldEvent::SignalLinkedToSource {
                 signal_id: sid,
                 source_id: src,
             }) => {
@@ -795,12 +805,15 @@ mod tests {
 
         let world = node_to_world_event(&node);
         match world {
-            WorldEvent::NeedDiscovered {
-                mentioned_actors, ..
+            WorldEvent::HelpRequested {
+                mentioned_entities, ..
             } => {
-                assert_eq!(mentioned_actors, vec!["YMCA", "Habitat for Humanity"]);
+                assert_eq!(mentioned_entities.len(), 2);
+                assert_eq!(mentioned_entities[0].name, "YMCA");
+                assert_eq!(mentioned_entities[1].name, "Habitat for Humanity");
+                assert_eq!(mentioned_entities[0].entity_type, EntityType::Organization);
             }
-            _ => panic!("Expected NeedDiscovered"),
+            _ => panic!("Expected HelpRequested"),
         }
     }
 }

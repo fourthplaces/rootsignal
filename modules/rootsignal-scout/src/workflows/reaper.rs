@@ -49,8 +49,11 @@ impl SignalReaper for SignalReaperImpl {
         let result = ctx
             .run(|| async move {
                 let run_id = format!("reaper-{}", uuid::Uuid::new_v4());
-                let store = deps.build_store();
-                let engine = deps.build_engine(&run_id);
+                let store: Arc<dyn SignalReader> =
+                    Arc::new(crate::store::build_signal_reader(deps.graph_client.clone()));
+                let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
+                    Arc::new(crate::infra::embedder::NoOpEmbedder);
+                let engine = deps.build_engine(store.clone(), embedder, None, None, &run_id);
 
                 let expired = store
                     .find_expired_signals()
@@ -61,21 +64,6 @@ impl SignalReaper for SignalReaperImpl {
                 let mut needs = 0u64;
                 let mut stale = 0u64;
 
-                let dummy_store: Arc<dyn SignalReader> =
-                    Arc::new(crate::store::build_signal_reader(deps.graph_client.clone()));
-                let pipe_deps = crate::pipeline::state::PipelineDeps {
-                    store: dummy_store,
-                    embedder: Arc::new(crate::infra::embedder::NoOpEmbedder)
-                        as Arc<dyn crate::infra::embedder::TextEmbedder>,
-                    region: None,
-                    run_id,
-                    fetcher: None,
-                    anthropic_api_key: None,
-                    graph_client: None,
-                };
-                let mut state =
-                    crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
-
                 for (signal_id, node_type, reason) in &expired {
                     let event = crate::pipeline::events::ScoutEvent::System(
                         rootsignal_common::events::SystemEvent::EntityExpired {
@@ -84,7 +72,7 @@ impl SignalReaper for SignalReaperImpl {
                             reason: reason.clone(),
                         },
                     );
-                    if let Err(e) = engine.dispatch(event, &mut state, &pipe_deps).await {
+                    if let Err(e) = engine.emit(event).settled().await {
                         tracing::warn!(error = %e, signal_id = %signal_id, "Failed to expire signal");
                         continue;
                     }

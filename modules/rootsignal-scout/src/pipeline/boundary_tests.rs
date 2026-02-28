@@ -15,6 +15,58 @@ use rootsignal_common::types::SourceNode;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Dispatch collected events through a test engine, updating state.
+async fn dispatch_events(
+    events: Vec<crate::core::events::ScoutEvent>,
+    ctx: &mut RunContext,
+    store: &Arc<MockSignalReader>,
+) {
+    dispatch_events_with(events, ctx, store, None).await;
+}
+
+/// Dispatch collected events with an optional custom embedder for dedup.
+///
+/// Converts PipelineEvent::SignalsExtracted → SignalEvent::SignalsExtracted
+/// at the boundary (same conversion the scrape handlers do in production).
+async fn dispatch_events_with(
+    events: Vec<crate::core::events::ScoutEvent>,
+    ctx: &mut RunContext,
+    store: &Arc<MockSignalReader>,
+    _embedder: Option<std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>>,
+) {
+    use crate::core::events::{PipelineEvent, ScoutEvent};
+    use crate::domains::signals::events::SignalEvent;
+
+    let engine = test_engine_for_store(store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>);
+    for event in events {
+        match event {
+            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
+                url,
+                canonical_key,
+                count,
+                batch,
+            }) => {
+                let _ = engine
+                    .emit(SignalEvent::SignalsExtracted {
+                        url,
+                        canonical_key,
+                        count,
+                        batch,
+                    })
+                    .settled()
+                    .await;
+            }
+            other => {
+                let _ = engine.emit(other).settled().await;
+            }
+        }
+    }
+    // Sync engine stats back to ctx so test assertions work.
+    // Only stats — collected_links are written directly by run_web, not via events.
+    let state = engine.deps().state.read().await;
+    ctx.stats = state.stats.clone();
+}
+
 /// Build a CollectedLink for testing.
 fn link(url: &str, discovered_on: &str) -> CollectedLink {
     CollectedLink {
@@ -66,7 +118,6 @@ async fn page_with_content_produces_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -74,7 +125,8 @@ async fn page_with_content_produces_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1, "one signal should be created");
 }
@@ -107,7 +159,6 @@ async fn empty_page_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://empty.org");
@@ -115,7 +166,8 @@ async fn empty_page_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0);
 }
@@ -136,7 +188,6 @@ async fn unreachable_page_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://doesnt-exist.org");
@@ -145,7 +196,8 @@ async fn unreachable_page_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 0);
 }
 
@@ -193,7 +245,6 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/article");
@@ -201,7 +252,8 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 3,
@@ -243,7 +295,6 @@ async fn same_title_extracted_twice_produces_one_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/dupe");
@@ -251,7 +302,8 @@ async fn same_title_extracted_twice_produces_one_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -303,7 +355,6 @@ async fn all_signals_stored_regardless_of_region() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/far-away");
@@ -311,7 +362,8 @@ async fn all_signals_stored_regardless_of_region() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -349,7 +401,6 @@ async fn blocked_url_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://blocked.org/page");
@@ -357,7 +408,8 @@ async fn blocked_url_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -393,7 +445,6 @@ async fn unchanged_content_is_not_re_extracted() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/same");
@@ -401,7 +452,8 @@ async fn unchanged_content_is_not_re_extracted() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -449,7 +501,6 @@ async fn outbound_links_on_page_are_collected() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://linktree.org");
@@ -457,7 +508,8 @@ async fn outbound_links_on_page_are_collected() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     // javascript: links should be filtered out
     assert!(
@@ -575,7 +627,6 @@ async fn scrape_then_promote_creates_new_sources() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://hub.org");
@@ -584,7 +635,8 @@ async fn scrape_then_promote_creates_new_sources() {
     let mut log = run_log();
 
     // Step 1: run_web collects links
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
     assert!(!ctx.collected_links.is_empty(), "links should be collected");
 
     // Step 2: promote_links creates source nodes
@@ -623,7 +675,6 @@ async fn unreachable_page_produces_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://unreachable.org/page");
@@ -631,7 +682,8 @@ async fn unreachable_page_produces_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "fetcher error → no signals");
 }
@@ -667,7 +719,6 @@ async fn page_with_no_extractable_content_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/empty-extract");
@@ -675,7 +726,8 @@ async fn page_with_no_extractable_content_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -716,7 +768,6 @@ async fn database_write_failure_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/store-fail");
@@ -725,7 +776,8 @@ async fn database_write_failure_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic even when store.create_node fails
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -766,7 +818,6 @@ async fn blocked_url_produces_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://spam-site.org/page");
@@ -774,7 +825,8 @@ async fn blocked_url_produces_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "blocked URL → zero signals");
 }
@@ -818,7 +870,6 @@ async fn all_signal_types_are_stored() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/mixed-types");
@@ -826,7 +877,8 @@ async fn all_signal_types_are_stored() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 3,
@@ -870,7 +922,6 @@ async fn unicode_and_emoji_titles_are_preserved() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/unicode");
@@ -878,7 +929,8 @@ async fn unicode_and_emoji_titles_are_preserved() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 2);
 }
@@ -914,7 +966,6 @@ async fn signal_at_zero_zero_is_still_stored() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/null-island");
@@ -922,7 +973,8 @@ async fn signal_at_zero_zero_is_still_stored() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -951,7 +1003,6 @@ async fn broken_extraction_skips_page_gracefully() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/extract-fail");
@@ -959,7 +1010,8 @@ async fn broken_extraction_skips_page_gracefully() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1001,7 +1053,6 @@ async fn blank_author_name_does_not_create_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/ws-author");
@@ -1009,7 +1060,8 @@ async fn blank_author_name_does_not_create_actor() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1062,7 +1114,6 @@ async fn signal_with_resource_needs_gets_resource_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/resources");
@@ -1070,7 +1121,8 @@ async fn signal_with_resource_needs_gets_resource_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -1089,7 +1141,6 @@ async fn zero_sources_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let sources: Vec<&SourceNode> = vec![];
@@ -1098,7 +1149,8 @@ async fn zero_sources_produces_nothing() {
     let mut log = run_log();
 
     // Should not panic with empty sources
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 0);
 }
 
@@ -1126,7 +1178,6 @@ async fn outbound_links_collected_despite_extraction_failure() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/links-but-error");
@@ -1134,7 +1185,8 @@ async fn outbound_links_collected_despite_extraction_failure() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1171,7 +1223,6 @@ async fn empty_social_account_produces_nothing() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1179,7 +1230,8 @@ async fn empty_social_account_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "zero posts → no signals");
 }
@@ -1206,7 +1258,6 @@ async fn image_only_posts_produce_no_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1214,7 +1265,8 @@ async fn image_only_posts_produce_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "text-less posts → no signals");
 }
@@ -1248,7 +1300,6 @@ async fn empty_markdown_page_still_collects_outbound_links() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/empty-md");
@@ -1256,7 +1307,8 @@ async fn empty_markdown_page_still_collects_outbound_links() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1309,7 +1361,6 @@ async fn mixed_outcome_pages_each_handled_independently() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let s1 = page_source("https://good.org/events");
@@ -1320,7 +1371,8 @@ async fn mixed_outcome_pages_each_handled_independently() {
     let mut ctx = RunContext::from_sources(&all);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1347,7 +1399,6 @@ async fn social_scrape_failure_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1356,7 +1407,8 @@ async fn social_scrape_failure_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1400,7 +1452,6 @@ async fn batch_title_dedup_is_case_insensitive() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/case-dedup");
@@ -1408,7 +1459,8 @@ async fn batch_title_dedup_is_case_insensitive() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -1452,7 +1504,6 @@ async fn web_source_without_actor_stores_content_location_only() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -1460,7 +1511,8 @@ async fn web_source_without_actor_stores_content_location_only() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 #[tokio::test]
@@ -1496,7 +1548,6 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1516,7 +1567,8 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
     );
 
     let mut log = run_log();
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 #[tokio::test]
@@ -1551,7 +1603,6 @@ async fn explicit_content_location_not_overwritten_by_actor() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1572,7 +1623,8 @@ async fn explicit_content_location_not_overwritten_by_actor() {
     );
 
     let mut log = run_log();
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1616,7 +1668,6 @@ async fn new_actor_inherits_parent_depth_plus_one() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1637,7 +1688,8 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     );
 
     let mut log = run_log();
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1677,7 +1729,6 @@ async fn bootstrap_actor_gets_depth_zero() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1686,7 +1737,8 @@ async fn bootstrap_actor_gets_depth_zero() {
     // No actor context — this is a bootstrap source
 
     let mut log = run_log();
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1751,7 +1803,6 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source(feed_url);
@@ -1759,7 +1810,8 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 #[tokio::test]
@@ -1817,7 +1869,6 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source(feed_url);
@@ -1825,7 +1876,8 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 #[tokio::test]
@@ -1866,7 +1918,6 @@ async fn social_published_at_becomes_published_at_fallback() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -1874,7 +1925,8 @@ async fn social_published_at_becomes_published_at_fallback() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,7 +1973,6 @@ async fn ocean_coordinates_store_ecological_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/oil-spill");
@@ -1929,7 +1980,8 @@ async fn ocean_coordinates_store_ecological_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -1975,7 +2027,6 @@ async fn antarctic_coordinates_store_signal() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://science.org/antarctic");
@@ -1983,7 +2034,8 @@ async fn antarctic_coordinates_store_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2031,7 +2083,6 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/hallucinated-geo");
@@ -2040,7 +2091,8 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
     let mut log = run_log();
 
     // Pipeline must not panic on absurd coordinates
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     // Signal is stored — we don't validate coordinate ranges at pipeline level.
     // Downstream display/query layers are responsible for geo-bounds checks.
@@ -2096,7 +2148,6 @@ async fn environmental_disaster_produces_all_signal_types() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://news.org/hurricane-response");
@@ -2104,7 +2155,8 @@ async fn environmental_disaster_produces_all_signal_types() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 5,
@@ -2160,7 +2212,6 @@ async fn hallucinated_future_date_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/future-date");
@@ -2168,7 +2219,8 @@ async fn hallucinated_future_date_does_not_crash() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2213,7 +2265,6 @@ async fn epoch_zero_date_does_not_crash() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/epoch-date");
@@ -2221,7 +2272,8 @@ async fn epoch_zero_date_does_not_crash() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2268,7 +2320,6 @@ async fn extremely_long_title_survives_pipeline() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/long-title");
@@ -2276,7 +2327,8 @@ async fn extremely_long_title_survives_pipeline() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2340,7 +2392,6 @@ async fn same_signal_from_two_sources_corroborates() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     // Process source A first
@@ -2349,7 +2400,8 @@ async fn same_signal_from_two_sources_corroborates() {
     let mut ctx = RunContext::from_sources(&[source_a.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources_a, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources_a, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1, "first source creates signal");
 
@@ -2359,7 +2411,8 @@ async fn same_signal_from_two_sources_corroborates() {
     let mut ctx2 = RunContext::from_sources(&[source_b.clone()]);
     let mut log2 = run_log();
 
-    phase.run_web(&sources_b, &mut ctx2, &mut log2).await;
+    let events = phase.run_web(&sources_b, &mut ctx2, &mut log2).await;
+    dispatch_events(events, &mut ctx2, &store).await;
 
     assert_eq!(
         ctx2.stats.signals_stored, 1,
@@ -2430,7 +2483,6 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2438,7 +2490,8 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -2484,7 +2537,6 @@ async fn minimum_viable_signal_with_no_optional_fields() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/bare-signal");
@@ -2492,7 +2544,8 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2540,7 +2593,6 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2548,7 +2600,8 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2588,7 +2641,6 @@ async fn aggregator_source_author_does_not_create_actor_node() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://aggregator.com/news");
@@ -2596,7 +2648,8 @@ async fn aggregator_source_author_does_not_create_actor_node() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 1, "signal should still be stored");
 }
 
@@ -2636,7 +2689,6 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/mentions");
@@ -2644,7 +2696,8 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2686,7 +2739,6 @@ async fn signal_has_produced_by_edge_to_its_source() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://localorg.org/events");
@@ -2694,7 +2746,8 @@ async fn signal_has_produced_by_edge_to_its_source() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -2729,7 +2782,6 @@ async fn social_signal_has_produced_by_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = social_source(ig_url);
@@ -2737,7 +2789,8 @@ async fn social_signal_has_produced_by_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_social(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_social(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -2766,11 +2819,8 @@ async fn enrich_with_sink(
         Vec<rootsignal_common::SourceNode>,
     )],
 ) -> (u32, CapturedEvents) {
-    let dummy_store: std::sync::Arc<dyn SignalReader> =
-        std::sync::Arc::new(crate::testing::MockSignalReader::new());
     let (engine, captured) = crate::testing::test_engine_with_capture();
-    let deps = crate::testing::test_pipeline_deps(dummy_store);
-    let updated = enrich_actor_locations(store, &engine, &deps, actors).await;
+    let updated = enrich_actor_locations(store, &engine, actors).await;
     (updated, captured)
 }
 
@@ -2792,10 +2842,10 @@ fn dispatched_location_name(
     actor_id: uuid::Uuid,
 ) -> Option<String> {
     use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::WorldEvent;
+    use rootsignal_common::events::SystemEvent;
     let events = captured.lock().unwrap();
     events.iter().find_map(|e| match e {
-        ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+        ScoutEvent::System(SystemEvent::ActorLocationIdentified {
             actor_id: id,
             location_name,
             ..
@@ -2810,10 +2860,10 @@ fn dispatched_location_coords(
     actor_id: uuid::Uuid,
 ) -> Option<(f64, f64)> {
     use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::WorldEvent;
+    use rootsignal_common::events::SystemEvent;
     let events = captured.lock().unwrap();
     events.iter().find_map(|e| match e {
-        ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+        ScoutEvent::System(SystemEvent::ActorLocationIdentified {
             actor_id: id,
             location_lat,
             location_lng,
@@ -3462,7 +3512,6 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/low-conf");
@@ -3470,7 +3519,8 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -3533,7 +3583,6 @@ async fn resource_roles_wire_to_correct_edge_types() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/multi-role");
@@ -3541,7 +3590,8 @@ async fn resource_roles_wire_to_correct_edge_types() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -3601,7 +3651,6 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source = page_source("https://example.com/multi-res");
@@ -3609,7 +3658,8 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -3690,11 +3740,10 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
     let phase = ScrapePhase::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
+        embedder.clone(),
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source_a = page_source("https://source-a.org/page");
@@ -3703,7 +3752,8 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
     let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events_with(events, &mut ctx, &store, Some(embedder)).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -3782,7 +3832,6 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let source_a = page_source("https://alpha.org/page");
@@ -3791,7 +3840,8 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
     let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
-    phase.run_web(&sources, &mut ctx, &mut log).await;
+    let events = phase.run_web(&sources, &mut ctx, &mut log).await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -3861,16 +3911,16 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
-        test_engine(),
     );
 
     let mut ctx = RunContext::from_sources(&[]);
     let mut log = run_log();
 
     let topics = vec!["legal clinic".to_string()];
-    phase
+    let events = phase
         .discover_from_topics(&topics, &mut ctx, &mut log)
         .await;
+    dispatch_events(events, &mut ctx, &store).await;
 
     // Signal-producing author's mentions should be collected
     let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();

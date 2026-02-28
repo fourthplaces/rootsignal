@@ -183,7 +183,7 @@ impl MutationRoot {
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
-        let (engine, deps) = require_engine(ctx)?;
+        let engine = require_engine(ctx)?;
         let url = url.trim().to_string();
 
         // Validate URL
@@ -222,18 +222,14 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        let mut state = rootsignal_scout::pipeline::state::PipelineState::new(HashMap::new());
         engine
-            .dispatch(
-                rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
-                    rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
-                        source,
-                        discovered_by: "admin".into(),
-                    },
-                ),
-                &mut state,
-                &deps,
-            )
+            .emit(rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
+                rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "admin".into(),
+                },
+            ))
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -400,7 +396,7 @@ impl MutationRoot {
 
     /// Public source submission (rate-limited, no auth required).
     async fn submit_source(&self, ctx: &Context<'_>, url: String) -> Result<SubmitSourceResult> {
-        let (engine, deps) = require_engine(ctx)?;
+        let engine = require_engine(ctx)?;
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -449,18 +445,14 @@ impl MutationRoot {
             scrape_count: 0,
         };
 
-        let mut state = rootsignal_scout::pipeline::state::PipelineState::new(HashMap::new());
         engine
-            .dispatch(
-                rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
-                    rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
-                        source,
-                        discovered_by: "human_submission".into(),
-                    },
-                ),
-                &mut state,
-                &deps,
-            )
+            .emit(rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
+                rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "human_submission".into(),
+                },
+            ))
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
@@ -684,13 +676,8 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
     true
 }
 
-/// Create a per-mutation engine + deps pair via the factory.
-fn require_engine(
-    ctx: &Context<'_>,
-) -> Result<(
-    rootsignal_scout::pipeline::ScoutEngine,
-    rootsignal_scout::pipeline::state::PipelineDeps,
-)> {
+/// Create a per-mutation engine via the factory.
+fn require_engine(ctx: &Context<'_>) -> Result<rootsignal_scout::pipeline::ScoutEngine> {
     ctx.data_unchecked::<Option<EngineFactory>>()
         .as_ref()
         .ok_or_else(|| async_graphql::Error::new("Engine not configured (Postgres required)"))

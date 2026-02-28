@@ -88,7 +88,7 @@ bytes = "1"
 testcontainers = "0.23"
 
 # Event sourcing
-seesaw_core = "0.13.2"
+seesaw_core = "0.15.5"
 
 # Local crates
 ai-client = { path = "modules/ai-client" }

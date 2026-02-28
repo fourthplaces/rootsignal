@@ -14,27 +14,19 @@ use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
 use crate::pipeline::events::ScoutEvent;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,
-    engine: &'a ScoutEngine,
-    deps: &'a PipelineDeps,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        engine: &'a ScoutEngine,
-        deps: &'a PipelineDeps,
         region_slug: &'a str,
     ) -> Self {
         Self {
             writer,
-            engine,
-            deps,
             _region_slug: region_slug,
         }
     }
@@ -50,21 +42,19 @@ impl<'a> Metrics<'a> {
         source_signal_counts: &HashMap<String, u32>,
         query_api_errors: &HashSet<String>,
         now: DateTime<Utc>,
-    ) {
+    ) -> Vec<ScoutEvent> {
+        let mut events: Vec<ScoutEvent> = Vec::new();
+
         // Record per-source scrape metrics. Skip queries where the search API errored.
-        let mut state = PipelineState::new(HashMap::new());
         for (canonical_key, signals_produced) in source_signal_counts {
             if query_api_errors.contains(canonical_key) {
                 continue;
             }
-            let event = ScoutEvent::System(SystemEvent::SourceScraped {
+            events.push(ScoutEvent::System(SystemEvent::SourceScraped {
                 canonical_key: canonical_key.clone(),
                 signals_produced: *signals_produced,
                 scraped_at: now,
-            });
-            if let Err(e) = self.engine.dispatch(event, &mut state, self.deps).await {
-                warn!(canonical_key, error = %e, "Failed to record source scrape metrics");
-            }
+            }));
         }
 
         // Update source weights based on scrape results.
@@ -149,5 +139,7 @@ impl<'a> Metrics<'a> {
             }
             Err(e) => warn!(error = %e, "Failed to get source stats"),
         }
+
+        events
     }
 }

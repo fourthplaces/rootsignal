@@ -8,31 +8,23 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::pipeline::events::{PipelineEvent, ScoutEvent};
-use crate::pipeline::state::{ExtractedBatch, PipelineDeps, PipelineState};
+use crate::core::engine::ScoutEngineDeps;
+use crate::domains::signals::events::SignalEvent;
+use crate::pipeline::state::{ExtractedBatch, PipelineState};
 use crate::testing::*;
 
-fn test_deps(store: Arc<MockSignalReader>) -> PipelineDeps {
-    PipelineDeps {
-        store,
-        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        region: Some(mpls_region()),
-        run_id: "test-run".to_string(),
-        fetcher: None,
-        anthropic_api_key: None,
-        graph_client: None,
-    }
+fn test_deps(store: Arc<MockSignalReader>) -> ScoutEngineDeps {
+    test_scout_deps(store as Arc<dyn crate::traits::SignalReader>)
 }
 
-/// Helper: stash a batch and call the handler.
+/// Helper: call the dedup handler with a batch.
 async fn run_dedup(
     url: &str,
     batch: ExtractedBatch,
     state: &mut PipelineState,
-    deps: &PipelineDeps,
-) -> Vec<ScoutEvent> {
-    state.extracted_batches.insert(url.to_string(), batch);
-    super::dedup::handle_signals_extracted(url, &*state, deps)
+    deps: &ScoutEngineDeps,
+) -> Vec<SignalEvent> {
+    super::dedup::handle_signals_extracted(url, &batch, &*state, deps)
         .await
         .unwrap()
 }
@@ -73,9 +65,7 @@ async fn url_title_dedup_filters_existing_titles() {
     let creates: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted { title, .. }) => {
-                Some(title.as_str())
-            }
+            SignalEvent::NewSignalAccepted { title, .. } => Some(title.as_str()),
             _ => None,
         })
         .collect();
@@ -109,10 +99,7 @@ async fn all_titles_deduped_returns_no_events() {
 
     // Only DedupCompleted (all titles filtered)
     assert_eq!(events.len(), 1);
-    assert!(matches!(
-        &events[0],
-        ScoutEvent::Pipeline(PipelineEvent::DedupCompleted { .. })
-    ));
+    assert!(matches!(&events[0], SignalEvent::DedupCompleted { .. }));
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +135,11 @@ async fn global_title_match_same_source_emits_reencountered() {
     // SameSourceReencountered + DedupCompleted
     assert_eq!(events.len(), 2);
     match &events[0] {
-        ScoutEvent::Pipeline(PipelineEvent::SameSourceReencountered {
+        SignalEvent::SameSourceReencountered {
             existing_id: id,
             similarity,
             ..
-        }) => {
+        } => {
             assert_eq!(*id, existing_id);
             assert!((similarity - 1.0).abs() < f64::EPSILON);
         }
@@ -189,11 +176,11 @@ async fn global_title_match_different_source_emits_cross_source_match() {
     // CrossSourceMatchDetected + DedupCompleted
     assert_eq!(events.len(), 2);
     match &events[0] {
-        ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
+        SignalEvent::CrossSourceMatchDetected {
             existing_id: id,
             similarity,
             ..
-        }) => {
+        } => {
             assert_eq!(*id, existing_id);
             assert!((similarity - 1.0).abs() < f64::EPSILON);
         }
@@ -232,13 +219,13 @@ async fn new_signal_emits_accepted_and_stashes_pending_node() {
     // DedupCompleted is appended at the end
     assert_eq!(events.len(), 2);
     match &events[0] {
-        ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted {
+        SignalEvent::NewSignalAccepted {
             node_id: id,
             title,
             source_url,
             pending_node,
             ..
-        }) => {
+        } => {
             assert_eq!(*id, node_id);
             assert_eq!(title, "Free Legal Clinic");
             assert_eq!(source_url, "https://example.org/events");
@@ -247,10 +234,7 @@ async fn new_signal_emits_accepted_and_stashes_pending_node() {
         }
         other => panic!("expected NewSignalAccepted, got {:?}", other),
     }
-    assert!(matches!(
-        &events[1],
-        ScoutEvent::Pipeline(PipelineEvent::DedupCompleted { .. })
-    ));
+    assert!(matches!(&events[1], SignalEvent::DedupCompleted { .. }));
 }
 
 #[tokio::test]
@@ -290,7 +274,7 @@ async fn create_stashes_tags_and_author_from_extraction_id() {
     assert_eq!(events.len(), 2);
 
     match &events[0] {
-        ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted { pending_node, .. }) => {
+        SignalEvent::NewSignalAccepted { pending_node, .. } => {
             assert_eq!(
                 pending_node.signal_tags,
                 vec!["food".to_string(), "mutual-aid".to_string()]
@@ -342,23 +326,20 @@ async fn mixed_batch_emits_correct_verdicts() {
     assert_eq!(events.len(), 3);
 
     match &events[0] {
-        ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
+        SignalEvent::CrossSourceMatchDetected {
             existing_id: id, ..
-        }) => assert_eq!(*id, existing_id),
+        } => assert_eq!(*id, existing_id),
         other => panic!("expected CrossSourceMatchDetected, got {:?}", other),
     }
 
     match &events[1] {
-        ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted { title, .. }) => {
+        SignalEvent::NewSignalAccepted { title, .. } => {
             assert_eq!(title, "Brand New Event")
         }
         other => panic!("expected NewSignalAccepted, got {:?}", other),
     }
 
-    assert!(matches!(
-        &events[2],
-        ScoutEvent::Pipeline(PipelineEvent::DedupCompleted { .. })
-    ));
+    assert!(matches!(&events[2], SignalEvent::DedupCompleted { .. }));
 }
 
 #[tokio::test]
@@ -383,53 +364,5 @@ async fn empty_batch_emits_only_dedup_completed() {
     .await;
 
     assert_eq!(events.len(), 1);
-    assert!(matches!(
-        &events[0],
-        ScoutEvent::Pipeline(PipelineEvent::DedupCompleted { .. })
-    ));
-}
-
-#[tokio::test]
-async fn missing_batch_returns_no_events() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let mut state = PipelineState::new(HashMap::new());
-
-    // Don't stash anything — call handler directly
-    let events =
-        super::dedup::handle_signals_extracted("https://example.org/events", &state, &deps)
-            .await
-            .unwrap();
-
-    assert!(events.is_empty());
-}
-
-#[tokio::test]
-async fn extracted_batch_consumed_after_dedup() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let mut state = PipelineState::new(HashMap::new());
-
-    run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "content".to_string(),
-            nodes: vec![tension_at("Something", 44.93, -93.26)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &mut state,
-        &deps,
-    )
-    .await;
-
-    // Handler reads but doesn't remove — reducer cleans up on DedupCompleted
-    assert!(
-        state
-            .extracted_batches
-            .contains_key("https://example.org/events"),
-        "extracted batch should still be in state (reducer cleans up, not handler)"
-    );
+    assert!(matches!(&events[0], SignalEvent::DedupCompleted { .. }));
 }

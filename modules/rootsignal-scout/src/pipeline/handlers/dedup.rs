@@ -16,29 +16,26 @@ use anyhow::Result;
 use rootsignal_common::types::NodeType;
 use tracing::{info, warn};
 
+use crate::domains::signals::events::SignalEvent;
 use crate::infra::util::sanitize_url;
-use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::scrape_phase::{dedup_verdict, normalize_title, DedupVerdict};
-use crate::pipeline::state::{PendingNode, PipelineDeps, PipelineState};
+use crate::core::engine::ScoutEngineDeps;
+use crate::pipeline::state::{ExtractedBatch, PendingNode, PipelineState};
 
-/// Handle `SignalsExtracted`: pull the extracted batch from state and run dedup.
+/// Handle `SignalsExtracted`: run 4-layer dedup on the extracted batch.
+///
+/// The batch is carried directly on the event payload — no stash/cleanup needed.
 pub async fn handle_signals_extracted(
     url: &str,
+    batch: &ExtractedBatch,
     state: &PipelineState,
-    deps: &PipelineDeps,
-) -> Result<Vec<ScoutEvent>> {
-    let batch = match state.extracted_batches.get(url) {
-        Some(b) => b,
-        None => {
-            tracing::warn!(url, "SignalsExtracted: no extracted batch found in state");
-            return Ok(vec![]);
-        }
-    };
+    deps: &ScoutEngineDeps,
+) -> Result<Vec<SignalEvent>> {
 
     if batch.nodes.is_empty() {
-        return Ok(vec![ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+        return Ok(vec![SignalEvent::DedupCompleted {
             url: url.to_string(),
-        })]);
+        }]);
     }
 
     let content_hash_str = format!("{:x}", rootsignal_common::content_hash(&batch.content));
@@ -67,9 +64,9 @@ pub async fn handle_signals_extracted(
     }
 
     if nodes.is_empty() {
-        events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+        events.push(SignalEvent::DedupCompleted {
             url: url.to_string(),
-        }));
+        });
         return Ok(events);
     }
 
@@ -102,14 +99,12 @@ pub async fn handle_signals_extracted(
                     new_source = url,
                     "Global title+type match from different source"
                 );
-                events.push(ScoutEvent::Pipeline(
-                    PipelineEvent::CrossSourceMatchDetected {
-                        existing_id,
-                        node_type: node.node_type(),
-                        source_url: url.to_string(),
-                        similarity,
-                    },
-                ));
+                events.push(SignalEvent::CrossSourceMatchDetected {
+                    existing_id,
+                    node_type: node.node_type(),
+                    source_url: url.to_string(),
+                    similarity,
+                });
             }
             DedupVerdict::Refresh {
                 existing_id,
@@ -122,14 +117,12 @@ pub async fn handle_signals_extracted(
                     source = url,
                     "Same-source title match"
                 );
-                events.push(ScoutEvent::Pipeline(
-                    PipelineEvent::SameSourceReencountered {
-                        existing_id,
-                        node_type: node.node_type(),
-                        source_url: url.to_string(),
-                        similarity,
-                    },
-                ));
+                events.push(SignalEvent::SameSourceReencountered {
+                    existing_id,
+                    node_type: node.node_type(),
+                    source_url: url.to_string(),
+                    similarity,
+                });
             }
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
@@ -139,9 +132,9 @@ pub async fn handle_signals_extracted(
     let nodes = remaining_nodes;
 
     if nodes.is_empty() {
-        events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+        events.push(SignalEvent::DedupCompleted {
             url: url.to_string(),
-        }));
+        });
         return Ok(events);
     }
 
@@ -253,14 +246,12 @@ pub async fn handle_signals_extracted(
                         );
                     }
                 }
-                events.push(ScoutEvent::Pipeline(
-                    PipelineEvent::SameSourceReencountered {
-                        existing_id,
-                        node_type,
-                        source_url: url.to_string(),
-                        similarity,
-                    },
-                ));
+                events.push(SignalEvent::SameSourceReencountered {
+                    existing_id,
+                    node_type,
+                    source_url: url.to_string(),
+                    similarity,
+                });
             }
             DedupVerdict::Corroborate {
                 existing_id,
@@ -290,14 +281,12 @@ pub async fn handle_signals_extracted(
                         );
                     }
                 }
-                events.push(ScoutEvent::Pipeline(
-                    PipelineEvent::CrossSourceMatchDetected {
-                        existing_id,
-                        node_type,
-                        source_url: url.to_string(),
-                        similarity,
-                    },
-                ));
+                events.push(SignalEvent::CrossSourceMatchDetected {
+                    existing_id,
+                    node_type,
+                    source_url: url.to_string(),
+                    similarity,
+                });
             }
             DedupVerdict::Create => {
                 let node_id = node.id();
@@ -331,20 +320,20 @@ pub async fn handle_signals_extracted(
                     source_id: batch.source_id,
                 };
 
-                events.push(ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted {
+                events.push(SignalEvent::NewSignalAccepted {
                     node_id,
                     node_type,
                     title,
                     source_url: url.to_string(),
                     pending_node: Box::new(pn),
-                }));
+                });
             }
         }
     }
 
-    events.push(ScoutEvent::Pipeline(PipelineEvent::DedupCompleted {
+    events.push(SignalEvent::DedupCompleted {
         url: url.to_string(),
-    }));
+    });
 
     Ok(events)
 }

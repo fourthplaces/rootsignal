@@ -8,8 +8,9 @@ use crate::safety::SensitivityLevel;
 
 // --- Re-exports from rootsignal-world ---
 pub use rootsignal_world::types::{
-    haversine_km, ActorType, ChannelType, DiscoveryMethod, EdgeType, GeoPoint, GeoPrecision,
-    NodeType, Severity, SocialPlatform, SourceRole, Urgency,
+    haversine_km, ActorType, ChannelType, DiscoveryMethod, EdgeType, Entity, EntityType, GeoPoint,
+    GeoPrecision, NodeType, Reference, Relationship, Severity, SocialPlatform, SourceRole, Tone,
+    Urgency,
 };
 pub use rootsignal_world::values::{Location, Schedule};
 

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::{SystemEvent, WorldEvent};
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
@@ -23,8 +23,6 @@ use rootsignal_archive::Archive;
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::events::ScoutEvent;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -271,8 +269,6 @@ Return valid JSON matching the GravityFinding schema.";
 
 pub struct GatheringFinder<'a> {
     writer: &'a GraphWriter,
-    engine: &'a ScoutEngine,
-    deps: &'a PipelineDeps,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -288,8 +284,6 @@ pub struct GatheringFinder<'a> {
 impl<'a> GatheringFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        engine: &'a ScoutEngine,
-        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -317,8 +311,6 @@ impl<'a> GatheringFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
-            engine,
-            deps,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -332,7 +324,7 @@ impl<'a> GatheringFinder<'a> {
         }
     }
 
-    pub async fn run(&self) -> (GatheringFinderStats, Vec<SourceNode>) {
+    pub async fn run(&self, events: &mut seesaw_core::Events) -> (GatheringFinderStats, Vec<SourceNode>) {
         let mut stats = GatheringFinderStats::default();
         let mut discovered_sources = Vec::new();
 
@@ -369,7 +361,7 @@ impl<'a> GatheringFinder<'a> {
             }
 
             let found_gatherings = match self
-                .investigate_tension(target, &mut stats, &mut discovered_sources)
+                .investigate_tension(target, &mut stats, &mut discovered_sources, events)
                 .await
             {
                 Ok(found) => {
@@ -410,6 +402,7 @@ impl<'a> GatheringFinder<'a> {
         target: &GatheringFinderTarget,
         stats: &mut GatheringFinderStats,
         discovered_sources: &mut Vec<SourceNode>,
+        events: &mut seesaw_core::Events,
     ) -> Result<bool> {
         // Fetch existing gravity signals for context
         let existing = self
@@ -489,7 +482,7 @@ impl<'a> GatheringFinder<'a> {
             .take(MAX_GATHERINGS_PER_TENSION)
         {
             if let Err(e) = self
-                .process_gathering(target, &gathering, stats, discovered_sources)
+                .process_gathering(target, &gathering, stats, discovered_sources, events)
                 .await
             {
                 warn!(
@@ -527,6 +520,7 @@ impl<'a> GatheringFinder<'a> {
         gathering: &DiscoveredGathering,
         stats: &mut GatheringFinderStats,
         discovered_sources: &mut Vec<SourceNode>,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let embed_text = format!("{} {}", gathering.title, gathering.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -539,8 +533,7 @@ impl<'a> GatheringFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .deps
-            .store
+            .writer
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -565,19 +558,11 @@ impl<'a> GatheringFinder<'a> {
                 was_new = false;
 
                 // Touch the existing signal so it doesn't age out
-                let refresh_event = ScoutEvent::System(SystemEvent::FreshnessConfirmed {
+                events.push(ScoutEvent::System(SystemEvent::FreshnessConfirmed {
                     signal_ids: vec![dup.id],
                     node_type: NodeType::Gathering,
                     confirmed_at: Utc::now(),
-                });
-                let mut state = PipelineState::new(std::collections::HashMap::new());
-                if let Err(e) = self
-                    .engine
-                    .dispatch(refresh_event, &mut state, self.deps)
-                    .await
-                {
-                    warn!(error = %e, "Failed to refresh signal freshness (non-fatal)");
-                }
+                }));
 
                 dup.id
             }
@@ -586,28 +571,24 @@ impl<'a> GatheringFinder<'a> {
                     warn!(error = %e, "Gathering dedup check failed, creating new");
                 }
                 was_new = true;
-                self.create_gathering_node(gathering).await?
+                self.create_gathering_node(gathering, events).await?
             }
         };
 
         // Wire DRAWN_TO edge to the target tension
-        let drawn_event = ScoutEvent::World(WorldEvent::TensionLinked {
+        events.push(ScoutEvent::System(SystemEvent::TensionLinked {
             signal_id,
             tension_id: target.tension_id,
             strength: gathering.match_strength.clamp(0.0, 1.0),
             explanation: gathering.explanation.clone(),
             source_url: None,
-        });
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(drawn_event, &mut state, self.deps)
-            .await?;
+        }));
         stats.edges_created += 1;
 
         // Wire additional DRAWN_TO edges for also_addresses
         if !gathering.also_addresses.is_empty() {
             if let Err(e) = self
-                .wire_also_addresses(signal_id, &gathering.also_addresses, &gathering.explanation)
+                .wire_also_addresses(signal_id, &gathering.also_addresses, &gathering.explanation, events)
                 .await
             {
                 warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
@@ -650,7 +631,7 @@ impl<'a> GatheringFinder<'a> {
         Ok(())
     }
 
-    async fn create_gathering_node(&self, gathering: &DiscoveredGathering) -> Result<Uuid> {
+    async fn create_gathering_node(&self, gathering: &DiscoveredGathering, events: &mut seesaw_core::Events) -> Result<Uuid> {
         let now = Utc::now();
         let meta = NodeMeta {
             id: Uuid::new_v4(),
@@ -716,18 +697,13 @@ impl<'a> GatheringFinder<'a> {
 
         let node_id = node.meta().unwrap().id;
 
-        // Dispatch world event + system events through engine
+        // Collect world event + system events for causal chain dispatch
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
-            .await?;
+        events.push(ScoutEvent::World(world_event));
         for se in system_events {
-            self.engine
-                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
-                .await?;
+            events.push(ScoutEvent::System(se));
         }
 
         info!(
@@ -749,6 +725,7 @@ impl<'a> GatheringFinder<'a> {
         signal_id: Uuid,
         also_addresses: &[String],
         explanation: &str,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let lat_delta = self.region.radius_km / 111.0;
         let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
@@ -787,17 +764,13 @@ impl<'a> GatheringFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring gravity also_addresses edge"
                 );
-                let also_event = ScoutEvent::World(WorldEvent::TensionLinked {
+                events.push(ScoutEvent::System(SystemEvent::TensionLinked {
                     signal_id,
                     tension_id,
                     strength: sim.clamp(0.0, 1.0),
                     explanation: explanation.to_string(),
                     source_url: None,
-                });
-                let mut state = PipelineState::new(std::collections::HashMap::new());
-                self.engine
-                    .dispatch(also_event, &mut state, self.deps)
-                    .await?;
+                }));
             }
         }
 

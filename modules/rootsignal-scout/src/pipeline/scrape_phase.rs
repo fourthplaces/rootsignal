@@ -22,7 +22,7 @@ use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
 use crate::pipeline::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
-use crate::pipeline::state::{ExtractedBatch, PipelineDeps};
+use crate::pipeline::state::ExtractedBatch;
 use rootsignal_common::{
     canonical_value, is_web_query, scraping_strategy, ActorContext, DiscoveryMethod, Node,
     NodeType, Post, ScoutScope, ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
@@ -288,8 +288,6 @@ pub(crate) fn dedup_verdict(
 // ScrapePhase — the core scrape-extract-store-dedup pipeline
 // ---------------------------------------------------------------------------
 
-use crate::pipeline::ScoutEngine;
-
 pub(crate) struct ScrapePhase {
     store: Arc<dyn crate::traits::SignalReader>,
     extractor: Arc<dyn SignalExtractor>,
@@ -297,7 +295,6 @@ pub(crate) struct ScrapePhase {
     fetcher: Arc<dyn crate::traits::ContentFetcher>,
     region: ScoutScope,
     run_id: String,
-    engine: Arc<ScoutEngine>,
 }
 
 impl ScrapePhase {
@@ -308,7 +305,6 @@ impl ScrapePhase {
         fetcher: Arc<dyn crate::traits::ContentFetcher>,
         region: ScoutScope,
         run_id: String,
-        engine: Arc<ScoutEngine>,
     ) -> Self {
         Self {
             store,
@@ -317,43 +313,27 @@ impl ScrapePhase {
             fetcher,
             region,
             run_id,
-            engine,
         }
     }
 
-    /// Register discovered sources through the engine dispatch loop.
-    pub async fn register_sources(
-        &self,
+    /// Collect SourceDiscovered events for discovered sources (no dispatch).
+    pub fn register_sources_events(
         sources: Vec<SourceNode>,
         discovered_by: &str,
-        ctx: &mut RunContext,
-    ) -> Result<()> {
-        let deps = PipelineDeps {
-            store: self.store.clone(),
-            embedder: self.embedder.clone(),
-            region: Some(self.region.clone()),
-            run_id: self.run_id.clone(),
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
-        };
-        for source in sources {
-            self.engine
-                .dispatch(
-                    ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
-                        source,
-                        discovered_by: discovered_by.into(),
-                    }),
-                    ctx,
-                    &deps,
-                )
-                .await?;
-        }
-        Ok(())
+    ) -> Vec<ScoutEvent> {
+        sources
+            .into_iter()
+            .map(|source| {
+                ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+                    source,
+                    discovered_by: discovered_by.into(),
+                })
+            })
+            .collect()
     }
 
-    /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals, store results.
-    /// Used by both Phase A (tension/mixed sources) and Phase B (response/discovery sources).
+    /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals.
+    /// Returns collected events (SignalsExtracted, FreshnessConfirmed, etc.) for seesaw to process.
     ///
     /// Mutates `ctx.url_to_canonical_key` (resolved WebQuery URLs are inserted so
     /// scrape results can be attributed back to the originating query source).
@@ -365,7 +345,8 @@ impl ScrapePhase {
         sources: &[&SourceNode],
         ctx: &mut RunContext,
         run_log: &RunLogger,
-    ) {
+    ) -> Vec<ScoutEvent> {
+        let mut collected_events: Vec<ScoutEvent> = Vec::new();
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
@@ -542,7 +523,7 @@ impl ScrapePhase {
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         if phase_urls.is_empty() {
-            return;
+            return collected_events;
         }
 
         // Scrape + extract in parallel
@@ -683,43 +664,30 @@ impl ScrapePhase {
                     }
 
                     let source_id = ck_to_source_id.get(&ck).copied();
-                    let signal_count_before = ctx.stats.signals_stored;
-                    match self
-                        .store_signals(
-                            &url,
-                            &content,
-                            nodes,
-                            resource_tags,
-                            signal_tags,
-                            &author_actors,
-                            ctx,
-                            &known_urls,
-                            run_log,
-                            source_id,
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            ctx.stats.urls_scraped += 1;
-                            let produced = ctx.stats.signals_stored - signal_count_before;
-                            *ctx.source_signal_counts.entry(ck).or_default() += produced;
-                        }
-                        Err(e) => {
-                            warn!(url, error = %e, "Failed to store signals");
-                            ctx.stats.urls_failed += 1;
-                            ctx.source_signal_counts.entry(ck).or_default();
-                        }
+                    let events = self.store_signals_events(
+                        &url,
+                        &content,
+                        nodes,
+                        resource_tags,
+                        signal_tags,
+                        &author_actors,
+                        ctx,
+                        source_id,
+                    );
+                    if !events.is_empty() {
+                        ctx.source_signal_counts.entry(ck).or_default();
                     }
+                    collected_events.extend(events);
                 }
                 ScrapeOutcome::Unchanged => {
-                    match self.refresh_url_signals_via_engine(&url, now, ctx).await {
-                        Ok(n) if n > 0 => {
-                            info!(url, refreshed = n, "Refreshed unchanged signals")
+                    match self.refresh_url_signals_events(&url, now).await {
+                        Ok(events) if !events.is_empty() => {
+                            info!(url, refreshed = events.len(), "Refreshed unchanged signals");
+                            collected_events.extend(events);
                         }
                         Ok(_) => {}
                         Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
                     }
-                    ctx.stats.urls_unchanged += 1;
                     ctx.source_signal_counts.entry(ck).or_default();
                 }
                 ScrapeOutcome::Failed => {
@@ -729,19 +697,21 @@ impl ScrapePhase {
                         success: false,
                         content_bytes: 0,
                     });
-                    ctx.stats.urls_failed += 1;
                 }
             }
         }
+        collected_events
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
+    /// Returns collected events for seesaw to process.
     pub async fn run_social(
         &self,
         social_sources: &[&SourceNode],
         ctx: &mut RunContext,
         run_log: &RunLogger,
-    ) {
+    ) -> Vec<ScoutEvent> {
+        let mut collected_events: Vec<ScoutEvent> = Vec::new();
         type SocialResult = Option<(
             String,
             String,
@@ -1111,27 +1081,20 @@ impl ScrapePhase {
             }
             ctx.stats.social_media_posts += post_count as u32;
             let source_id = ck_to_source_id.get(&canonical_key).copied();
-            let signal_count_before = ctx.stats.signals_stored;
-            if let Err(e) = self
-                .store_signals(
-                    &source_url,
-                    &combined_text,
-                    nodes,
-                    resource_tags,
-                    signal_tags,
-                    &author_actors,
-                    ctx,
-                    &known_urls,
-                    run_log,
-                    source_id,
-                )
-                .await
-            {
-                warn!(source_url = source_url.as_str(), error = %e, "Failed to store social media signals");
-            }
-            let produced = ctx.stats.signals_stored - signal_count_before;
-            *ctx.source_signal_counts.entry(canonical_key).or_default() += produced;
+            let events = self.store_signals_events(
+                &source_url,
+                &combined_text,
+                nodes,
+                resource_tags,
+                signal_tags,
+                &author_actors,
+                ctx,
+                source_id,
+            );
+            ctx.source_signal_counts.entry(canonical_key).or_default();
+            collected_events.extend(events);
         }
+        collected_events
     }
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
@@ -1141,7 +1104,8 @@ impl ScrapePhase {
         topics: &[String],
         ctx: &mut RunContext,
         run_log: &RunLogger,
-    ) {
+    ) -> Vec<ScoutEvent> {
+        let mut collected_events: Vec<ScoutEvent> = Vec::new();
         const MAX_SOCIAL_SEARCHES: usize = 10;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
@@ -1149,7 +1113,7 @@ impl ScrapePhase {
         const SITE_SEARCH_RESULTS: usize = 5;
 
         if topics.is_empty() {
-            return;
+            return collected_events;
         }
 
         info!(topics = ?topics, "Starting social topic discovery...");
@@ -1289,26 +1253,18 @@ impl ScrapePhase {
                 // Store signals through normal pipeline
                 let author_actors: HashMap<Uuid, String> =
                     result.author_actors.into_iter().collect();
-                let signal_count_before = ctx.stats.signals_stored;
-                if let Err(e) = self
-                    .store_signals(
-                        &source_url,
-                        &combined_text,
-                        result.nodes,
-                        result.resource_tags,
-                        result.signal_tags,
-                        &author_actors,
-                        ctx,
-                        &known_urls,
-                        run_log,
-                        None,
-                    )
-                    .await
-                {
-                    warn!(username, error = %e, "Failed to store discovery signals");
-                    continue;
-                }
-                let produced = ctx.stats.signals_stored - signal_count_before;
+                let events = self.store_signals_events(
+                    &source_url,
+                    &combined_text,
+                    result.nodes,
+                    result.resource_tags,
+                    result.signal_tags,
+                    &author_actors,
+                    ctx,
+                    None,
+                );
+                let produced = events.len() as u32;
+                collected_events.extend(events);
 
                 // Only follow mentions from authors whose posts produced signals
                 if produced > 0 {
@@ -1422,35 +1378,24 @@ impl ScrapePhase {
 
                     let author_actors: HashMap<Uuid, String> =
                         extracted.author_actors.into_iter().collect();
-                    if let Err(e) = self
-                        .store_signals(
-                            &result.url,
-                            &content,
-                            extracted.nodes,
-                            extracted.resource_tags,
-                            extracted.signal_tags,
-                            &author_actors,
-                            ctx,
-                            &known_urls,
-                            run_log,
-                            None,
-                        )
-                        .await
-                    {
-                        warn!(url = result.url, error = %e, "Failed to store site-scoped signals");
-                    }
+                    let events = self.store_signals_events(
+                        &result.url,
+                        &content,
+                        extracted.nodes,
+                        extracted.resource_tags,
+                        extracted.signal_tags,
+                        &author_actors,
+                        ctx,
+                        None,
+                    );
+                    collected_events.extend(events);
                 }
             }
         }
 
-        // Register all discovered sources through the engine
+        // Collect source discovery events
         if !new_sources.is_empty() {
-            if let Err(e) = self
-                .register_sources(new_sources, "topic_discovery", ctx)
-                .await
-            {
-                warn!(error = %e, "Failed to register topic discovery sources");
-            }
+            collected_events.extend(Self::register_sources_events(new_sources, "topic_discovery"));
         }
 
         ctx.stats.discovery_accounts_found = new_accounts;
@@ -1458,25 +1403,26 @@ impl ScrapePhase {
             topics = topics.len(),
             new_accounts, "Social topic discovery complete"
         );
+        collected_events
     }
 
     // -----------------------------------------------------------------------
     // store_signals — multi-layer dedup + graph storage (private)
     // -----------------------------------------------------------------------
 
-    async fn store_signals(
+    /// Collect events for extracted signals (no dispatch).
+    /// Stashes ExtractedBatch in state and returns a SignalsExtracted event.
+    fn store_signals_events(
         &self,
         url: &str,
         content: &str,
-        mut nodes: Vec<Node>,
+        nodes: Vec<Node>,
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         signal_tags: Vec<(Uuid, Vec<String>)>,
         author_actors: &HashMap<Uuid, String>,
         ctx: &mut RunContext,
-        known_urls: &HashSet<String>,
-        run_log: &RunLogger,
         source_id: Option<Uuid>,
-    ) -> Result<()> {
+    ) -> Vec<ScoutEvent> {
         let url = sanitize_url(url);
         let raw_count = nodes.len() as u32;
 
@@ -1490,7 +1436,7 @@ impl ScrapePhase {
         let nodes = score_and_filter(nodes, &url, actor_ctx);
 
         if nodes.is_empty() {
-            return Ok(());
+            return Vec::new();
         }
 
         // Layer 1: Within-batch dedup by (normalized_title, node_type)
@@ -1502,90 +1448,54 @@ impl ScrapePhase {
             .cloned()
             .unwrap_or_else(|| url.clone());
 
-        // Stash extracted batch in state for the dedup handler to consume
-        ctx.extracted_batches.insert(
-            url.clone(),
-            ExtractedBatch {
-                content: content.to_string(),
-                nodes,
-                resource_tags: resource_tags.into_iter().collect(),
-                signal_tags: signal_tags.into_iter().collect(),
-                author_actors: author_actors.clone(),
-                source_id,
-            },
-        );
-
-        // Build deps from self fields and dispatch through the engine
-        let deps = PipelineDeps {
-            store: self.store.clone(),
-            embedder: self.embedder.clone(),
-            region: Some(self.region.clone()),
-            run_id: self.run_id.clone(),
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
+        let batch = ExtractedBatch {
+            content: content.to_string(),
+            nodes,
+            resource_tags: resource_tags.into_iter().collect(),
+            signal_tags: signal_tags.into_iter().collect(),
+            author_actors: author_actors.clone(),
+            source_id,
         };
 
-        self.engine
-            .dispatch(
-                ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                    url,
-                    canonical_key,
-                    count: raw_count,
-                }),
-                ctx,
-                &deps,
-            )
-            .await
+        vec![ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
+            url,
+            canonical_key,
+            count: raw_count,
+            batch: Box::new(batch),
+        })]
     }
 
-    /// Enrich actor locations by triangulating from their authored signals.
-    ///
-    /// Finds all actors active in this phase's region, then calls
-    /// `enrich_actor_locations` to update each actor's location from signal mode.
-    /// Query signal IDs for a URL, then dispatch FreshnessConfirmed through the engine.
-    async fn refresh_url_signals_via_engine(
+    /// Collect FreshnessConfirmed events for unchanged URLs (no dispatch).
+    async fn refresh_url_signals_events(
         &self,
         url: &str,
         now: DateTime<Utc>,
-        ctx: &mut RunContext,
-    ) -> Result<u64> {
+    ) -> Result<Vec<ScoutEvent>> {
         use rootsignal_common::events::SystemEvent;
-        use std::collections::HashMap as StdHashMap;
 
         let all_ids = self.store.signal_ids_for_url(url).await?;
         if all_ids.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         // Group by NodeType for batch FreshnessConfirmed events
-        let mut by_type: StdHashMap<NodeType, Vec<Uuid>> = StdHashMap::new();
+        let mut by_type: HashMap<NodeType, Vec<Uuid>> = HashMap::new();
         for (id, nt) in &all_ids {
             by_type.entry(*nt).or_default().push(*id);
         }
 
-        let deps = PipelineDeps {
-            store: self.store.clone(),
-            embedder: self.embedder.clone(),
-            region: Some(self.region.clone()),
-            run_id: self.run_id.clone(),
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
-        };
-
-        let total = all_ids.len() as u64;
-        for (node_type, ids) in by_type {
-            let event = ScoutEvent::System(SystemEvent::FreshnessConfirmed {
-                signal_ids: ids,
-                node_type,
-                confirmed_at: now,
-            });
-            self.engine.dispatch(event, ctx, &deps).await?;
-        }
-        Ok(total)
+        let events: Vec<ScoutEvent> = by_type
+            .into_iter()
+            .map(|(node_type, ids)| {
+                ScoutEvent::System(SystemEvent::FreshnessConfirmed {
+                    signal_ids: ids,
+                    node_type,
+                    confirmed_at: now,
+                })
+            })
+            .collect();
+        Ok(events)
     }
-
 }
 
 #[cfg(test)]

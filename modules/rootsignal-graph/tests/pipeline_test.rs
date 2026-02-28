@@ -12,8 +12,9 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use rootsignal_common::events::{Event, Location, WorldEvent};
+use rootsignal_common::events::{Event, Location, SystemEvent, WorldEvent};
 use rootsignal_common::{ActorType, ChannelType, GeoPoint, GeoPrecision};
+use rootsignal_world::types::{Entity, EntityType, Reference};
 use rootsignal_events::StoredEvent;
 use rootsignal_graph::{query, BBox, GraphClient, Pipeline};
 
@@ -55,6 +56,7 @@ fn mpls() -> Option<Location> {
         }),
         name: Some("Minneapolis".into()),
         address: None,
+        role: None,
     })
 }
 
@@ -80,21 +82,18 @@ async fn pipeline_creates_signal_with_factual_and_derived_properties() {
     let pipeline = Pipeline::new(client.clone(), 0.3);
 
     let id = Uuid::new_v4();
-    let event = Event::World(WorldEvent::GatheringDiscovered {
+    let event = Event::World(WorldEvent::GatheringAnnounced {
         id,
         title: "Community Potluck".into(),
         summary: "A neighborhood potluck in the park".into(),
-        confidence: 0.85,
         source_url: "https://patch.com/mn/potluck".into(),
-        extracted_at: Utc::now(),
         published_at: None,
-        location: mpls(),
-        from_location: None,
-        mentioned_actors: vec![],
-        author_actor: None,
+        extraction_id: None,
+        locations: mpls().into_iter().collect(),
+        mentioned_entities: vec![],
+        references: vec![],
         schedule: None,
         action_url: None,
-        organizer: None,
     });
 
     let events = vec![stored(1, &event)];
@@ -131,26 +130,23 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
     let events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::GatheringDiscovered {
+            &Event::World(WorldEvent::GatheringAnnounced {
                 id: signal_id,
                 title: "Rally at Capitol".into(),
                 summary: "Advocacy rally".into(),
-                confidence: 0.9,
                 source_url: "https://startribune.com/rally".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
                 schedule: None,
                 action_url: None,
-                organizer: None,
             }),
         ),
         stored(
             2,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev1_id,
                 signal_id: signal_id,
                 url: "https://mpr.org/rally-coverage".into(),
@@ -163,7 +159,7 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
         ),
         stored(
             3,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev2_id,
                 signal_id: signal_id,
                 url: "https://twitter.com/user/rally".into(),
@@ -209,44 +205,40 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
     let events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::TensionDiscovered {
+            &Event::World(WorldEvent::ConcernRaised {
                 id: sig1,
                 title: "Housing crisis".into(),
                 summary: "Rising rents".into(),
-                confidence: 0.8,
                 source_url: "https://example.com/housing".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
-                severity: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
+                schedule: None,
                 what_would_help: None,
             }),
         ),
         stored(
             2,
-            &Event::World(WorldEvent::AidDiscovered {
+            &Event::World(WorldEvent::ResourceOffered {
                 id: sig2,
                 title: "Rent assistance".into(),
                 summary: "Emergency fund".into(),
-                confidence: 0.85,
                 source_url: "https://example.com/aid".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
+                schedule: None,
                 action_url: None,
                 availability: None,
-                is_ongoing: None,
             }),
         ),
         stored(
             3,
-            &Event::World(WorldEvent::ActorIdentified {
+            &Event::System(SystemEvent::ActorIdentified {
                 actor_id,
                 name: "Housing Alliance".into(),
                 actor_type: ActorType::Organization,
@@ -262,7 +254,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
         ),
         stored(
             4,
-            &Event::World(WorldEvent::ActorLinkedToSignal {
+            &Event::System(SystemEvent::ActorLinkedToSignal {
                 actor_id,
                 signal_id: sig2,
                 role: "provider".into(),
@@ -315,26 +307,23 @@ async fn replay_produces_identical_graph() {
     let events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::GatheringDiscovered {
+            &Event::World(WorldEvent::GatheringAnnounced {
                 id: signal_id,
                 title: "Farmers Market".into(),
                 summary: "Weekly market".into(),
-                confidence: 0.9,
                 source_url: "https://patch.com/market".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
                 schedule: None,
                 action_url: None,
-                organizer: None,
             }),
         ),
         stored(
             2,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev_id,
                 signal_id: signal_id,
                 url: "https://mpr.org/market".into(),

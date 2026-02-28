@@ -15,6 +15,7 @@ use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, WorldEvent};
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
+use rootsignal_world::types::{Entity, EntityType, Reference};
 use rootsignal_events::StoredEvent;
 use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
 
@@ -61,6 +62,7 @@ fn mpls() -> Option<Location> {
         }),
         name: Some("Minneapolis".into()),
         address: None,
+        role: None,
     })
 }
 
@@ -643,27 +645,24 @@ async fn same_source_no_duplicate_evidence() {
     let events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::GatheringDiscovered {
+            &Event::World(WorldEvent::GatheringAnnounced {
                 id: signal_id,
                 title: "Cleanup day".into(),
                 summary: "Community cleanup".into(),
-                confidence: 0.8,
                 source_url: "https://source-a.org".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
                 schedule: None,
                 action_url: None,
-                organizer: None,
             }),
         ),
         // Three citations from same URL — simulates re-scrapes
         stored(
             2,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev1_id,
                 signal_id,
                 url: "https://source-a.org".into(),
@@ -676,7 +675,7 @@ async fn same_source_no_duplicate_evidence() {
         ),
         stored(
             3,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev2_id,
                 signal_id,
                 url: "https://source-a.org".into(),
@@ -689,7 +688,7 @@ async fn same_source_no_duplicate_evidence() {
         ),
         stored(
             4,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: ev3_id,
                 signal_id,
                 url: "https://source-a.org".into(),
@@ -744,26 +743,23 @@ async fn cross_source_creates_new_evidence() {
     let events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::GatheringDiscovered {
+            &Event::World(WorldEvent::GatheringAnnounced {
                 id: signal_id,
                 title: "Community meeting".into(),
                 summary: "Neighborhood meeting".into(),
-                confidence: 0.8,
                 source_url: "https://source-a.org".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
                 schedule: None,
                 action_url: None,
-                organizer: None,
             }),
         ),
         stored(
             2,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://source-a.org".into(),
@@ -776,7 +772,7 @@ async fn cross_source_creates_new_evidence() {
         ),
         stored(
             3,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://source-b.org".into(),
@@ -789,7 +785,7 @@ async fn cross_source_creates_new_evidence() {
         ),
         stored(
             4,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://source-c.org".into(),
@@ -839,26 +835,23 @@ async fn same_source_does_not_inflate_corroboration() {
     let mut events = vec![
         stored(
             1,
-            &Event::World(WorldEvent::GatheringDiscovered {
+            &Event::World(WorldEvent::GatheringAnnounced {
                 id: signal_id,
                 title: "Annual parade".into(),
                 summary: "City parade".into(),
-                confidence: 0.8,
                 source_url: "https://parade.org".into(),
-                extracted_at: Utc::now(),
                 published_at: None,
-                location: mpls(),
-                from_location: None,
-                mentioned_actors: vec![],
-                author_actor: None,
+                extraction_id: None,
+                locations: mpls().into_iter().collect(),
+                mentioned_entities: vec![],
+                references: vec![],
                 schedule: None,
                 action_url: None,
-                organizer: None,
             }),
         ),
         stored(
             2,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://parade.org".into(),
@@ -871,7 +864,7 @@ async fn same_source_does_not_inflate_corroboration() {
         ),
     ];
 
-    // Simulate 5 same-source re-scrapes: FreshnessConfirmed + CitationRecorded (MERGE)
+    // Simulate 5 same-source re-scrapes: FreshnessConfirmed + CitationPublished (MERGE)
     for i in 0..5u32 {
         let seq = (i as i64) * 2 + 3;
         events.push(stored(
@@ -884,7 +877,7 @@ async fn same_source_does_not_inflate_corroboration() {
         ));
         events.push(stored(
             seq + 1,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://parade.org".into(),
@@ -932,11 +925,11 @@ async fn same_source_does_not_inflate_corroboration() {
         "should have exactly 1 evidence node after 5 same-source refreshes, got {cnt}"
     );
 
-    // Now simulate a REAL cross-source corroboration via ObservationCorroborated + CitationRecorded
+    // Now simulate a REAL cross-source corroboration via ObservationCorroborated + CitationPublished
     let corr_events = vec![
         stored(
             13,
-            &Event::World(WorldEvent::ObservationCorroborated {
+            &Event::System(SystemEvent::ObservationCorroborated {
                 signal_id,
                 node_type: rootsignal_common::NodeType::Gathering,
                 new_source_url: "https://independent-news.org".into(),
@@ -945,7 +938,7 @@ async fn same_source_does_not_inflate_corroboration() {
         ),
         stored(
             14,
-            &Event::World(WorldEvent::CitationRecorded {
+            &Event::World(WorldEvent::CitationPublished {
                 citation_id: Uuid::new_v4(),
                 signal_id,
                 url: "https://independent-news.org".into(),

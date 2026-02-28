@@ -1,27 +1,16 @@
-//! Engine integration tests — full dispatch loop via seesaw CompatEngine.
+//! Engine integration tests — full dispatch loop via seesaw engine.
 //!
-//! MOCK → ENGINE.DISPATCH → OUTPUT
-//! Proves CompatEngine + seesaw handlers compose correctly.
+//! MOCK → ENGINE.EMIT → OUTPUT
+//! Proves seesaw handlers compose correctly.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::events::{PipelineEvent, ScoutEvent};
-use crate::pipeline::state::{ExtractedBatch, PipelineState};
+use crate::core::events::{PipelinePhase, ScoutEvent};
+use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::signals::events::SignalEvent;
+use crate::pipeline::state::ExtractedBatch;
 use crate::testing::*;
-
-/// Build test PipelineDeps with a store and Minneapolis region.
-fn test_deps(store: Arc<MockSignalReader>) -> crate::pipeline::state::PipelineDeps {
-    crate::pipeline::state::PipelineDeps {
-        store,
-        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        region: Some(mpls_region()),
-        run_id: "test-run".to_string(),
-        fetcher: None,
-        anthropic_api_key: None,
-        graph_client: None,
-    }
-}
 
 /// Helper: collect event variant names from captured events.
 fn event_names(captured: &Arc<std::sync::Mutex<Vec<ScoutEvent>>>) -> Vec<String> {
@@ -40,8 +29,10 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<ScoutEvent>>>) -> Vec<String>
 #[tokio::test]
 async fn new_signal_accepted_dispatches_full_event_chain() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
     let node_id = node.id();
@@ -56,22 +47,19 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         source_id: None,
     };
 
-    let mut state = PipelineState::new(HashMap::new());
-
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted {
-                node_id,
-                node_type: rootsignal_common::types::NodeType::Tension,
-                title: "Free Legal Clinic".to_string(),
-                source_url: "https://www.instagram.com/locallegalaid".to_string(),
-                pending_node: Box::new(pn),
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(SignalEvent::NewSignalAccepted {
+            node_id,
+            node_type: rootsignal_common::types::NodeType::Tension,
+            title: "Free Legal Clinic".to_string(),
+            source_url: "https://www.instagram.com/locallegalaid".to_string(),
+            pending_node: Box::new(pn),
+        })
+        .settled()
         .await
         .unwrap();
+
+    let state = engine.deps().state.read().await;
 
     // Reducer counted the create
     assert_eq!(state.stats.signals_stored, 1);
@@ -90,7 +78,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         "expected ActorIdentified event, got: {names:?}"
     );
 
-    // PendingNode consumed by reducer on SignalReaderd
+    // PendingNode consumed by reducer on SignalCreated
     assert!(!state.pending_nodes.contains_key(&node_id));
 }
 
@@ -101,33 +89,31 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
 #[tokio::test]
 async fn cross_source_match_dispatches_citation_and_scoring_events() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
     let existing_id = uuid::Uuid::new_v4();
-    let mut state = PipelineState::new(HashMap::new());
 
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
-                existing_id,
-                node_type: rootsignal_common::types::NodeType::Tension,
-                source_url: "https://org-b.org/events".to_string(),
-                similarity: 0.95,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(SignalEvent::CrossSourceMatchDetected {
+            existing_id,
+            node_type: rootsignal_common::types::NodeType::Tension,
+            source_url: "https://org-b.org/events".to_string(),
+            similarity: 0.95,
+        })
+        .settled()
         .await
         .unwrap();
 
     // Reducer counted the dedup
-    assert_eq!(state.stats.signals_deduplicated, 1);
+    assert_eq!(engine.deps().state.read().await.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
-    // CrossSourceMatchDetected → CitationRecorded + ObservationCorroborated + CorroborationScored
+    // CrossSourceMatchDetected → CitationPublished + ObservationCorroborated + CorroborationScored
     assert_eq!(names.len(), 4, "expected 4 events, got: {names:?}");
-    assert!(names.contains(&"citation_recorded".to_string()));
+    assert!(names.contains(&"citation_published".to_string()));
     assert!(names.contains(&"observation_corroborated".to_string()));
     assert!(names.contains(&"corroboration_scored".to_string()));
 }
@@ -139,33 +125,31 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
 #[tokio::test]
 async fn same_source_reencountered_dispatches_citation_and_freshness() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
     let existing_id = uuid::Uuid::new_v4();
-    let mut state = PipelineState::new(HashMap::new());
 
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::SameSourceReencountered {
-                existing_id,
-                node_type: rootsignal_common::types::NodeType::Gathering,
-                source_url: "https://example.org".to_string(),
-                similarity: 1.0,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(SignalEvent::SameSourceReencountered {
+            existing_id,
+            node_type: rootsignal_common::types::NodeType::Gathering,
+            source_url: "https://example.org".to_string(),
+            similarity: 1.0,
+        })
+        .settled()
         .await
         .unwrap();
 
     // Reducer counted the dedup
-    assert_eq!(state.stats.signals_deduplicated, 1);
+    assert_eq!(engine.deps().state.read().await.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
-    // SameSourceReencountered → CitationRecorded + FreshnessConfirmed
+    // SameSourceReencountered → CitationPublished + FreshnessConfirmed
     assert_eq!(names.len(), 3, "expected 3 events, got: {names:?}");
-    assert!(names.contains(&"citation_recorded".to_string()));
+    assert!(names.contains(&"citation_published".to_string()));
     assert!(names.contains(&"freshness_confirmed".to_string()));
 }
 
@@ -176,48 +160,41 @@ async fn same_source_reencountered_dispatches_citation_and_freshness() {
 #[tokio::test]
 async fn signals_extracted_dispatches_dedup_and_creation_chain() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
 
-    let mut state = PipelineState::new(HashMap::new());
+    let batch = ExtractedBatch {
+        content: "page content about legal clinic".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        source_id: None,
+    };
 
-    // Stash extracted batch in state (this is what the scrape phase does)
-    state.extracted_batches.insert(
-        "https://localorg.org/events".to_string(),
-        ExtractedBatch {
-            content: "page content about legal clinic".to_string(),
-            nodes: vec![node],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-    );
-
-    // Dispatch SignalsExtracted — the engine does the rest
+    // Dispatch SignalEvent::SignalsExtracted — the engine does the rest
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                url: "https://localorg.org/events".to_string(),
-                canonical_key: "localorg.org".to_string(),
-                count: 1,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(SignalEvent::SignalsExtracted {
+            url: "https://localorg.org/events".to_string(),
+            canonical_key: "localorg.org".to_string(),
+            count: 1,
+            batch: Box::new(batch),
+        })
+        .settled()
         .await
         .unwrap();
+
+    let state = engine.deps().state.read().await;
 
     // Reducer counted extraction + creation
     assert_eq!(state.stats.signals_extracted, 1);
     assert_eq!(state.stats.signals_stored, 1);
 
-    // Extracted batch cleaned up by reducer on DedupCompleted
-    assert!(state.extracted_batches.is_empty());
-
-    // Pending nodes cleaned up by reducer on SignalReaderd
+    // Pending nodes cleaned up by reducer on SignalCreated
     assert!(state.pending_nodes.is_empty());
 
     // Wiring contexts stay until end of run
@@ -226,11 +203,11 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
     let names = event_names(&captured);
 
     // Root: SignalsExtracted
-    assert_eq!(names[0], "pipeline:signals_extracted");
+    assert_eq!(names[0], "signal:signals_extracted");
 
     // NewSignalAccepted somewhere in chain
     assert!(
-        names.contains(&"pipeline:new_signal_accepted".to_string()),
+        names.contains(&"signal:new_signal_accepted".to_string()),
         "expected NewSignalAccepted, got: {names:?}"
     );
 }
@@ -248,35 +225,32 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
         rootsignal_common::types::NodeType::Tension,
         "https://example.org/events",
     );
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
-
-    let mut state = PipelineState::new(HashMap::new());
-
-    state.extracted_batches.insert(
-        "https://example.org/events".to_string(),
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
     );
 
+    let batch = ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        source_id: None,
+    };
+
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                url: "https://example.org/events".to_string(),
-                canonical_key: "example.org".to_string(),
-                count: 1,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(SignalEvent::SignalsExtracted {
+            url: "https://example.org/events".to_string(),
+            canonical_key: "example.org".to_string(),
+            count: 1,
+            batch: Box::new(batch),
+        })
+        .settled()
         .await
         .unwrap();
+
+    let state = engine.deps().state.read().await;
 
     // Reducer counted extraction + dedup
     assert_eq!(state.stats.signals_extracted, 1);
@@ -287,7 +261,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
 
     // SameSourceReencountered in chain
     assert!(
-        names.contains(&"pipeline:same_source_reencountered".to_string()),
+        names.contains(&"signal:same_source_reencountered".to_string()),
         "expected SameSourceReencountered, got: {names:?}"
     );
 
@@ -305,34 +279,34 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
 #[tokio::test]
 async fn link_promotion_promotes_links_on_phase_completed() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
-    let mut state = PipelineState::new(HashMap::new());
+    // Pre-populate collected links in engine state (simulates links found during scraping)
+    {
+        let mut state = engine.deps().state.write().await;
+        state
+            .collected_links
+            .push(crate::enrichment::link_promoter::CollectedLink {
+                url: "https://example.org/community".to_string(),
+                discovered_on: "https://localorg.org".to_string(),
+            });
+        state
+            .collected_links
+            .push(crate::enrichment::link_promoter::CollectedLink {
+                url: "https://another.org/events".to_string(),
+                discovered_on: "https://localorg.org".to_string(),
+            });
+    }
 
-    // Stash collected links in state (simulates links found during scraping)
-    state
-        .collected_links
-        .push(crate::enrichment::link_promoter::CollectedLink {
-            url: "https://example.org/community".to_string(),
-            discovered_on: "https://localorg.org".to_string(),
-        });
-    state
-        .collected_links
-        .push(crate::enrichment::link_promoter::CollectedLink {
-            url: "https://another.org/events".to_string(),
-            discovered_on: "https://localorg.org".to_string(),
-        });
-
-    // Dispatch PhaseCompleted(TensionScrape) — link_promotion_handler fires
+    // Dispatch LifecycleEvent::PhaseCompleted(TensionScrape) — link_promotion_handler fires
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
-                phase: crate::core::events::PipelinePhase::TensionScrape,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
         .await
         .unwrap();
 
@@ -341,7 +315,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     // SourceDiscovered events emitted for promoted links
     let source_discovered_count = names
         .iter()
-        .filter(|n| *n == "pipeline:source_discovered")
+        .filter(|n| n.contains("source_discovered"))
         .count();
     assert!(
         source_discovered_count >= 1,
@@ -350,13 +324,13 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 
     // LinksPromoted event emitted
     assert!(
-        names.contains(&"pipeline:links_promoted".to_string()),
+        names.iter().any(|n| n.contains("links_promoted")),
         "expected LinksPromoted, got: {names:?}"
     );
 
     // Reducer cleared collected_links on LinksPromoted
     assert!(
-        state.collected_links.is_empty(),
+        engine.deps().state.read().await.collected_links.is_empty(),
         "collected_links should be cleared after LinksPromoted"
     );
 }
@@ -368,20 +342,18 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 #[tokio::test]
 async fn link_promotion_skips_when_no_links() {
     let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let (engine, captured) = test_engine_with_capture();
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
-    let mut state = PipelineState::new(HashMap::new());
     // No collected links
 
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
-                phase: crate::core::events::PipelinePhase::TensionScrape,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
         .await
         .unwrap();
 
@@ -389,11 +361,11 @@ async fn link_promotion_skips_when_no_links() {
 
     // Only the root PhaseCompleted event — no handler output
     assert!(
-        !names.contains(&"pipeline:source_discovered".to_string()),
+        !names.iter().any(|n| n.contains("source_discovered")),
         "should not emit SourceDiscovered with no links, got: {names:?}"
     );
     assert!(
-        !names.contains(&"pipeline:links_promoted".to_string()),
+        !names.iter().any(|n| n.contains("links_promoted")),
         "should not emit LinksPromoted with no links, got: {names:?}"
     );
 }
@@ -462,29 +434,18 @@ async fn actor_location_emits_events_on_response_complete() {
         .await
         .unwrap();
 
-    // Build deps with this store so the handler can read actors + signals
-    let deps = crate::pipeline::state::PipelineDeps {
-        store: store.clone() as Arc<dyn crate::traits::SignalReader>,
-        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        region: Some(mpls_region()),
-        run_id: "test-run".to_string(),
-        fetcher: None,
-        anthropic_api_key: None,
-        graph_client: None,
-    };
-    let (engine, captured) = test_engine_with_capture();
+    // Build engine with this store so the handler can read actors + signals
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
 
-    let mut state = PipelineState::new(HashMap::new());
-
-    // Dispatch PhaseCompleted(ResponseScrape) — actor_location_handler fires
+    // Dispatch LifecycleEvent::PhaseCompleted(ResponseScrape) — actor_location_handler fires
     engine
-        .dispatch(
-            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
-                phase: crate::core::events::PipelinePhase::ResponseScrape,
-            }),
-            &mut state,
-            &deps,
-        )
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::ResponseScrape,
+        })
+        .settled()
         .await
         .unwrap();
 
@@ -498,7 +459,7 @@ async fn actor_location_emits_events_on_response_complete() {
 
     // ActorEnrichmentCompleted event emitted
     assert!(
-        names.contains(&"pipeline:actor_enrichment_completed".to_string()),
+        names.iter().any(|n| n.contains("actor_enrichment_completed")),
         "expected ActorEnrichmentCompleted, got: {names:?}"
     );
 }

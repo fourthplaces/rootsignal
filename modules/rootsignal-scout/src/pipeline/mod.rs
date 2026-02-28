@@ -14,6 +14,5 @@ mod chain_tests;
 #[cfg(test)]
 pub mod simweb_adapter;
 
-/// Type alias for the scout engine — CompatEngine wraps seesaw with the
-/// same `dispatch(event, &mut state, &deps)` signature as the old engine.
-pub type ScoutEngine = crate::core::engine::CompatEngine;
+/// Type alias for the scout engine — raw seesaw engine with ScoutEngineDeps.
+pub type ScoutEngine = crate::core::engine::SeesawEngine;

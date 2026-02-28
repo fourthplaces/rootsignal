@@ -9,4 +9,4 @@ pub use crate::discovery::response_finder;
 pub use crate::discovery::response_mapper;
 pub use crate::discovery::source_finder;
 pub use crate::discovery::tension_linker;
-pub(crate) use crate::pipeline::handlers::bootstrap as engine_bootstrap;
+

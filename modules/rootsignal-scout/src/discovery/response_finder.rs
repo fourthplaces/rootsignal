@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::WorldEvent;
+use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{
     canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
@@ -25,8 +25,6 @@ use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::events::ScoutEvent;
 use crate::pipeline::extractor::ResourceTag;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -278,8 +276,6 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     writer: &'a GraphWriter,
-    engine: &'a ScoutEngine,
-    deps: &'a PipelineDeps,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -296,8 +292,6 @@ pub struct ResponseFinder<'a> {
 impl<'a> ResponseFinder<'a> {
     pub fn new(
         writer: &'a GraphWriter,
-        engine: &'a ScoutEngine,
-        deps: &'a PipelineDeps,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -310,8 +304,6 @@ impl<'a> ResponseFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             writer,
-            engine,
-            deps,
             anthropic_api_key: anthropic_api_key.to_string(),
             archive,
             embedder,
@@ -346,7 +338,7 @@ impl<'a> ResponseFinder<'a> {
         (claude, visited)
     }
 
-    pub async fn run(&self) -> (ResponseFinderStats, Vec<SourceNode>) {
+    pub async fn run(&self, events: &mut seesaw_core::Events) -> (ResponseFinderStats, Vec<SourceNode>) {
         let mut stats = ResponseFinderStats::default();
         let mut discovered_sources = Vec::new();
 
@@ -397,6 +389,7 @@ impl<'a> ResponseFinder<'a> {
                     &situation_context,
                     &mut stats,
                     &mut discovered_sources,
+                    events,
                 )
                 .await
             {
@@ -432,6 +425,7 @@ impl<'a> ResponseFinder<'a> {
         situation_context: &str,
         stats: &mut ResponseFinderStats,
         discovered_sources: &mut Vec<SourceNode>,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         // Fetch existing response heuristics
         let existing = self
@@ -497,7 +491,7 @@ impl<'a> ResponseFinder<'a> {
             .into_iter()
             .take(MAX_RESPONSES_PER_TENSION)
         {
-            if let Err(e) = self.process_response(target, &response, stats).await {
+            if let Err(e) = self.process_response(target, &response, stats, events).await {
                 warn!(
                     tension_id = %target.tension_id,
                     response_title = response.title.as_str(),
@@ -509,7 +503,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Process emergent tensions
         for tension in &finding.emergent_tensions {
-            if let Err(e) = self.process_emergent_tension(tension, stats).await {
+            if let Err(e) = self.process_emergent_tension(tension, stats, events).await {
                 warn!(
                     tension_title = tension.title.as_str(),
                     error = %e,
@@ -543,6 +537,7 @@ impl<'a> ResponseFinder<'a> {
         target: &ResponseFinderTarget,
         response: &DiscoveredResponse,
         stats: &mut ResponseFinderStats,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let embed_text = format!("{} {}", response.title, response.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
@@ -563,8 +558,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .deps
-            .store
+            .writer
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -594,28 +588,24 @@ impl<'a> ResponseFinder<'a> {
                     warn!(error = %e, "Response dedup check failed, creating new");
                 }
                 was_new = true;
-                self.create_response_node(response).await?
+                self.create_response_node(response, events).await?
             }
         };
 
         // Wire RESPONDS_TO edge to the target tension
-        let resp_event = ScoutEvent::World(WorldEvent::ResponseLinked {
+        events.push(ScoutEvent::System(SystemEvent::ResponseLinked {
             signal_id,
             tension_id: target.tension_id,
             strength: response.match_strength.clamp(0.0, 1.0),
             explanation: response.explanation.clone(),
             source_url: None,
-        });
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(resp_event, &mut state, self.deps)
-            .await?;
+        }));
         stats.edges_created += 1;
 
         // Wire additional edges for also_addresses
         if !response.also_addresses.is_empty() {
             if let Err(e) = self
-                .wire_also_addresses(signal_id, &response.also_addresses, &response.explanation)
+                .wire_also_addresses(signal_id, &response.also_addresses, &response.explanation, events)
                 .await
             {
                 warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
@@ -625,7 +615,7 @@ impl<'a> ResponseFinder<'a> {
         // Wire resource edges
         if !response.resources.is_empty() {
             if let Err(e) = self
-                .wire_resources(signal_id, &response.signal_type, &response.resources)
+                .wire_resources(signal_id, &response.signal_type, &response.resources, events)
                 .await
             {
                 warn!(error = %e, "Failed to wire resource edges (non-fatal)");
@@ -645,22 +635,18 @@ impl<'a> ResponseFinder<'a> {
         signal_id: Uuid,
         _signal_type: &str,
         resources: &[ResourceTag],
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         for tag in resources.iter().filter(|t| t.confidence >= 0.3) {
             let slug = rootsignal_common::slugify(&tag.slug);
             let description = tag.context.as_deref().unwrap_or("");
 
-            // Dispatch ResourceIdentified event (find_or_create via engine)
-            let resource_event = ScoutEvent::World(WorldEvent::ResourceIdentified {
+            events.push(ScoutEvent::World(WorldEvent::ResourceIdentified {
                 resource_id: Uuid::new_v4(),
                 name: tag.slug.clone(),
                 slug: slug.clone(),
                 description: description.to_string(),
-            });
-            let mut state = PipelineState::new(std::collections::HashMap::new());
-            self.engine
-                .dispatch(resource_event, &mut state, self.deps)
-                .await?;
+            }));
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
             let (role, quantity, notes, capacity): (
@@ -682,7 +668,7 @@ impl<'a> ResponseFinder<'a> {
                 }
             };
 
-            let edge_event = ScoutEvent::World(WorldEvent::ResourceEdgeCreated {
+            events.push(ScoutEvent::World(WorldEvent::ResourceLinked {
                 signal_id,
                 resource_slug: slug.clone(),
                 role: role.to_string(),
@@ -690,10 +676,7 @@ impl<'a> ResponseFinder<'a> {
                 quantity: quantity.map(|s| s.to_string()),
                 notes: notes.map(|s| s.to_string()),
                 capacity: capacity.map(|s| s.to_string()),
-            });
-            self.engine
-                .dispatch(edge_event, &mut state, self.deps)
-                .await?;
+            }));
 
             info!(
                 signal_id = %signal_id,
@@ -705,7 +688,7 @@ impl<'a> ResponseFinder<'a> {
         Ok(())
     }
 
-    async fn create_response_node(&self, response: &DiscoveredResponse) -> Result<Uuid> {
+    async fn create_response_node(&self, response: &DiscoveredResponse, events: &mut seesaw_core::Events) -> Result<Uuid> {
         let now = Utc::now();
         let meta = NodeMeta {
             id: Uuid::new_v4(),
@@ -771,18 +754,13 @@ impl<'a> ResponseFinder<'a> {
 
         let node_id = node.meta().unwrap().id;
 
-        // Dispatch world event + system events through engine
+        // Push world event + system events into caller's event collection
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
-            .await?;
+        events.push(ScoutEvent::World(world_event));
         for se in system_events {
-            self.engine
-                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
-                .await?;
+            events.push(ScoutEvent::System(se));
         }
 
         info!(
@@ -803,6 +781,7 @@ impl<'a> ResponseFinder<'a> {
         signal_id: Uuid,
         also_addresses: &[String],
         explanation: &str,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let lat_delta = self.region.radius_km / 111.0;
         let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
@@ -841,17 +820,14 @@ impl<'a> ResponseFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring also_addresses edge"
                 );
-                let also_event = ScoutEvent::World(WorldEvent::ResponseLinked {
+                let also_event = ScoutEvent::System(SystemEvent::ResponseLinked {
                     signal_id,
                     tension_id,
                     strength: sim.clamp(0.0, 1.0),
                     explanation: explanation.to_string(),
                     source_url: None,
                 });
-                let mut state = PipelineState::new(std::collections::HashMap::new());
-                self.engine
-                    .dispatch(also_event, &mut state, self.deps)
-                    .await?;
+                events.push(also_event);
             }
         }
 
@@ -862,14 +838,14 @@ impl<'a> ResponseFinder<'a> {
         &self,
         tension: &EmergentTension,
         stats: &mut ResponseFinderStats,
+        events: &mut seesaw_core::Events,
     ) -> Result<()> {
         let embed_text = format!("{} {}", tension.title, tension.summary);
         let embedding = self.embedder.embed(&embed_text).await?;
 
         // Dedup check (region-scoped)
         let existing = self
-            .deps
-            .store
+            .writer
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,
@@ -946,18 +922,13 @@ impl<'a> ResponseFinder<'a> {
         let node = Node::Tension(tension_node);
         let tension_id = node.meta().unwrap().id;
 
-        // Dispatch world event + system events through engine
+        // Push world event + system events into caller's event collection
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        let mut state = PipelineState::new(std::collections::HashMap::new());
-        self.engine
-            .dispatch(ScoutEvent::World(world_event), &mut state, self.deps)
-            .await?;
+        events.push(ScoutEvent::World(world_event));
         for se in system_events {
-            self.engine
-                .dispatch(ScoutEvent::System(se), &mut state, self.deps)
-                .await?;
+            events.push(ScoutEvent::System(se));
         }
 
         info!(

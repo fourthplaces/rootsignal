@@ -1,7 +1,9 @@
-//! Pipeline state managed by the aggregate.
+//! Pipeline state managed by the aggregate + handler stash.
 //!
 //! `PipelineState` is the mutable state for a scout run. State mutations
 //! happen in `apply()` (pure, synchronous), not scattered across handlers.
+//! Per-domain `apply_*` methods handle the new domain event types.
+//!
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,12 +14,15 @@ use uuid::Uuid;
 
 use rootsignal_common::Node;
 
+use crate::core::events::{FreshnessBucket, PipelineEvent, ScoutEvent};
+use crate::core::stats::ScoutStats;
+use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::scrape::events::ScrapeEvent;
+use crate::domains::signals::events::SignalEvent;
 use crate::enrichment::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::pipeline::extractor::ResourceTag;
 use crate::pipeline::scrape_phase::EmbeddingCache;
-use crate::core::events::{FreshnessBucket, PipelineEvent, ScoutEvent};
-use crate::core::stats::ScoutStats;
 
 /// Scheduling data passed between schedule_handler and scrape handlers.
 pub struct ScheduledData {
@@ -61,10 +66,6 @@ pub struct PipelineState {
     /// Links collected during scraping for promotion.
     pub collected_links: Vec<CollectedLink>,
 
-    /// Extracted node batches awaiting dedup, keyed by source URL.
-    /// Stashed before `SignalsExtracted` is dispatched, consumed by the dedup handler.
-    pub extracted_batches: HashMap<String, ExtractedBatch>,
-
     /// Nodes awaiting creation (passed dedup as new).
     /// Stashed by the dedup handler, consumed by `handle_create`,
     /// which moves wiring data to `wiring_contexts`.
@@ -82,8 +83,9 @@ pub struct PipelineState {
     pub social_topics: Vec<String>,
 }
 
-/// A batch of extracted nodes for a single URL, awaiting dedup.
-/// Stashed in state before `SignalsExtracted` is dispatched.
+/// A batch of extracted nodes for a single URL, carried on `SignalsExtracted`
+/// as event payload for the dedup handler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedBatch {
     pub content: String,
     pub nodes: Vec<Node>,
@@ -128,7 +130,6 @@ impl PipelineState {
             actor_contexts: HashMap::new(),
             url_to_pub_date: HashMap::new(),
             collected_links: Vec::new(),
-            extracted_batches: HashMap::new(),
             pending_nodes: HashMap::new(),
             wiring_contexts: HashMap::new(),
             scheduled: None,
@@ -188,45 +189,6 @@ impl PipelineState {
                 self.stats.signals_extracted += count;
             }
 
-            // Dedup verdicts
-            PipelineEvent::NewSignalAccepted {
-                node_id,
-                node_type,
-                pending_node,
-                ..
-            } => {
-                self.stats.signals_stored += 1;
-                if let Some(idx) = signal_type_index(node_type) {
-                    self.stats.by_type[idx] += 1;
-                }
-                self.wiring_contexts.insert(
-                    *node_id,
-                    WiringContext {
-                        resource_tags: pending_node.resource_tags.clone(),
-                        signal_tags: pending_node.signal_tags.clone(),
-                        author_name: pending_node.author_name.clone(),
-                        source_id: pending_node.source_id,
-                    },
-                );
-                self.pending_nodes.insert(*node_id, *pending_node.clone());
-            }
-            PipelineEvent::CrossSourceMatchDetected { .. }
-            | PipelineEvent::SameSourceReencountered { .. } => {
-                self.stats.signals_deduplicated += 1;
-            }
-
-            // URL-level summary
-            PipelineEvent::UrlProcessed {
-                canonical_key,
-                signals_created,
-                ..
-            } => {
-                *self
-                    .source_signal_counts
-                    .entry(canonical_key.clone())
-                    .or_default() += signals_created;
-            }
-
             // Links
             PipelineEvent::LinkCollected { url, discovered_on } => {
                 self.collected_links.push(CollectedLink {
@@ -258,37 +220,131 @@ impl PipelineState {
                 FreshnessBucket::Older | FreshnessBucket::Unknown => {}
             },
 
-            // SignalReaderd — clean up PendingNode
-            PipelineEvent::SignalReaderd { node_id, .. } => {
-                self.pending_nodes.remove(node_id);
-            }
-
-            // DedupCompleted — clean up extracted batch
-            PipelineEvent::DedupCompleted { url } => {
-                self.extracted_batches.remove(url);
-            }
-
             // LinksPromoted — clear collected links (they've been promoted to sources)
             PipelineEvent::LinksPromoted { .. } => {
                 self.collected_links.clear();
             }
 
-            // Phase lifecycle / engine lifecycle — no state changes
-            PipelineEvent::PhaseStarted { .. }
-            | PipelineEvent::PhaseCompleted { .. }
-            | PipelineEvent::ExtractionFailed { .. }
-            | PipelineEvent::ActorEnrichmentCompleted { .. }
-            | PipelineEvent::EngineStarted { .. }
-            | PipelineEvent::SourcesScheduled { .. }
-            | PipelineEvent::MetricsCompleted
-            | PipelineEvent::RunCompleted { .. } => {}
+            // No state changes
+            PipelineEvent::ActorEnrichmentCompleted { .. } => {}
 
             PipelineEvent::SourceDiscovered { .. } => {
                 self.stats.sources_discovered += 1;
             }
         }
     }
+
+    // -----------------------------------------------------------------
+    // Per-domain apply methods (used by new domain event types)
+    // -----------------------------------------------------------------
+
+    /// Apply a scrape domain event.
+    pub fn apply_scrape(&mut self, event: &ScrapeEvent) {
+        match event {
+            ScrapeEvent::ContentFetched { .. } => {
+                self.stats.urls_scraped += 1;
+            }
+            ScrapeEvent::ContentUnchanged { .. } => {
+                self.stats.urls_unchanged += 1;
+            }
+            ScrapeEvent::ContentFetchFailed { .. } => {
+                self.stats.urls_failed += 1;
+            }
+            ScrapeEvent::SignalsExtracted { count, .. } => {
+                self.stats.signals_extracted += count;
+            }
+            ScrapeEvent::SocialPostsFetched { count, .. } => {
+                self.stats.social_media_posts += count;
+            }
+            ScrapeEvent::FreshnessRecorded { bucket, .. } => match bucket {
+                FreshnessBucket::Within7d => self.stats.fresh_7d += 1,
+                FreshnessBucket::Within30d => self.stats.fresh_30d += 1,
+                FreshnessBucket::Within90d => self.stats.fresh_90d += 1,
+                FreshnessBucket::Older | FreshnessBucket::Unknown => {}
+            },
+            ScrapeEvent::LinkCollected {
+                url, discovered_on, ..
+            } => {
+                self.collected_links.push(CollectedLink {
+                    url: url.clone(),
+                    discovered_on: discovered_on.clone(),
+                });
+            }
+            ScrapeEvent::ExtractionFailed { .. } => {}
+        }
+    }
+
+    /// Apply a signal domain event.
+    pub fn apply_signal(&mut self, event: &SignalEvent) {
+        match event {
+            SignalEvent::SignalsExtracted { count, .. } => {
+                self.stats.signals_extracted += count;
+            }
+            SignalEvent::NewSignalAccepted {
+                node_id,
+                node_type,
+                pending_node,
+                ..
+            } => {
+                self.stats.signals_stored += 1;
+                if let Some(idx) = signal_type_index(node_type) {
+                    self.stats.by_type[idx] += 1;
+                }
+                self.wiring_contexts.insert(
+                    *node_id,
+                    WiringContext {
+                        resource_tags: pending_node.resource_tags.clone(),
+                        signal_tags: pending_node.signal_tags.clone(),
+                        author_name: pending_node.author_name.clone(),
+                        source_id: pending_node.source_id,
+                    },
+                );
+                self.pending_nodes.insert(*node_id, *pending_node.clone());
+            }
+            SignalEvent::CrossSourceMatchDetected { .. }
+            | SignalEvent::SameSourceReencountered { .. } => {
+                self.stats.signals_deduplicated += 1;
+            }
+            SignalEvent::UrlProcessed {
+                canonical_key,
+                signals_created,
+                ..
+            } => {
+                *self
+                    .source_signal_counts
+                    .entry(canonical_key.clone())
+                    .or_default() += signals_created;
+            }
+            SignalEvent::SignalCreated { node_id, .. } => {
+                self.pending_nodes.remove(node_id);
+            }
+            SignalEvent::DedupCompleted { .. } => {}
+        }
+    }
+
+    /// Apply a discovery domain event.
+    pub fn apply_discovery(&mut self, event: &DiscoveryEvent) {
+        match event {
+            DiscoveryEvent::SourceDiscovered { .. } => {
+                self.stats.sources_discovered += 1;
+            }
+            DiscoveryEvent::LinksPromoted { .. } => {
+                self.collected_links.clear();
+            }
+            DiscoveryEvent::ExpansionQueryCollected { query, .. } => {
+                self.expansion_queries.push(query.clone());
+                self.stats.expansion_queries_collected += 1;
+            }
+            DiscoveryEvent::SocialTopicCollected { topic, .. } => {
+                self.social_expansion_topics.push(topic.clone());
+                self.stats.expansion_social_topics_queued += 1;
+            }
+        }
+    }
+
+    // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
 }
+
 
 /// Map signal node types to the `by_type` stats index.
 /// Returns None for non-signal types (e.g. Citation).
@@ -299,6 +355,8 @@ fn signal_type_index(nt: &NodeType) -> Option<usize> {
         NodeType::Need => Some(2),
         NodeType::Notice => Some(3),
         NodeType::Tension => Some(4),
+        NodeType::Condition => Some(5),
+        NodeType::Incident => Some(6),
         NodeType::Citation => None,
     }
 }

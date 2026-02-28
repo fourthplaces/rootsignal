@@ -5,16 +5,25 @@
 //! - **World**: observable facts (discoveries, citations, actors)
 //! - **System**: editorial decisions (sensitivity, corrections, sources)
 //!
+//! Plus domain event wrappers for infrastructure handler interop:
+//! - **Lifecycle**: phase transitions, run lifecycle
+//! - **Signal**: dedup verdicts, signal storage
+//! - **Discovery**: source discovery, link promotion
+//! - **Enrichment**: actor enrichment
+//!
 //! All variants flow through the same engine dispatch loop,
 //! get persisted to the EventStore, and form causal chains.
 
 use chrono::{DateTime, Utc};
 use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
-use rootsignal_common::types::{NodeType, SourceNode};
+use rootsignal_common::types::SourceNode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::aggregate::PendingNode;
+use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::enrichment::events::EnrichmentEvent;
+use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::signals::events::SignalEvent;
 
 // ---------------------------------------------------------------------------
 // ScoutEvent — the unified event type
@@ -26,6 +35,12 @@ pub enum ScoutEvent {
     Pipeline(PipelineEvent),
     World(WorldEvent),
     System(SystemEvent),
+    // Domain event wrappers — used by infrastructure handlers (persist, reduce,
+    // capture) to handle per-domain events dispatched through the engine.
+    Lifecycle(LifecycleEvent),
+    Signal(SignalEvent),
+    Discovery(DiscoveryEvent),
+    Enrichment(EnrichmentEvent),
 }
 
 impl ScoutEvent {
@@ -34,6 +49,8 @@ impl ScoutEvent {
         match self {
             ScoutEvent::World(_) | ScoutEvent::System(_) => true,
             ScoutEvent::Pipeline(pe) => pe.is_projectable(),
+            ScoutEvent::Discovery(de) => de.is_projectable(),
+            ScoutEvent::Lifecycle(_) | ScoutEvent::Signal(_) | ScoutEvent::Enrichment(_) => false,
         }
     }
 
@@ -42,6 +59,10 @@ impl ScoutEvent {
             ScoutEvent::Pipeline(pe) => format!("pipeline:{}", pe.variant_name()),
             ScoutEvent::World(we) => we.event_type().to_string(),
             ScoutEvent::System(se) => se.event_type().to_string(),
+            ScoutEvent::Lifecycle(le) => le.event_type_str(),
+            ScoutEvent::Signal(se) => se.event_type_str(),
+            ScoutEvent::Discovery(de) => de.event_type_str(),
+            ScoutEvent::Enrichment(ee) => ee.event_type_str(),
         }
     }
 
@@ -55,6 +76,11 @@ impl ScoutEvent {
             // just the inner event via Event's to_payload(), not the tagged ScoutEvent wrapper.
             ScoutEvent::World(we) => Event::World(we.clone()).to_payload(),
             ScoutEvent::System(se) => Event::System(se.clone()).to_payload(),
+            // Domain events serialize directly.
+            ScoutEvent::Lifecycle(le) => le.to_persist_payload(),
+            ScoutEvent::Signal(se) => se.to_persist_payload(),
+            ScoutEvent::Discovery(de) => de.to_persist_payload(),
+            ScoutEvent::Enrichment(ee) => ee.to_persist_payload(),
         }
     }
 }
@@ -66,14 +92,6 @@ impl ScoutEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PipelineEvent {
-    // Phase lifecycle
-    PhaseStarted {
-        phase: PipelinePhase,
-    },
-    PhaseCompleted {
-        phase: PipelinePhase,
-    },
-
     // Content fetching
     ContentFetched {
         url: String,
@@ -96,53 +114,8 @@ pub enum PipelineEvent {
         url: String,
         canonical_key: String,
         count: u32,
-    },
-    ExtractionFailed {
-        url: String,
-        canonical_key: String,
-        error: String,
-    },
-
-    // Dedup verdicts — facts about what the dedup layer observed
-    NewSignalAccepted {
-        node_id: Uuid,
-        node_type: NodeType,
-        title: String,
-        source_url: String,
-        pending_node: Box<PendingNode>,
-    },
-    CrossSourceMatchDetected {
-        existing_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        similarity: f64,
-    },
-    SameSourceReencountered {
-        existing_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        similarity: f64,
-    },
-
-    // Signal stored (after world + system events emitted)
-    SignalReaderd {
-        node_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        canonical_key: String,
-    },
-
-    // Dedup batch complete — reducer cleans up extracted batch
-    DedupCompleted {
-        url: String,
-    },
-
-    // URL-level summary (replaces stats diffing pattern)
-    UrlProcessed {
-        url: String,
-        canonical_key: String,
-        signals_created: u32,
-        signals_deduplicated: u32,
+        /// The extracted batch, carried as event payload for the dedup handler.
+        batch: Box<crate::core::aggregate::ExtractedBatch>,
     },
 
     // Link discovery
@@ -189,25 +162,6 @@ pub enum PipelineEvent {
     ActorEnrichmentCompleted {
         actors_updated: u32,
     },
-
-    // Engine lifecycle
-    EngineStarted {
-        run_id: String,
-    },
-
-    // Scheduling
-    SourcesScheduled {
-        tension_count: u32,
-        response_count: u32,
-    },
-
-    // Metrics
-    MetricsCompleted,
-
-    // Run lifecycle
-    RunCompleted {
-        stats: crate::core::stats::ScoutStats,
-    },
 }
 
 impl PipelineEvent {
@@ -218,19 +172,10 @@ impl PipelineEvent {
 
     pub fn variant_name(&self) -> &'static str {
         match self {
-            PipelineEvent::PhaseStarted { .. } => "phase_started",
-            PipelineEvent::PhaseCompleted { .. } => "phase_completed",
             PipelineEvent::ContentFetched { .. } => "content_fetched",
             PipelineEvent::ContentUnchanged { .. } => "content_unchanged",
             PipelineEvent::ContentFetchFailed { .. } => "content_fetch_failed",
             PipelineEvent::SignalsExtracted { .. } => "signals_extracted",
-            PipelineEvent::ExtractionFailed { .. } => "extraction_failed",
-            PipelineEvent::NewSignalAccepted { .. } => "new_signal_accepted",
-            PipelineEvent::CrossSourceMatchDetected { .. } => "cross_source_match_detected",
-            PipelineEvent::SameSourceReencountered { .. } => "same_source_reencountered",
-            PipelineEvent::SignalReaderd { .. } => "signal_stored",
-            PipelineEvent::DedupCompleted { .. } => "dedup_completed",
-            PipelineEvent::UrlProcessed { .. } => "url_processed",
             PipelineEvent::LinkCollected { .. } => "link_collected",
             PipelineEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
             PipelineEvent::SocialTopicCollected { .. } => "social_topic_collected",
@@ -239,10 +184,6 @@ impl PipelineEvent {
             PipelineEvent::FreshnessRecorded { .. } => "freshness_recorded",
             PipelineEvent::LinksPromoted { .. } => "links_promoted",
             PipelineEvent::ActorEnrichmentCompleted { .. } => "actor_enrichment_completed",
-            PipelineEvent::EngineStarted { .. } => "engine_started",
-            PipelineEvent::SourcesScheduled { .. } => "sources_scheduled",
-            PipelineEvent::MetricsCompleted => "metrics_completed",
-            PipelineEvent::RunCompleted { .. } => "run_completed",
         }
     }
 }
@@ -262,6 +203,7 @@ pub enum PipelinePhase {
     SocialScrape,
     SocialDiscovery,
     ActorEnrichment,
+    Synthesis,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,8 +303,9 @@ mod tests {
         });
         assert!(pipeline_projectable.is_projectable());
 
-        let pipeline_not = ScoutEvent::Pipeline(PipelineEvent::PhaseStarted {
-            phase: PipelinePhase::Expansion,
+        let pipeline_not = ScoutEvent::Pipeline(PipelineEvent::ContentUnchanged {
+            url: "https://example.org".into(),
+            canonical_key: "example.org".into(),
         });
         assert!(!pipeline_not.is_projectable());
     }

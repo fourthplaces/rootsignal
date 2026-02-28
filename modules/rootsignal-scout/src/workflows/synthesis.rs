@@ -121,12 +121,11 @@ pub async fn run_synthesis_from_deps(
     let cancelled = Arc::new(AtomicBool::new(false));
     let run_id = uuid::Uuid::new_v4().to_string();
     let store: Arc<dyn crate::traits::SignalReader> = Arc::new(deps.build_store());
-    let engine = deps.build_engine(&run_id);
-    let pipe_deps = deps.build_pipeline_deps(
+    let engine = deps.build_engine(
         store.clone(),
         embedder.clone(),
         None,
-        scope.clone(),
+        Some(scope.clone()),
         &run_id,
     );
 
@@ -150,7 +149,14 @@ pub async fn run_synthesis_from_deps(
 
     let run_id_owned = run_id.to_string();
 
-    let (sim_result, rm_result, tl_result, rf_result, gf_result, inv_result) = tokio::join!(
+    let (
+        _sim_result,
+        rm_events,
+        tl_events,
+        (rf_events, rf_sources),
+        (gf_events, gf_sources),
+        inv_events,
+    ) = tokio::join!(
         async {
             info!("Building similarity edges...");
             let similarity = SimilarityBuilder::new(deps.graph_client.clone());
@@ -164,32 +170,31 @@ pub async fn run_synthesis_from_deps(
             }
         },
         async {
+            let mut events = seesaw_core::Events::new();
             if run_response_mapping {
                 info!("Starting response mapping...");
                 let response_mapper = crate::discovery::response_mapper::ResponseMapper::new(
                     &writer,
-                    &engine,
-                    &pipe_deps,
                     &deps.anthropic_api_key,
                     scope.center_lat,
                     scope.center_lng,
                     scope.radius_km,
                 );
-                match response_mapper.map_responses().await {
+                match response_mapper.map_responses(&mut events).await {
                     Ok(rm_stats) => info!("{rm_stats}"),
                     Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
                 }
             } else if budget.is_active() {
                 info!("Skipping response mapping (budget exhausted)");
             }
+            events
         },
         async {
+            let mut events = seesaw_core::Events::new();
             if run_tension_linker {
                 info!("Starting tension linker...");
                 let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
                     &writer,
-                    &engine,
-                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -197,19 +202,19 @@ pub async fn run_synthesis_from_deps(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let tl_stats = tension_linker.run().await;
+                let tl_stats = tension_linker.run(&mut events).await;
                 info!("{tl_stats}");
             } else if budget.is_active() {
                 info!("Skipping tension linker (budget exhausted)");
             }
+            events
         },
         async {
+            let mut events = seesaw_core::Events::new();
             if run_response_finder {
                 info!("Starting response finder...");
                 let response_finder = crate::discovery::response_finder::ResponseFinder::new(
                     &writer,
-                    &engine,
-                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -217,23 +222,22 @@ pub async fn run_synthesis_from_deps(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let (rf_stats, rf_sources) = response_finder.run().await;
+                let (rf_stats, rf_sources) = response_finder.run(&mut events).await;
                 info!("{rf_stats}");
-                rf_sources
+                (events, rf_sources)
             } else {
                 if budget.is_active() {
                     info!("Skipping response finder (budget exhausted)");
                 }
-                Vec::new()
+                (events, Vec::new())
             }
         },
         async {
+            let mut events = seesaw_core::Events::new();
             if run_gathering_finder {
                 info!("Starting gathering finder...");
                 let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
                     &writer,
-                    &engine,
-                    &pipe_deps,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -241,66 +245,72 @@ pub async fn run_synthesis_from_deps(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let (gf_stats, gf_sources) = gathering_finder.run().await;
+                let (gf_stats, gf_sources) = gathering_finder.run(&mut events).await;
                 info!("{gf_stats}");
-                gf_sources
+                (events, gf_sources)
             } else {
                 if budget.is_active() {
                     info!("Skipping gathering finder (budget exhausted)");
                 }
-                Vec::new()
+                (events, Vec::new())
             }
         },
         async {
+            let mut events = seesaw_core::Events::new();
             if run_investigation {
                 info!("Starting investigation phase...");
                 let investigator = crate::discovery::investigator::Investigator::new(
                     &writer,
-                    &engine,
-                    &pipe_deps,
                     archive.clone(),
                     &deps.anthropic_api_key,
                     scope,
                     cancelled.clone(),
                 );
-                let investigation_stats = investigator.run().await;
+                let investigation_stats = investigator.run(&mut events).await;
                 info!("{investigation_stats}");
             } else if budget.is_active() {
                 info!("Skipping investigation (budget exhausted)");
             }
+            events
         },
     );
 
-    let _ = (sim_result, rm_result, tl_result, inv_result);
-
     info!("Parallel synthesis complete");
 
-    // Register discovered sources through the engine
+    // Emit all collected events through the engine (legitimate chain root)
+    let mut all_events = seesaw_core::Events::new();
+    all_events.extend(rm_events);
+    all_events.extend(tl_events);
+    all_events.extend(rf_events);
+    all_events.extend(gf_events);
+    all_events.extend(inv_events);
+
+    // Register discovered sources
     let finder_sources: Vec<rootsignal_common::SourceNode> =
-        rf_result.into_iter().chain(gf_result).collect();
+        rf_sources.into_iter().chain(gf_sources).collect();
     if !finder_sources.is_empty() {
         info!(
             count = finder_sources.len(),
             "Registering finder-discovered sources through engine"
         );
-        let mut state =
-            crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
         for source in finder_sources {
-            if let Err(e) = engine
-                .dispatch(
-                    crate::pipeline::events::ScoutEvent::Pipeline(
-                        crate::pipeline::events::PipelineEvent::SourceDiscovered {
-                            source,
-                            discovered_by: "synthesis".into(),
-                        },
-                    ),
-                    &mut state,
-                    &pipe_deps,
-                )
-                .await
-            {
-                warn!(error = %e, "Failed to register synthesis source (non-fatal)");
+            all_events.push(crate::pipeline::events::ScoutEvent::Pipeline(
+                crate::pipeline::events::PipelineEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "synthesis".into(),
+                },
+            ));
+        }
+    }
+
+    // Emit all collected events through the engine (legitimate chain root)
+    for output in all_events.into_outputs() {
+        if let Some(event) = output.value.downcast_ref::<crate::pipeline::events::ScoutEvent>() {
+            if let Err(e) = engine.emit(event.clone()).settled().await {
+                warn!(error = %e, "Failed to emit synthesis event (non-fatal)");
             }
+        } else {
+            warn!(event_type = output.event_type.as_str(), "Unknown event type from finder, skipping");
         }
     }
 

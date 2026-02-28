@@ -24,6 +24,10 @@ pub struct Schedule {
 }
 
 /// Where something is. Enough to put it on a map and give directions.
+///
+/// Multiple locations per event support typed roles: a march has "start" and "end",
+/// a watershed concern has multiple "affected_area" points, a resource has "origin"
+/// and "destination".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Location {
     /// Coordinates with precision level
@@ -35,4 +39,7 @@ pub struct Location {
     /// Street address if known
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    /// Role this location plays: "venue", "origin", "destination", "affected_area", "epicenter"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }

@@ -1,85 +1,76 @@
 //! Seesaw handlers for the signals domain.
 //!
 //! Each handler wraps an existing activity function with seesaw's
-//! `on::<ScoutEvent>().extract().then()` pattern.
+//! `on::<SignalEvent>().extract().then()` pattern.
 
-use seesaw_core::{handler::Emit, on, Context, Handler};
+use std::sync::Arc;
+
+use seesaw_core::{events, on, Context, Events, Handler};
 use uuid::Uuid;
 
+use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::{PipelineEvent, ScoutEvent};
+use crate::domains::signals::events::SignalEvent;
 use crate::pipeline::handlers::{creation, dedup};
-
-/// Wrapper to resolve the Vec<E>/E Emit ambiguity.
-/// Returns Emit<ScoutEvent> which has only one Into<Emit<ScoutEvent>> path.
-fn batch(events: Vec<ScoutEvent>) -> Emit<ScoutEvent> {
-    Emit::Batch(events)
-}
 
 /// SignalsExtracted → run 4-layer dedup on the extracted batch.
 pub fn dedup_handler() -> Handler<ScoutEngineDeps> {
-    on::<ScoutEvent>()
+    on::<SignalEvent>()
         .id("signals:dedup")
-        .extract(|e: &ScoutEvent| match e {
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted { url, .. }) => {
-                Some(url.clone())
+        .extract(|e: &SignalEvent| match e {
+            SignalEvent::SignalsExtracted { url, batch, .. } => {
+                Some((url.clone(), batch.clone()))
             }
             _ => None,
         })
-        .then::<ScoutEngineDeps, _, _, _, _, ScoutEvent>(
-            |url: String, ctx: Context<ScoutEngineDeps>| async move {
+        .then(
+            |(url, batch): (String, Box<ExtractedBatch>),
+             ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
                 let state = deps.state.read().await;
-                let pipe = deps.pipeline_deps.read().await;
-                let pipe = pipe.as_ref().expect("pipeline_deps set by dispatch");
                 let events =
-                    dedup::handle_signals_extracted(&url, &state, pipe).await?;
-                Ok(batch(events))
+                    dedup::handle_signals_extracted(&url, &batch, &state, deps).await?;
+                Ok(Events::batch(events))
             },
         )
 }
 
 /// NewSignalAccepted → emit World + System + Citation events, trigger wiring.
 pub fn create_handler() -> Handler<ScoutEngineDeps> {
-    on::<ScoutEvent>()
+    on::<SignalEvent>()
         .id("signals:create")
-        .extract(|e: &ScoutEvent| match e {
-            ScoutEvent::Pipeline(PipelineEvent::NewSignalAccepted {
+        .extract(|e: &SignalEvent| match e {
+            SignalEvent::NewSignalAccepted {
                 node_id,
                 source_url,
                 ..
-            }) => Some((*node_id, source_url.clone())),
+            } => Some((*node_id, source_url.clone())),
             _ => None,
         })
-        .then::<ScoutEngineDeps, _, _, _, _, ScoutEvent>(
+        .then(
             |(node_id, source_url): (Uuid, String),
              ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
                 let state = deps.state.read().await;
-                let pipe = deps.pipeline_deps.read().await;
-                let pipe = pipe.as_ref().expect("pipeline_deps set by dispatch");
-                let events =
-                    creation::handle_create(node_id, &source_url, &state, pipe)
-                        .await?;
-                Ok(batch(events))
+                creation::handle_create(node_id, &source_url, &state, deps).await
             },
         )
 }
 
 /// CrossSourceMatchDetected → emit citation + corroboration + scoring events.
 pub fn corroborate_handler() -> Handler<ScoutEngineDeps> {
-    on::<ScoutEvent>()
+    on::<SignalEvent>()
         .id("signals:corroborate")
-        .extract(|e: &ScoutEvent| match e {
-            ScoutEvent::Pipeline(PipelineEvent::CrossSourceMatchDetected {
+        .extract(|e: &SignalEvent| match e {
+            SignalEvent::CrossSourceMatchDetected {
                 existing_id,
                 node_type,
                 source_url,
                 similarity,
-            }) => Some((*existing_id, *node_type, source_url.clone(), *similarity)),
+            } => Some((*existing_id, *node_type, source_url.clone(), *similarity)),
             _ => None,
         })
-        .then::<ScoutEngineDeps, _, _, _, _, ScoutEvent>(
+        .then(
             |(existing_id, node_type, source_url, similarity): (
                 Uuid,
                 rootsignal_common::types::NodeType,
@@ -88,35 +79,32 @@ pub fn corroborate_handler() -> Handler<ScoutEngineDeps> {
             ),
              ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
-                let pipe = deps.pipeline_deps.read().await;
-                let pipe = pipe.as_ref().expect("pipeline_deps set by dispatch");
-                let events = creation::handle_corroborate(
+                creation::handle_corroborate(
                     existing_id,
                     node_type,
                     &source_url,
                     similarity,
-                    pipe,
+                    deps,
                 )
-                .await?;
-                Ok(batch(events))
+                .await
             },
         )
 }
 
 /// SameSourceReencountered → emit citation + freshness events.
 pub fn refresh_handler() -> Handler<ScoutEngineDeps> {
-    on::<ScoutEvent>()
+    on::<SignalEvent>()
         .id("signals:refresh")
-        .extract(|e: &ScoutEvent| match e {
-            ScoutEvent::Pipeline(PipelineEvent::SameSourceReencountered {
+        .extract(|e: &SignalEvent| match e {
+            SignalEvent::SameSourceReencountered {
                 existing_id,
                 node_type,
                 source_url,
                 ..
-            }) => Some((*existing_id, *node_type, source_url.clone())),
+            } => Some((*existing_id, *node_type, source_url.clone())),
             _ => None,
         })
-        .then::<ScoutEngineDeps, _, _, _, _, ScoutEvent>(
+        .then(
             |(existing_id, node_type, source_url): (
                 Uuid,
                 rootsignal_common::types::NodeType,
@@ -124,31 +112,28 @@ pub fn refresh_handler() -> Handler<ScoutEngineDeps> {
             ),
              ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
-                let pipe = deps.pipeline_deps.read().await;
-                let pipe = pipe.as_ref().expect("pipeline_deps set by dispatch");
-                let events = creation::handle_refresh(
+                creation::handle_refresh(
                     existing_id,
                     node_type,
                     &source_url,
-                    pipe,
+                    deps,
                 )
-                .await?;
-                Ok(batch(events))
+                .await
             },
         )
 }
 
-/// SignalReaderd → wire edges (source, actor, resources, tags).
-pub fn signal_stored_handler() -> Handler<ScoutEngineDeps> {
-    on::<ScoutEvent>()
+/// SignalCreated → wire edges (source, actor, resources, tags).
+pub fn signal_created_handler() -> Handler<ScoutEngineDeps> {
+    on::<SignalEvent>()
         .id("signals:wire_edges")
-        .extract(|e: &ScoutEvent| match e {
-            ScoutEvent::Pipeline(PipelineEvent::SignalReaderd {
+        .extract(|e: &SignalEvent| match e {
+            SignalEvent::SignalCreated {
                 node_id,
                 node_type,
                 source_url,
                 canonical_key,
-            }) => Some((
+            } => Some((
                 *node_id,
                 *node_type,
                 source_url.clone(),
@@ -156,7 +141,7 @@ pub fn signal_stored_handler() -> Handler<ScoutEngineDeps> {
             )),
             _ => None,
         })
-        .then::<ScoutEngineDeps, _, _, _, _, ScoutEvent>(
+        .then(
             |(node_id, node_type, source_url, canonical_key): (
                 Uuid,
                 rootsignal_common::types::NodeType,
@@ -166,18 +151,15 @@ pub fn signal_stored_handler() -> Handler<ScoutEngineDeps> {
              ctx: Context<ScoutEngineDeps>| async move {
                 let deps = ctx.deps();
                 let state = deps.state.read().await;
-                let pipe = deps.pipeline_deps.read().await;
-                let pipe = pipe.as_ref().expect("pipeline_deps set by dispatch");
-                let events = creation::handle_signal_stored(
+                creation::handle_signal_stored(
                     node_id,
                     node_type,
                     &source_url,
                     &canonical_key,
                     &state,
-                    pipe,
+                    deps,
                 )
-                .await?;
-                Ok(batch(events))
+                .await
             },
         )
 }

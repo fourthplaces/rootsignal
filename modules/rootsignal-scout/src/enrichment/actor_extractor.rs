@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use ai_client::claude::Claude;
@@ -8,13 +7,11 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::WorldEvent;
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
 use crate::pipeline::events::ScoutEvent;
-use crate::pipeline::state::{PipelineDeps, PipelineState};
-use crate::pipeline::ScoutEngine;
 use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.
@@ -75,19 +72,15 @@ pub async fn run_actor_extraction(
     store: &dyn SignalReader,
     client: &GraphClient,
     anthropic_api_key: &str,
-    engine: &ScoutEngine,
-    deps: &PipelineDeps,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> ActorExtractorStats {
+) -> (ActorExtractorStats, Vec<ScoutEvent>) {
     match run_actor_extraction_inner(
         store,
         client,
         anthropic_api_key,
-        engine,
-        deps,
         min_lat,
         max_lat,
         min_lng,
@@ -95,10 +88,10 @@ pub async fn run_actor_extraction(
     )
     .await
     {
-        Ok(stats) => stats,
+        Ok(result) => result,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
-            ActorExtractorStats::default()
+            (ActorExtractorStats::default(), vec![])
         }
     }
 }
@@ -107,14 +100,13 @@ async fn run_actor_extraction_inner(
     store: &dyn SignalReader,
     client: &GraphClient,
     anthropic_api_key: &str,
-    engine: &ScoutEngine,
-    deps: &PipelineDeps,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> Result<ActorExtractorStats> {
+) -> Result<(ActorExtractorStats, Vec<ScoutEvent>)> {
     let mut stats = ActorExtractorStats::default();
+    let mut events: Vec<ScoutEvent> = Vec::new();
 
     // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
@@ -150,7 +142,7 @@ async fn run_actor_extraction_inner(
 
     if signals.is_empty() {
         info!("Actor extractor: no signals without actors found");
-        return Ok(stats);
+        return Ok((stats, events));
     }
 
     info!(
@@ -206,30 +198,19 @@ async fn run_actor_extraction_inner(
                 Ok(Some(id)) => id,
                 Ok(None) => {
                     let new_id = Uuid::new_v4();
-                    let mut state = PipelineState::new(HashMap::new());
-                    if let Err(e) = engine
-                        .dispatch(
-                            ScoutEvent::World(WorldEvent::ActorIdentified {
-                                actor_id: new_id,
-                                name: extracted.name.clone(),
-                                actor_type,
-                                canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
-                                domains: vec![],
-                                social_urls: vec![],
-                                description: String::new(),
-                                bio: None,
-                                location_lat: Some((min_lat + max_lat) / 2.0),
-                                location_lng: Some((min_lng + max_lng) / 2.0),
-                                location_name: None,
-                            }),
-                            &mut state,
-                            deps,
-                        )
-                        .await
-                    {
-                        warn!(error = %e, actor = extracted.name, "Failed to create actor");
-                        continue;
-                    }
+                    events.push(ScoutEvent::System(SystemEvent::ActorIdentified {
+                        actor_id: new_id,
+                        name: extracted.name.clone(),
+                        actor_type,
+                        canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
+                        domains: vec![],
+                        social_urls: vec![],
+                        description: String::new(),
+                        bio: None,
+                        location_lat: Some((min_lat + max_lat) / 2.0),
+                        location_lng: Some((min_lng + max_lng) / 2.0),
+                        location_name: None,
+                    }));
                     stats.actors_created += 1;
                     new_id
                 }
@@ -239,25 +220,14 @@ async fn run_actor_extraction_inner(
                 }
             };
 
-            let mut state = PipelineState::new(HashMap::new());
-            if let Err(e) = engine
-                .dispatch(
-                    ScoutEvent::World(WorldEvent::ActorLinkedToSignal {
-                        actor_id,
-                        signal_id: signal.id,
-                        role: "mentioned".into(),
-                    }),
-                    &mut state,
-                    deps,
-                )
-                .await
-            {
-                warn!(error = %e, actor = extracted.name, "Failed to link actor to signal");
-                continue;
-            }
+            events.push(ScoutEvent::System(SystemEvent::ActorLinkedToSignal {
+                actor_id,
+                signal_id: signal.id,
+                role: "mentioned".into(),
+            }));
             stats.edges_created += 1;
         }
     }
 
-    Ok(stats)
+    Ok((stats, events))
 }

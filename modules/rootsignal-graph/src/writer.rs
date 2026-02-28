@@ -99,6 +99,8 @@ impl GraphWriter {
             NodeType::Need => "need_embedding",
             NodeType::Notice => "notice_embedding",
             NodeType::Tension => "tension_embedding",
+            NodeType::Condition => "condition_embedding",
+            NodeType::Incident => "incident_embedding",
             NodeType::Citation => return Ok(None),
         };
 
@@ -253,6 +255,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(1),
         };
 
@@ -294,6 +298,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(1),
         };
 
@@ -2283,6 +2289,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(()),
         };
 
@@ -2687,6 +2695,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(()),
         };
 
@@ -2714,6 +2724,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(0.5),
         };
 
@@ -2744,6 +2756,8 @@ impl GraphWriter {
             NodeType::Need => "Need",
             NodeType::Notice => "Notice",
             NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(Vec::new()),
         };
 

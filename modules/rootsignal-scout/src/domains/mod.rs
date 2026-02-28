@@ -1,5 +1,9 @@
 pub mod content;
 pub mod discovery;
 pub mod enrichment;
+pub mod expansion;
+pub mod lifecycle;
 pub mod scheduling;
+pub mod scrape;
 pub mod signals;
+pub mod synthesis;
