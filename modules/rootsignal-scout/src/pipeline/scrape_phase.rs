@@ -335,6 +335,7 @@ impl ScrapePhase {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: None,
+            graph_client: None,
         };
         for source in sources {
             self.engine
@@ -1522,6 +1523,7 @@ impl ScrapePhase {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: None,
+            graph_client: None,
         };
 
         self.engine
@@ -1569,6 +1571,7 @@ impl ScrapePhase {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: None,
+            graph_client: None,
         };
 
         let total = all_ids.len() as u64;
@@ -1583,27 +1586,6 @@ impl ScrapePhase {
         Ok(total)
     }
 
-    pub async fn enrich_actors(&self) {
-        let actors = self.store.list_all_actors().await.unwrap_or_default();
-        let deps = PipelineDeps {
-            store: self.store.clone(),
-            embedder: self.embedder.clone(),
-            region: Some(self.region.clone()),
-            run_id: self.run_id.clone(),
-            fetcher: None,
-            anthropic_api_key: None,
-        };
-        let updated = crate::enrichment::actor_location::enrich_actor_locations(
-            &*self.store,
-            &self.engine,
-            &deps,
-            &actors,
-        )
-        .await;
-        if updated > 0 {
-            info!(updated, "Enriched actor locations");
-        }
-    }
 }
 
 #[cfg(test)]

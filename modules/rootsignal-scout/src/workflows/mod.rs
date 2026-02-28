@@ -89,6 +89,7 @@ impl ScoutDeps {
             run_id: run_id.into(),
             fetcher,
             anthropic_api_key: Some(self.anthropic_api_key.clone()),
+            graph_client: Some(self.graph_client.clone()),
         }
     }
 

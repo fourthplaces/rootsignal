@@ -21,6 +21,7 @@ fn test_deps(store: Arc<MockSignalReader>) -> PipelineDeps {
         run_id: "test-run".to_string(),
         fetcher: None,
         anthropic_api_key: None,
+        graph_client: None,
     }
 }
 

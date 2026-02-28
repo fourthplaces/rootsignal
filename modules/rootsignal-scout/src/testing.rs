@@ -1473,6 +1473,7 @@ pub fn test_pipeline_deps(
         run_id: "test-run".to_string(),
         fetcher: None,
         anthropic_api_key: None,
+        graph_client: None,
     }
 }
 

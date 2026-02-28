@@ -254,10 +254,16 @@ impl seesaw_core::Aggregate for PipelineState {
                 self.extracted_batches.remove(url);
             }
 
+            // LinksPromoted — clear collected links (they've been promoted to sources)
+            PipelineEvent::LinksPromoted { .. } => {
+                self.collected_links.clear();
+            }
+
             // Phase lifecycle / engine lifecycle — no state changes
             PipelineEvent::PhaseStarted { .. }
             | PipelineEvent::PhaseCompleted { .. }
             | PipelineEvent::ExtractionFailed { .. }
+            | PipelineEvent::ActorEnrichmentCompleted { .. }
             | PipelineEvent::EngineStarted { .. } => {}
 
             PipelineEvent::SourceDiscovered { .. } => {

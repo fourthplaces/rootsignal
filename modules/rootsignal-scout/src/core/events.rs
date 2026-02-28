@@ -180,6 +180,16 @@ pub enum PipelineEvent {
         bucket: FreshnessBucket,
     },
 
+    // Link promotion
+    LinksPromoted {
+        count: u32,
+    },
+
+    // Actor enrichment
+    ActorEnrichmentCompleted {
+        actors_updated: u32,
+    },
+
     // Engine lifecycle
     EngineStarted {
         run_id: String,
@@ -213,6 +223,8 @@ impl PipelineEvent {
             PipelineEvent::SourceDiscovered { .. } => "source_discovered",
             PipelineEvent::SocialPostsFetched { .. } => "social_posts_fetched",
             PipelineEvent::FreshnessRecorded { .. } => "freshness_recorded",
+            PipelineEvent::LinksPromoted { .. } => "links_promoted",
+            PipelineEvent::ActorEnrichmentCompleted { .. } => "actor_enrichment_completed",
             PipelineEvent::EngineStarted { .. } => "engine_started",
         }
     }

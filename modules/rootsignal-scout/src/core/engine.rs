@@ -19,7 +19,7 @@ use crate::core::aggregate::PipelineState;
 use crate::core::deps::PipelineDeps;
 use crate::core::events::ScoutEvent;
 use crate::core::projection;
-use crate::domains::{discovery, signals};
+use crate::domains::{discovery, enrichment, signals};
 
 /// Dependencies shared by all seesaw handlers.
 pub struct ScoutEngineDeps {
@@ -66,7 +66,10 @@ pub(crate) fn build_seesaw_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handler(signals::handlers::refresh_handler())
         .with_handler(signals::handlers::signal_stored_handler())
         // Discovery domain handlers
-        .with_handler(discovery::handlers::bootstrap_handler());
+        .with_handler(discovery::handlers::bootstrap_handler())
+        .with_handler(discovery::handlers::link_promotion_handler())
+        // Enrichment domain handlers
+        .with_handler(enrichment::handlers::actor_location_handler());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {

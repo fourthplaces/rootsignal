@@ -19,6 +19,7 @@ fn test_deps(store: Arc<MockSignalReader>) -> crate::pipeline::state::PipelineDe
         run_id: "test-run".to_string(),
         fetcher: None,
         anthropic_api_key: None,
+        graph_client: None,
     }
 }
 
@@ -294,5 +295,210 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
     assert!(
         names.contains(&"freshness_confirmed".to_string()),
         "expected FreshnessConfirmed, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Link promotion handler — PhaseCompleted(TensionScrape) promotes collected links
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn link_promotion_promotes_links_on_phase_completed() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let (engine, captured) = test_engine_with_capture();
+
+    let mut state = PipelineState::new(HashMap::new());
+
+    // Stash collected links in state (simulates links found during scraping)
+    state
+        .collected_links
+        .push(crate::enrichment::link_promoter::CollectedLink {
+            url: "https://example.org/community".to_string(),
+            discovered_on: "https://localorg.org".to_string(),
+        });
+    state
+        .collected_links
+        .push(crate::enrichment::link_promoter::CollectedLink {
+            url: "https://another.org/events".to_string(),
+            discovered_on: "https://localorg.org".to_string(),
+        });
+
+    // Dispatch PhaseCompleted(TensionScrape) — link_promotion_handler fires
+    engine
+        .dispatch(
+            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
+                phase: crate::core::events::PipelinePhase::TensionScrape,
+            }),
+            &mut state,
+            &deps,
+        )
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // SourceDiscovered events emitted for promoted links
+    let source_discovered_count = names
+        .iter()
+        .filter(|n| *n == "pipeline:source_discovered")
+        .count();
+    assert!(
+        source_discovered_count >= 1,
+        "expected at least 1 SourceDiscovered, got: {names:?}"
+    );
+
+    // LinksPromoted event emitted
+    assert!(
+        names.contains(&"pipeline:links_promoted".to_string()),
+        "expected LinksPromoted, got: {names:?}"
+    );
+
+    // Reducer cleared collected_links on LinksPromoted
+    assert!(
+        state.collected_links.is_empty(),
+        "collected_links should be cleared after LinksPromoted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Link promotion handler — skips when no links collected
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn link_promotion_skips_when_no_links() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let (engine, captured) = test_engine_with_capture();
+
+    let mut state = PipelineState::new(HashMap::new());
+    // No collected links
+
+    engine
+        .dispatch(
+            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
+                phase: crate::core::events::PipelinePhase::TensionScrape,
+            }),
+            &mut state,
+            &deps,
+        )
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // Only the root PhaseCompleted event — no handler output
+    assert!(
+        !names.contains(&"pipeline:source_discovered".to_string()),
+        "should not emit SourceDiscovered with no links, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"pipeline:links_promoted".to_string()),
+        "should not emit LinksPromoted with no links, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Actor location handler — emits location events on ResponseScrape complete
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn actor_location_emits_events_on_response_complete() {
+    use chrono::Utc;
+
+    let store = Arc::new(MockSignalReader::new());
+
+    // Create an actor with no location
+    let actor = rootsignal_common::ActorNode {
+        id: uuid::Uuid::new_v4(),
+        name: "Phillips Org".to_string(),
+        actor_type: rootsignal_common::ActorType::Organization,
+        canonical_key: "phillips-org-entity".to_string(),
+        domains: vec![],
+        social_urls: vec![],
+        description: String::new(),
+        signal_count: 0,
+        first_seen: Utc::now(),
+        last_active: Utc::now(),
+        typical_roles: vec![],
+        bio: None,
+        location_lat: None,
+        location_lng: None,
+        location_name: None,
+        discovery_depth: 0,
+    };
+    store.upsert_actor(&actor).await.unwrap();
+
+    // Seed 2 signals at Phillips — enough for triangulation to produce a location
+    let node1 = {
+        let mut n = tension_at("Community Event A", 44.9489, -93.2601);
+        if let Some(meta) = n.meta_mut() {
+            meta.about_location_name = Some("Phillips".to_string());
+        }
+        n
+    };
+    let sig1 = store
+        .create_node(&node1, &[0.1], "test", "run-1")
+        .await
+        .unwrap();
+    store
+        .link_actor_to_signal(actor.id, sig1, "authored")
+        .await
+        .unwrap();
+
+    let node2 = {
+        let mut n = tension_at("Community Event B", 44.9489, -93.2601);
+        if let Some(meta) = n.meta_mut() {
+            meta.about_location_name = Some("Phillips".to_string());
+        }
+        n
+    };
+    let sig2 = store
+        .create_node(&node2, &[0.2], "test", "run-1")
+        .await
+        .unwrap();
+    store
+        .link_actor_to_signal(actor.id, sig2, "authored")
+        .await
+        .unwrap();
+
+    // Build deps with this store so the handler can read actors + signals
+    let deps = crate::pipeline::state::PipelineDeps {
+        store: store.clone() as Arc<dyn crate::traits::SignalReader>,
+        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        region: Some(mpls_region()),
+        run_id: "test-run".to_string(),
+        fetcher: None,
+        anthropic_api_key: None,
+        graph_client: None,
+    };
+    let (engine, captured) = test_engine_with_capture();
+
+    let mut state = PipelineState::new(HashMap::new());
+
+    // Dispatch PhaseCompleted(ResponseScrape) — actor_location_handler fires
+    engine
+        .dispatch(
+            ScoutEvent::Pipeline(PipelineEvent::PhaseCompleted {
+                phase: crate::core::events::PipelinePhase::ResponseScrape,
+            }),
+            &mut state,
+            &deps,
+        )
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // ActorLocationIdentified event emitted
+    assert!(
+        names.contains(&"actor_location_identified".to_string()),
+        "expected ActorLocationIdentified, got: {names:?}"
+    );
+
+    // ActorEnrichmentCompleted event emitted
+    assert!(
+        names.contains(&"pipeline:actor_enrichment_completed".to_string()),
+        "expected ActorEnrichmentCompleted, got: {names:?}"
     );
 }

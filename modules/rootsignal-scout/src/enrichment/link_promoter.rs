@@ -12,6 +12,7 @@ use tracing::info;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
 
 /// A link discovered during scraping, used by `promote_links` to create new sources.
+#[derive(Clone)]
 pub struct CollectedLink {
     pub url: String,
     pub discovered_on: String,

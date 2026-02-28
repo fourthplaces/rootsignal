@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use rootsignal_common::ScoutScope;
 
+use rootsignal_graph::GraphClient;
+
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::{ContentFetcher, SignalReader};
 
@@ -20,4 +22,5 @@ pub struct PipelineDeps {
     pub run_id: String,
     pub fetcher: Option<Arc<dyn ContentFetcher>>,
     pub anthropic_api_key: Option<String>,
+    pub graph_client: Option<GraphClient>,
 }

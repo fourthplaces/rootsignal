@@ -87,6 +87,7 @@ impl EngineFactory {
                     run_id,
                     fetcher: None,
                     anthropic_api_key: None,
+                    graph_client: Some(graph_client.clone()),
                 };
                 (engine, deps)
             }),
@@ -119,6 +120,7 @@ impl EngineFactory {
                     run_id,
                     fetcher: None,
                     anthropic_api_key: None,
+                    graph_client: None,
                 };
                 (engine, deps)
             }),

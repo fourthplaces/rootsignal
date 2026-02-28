@@ -71,6 +71,7 @@ impl SignalReaper for SignalReaperImpl {
                     run_id,
                     fetcher: None,
                     anthropic_api_key: None,
+                    graph_client: None,
                 };
                 let mut state =
                     crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());

@@ -108,26 +108,21 @@ pub fn triangulate_actor_location(
 /// Max age in days for signal observations used in triangulation.
 const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 
-/// Enrich actor locations by triangulating from their authored signals.
+/// Collect actor location events by triangulating from their authored signals.
 ///
-/// For each actor, queries signals via `store`, builds the evidence set,
-/// calls `triangulate_actor_location`, and persists the result via engine dispatch.
-///
-/// Returns the count of actors whose location was updated.
-pub async fn enrich_actor_locations(
+/// Returns the world events to emit — does NOT dispatch them.
+/// Used by the actor_location_handler to emit events through seesaw.
+pub async fn collect_actor_location_events(
     store: &dyn crate::traits::SignalReader,
-    engine: &crate::pipeline::ScoutEngine,
-    deps: &crate::pipeline::state::PipelineDeps,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
     )],
-) -> u32 {
-    use crate::pipeline::events::ScoutEvent;
+) -> Vec<crate::core::events::ScoutEvent> {
+    use crate::core::events::ScoutEvent;
     use rootsignal_common::events::WorldEvent;
 
-    let mut updated = 0;
-    let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+    let mut events = Vec::new();
     for (actor, _sources) in actors {
         let signals = match store.get_signals_for_actor(actor.id).await {
             Ok(s) => s,
@@ -157,8 +152,6 @@ pub async fn enrich_actor_locations(
             _ => None,
         };
 
-        // Extract bio location: if the actor's bio text contains a known signal
-        // location name (case-insensitive substring), use that signal's coordinates.
         let bio_location = actor.bio.as_ref().and_then(|bio| {
             let bio_lower = bio.to_lowercase();
             signal_locs.iter().find_map(|sl| {
@@ -184,7 +177,7 @@ pub async fn enrich_actor_locations(
         if let Some(new_loc) = result {
             let changed = current.as_ref().map_or(true, |c| c.name != new_loc.name);
             if changed {
-                let event = ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+                events.push(ScoutEvent::World(WorldEvent::ActorLocationIdentified {
                     actor_id: actor.id,
                     location_lat: new_loc.lat,
                     location_lng: new_loc.lng,
@@ -193,11 +186,32 @@ pub async fn enrich_actor_locations(
                     } else {
                         Some(new_loc.name.clone())
                     },
-                });
-                if engine.dispatch(event, &mut state, deps).await.is_ok() {
-                    updated += 1;
-                }
+                }));
             }
+        }
+    }
+    events
+}
+
+/// Enrich actor locations by triangulating from their authored signals.
+///
+/// Dispatches ActorLocationIdentified events through the engine.
+/// Returns the count of actors whose location was updated.
+pub async fn enrich_actor_locations(
+    store: &dyn crate::traits::SignalReader,
+    engine: &crate::pipeline::ScoutEngine,
+    deps: &crate::pipeline::state::PipelineDeps,
+    actors: &[(
+        rootsignal_common::ActorNode,
+        Vec<rootsignal_common::SourceNode>,
+    )],
+) -> u32 {
+    let events = collect_actor_location_events(store, actors).await;
+    let mut updated = 0u32;
+    let mut state = crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
+    for event in events {
+        if engine.dispatch(event, &mut state, deps).await.is_ok() {
+            updated += 1;
         }
     }
     updated

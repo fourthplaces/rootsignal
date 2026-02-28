@@ -13,7 +13,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
-use crate::pipeline::events::ScoutEvent;
+use crate::pipeline::events::{PipelineEvent, PipelinePhase, ScoutEvent};
 use crate::pipeline::state::{PipelineDeps, PipelineState};
 use crate::pipeline::ScoutEngine;
 use crate::traits::SignalReader;
@@ -29,7 +29,6 @@ use rootsignal_archive::Archive;
 use crate::store::event_sourced::EventSourcedReader;
 
 use crate::discovery::source_finder::SourceFinderStats;
-use crate::enrichment::link_promoter::{self, PromotionConfig};
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::sanitize_url;
@@ -182,6 +181,7 @@ impl<'a> ScrapePipeline<'a> {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: None,
+            graph_client: None,
         }
     }
 
@@ -227,6 +227,7 @@ impl<'a> ScrapePipeline<'a> {
                 run_id: self.run_id.clone(),
                 fetcher: Some(self.archive.clone() as Arc<dyn crate::traits::ContentFetcher>),
                 anthropic_api_key: Some(self.anthropic_api_key.clone()),
+                graph_client: Some(self.graph_client.clone()),
             };
             let mut boot_state =
                 crate::pipeline::state::PipelineState::new(std::collections::HashMap::new());
@@ -433,29 +434,6 @@ impl<'a> ScrapePipeline<'a> {
         Ok((run, ctx))
     }
 
-    /// Promote any links collected during scraping into new SourceNodes.
-    /// Clears the collected_links buffer after processing.
-    async fn promote_collected_links(&self, run: &ScheduledRun, ctx: &mut RunContext) {
-        if ctx.collected_links.is_empty() {
-            return;
-        }
-        let config = PromotionConfig::default();
-        let sources = link_promoter::promote_links(&ctx.collected_links, &config);
-        if !sources.is_empty() {
-            let count = sources.len();
-            if let Err(e) = run
-                .phase
-                .register_sources(sources, "link_promoter", ctx)
-                .await
-            {
-                warn!(error = %e, "Failed to register promoted links");
-            } else {
-                info!(promoted = count, "Promoted linked URLs");
-            }
-        }
-        ctx.collected_links.clear();
-    }
-
     /// Scrape tension + mixed sources (web pages, search queries, social accounts).
     /// This is the "find problems" pass.
     pub(crate) async fn scrape_tension_sources(
@@ -485,8 +463,6 @@ impl<'a> ScrapePipeline<'a> {
         if !phase_a_social.is_empty() {
             run.phase.run_social(&phase_a_social, ctx, run_log).await;
         }
-
-        self.promote_collected_links(run, ctx).await;
     }
 
     /// Find new sources from graph analysis (actor-linked accounts, coverage gaps).
@@ -577,8 +553,6 @@ impl<'a> ScrapePipeline<'a> {
             run.phase.run_social(&phase_b_social, ctx, run_log).await;
         }
 
-        self.promote_collected_links(run, ctx).await;
-
         check_cancelled_flag(&self.cancelled)?;
 
         // Topic discovery — search social media to find new accounts
@@ -588,8 +562,6 @@ impl<'a> ScrapePipeline<'a> {
         run.phase
             .discover_from_topics(&all_social_topics, ctx, run_log)
             .await;
-
-        self.promote_collected_links(run, ctx).await;
 
         Ok(())
     }
@@ -603,6 +575,7 @@ impl<'a> ScrapePipeline<'a> {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: None,
+            graph_client: None,
         };
         let metrics = Metrics::new(&self.writer, &self.engine, &pipe_deps, &self.region.name);
         metrics
@@ -663,7 +636,6 @@ impl<'a> ScrapePipeline<'a> {
             run.phase
                 .discover_from_topics(&end_social_topics, ctx, run_log)
                 .await;
-            self.promote_collected_links(run, ctx).await;
         }
 
         Ok(())
@@ -683,6 +655,18 @@ impl<'a> ScrapePipeline<'a> {
         ctx.stats
     }
 
+    /// Dispatch a phase lifecycle event through the engine.
+    async fn dispatch_phase(
+        &self,
+        event: PipelineEvent,
+        ctx: &mut RunContext,
+    ) {
+        let deps = self.reap_deps();
+        if let Err(e) = self.engine.dispatch(ScoutEvent::Pipeline(event), ctx, &deps).await {
+            warn!(error = %e, "Failed to dispatch phase event");
+        }
+    }
+
     /// Run all phases in sequence.
     pub async fn run_all(self) -> Result<ScoutStats> {
         let run_log = RunLogger::new(
@@ -692,23 +676,38 @@ impl<'a> ScrapePipeline<'a> {
         )
         .await;
 
-        self.reap_expired_signals(&run_log).await;
+        // Reap expired signals
+        {
+            let mut reap_ctx = PipelineState::new(Default::default());
+            self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::ReapExpired }, &mut reap_ctx).await;
+            self.reap_expired_signals(&run_log).await;
+            self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::ReapExpired }, &mut reap_ctx).await;
+        }
 
         let (run, mut ctx) = self.load_and_schedule_sources(&run_log).await?;
 
+        // Tension scrape — link_promotion_handler fires on PhaseCompleted
+        self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::TensionScrape }, &mut ctx).await;
         self.scrape_tension_sources(&run, &mut ctx, &run_log).await;
+        self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::TensionScrape }, &mut ctx).await;
         check_cancelled_flag(&self.cancelled)?;
 
+        // Mid-run discovery (stays in orchestrator — needs GraphWriter + budget)
+        self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::MidRunDiscovery }, &mut ctx).await;
         let (_, social_topics, mid_run_sources) = self.discover_mid_run_sources().await;
         if !mid_run_sources.is_empty() {
             run.phase
                 .register_sources(mid_run_sources, "source_finder", &mut ctx)
                 .await?;
         }
+        self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::MidRunDiscovery }, &mut ctx).await;
         check_cancelled_flag(&self.cancelled)?;
 
+        // Response scrape — link_promotion_handler + actor_location_handler fire on PhaseCompleted
+        self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::ResponseScrape }, &mut ctx).await;
         self.scrape_response_sources(&run, social_topics, &mut ctx, &run_log)
             .await?;
+        self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::ResponseScrape }, &mut ctx).await;
 
         // Delete consumed pins now that their sources have been scraped
         if !run.consumed_pin_ids.is_empty() {
@@ -728,8 +727,8 @@ impl<'a> ScrapePipeline<'a> {
             }
         }
 
-        // Enrich actor locations from signal mode before metrics/expansion
-        run.phase.enrich_actors().await;
+        // Actor enrichment (actor extraction + embedding + metrics stay in orchestrator)
+        self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::ActorEnrichment }, &mut ctx).await;
 
         // Bounding box used by actor extraction and metric enrichment
         let (min_lat, max_lat, min_lng, max_lng) = self.region.bounding_box();
@@ -743,6 +742,7 @@ impl<'a> ScrapePipeline<'a> {
             run_id: self.run_id.clone(),
             fetcher: None,
             anthropic_api_key: Some(self.anthropic_api_key.clone()),
+            graph_client: Some(self.graph_client.clone()),
         };
         let actor_stats = crate::enrichment::actor_extractor::run_actor_extraction(
             self.store.as_ref() as &dyn crate::traits::SignalReader,
@@ -785,10 +785,15 @@ impl<'a> ScrapePipeline<'a> {
             Err(e) => warn!(error = %e, "Metric enrichment failed, continuing"),
         }
 
+        self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::ActorEnrichment }, &mut ctx).await;
+
         self.update_source_metrics(&run, &ctx).await;
         check_cancelled_flag(&self.cancelled)?;
 
+        // Expansion — link_promotion_handler fires on PhaseCompleted
+        self.dispatch_phase(PipelineEvent::PhaseStarted { phase: PipelinePhase::Expansion }, &mut ctx).await;
         self.expand_and_discover(&run, &mut ctx, &run_log).await?;
+        self.dispatch_phase(PipelineEvent::PhaseCompleted { phase: PipelinePhase::Expansion }, &mut ctx).await;
 
         Ok(self.finalize(ctx, run_log).await)
     }
