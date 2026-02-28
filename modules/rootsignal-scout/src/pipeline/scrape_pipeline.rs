@@ -94,11 +94,17 @@ impl<'a> ScrapePipeline<'a> {
     ) -> Self {
         let store = Arc::new(EventSourcedReader::new(writer.clone()));
         let engine_projector = GraphProjector::new(graph_client.clone());
-        let engine = Arc::new(rootsignal_engine::Engine::new(
-            crate::pipeline::reducer::ScoutReducer,
-            crate::pipeline::router::ScoutRouter::new(Some(engine_projector)),
-            Arc::new(event_store) as Arc<dyn rootsignal_engine::EventPersister>,
-            run_id.clone(),
+        let engine = Arc::new(crate::core::engine::CompatEngine::new(
+            crate::core::engine::ScoutEngineDeps {
+                pipeline_deps: Arc::new(tokio::sync::RwLock::new(None)),
+                state: Arc::new(tokio::sync::RwLock::new(
+                    crate::core::aggregate::PipelineState::default(),
+                )),
+                graph_projector: Some(engine_projector),
+                event_store: Some(event_store),
+                run_id: run_id.clone(),
+                captured_events: None,
+            },
         ));
         Self {
             writer,

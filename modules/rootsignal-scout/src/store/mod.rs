@@ -6,7 +6,6 @@ use rootsignal_events::EventStore;
 use rootsignal_graph::{GraphClient, GraphProjector, GraphWriter};
 use sqlx::PgPool;
 
-use crate::pipeline::ScoutEngine;
 use crate::traits::SignalReader;
 
 /// Build the production SignalReader: read-only queries via Neo4j.
@@ -52,7 +51,9 @@ impl SignalReaderFactory {
 /// Used by API mutations to dispatch `SourceDiscovered` through the engine
 /// instead of calling `upsert_source` directly.
 pub struct EngineFactory {
-    create_fn: Box<dyn Fn() -> (ScoutEngine, crate::pipeline::state::PipelineDeps) + Send + Sync>,
+    create_fn: Box<
+        dyn Fn() -> (crate::pipeline::ScoutEngine, crate::core::deps::PipelineDeps) + Send + Sync,
+    >,
 }
 
 impl EngineFactory {
@@ -63,17 +64,23 @@ impl EngineFactory {
                 let run_id = format!("api-{}", uuid::Uuid::new_v4());
                 let event_store = EventStore::new(pg_pool.clone());
                 let projector = GraphProjector::new(graph_client.clone());
-                let engine = rootsignal_engine::Engine::new(
-                    crate::pipeline::reducer::ScoutReducer,
-                    crate::pipeline::router::ScoutRouter::new(Some(projector)),
-                    Arc::new(event_store) as Arc<dyn rootsignal_engine::EventPersister>,
-                    run_id.clone(),
+                let engine = crate::core::engine::CompatEngine::new(
+                    crate::core::engine::ScoutEngineDeps {
+                        pipeline_deps: Arc::new(tokio::sync::RwLock::new(None)),
+                        state: Arc::new(tokio::sync::RwLock::new(
+                            crate::core::aggregate::PipelineState::default(),
+                        )),
+                        graph_projector: Some(projector),
+                        event_store: Some(event_store),
+                        run_id: run_id.clone(),
+                        captured_events: None,
+                    },
                 );
                 let store =
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                let deps = crate::pipeline::state::PipelineDeps {
+                let deps = crate::core::deps::PipelineDeps {
                     store,
                     embedder,
                     region: None,
@@ -86,21 +93,26 @@ impl EngineFactory {
         }
     }
 
-    /// Test factory: engine with MemoryEventSink and no projector, mock store in deps.
+    /// Test factory: engine with no event store and no projector, mock store in deps.
     pub fn fixed(store: Arc<dyn SignalReader>) -> Self {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("test-{}", uuid::Uuid::new_v4());
-                let engine = rootsignal_engine::Engine::new(
-                    crate::pipeline::reducer::ScoutReducer,
-                    crate::pipeline::router::ScoutRouter::new(None),
-                    Arc::new(rootsignal_engine::MemoryEventSink::new())
-                        as Arc<dyn rootsignal_engine::EventPersister>,
-                    run_id.clone(),
+                let engine = crate::core::engine::CompatEngine::new(
+                    crate::core::engine::ScoutEngineDeps {
+                        pipeline_deps: Arc::new(tokio::sync::RwLock::new(None)),
+                        state: Arc::new(tokio::sync::RwLock::new(
+                            crate::core::aggregate::PipelineState::default(),
+                        )),
+                        graph_projector: None,
+                        event_store: None,
+                        run_id: run_id.clone(),
+                        captured_events: None,
+                    },
                 );
                 let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
                     as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                let deps = crate::pipeline::state::PipelineDeps {
+                let deps = crate::core::deps::PipelineDeps {
                     store: store.clone(),
                     embedder,
                     region: None,
@@ -114,7 +126,7 @@ impl EngineFactory {
     }
 
     /// Create an engine + minimal PipelineDeps for a single operation.
-    pub fn create(&self) -> (ScoutEngine, crate::pipeline::state::PipelineDeps) {
+    pub fn create(&self) -> (crate::pipeline::ScoutEngine, crate::core::deps::PipelineDeps) {
         (self.create_fn)()
     }
 }

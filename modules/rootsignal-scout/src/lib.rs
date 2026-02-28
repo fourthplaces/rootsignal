@@ -1,3 +1,8 @@
+// New structure (Phase 1+)
+pub mod core;
+pub mod domains;
+
+// Existing modules (coexist until migration complete)
 pub mod discovery;
 pub mod enrichment;
 pub mod infra;

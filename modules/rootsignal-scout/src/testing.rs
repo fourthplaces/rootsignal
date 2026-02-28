@@ -1425,15 +1425,41 @@ pub fn run_log() -> crate::infra::run_log::RunLogger {
     crate::infra::run_log::RunLogger::noop()
 }
 
-/// Create a test engine with MemoryEventSink and no projector.
+/// Create a test engine with no event store and no projector.
 pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
-    std::sync::Arc::new(rootsignal_engine::Engine::new(
-        crate::pipeline::reducer::ScoutReducer,
-        crate::pipeline::router::ScoutRouter::new(None),
-        std::sync::Arc::new(rootsignal_engine::MemoryEventSink::new())
-            as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
-        "test-run".to_string(),
+    std::sync::Arc::new(crate::core::engine::CompatEngine::new(
+        crate::core::engine::ScoutEngineDeps {
+            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            state: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::core::aggregate::PipelineState::default(),
+            )),
+            graph_projector: None,
+            event_store: None,
+            run_id: "test-run".to_string(),
+            captured_events: None,
+        },
     ))
+}
+
+/// Create a test engine that captures all dispatched events for inspection.
+pub fn test_engine_with_capture() -> (
+    std::sync::Arc<crate::pipeline::ScoutEngine>,
+    std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let engine = std::sync::Arc::new(crate::core::engine::CompatEngine::new(
+        crate::core::engine::ScoutEngineDeps {
+            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            state: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::core::aggregate::PipelineState::default(),
+            )),
+            graph_projector: None,
+            event_store: None,
+            run_id: "test-run".to_string(),
+            captured_events: Some(captured.clone()),
+        },
+    ));
+    (engine, captured)
 }
 
 /// Create test PipelineDeps with a given store.

@@ -2755,27 +2755,23 @@ use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
 
-/// Wrapper that creates test engine+deps and calls enrich_actor_locations,
-/// returning the event sink so tests can inspect dispatched events.
+type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>;
+
+/// Wrapper that creates test engine+deps and calls enrich_actor_locations.
+/// Returns the updated count and a vec of captured events for inspection.
 async fn enrich_with_sink(
     store: &dyn SignalReader,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
     )],
-) -> (u32, std::sync::Arc<rootsignal_engine::MemoryEventSink>) {
+) -> (u32, CapturedEvents) {
     let dummy_store: std::sync::Arc<dyn SignalReader> =
         std::sync::Arc::new(crate::testing::MockSignalReader::new());
-    let sink = std::sync::Arc::new(rootsignal_engine::MemoryEventSink::new());
-    let engine = std::sync::Arc::new(rootsignal_engine::Engine::new(
-        crate::pipeline::reducer::ScoutReducer,
-        crate::pipeline::router::ScoutRouter::new(None),
-        sink.clone() as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
-        "test-run".to_string(),
-    ));
+    let (engine, captured) = crate::testing::test_engine_with_capture();
     let deps = crate::testing::test_pipeline_deps(dummy_store);
     let updated = enrich_actor_locations(store, &engine, &deps, actors).await;
-    (updated, sink)
+    (updated, captured)
 }
 
 /// Wrapper for tests that only need the updated count.
@@ -2790,49 +2786,41 @@ async fn enrich_with_engine(
     updated
 }
 
-/// Extract the location name dispatched for an actor from the event sink.
+/// Extract the location name dispatched for an actor.
 fn dispatched_location_name(
-    sink: &rootsignal_engine::MemoryEventSink,
+    captured: &CapturedEvents,
     actor_id: uuid::Uuid,
 ) -> Option<String> {
-    let actor_str = actor_id.to_string();
-    sink.events()
-        .iter()
-        .filter(|e| e.event_type == "actor_location_identified")
-        .find(|e| {
-            e.payload
-                .get("actor_id")
-                .and_then(|v| v.as_str())
-                .map_or(false, |id| id == actor_str)
-        })
-        .and_then(|e| {
-            e.payload
-                .get("location_name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
+    use crate::core::events::ScoutEvent;
+    use rootsignal_common::events::WorldEvent;
+    let events = captured.lock().unwrap();
+    events.iter().find_map(|e| match e {
+        ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+            actor_id: id,
+            location_name,
+            ..
+        }) if *id == actor_id => location_name.clone().or(Some(String::new())),
+        _ => None,
+    })
 }
 
-/// Extract the location coordinates dispatched for an actor from the event sink.
+/// Extract the location coordinates dispatched for an actor.
 fn dispatched_location_coords(
-    sink: &rootsignal_engine::MemoryEventSink,
+    captured: &CapturedEvents,
     actor_id: uuid::Uuid,
 ) -> Option<(f64, f64)> {
-    let actor_str = actor_id.to_string();
-    sink.events()
-        .iter()
-        .filter(|e| e.event_type == "actor_location_identified")
-        .find(|e| {
-            e.payload
-                .get("actor_id")
-                .and_then(|v| v.as_str())
-                .map_or(false, |id| id == actor_str)
-        })
-        .and_then(|e| {
-            let lat = e.payload.get("location_lat").and_then(|v| v.as_f64())?;
-            let lng = e.payload.get("location_lng").and_then(|v| v.as_f64())?;
-            Some((lat, lng))
-        })
+    use crate::core::events::ScoutEvent;
+    use rootsignal_common::events::WorldEvent;
+    let events = captured.lock().unwrap();
+    events.iter().find_map(|e| match e {
+        ScoutEvent::World(WorldEvent::ActorLocationIdentified {
+            actor_id: id,
+            location_lat,
+            location_lng,
+            ..
+        }) if *id == actor_id => Some((*location_lat, *location_lng)),
+        _ => None,
+    })
 }
 
 /// Phillips neighborhood coordinates.
@@ -2932,11 +2920,11 @@ async fn enrichment_updates_actor_to_signal_mode_location() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "one actor should have been updated");
     assert_eq!(
-        dispatched_location_name(&sink, actor_id),
+        dispatched_location_name(&captured, actor_id),
         Some("Phillips".to_string()),
         "actor should be placed in Phillips (mode of signals)"
     );
@@ -3124,15 +3112,15 @@ async fn enrichment_processes_each_actor_independently() {
     let actor_a_id = actor_a.id;
     let actor_b_id = actor_b.id;
     let actors = vec![(actor_a, vec![]), (actor_b, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 2, "both actors should be updated");
     assert_eq!(
-        dispatched_location_name(&sink, actor_a_id),
+        dispatched_location_name(&captured, actor_a_id),
         Some("Phillips".to_string())
     );
     assert_eq!(
-        dispatched_location_name(&sink, actor_b_id),
+        dispatched_location_name(&captured, actor_b_id),
         Some("Powderhorn".to_string())
     );
 }
@@ -3202,11 +3190,11 @@ async fn enrichment_overwrites_wrong_location_with_signal_mode() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "wrong location should be corrected");
     assert_eq!(
-        dispatched_location_name(&sink, actor_id),
+        dispatched_location_name(&captured, actor_id),
         Some("Phillips".to_string()),
         "should move from Powderhorn to Phillips"
     );
@@ -3248,11 +3236,11 @@ async fn enrichment_three_neighborhoods_plurality_wins() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1);
     assert_eq!(
-        dispatched_location_name(&sink, actor_id),
+        dispatched_location_name(&captured, actor_id),
         Some("Phillips".to_string()),
         "Phillips has plurality (3 of 6)"
     );
@@ -3273,9 +3261,9 @@ async fn enrichment_sets_coordinates_not_just_name() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (_updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (_updated, captured) = enrich_with_sink(&*store, &actors).await;
 
-    let coords = dispatched_location_coords(&sink, actor_id);
+    let coords = dispatched_location_coords(&captured, actor_id);
     assert!(coords.is_some(), "coordinates should be set");
     let (lat, lng) = coords.unwrap();
     assert!(
@@ -3417,11 +3405,11 @@ async fn enrichment_exactly_two_signals_is_sufficient() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(updated, 1, "2 signals should be enough");
     assert_eq!(
-        dispatched_location_name(&sink, actor_id),
+        dispatched_location_name(&captured, actor_id),
         Some("Powderhorn".to_string())
     );
 }
@@ -3928,14 +3916,14 @@ async fn actor_bio_location_corroborated_by_signal_wins() {
 
     let actor_id = actor.id;
     let actors = vec![(actor, vec![])];
-    let (updated, sink) = enrich_with_sink(&*store, &actors).await;
+    let (updated, captured) = enrich_with_sink(&*store, &actors).await;
 
     assert_eq!(
         updated, 1,
         "bio corroborated by one signal should update location"
     );
     assert_eq!(
-        dispatched_location_name(&sink, actor_id),
+        dispatched_location_name(&captured, actor_id),
         Some("Phillips".to_string()),
         "bio location corroborated by signal should win"
     );

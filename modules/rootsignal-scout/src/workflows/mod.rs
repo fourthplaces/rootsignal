@@ -55,16 +55,22 @@ impl ScoutDeps {
     }
 
     /// Build a ScoutEngine wired to the event store and graph projector.
+    ///
+    /// Pipeline deps are set on each `dispatch()` call via the compat layer,
+    /// so the engine starts with a placeholder.
     pub fn build_engine(&self, run_id: &str) -> crate::pipeline::ScoutEngine {
         let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
         let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
-        rootsignal_engine::Engine::new(
-            crate::pipeline::reducer::ScoutReducer,
-            crate::pipeline::router::ScoutRouter::new(Some(projector)),
-            std::sync::Arc::new(event_store)
-                as std::sync::Arc<dyn rootsignal_engine::EventPersister>,
-            run_id.into(),
-        )
+        crate::core::engine::CompatEngine::new(crate::core::engine::ScoutEngineDeps {
+            pipeline_deps: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            state: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::core::aggregate::PipelineState::default(),
+            )),
+            graph_projector: Some(projector),
+            event_store: Some(event_store),
+            run_id: run_id.into(),
+            captured_events: None,
+        })
     }
 
     /// Build PipelineDeps from the shared deps, wired to the given store/embedder.

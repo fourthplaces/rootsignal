@@ -4,7 +4,6 @@ members = [
     "modules/apify-client",
     "modules/twilio-rs",
     "modules/rootsignal-common",
-    "modules/rootsignal-engine",
     "modules/rootsignal-events",
     "modules/rootsignal-graph",
     "modules/browserless-client",
@@ -87,6 +86,11 @@ bytes = "1"
 
 # Testing
 testcontainers = "0.23"
+
+# Event sourcing
+seesaw_core = "0.12.1"
+seesaw-postgres = "0.12.1"
+seesaw-memory = "0.12.1"
 
 # Local crates
 ai-client = { path = "modules/ai-client" }

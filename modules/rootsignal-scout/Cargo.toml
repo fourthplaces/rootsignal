@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 rootsignal-common = { workspace = true }
-rootsignal-engine = { path = "../rootsignal-engine" }
 rootsignal-events = { workspace = true }
 rootsignal-graph = { workspace = true }
 rootsignal-archive = { workspace = true }
@@ -31,6 +30,9 @@ feed-rs = { workspace = true }
 sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
 restate-sdk = { workspace = true }
+seesaw_core = { workspace = true }
+seesaw-postgres = { workspace = true }
+seesaw-memory = { workspace = true }
 typed-builder = { workspace = true }
 bytes = { workspace = true }
 url = "2"
