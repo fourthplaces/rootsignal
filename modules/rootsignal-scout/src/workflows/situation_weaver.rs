@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use rootsignal_graph::GraphWriter;
 
-use crate::scheduling::budget::{BudgetTracker, OperationCost};
+use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
 use super::types::{BudgetedTaskRequest, EmptyRequest, SituationWeaverResult};
 use super::ScoutDeps;

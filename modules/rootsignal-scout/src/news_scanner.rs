@@ -11,7 +11,7 @@ use rootsignal_graph::GraphWriter;
 use rootsignal_archive::Archive;
 
 use crate::core::extractor::{Extractor, SignalExtractor};
-use crate::scheduling::budget::BudgetTracker;
+use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Hardcoded seed list of global/national RSS feeds for Driver B.
 const NEWS_FEEDS: &[&str] = &[

@@ -148,7 +148,7 @@ pub async fn schedule_sources(
 
     // Schedule sources
     let now_schedule = Utc::now();
-    let scheduler = crate::scheduling::scheduler::SourceScheduler::new();
+    let scheduler = crate::domains::scheduling::activities::scheduler::SourceScheduler::new();
     let schedule = scheduler.schedule(&all_sources, now_schedule);
     let scheduled_keys: HashSet<String> = schedule
         .scheduled
@@ -172,7 +172,7 @@ pub async fn schedule_sources(
     );
 
     // Web query tiered scheduling
-    let wq_schedule = crate::scheduling::scheduler::schedule_web_queries(
+    let wq_schedule = crate::domains::scheduling::activities::scheduler::schedule_web_queries(
         &all_sources,
         0,
         now_schedule,

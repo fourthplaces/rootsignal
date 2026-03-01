@@ -13,7 +13,7 @@ use rootsignal_common::{
     AidNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta,
     NoticeNode, ReviewStatus, SensitivityLevel, Severity, TensionNode, Urgency,
 };
-use rootsignal_scout::enrichment::quality;
+use rootsignal_scout::domains::enrichment::activities::quality;
 
 // ---------------------------------------------------------------------------
 // Helpers

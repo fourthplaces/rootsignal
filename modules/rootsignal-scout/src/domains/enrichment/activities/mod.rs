@@ -1,12 +1,11 @@
 // Enrichment activities: actor extraction, location, quality, etc.
-// Canonical location: crate::enrichment::*
 
-pub use crate::enrichment::actor_extractor;
-pub use crate::enrichment::actor_location;
-pub use crate::enrichment::domain_filter;
-pub use crate::enrichment::link_promoter;
-pub use crate::enrichment::quality;
-pub use crate::enrichment::universe_check;
+pub mod actor_extractor;
+pub mod actor_location;
+pub mod domain_filter;
+pub mod link_promoter;
+pub mod quality;
+pub mod universe_check;
 
 use std::collections::HashSet;
 
@@ -45,7 +44,7 @@ pub async fn run_post_scrape(
     info!("=== Actor Extraction ===");
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
     let (actor_stats, actor_events) =
-        crate::enrichment::actor_extractor::run_actor_extraction(
+        actor_extractor::run_actor_extraction(
             store,
             graph_client,
             api_key,
@@ -92,7 +91,7 @@ pub async fn update_metrics(
     source_signal_counts: &std::collections::HashMap<String, u32>,
     query_api_errors: &HashSet<String>,
 ) -> Vec<ScoutEvent> {
-    let metrics = crate::scheduling::metrics::Metrics::new(writer, region_name);
+    let metrics = crate::domains::scheduling::activities::metrics::Metrics::new(writer, region_name);
     metrics
         .update(all_sources, source_signal_counts, query_api_errors, Utc::now())
         .await

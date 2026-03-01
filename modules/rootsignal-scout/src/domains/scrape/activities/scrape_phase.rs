@@ -15,8 +15,8 @@ use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::enrichment::link_promoter::{self, CollectedLink};
-use crate::enrichment::quality;
+use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
+use crate::domains::enrichment::activities::quality;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};

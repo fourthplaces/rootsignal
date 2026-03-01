@@ -13,7 +13,7 @@ use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::RunLogger;
 use self::expansion::{Expansion, ExpansionOutput};
 use crate::domains::scrape::activities::scrape_phase::{ScrapeOutput, ScrapePhase};
-use crate::scheduling::budget::BudgetTracker;
+use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.
 pub struct ExpansionActivityOutput {
@@ -52,7 +52,7 @@ pub async fn expand_and_discover(
     }
 
     // End-of-run discovery
-    let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
+    let end_discoverer = crate::domains::discovery::activities::source_finder::SourceFinder::new(
         writer,
         region_name,
         region_name,

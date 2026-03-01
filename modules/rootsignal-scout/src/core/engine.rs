@@ -43,7 +43,7 @@ pub struct ScoutEngineDeps {
     /// None in production, Some in tests that need event inspection.
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>>,
     /// Budget tracker for LLM/API cost tracking.
-    pub budget: Option<Arc<crate::scheduling::budget::BudgetTracker>>,
+    pub budget: Option<Arc<crate::domains::scheduling::activities::budget::BudgetTracker>>,
     /// Cancellation flag — checked by handlers between phases.
     pub cancelled: Option<Arc<AtomicBool>>,
     /// Postgres connection pool — used by finalize handler to save run stats.

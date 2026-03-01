@@ -75,7 +75,7 @@ impl<'a> Metrics<'a> {
                 } else {
                     source.scrape_count.max(1)
                 };
-            let base_weight = crate::scheduling::scheduler::compute_weight(
+            let base_weight = super::scheduler::compute_weight(
                 total_signals,
                 source.signals_corroborated,
                 scrape_count,
@@ -95,13 +95,13 @@ impl<'a> Metrics<'a> {
                     source.consecutive_empty_runs
                 };
             let cadence = if is_web_query(&source.canonical_value) {
-                crate::scheduling::scheduler::cadence_hours_with_backoff(
+                super::scheduler::cadence_hours_with_backoff(
                     new_weight,
                     empty_runs,
                     &source.discovery_method,
                 )
             } else {
-                crate::scheduling::scheduler::cadence_hours_for_weight(new_weight)
+                super::scheduler::cadence_hours_for_weight(new_weight)
             };
             if let Err(e) = self
                 .writer

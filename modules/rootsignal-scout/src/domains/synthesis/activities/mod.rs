@@ -1,5 +1,11 @@
 //! Synthesis domain activity functions: pure logic extracted from handlers.
 
+pub mod gathering_finder;
+pub mod investigator;
+pub mod response_finder;
+pub mod response_mapper;
+pub mod tension_linker;
+
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -10,7 +16,7 @@ use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
 
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::infra::embedder::TextEmbedder;
-use crate::scheduling::budget::{BudgetTracker, OperationCost};
+use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
 /// Output from the synthesis activity: all events ready to emit.
 pub struct SynthesisOutput {
@@ -85,7 +91,7 @@ pub async fn run_synthesis(
             if run_response_mapping {
                 info!("Starting response mapping...");
                 let response_mapper =
-                    crate::discovery::response_mapper::ResponseMapper::new(
+                    response_mapper::ResponseMapper::new(
                         writer,
                         api_key,
                         region_owned.center_lat,
@@ -109,7 +115,7 @@ pub async fn run_synthesis(
             if run_tension_linker {
                 info!("Starting tension linker...");
                 let tension_linker =
-                    crate::discovery::tension_linker::TensionLinker::new(
+                    tension_linker::TensionLinker::new(
                         writer,
                         archive.clone(),
                         embedder,
@@ -131,7 +137,7 @@ pub async fn run_synthesis(
             if run_response_finder {
                 info!("Starting response finder...");
                 let response_finder =
-                    crate::discovery::response_finder::ResponseFinder::new(
+                    response_finder::ResponseFinder::new(
                         writer,
                         archive.clone(),
                         embedder,
@@ -157,7 +163,7 @@ pub async fn run_synthesis(
             if run_gathering_finder {
                 info!("Starting gathering finder...");
                 let gathering_finder =
-                    crate::discovery::gathering_finder::GatheringFinder::new(
+                    gathering_finder::GatheringFinder::new(
                         writer,
                         archive.clone(),
                         embedder,
@@ -183,7 +189,7 @@ pub async fn run_synthesis(
             if run_investigation {
                 info!("Starting investigation phase...");
                 let investigator =
-                    crate::discovery::investigator::Investigator::new(
+                    investigator::Investigator::new(
                         writer,
                         archive.clone(),
                         api_key,

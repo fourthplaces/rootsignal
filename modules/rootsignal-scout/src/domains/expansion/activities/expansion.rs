@@ -148,7 +148,7 @@ impl<'a> Expansion<'a> {
                 cv,
                 None,
                 DiscoveryMethod::SignalExpansion,
-                crate::discovery::source_finder::initial_weight_for_method(
+                crate::domains::discovery::activities::source_finder::initial_weight_for_method(
                     DiscoveryMethod::SignalExpansion,
                     None,
                 ),

@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use rootsignal_graph::{GraphWriter, SimilarityBuilder};
 
-use crate::scheduling::budget::{BudgetTracker, OperationCost};
+use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
 use super::types::{BudgetedTaskRequest, EmptyRequest, SynthesisResult};
 use super::{create_archive, ScoutDeps};
@@ -173,7 +173,7 @@ pub async fn run_synthesis_from_deps(
             let mut events = seesaw_core::Events::new();
             if run_response_mapping {
                 info!("Starting response mapping...");
-                let response_mapper = crate::discovery::response_mapper::ResponseMapper::new(
+                let response_mapper = crate::domains::synthesis::activities::response_mapper::ResponseMapper::new(
                     &writer,
                     &deps.anthropic_api_key,
                     scope.center_lat,
@@ -193,7 +193,7 @@ pub async fn run_synthesis_from_deps(
             let mut events = seesaw_core::Events::new();
             if run_tension_linker {
                 info!("Starting tension linker...");
-                let tension_linker = crate::discovery::tension_linker::TensionLinker::new(
+                let tension_linker = crate::domains::synthesis::activities::tension_linker::TensionLinker::new(
                     &writer,
                     archive.clone(),
                     &*embedder,
@@ -213,7 +213,7 @@ pub async fn run_synthesis_from_deps(
             let mut events = seesaw_core::Events::new();
             if run_response_finder {
                 info!("Starting response finder...");
-                let response_finder = crate::discovery::response_finder::ResponseFinder::new(
+                let response_finder = crate::domains::synthesis::activities::response_finder::ResponseFinder::new(
                     &writer,
                     archive.clone(),
                     &*embedder,
@@ -236,7 +236,7 @@ pub async fn run_synthesis_from_deps(
             let mut events = seesaw_core::Events::new();
             if run_gathering_finder {
                 info!("Starting gathering finder...");
-                let gathering_finder = crate::discovery::gathering_finder::GatheringFinder::new(
+                let gathering_finder = crate::domains::synthesis::activities::gathering_finder::GatheringFinder::new(
                     &writer,
                     archive.clone(),
                     &*embedder,
@@ -259,7 +259,7 @@ pub async fn run_synthesis_from_deps(
             let mut events = seesaw_core::Events::new();
             if run_investigation {
                 info!("Starting investigation phase...");
-                let investigator = crate::discovery::investigator::Investigator::new(
+                let investigator = crate::domains::synthesis::activities::investigator::Investigator::new(
                     &writer,
                     archive.clone(),
                     &deps.anthropic_api_key,

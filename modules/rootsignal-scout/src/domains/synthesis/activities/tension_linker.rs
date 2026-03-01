@@ -17,7 +17,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 use rootsignal_archive::Archive;
-use super::agent_tools::{ReadPageTool, WebSearchTool};
+use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::core::events::ScoutEvent;
 
@@ -534,7 +534,7 @@ impl<'a> TensionLinker<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::agent_tools::{WebSearchOutput, WebSearchResultItem};
+    use crate::infra::agent_tools::{WebSearchOutput, WebSearchResultItem};
     use super::*;
 
     #[test]

@@ -1,11 +1,12 @@
 //! Discovery domain activity functions: pure logic extracted from handlers.
 
 pub(crate) mod bootstrap;
+pub(crate) mod bootstrap_queries;
+pub mod source_finder;
 
 use tracing::info;
 
 use crate::core::events::ScoutEvent;
-use crate::discovery::source_finder;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 use rootsignal_graph::GraphWriter;
@@ -24,7 +25,7 @@ pub async fn discover_mid_run(
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,
-    budget: &crate::scheduling::budget::BudgetTracker,
+    budget: &crate::domains::scheduling::activities::budget::BudgetTracker,
 ) -> MidRunOutput {
     let discoverer = source_finder::SourceFinder::new(
         writer,

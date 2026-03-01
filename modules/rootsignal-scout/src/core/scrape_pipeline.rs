@@ -26,7 +26,7 @@ use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::core::extractor::SignalExtractor;
 use crate::core::stats::ScoutStats;
-use crate::scheduling::budget::BudgetTracker;
+use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Bundles the shared dependencies for the scrape pipeline.
 pub struct ScrapePipeline {

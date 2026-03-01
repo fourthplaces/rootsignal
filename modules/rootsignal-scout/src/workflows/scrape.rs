@@ -133,7 +133,7 @@ async fn run_scrape_from_deps(
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let archive = create_archive(deps);
-    let budget = Arc::new(crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents));
+    let budget = Arc::new(crate::domains::scheduling::activities::budget::BudgetTracker::new(deps.daily_budget_cents));
     let run_id = uuid::Uuid::new_v4().to_string();
 
     let pipeline = crate::core::scrape_pipeline::ScrapePipeline::new(

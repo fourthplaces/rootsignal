@@ -19,7 +19,7 @@ use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
-use crate::enrichment::link_promoter::CollectedLink;
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
 use crate::core::embedding_cache::EmbeddingCache;

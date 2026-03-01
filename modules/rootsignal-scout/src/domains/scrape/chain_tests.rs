@@ -16,7 +16,7 @@ use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::domains::signals::events::SignalEvent;
-use crate::enrichment::link_promoter::{self, PromotionConfig};
+use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 
 async fn dispatch_events(
     events: Vec<crate::core::events::ScoutEvent>,

@@ -18,7 +18,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
 use rootsignal_archive::Archive;
-use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
+use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::core::events::ScoutEvent;
 
@@ -804,7 +804,7 @@ impl<'a> GatheringFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::discovery::source_finder::initial_weight_for_method(
+            weight: crate::domains::discovery::activities::source_finder::initial_weight_for_method(
                 DiscoveryMethod::GapAnalysis,
                 Some("unmet_tension"),
             ),

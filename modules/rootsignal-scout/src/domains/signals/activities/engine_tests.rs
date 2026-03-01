@@ -290,13 +290,13 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         let mut state = engine.deps().state.write().await;
         state
             .collected_links
-            .push(crate::enrichment::link_promoter::CollectedLink {
+            .push(crate::domains::enrichment::activities::link_promoter::CollectedLink {
                 url: "https://example.org/community".to_string(),
                 discovered_on: "https://localorg.org".to_string(),
             });
         state
             .collected_links
-            .push(crate::enrichment::link_promoter::CollectedLink {
+            .push(crate::domains::enrichment::activities::link_promoter::CollectedLink {
                 url: "https://another.org/events".to_string(),
                 discovered_on: "https://localorg.org".to_string(),
             });

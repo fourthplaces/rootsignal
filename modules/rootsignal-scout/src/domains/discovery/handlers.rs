@@ -12,7 +12,7 @@ use rootsignal_graph::GraphWriter;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::{PipelinePhase, ScoutEvent};
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::enrichment::link_promoter::{self, PromotionConfig};
+use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use crate::domains::discovery::activities::bootstrap;
 
 /// EngineStarted → seed sources when the region has none.

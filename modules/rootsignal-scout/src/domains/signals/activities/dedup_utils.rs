@@ -9,7 +9,7 @@ use rootsignal_common::types::NodeType;
 use rootsignal_common::{ActorContext, Node, ScrapingStrategy};
 use uuid::Uuid;
 
-use crate::enrichment::quality;
+use crate::domains::enrichment::activities::quality;
 
 /// Normalize a title for dedup comparison: lowercase and trim.
 pub(crate) fn normalize_title(title: &str) -> String {

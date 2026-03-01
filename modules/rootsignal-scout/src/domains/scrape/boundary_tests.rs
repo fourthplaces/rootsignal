@@ -5,17 +5,17 @@
 
 use std::sync::Arc;
 
-use crate::enrichment::link_promoter::CollectedLink;
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::domains::signals::events::SignalEvent;
-use crate::enrichment::link_promoter::{self, PromotionConfig};
+use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use rootsignal_common::canonical_value;
 use chrono::TimeZone;
-use crate::enrichment::actor_location::enrich_actor_locations;
+use crate::domains::enrichment::activities::actor_location::enrich_actor_locations;
 use crate::traits::SignalReader;
 use chrono::Utc;
 use rootsignal_common::ActorType;
