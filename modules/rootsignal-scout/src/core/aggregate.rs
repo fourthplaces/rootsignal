@@ -15,6 +15,7 @@ use uuid::Uuid;
 use rootsignal_common::Node;
 
 use crate::core::events::FreshnessBucket;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
@@ -22,9 +23,8 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
-use crate::core::embedding_cache::EmbeddingCache;
-
 /// Scheduling data passed between schedule_handler and scrape handlers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledData {
     pub all_sources: Vec<SourceNode>,
     pub scheduled_sources: Vec<SourceNode>,
@@ -44,10 +44,8 @@ pub struct ScheduleOutput {
 }
 
 /// Mutable state for a scout run, updated by the reducer.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PipelineState {
-    /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
-    pub embed_cache: EmbeddingCache,
-
     /// URL → source canonical_key resolution map.
     pub url_to_canonical_key: HashMap<String, String>,
 
@@ -108,8 +106,6 @@ pub struct ExtractedBatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingNode {
     pub node: rootsignal_common::Node,
-    #[serde(skip)]
-    pub embedding: Vec<f32>,
     pub content_hash: String,
     pub resource_tags: Vec<ResourceTag>,
     pub signal_tags: Vec<String>,
@@ -119,6 +115,7 @@ pub struct PendingNode {
 
 /// Edge-wiring data stashed by `create_signal_events` for `wire_signal_edges`.
 /// Only the fields needed for wiring — the Node itself is already projected.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WiringContext {
     pub resource_tags: Vec<ResourceTag>,
     pub signal_tags: Vec<String>,
@@ -129,7 +126,6 @@ pub struct WiringContext {
 impl PipelineState {
     pub fn new(url_to_canonical_key: HashMap<String, String>) -> Self {
         Self {
-            embed_cache: EmbeddingCache::new(),
             url_to_canonical_key,
             source_signal_counts: HashMap::new(),
             expansion_queries: Vec::new(),
@@ -313,8 +309,94 @@ impl PipelineState {
         self.url_to_canonical_key.extend(output.url_mappings);
         self.scheduled = Some(output.scheduled_data);
     }
+
+    /// Apply a pipeline event to aggregate state.
+    pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
+        match event {
+            PipelineEvent::ScheduleResolved {
+                scheduled_data,
+                actor_contexts,
+                url_mappings,
+            } => {
+                self.actor_contexts.extend(actor_contexts.clone());
+                self.url_to_canonical_key.extend(url_mappings.clone());
+                self.scheduled = Some(scheduled_data.clone());
+            }
+            PipelineEvent::ScrapeAccumulated {
+                url_mappings,
+                source_signal_counts,
+                pub_dates,
+                collected_links,
+                expansion_queries,
+                query_api_errors,
+                stats_delta,
+            } => {
+                self.url_to_canonical_key.extend(url_mappings.clone());
+                for (k, v) in source_signal_counts {
+                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
+                }
+                self.query_api_errors.extend(query_api_errors.clone());
+                self.url_to_pub_date.extend(pub_dates.clone());
+                self.collected_links.extend(collected_links.clone());
+                self.expansion_queries.extend(expansion_queries.clone());
+                self.stats.social_media_posts += stats_delta.social_media_posts;
+                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
+                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
+            }
+            PipelineEvent::ExpansionAccumulated {
+                social_expansion_topics,
+                expansion_deferred_expanded,
+                expansion_queries_collected,
+                expansion_sources_created,
+                expansion_social_topics_queued,
+            } => {
+                self.social_expansion_topics
+                    .extend(social_expansion_topics.clone());
+                self.stats.expansion_deferred_expanded = *expansion_deferred_expanded;
+                self.stats.expansion_queries_collected = *expansion_queries_collected;
+                self.stats.expansion_sources_created = *expansion_sources_created;
+                self.stats.expansion_social_topics_queued = *expansion_social_topics_queued;
+            }
+            PipelineEvent::SocialTopicsCollected { topics } => {
+                self.social_topics = topics.clone();
+            }
+            PipelineEvent::SocialTopicsConsumed => {
+                self.social_topics.clear();
+            }
+        }
+    }
 }
 
+// ── Aggregate + Apply traits ─────────────────────────────────────
+
+use seesaw_core::{Aggregate, aggregators};
+
+impl Aggregate for PipelineState {
+    fn aggregate_type() -> &'static str {
+        "ScoutRun"
+    }
+}
+
+#[aggregators(singleton)]
+pub mod pipeline_aggregators {
+    use super::*;
+
+    fn on_signal(state: &mut PipelineState, event: SignalEvent) {
+        state.apply_signal(&event);
+    }
+
+    fn on_scrape(state: &mut PipelineState, event: ScrapeEvent) {
+        state.apply_scrape(&event);
+    }
+
+    fn on_discovery(state: &mut PipelineState, event: DiscoveryEvent) {
+        state.apply_discovery(&event);
+    }
+
+    fn on_pipeline(state: &mut PipelineState, event: PipelineEvent) {
+        state.apply_pipeline(&event);
+    }
+}
 
 /// Map signal node types to the `by_type` stats index.
 /// Returns None for non-signal types (e.g. Citation).

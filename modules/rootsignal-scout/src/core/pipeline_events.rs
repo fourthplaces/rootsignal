@@ -1,0 +1,67 @@
+//! Pipeline-level events for PipelineState aggregate mutations.
+//!
+//! These replace direct handler writes to PipelineState. Each variant
+//! carries accumulated output from a pipeline phase, applied to state
+//! via the `apply_pipeline` method on PipelineState.
+
+use std::collections::{HashMap, HashSet};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::core::aggregate::ScheduledData;
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
+use crate::domains::scrape::activities::scrape_phase::StatsDelta;
+use rootsignal_common::types::ActorContext;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PipelineEvent {
+    /// Schedule phase resolved — stash sources, actor contexts, URL mappings.
+    ScheduleResolved {
+        scheduled_data: ScheduledData,
+        actor_contexts: HashMap<String, ActorContext>,
+        url_mappings: HashMap<String, String>,
+    },
+    /// Scrape phase accumulated output — URL mappings, signal counts, pub dates, links, etc.
+    ScrapeAccumulated {
+        url_mappings: HashMap<String, String>,
+        source_signal_counts: HashMap<String, u32>,
+        pub_dates: HashMap<String, DateTime<Utc>>,
+        collected_links: Vec<CollectedLink>,
+        expansion_queries: Vec<String>,
+        query_api_errors: HashSet<String>,
+        stats_delta: StatsDelta,
+    },
+    /// Expansion phase accumulated output — social topics, stats.
+    ExpansionAccumulated {
+        social_expansion_topics: Vec<String>,
+        expansion_deferred_expanded: u32,
+        expansion_queries_collected: u32,
+        expansion_sources_created: u32,
+        expansion_social_topics_queued: u32,
+    },
+    /// Social topics collected during mid-run discovery.
+    SocialTopicsCollected {
+        topics: Vec<String>,
+    },
+    /// Social topics consumed by response scrape.
+    SocialTopicsConsumed,
+}
+
+impl PipelineEvent {
+    pub fn event_type_str(&self) -> String {
+        let variant = match self {
+            Self::ScheduleResolved { .. } => "schedule_resolved",
+            Self::ScrapeAccumulated { .. } => "scrape_accumulated",
+            Self::ExpansionAccumulated { .. } => "expansion_accumulated",
+            Self::SocialTopicsCollected { .. } => "social_topics_collected",
+            Self::SocialTopicsConsumed => "social_topics_consumed",
+        };
+        format!("pipeline:{variant}")
+    }
+
+    pub fn to_persist_payload(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("PipelineEvent serialization should never fail")
+    }
+}

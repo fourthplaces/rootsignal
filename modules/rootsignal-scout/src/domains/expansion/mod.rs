@@ -7,8 +7,10 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 
 use rootsignal_graph::GraphReader;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
@@ -67,7 +69,7 @@ pub mod handlers {
             deps.run_id.clone(),
         );
 
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         let output = activities::expand_and_discover(
             &expansion,
             Some(&phase),
@@ -80,17 +82,21 @@ pub mod handlers {
             &run_log,
         )
         .await;
-        drop(state);
 
-        // Apply state updates
-        let mut state = deps.state.write().await;
-        state.apply_expansion_output(output.expansion);
-        if let Some(topic_scrape) = output.topic_scrape {
-            state.apply_scrape_output(topic_scrape);
-        }
-        drop(state);
-
+        // Emit pipeline events instead of direct state writes
         let mut all_events = output.events;
+        all_events.push(PipelineEvent::ExpansionAccumulated {
+            social_expansion_topics: output.expansion.social_expansion_topics,
+            expansion_deferred_expanded: output.expansion.expansion_deferred_expanded,
+            expansion_queries_collected: output.expansion.expansion_queries_collected,
+            expansion_sources_created: output.expansion.expansion_sources_created,
+            expansion_social_topics_queued: output.expansion.expansion_social_topics_queued,
+        });
+        if let Some(topic_scrape) = output.topic_scrape {
+            let (scrape_events, pipeline_event) = topic_scrape.into_pipeline_event();
+            all_events.extend(scrape_events);
+            all_events.push(pipeline_event);
+        }
         all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::Expansion,
         });

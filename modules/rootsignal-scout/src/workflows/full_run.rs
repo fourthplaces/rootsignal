@@ -9,6 +9,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
+use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::*;
@@ -56,12 +57,11 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
 
-                let state = engine.deps().state.read().await;
-                let stats = state.stats.clone();
+                let state = engine.singleton::<PipelineState>();
                 Ok(FullRunResult {
-                    sources_created: stats.sources_discovered,
-                    urls_scraped: stats.urls_scraped,
-                    signals_stored: stats.signals_stored,
+                    sources_created: state.stats.sources_discovered,
+                    urls_scraped: state.stats.urls_scraped,
+                    signals_stored: state.stats.signals_stored,
                     issues_found: 0,
                 })
             })

@@ -28,8 +28,7 @@ async fn dispatch_events(
         let _ = engine.emit_output(output).settled().await;
     }
     // Sync engine stats back to ctx so test assertions work.
-    // Only stats — collected_links are written directly by run_web, not via events.
-    let state = engine.deps().state.read().await;
+    let state = engine.singleton::<crate::core::aggregate::PipelineState>();
     ctx.stats = state.stats.clone();
 }
 

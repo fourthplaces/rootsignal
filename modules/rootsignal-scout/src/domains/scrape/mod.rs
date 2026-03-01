@@ -16,8 +16,10 @@ use tracing::info;
 
 use rootsignal_graph::GraphReader;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::{build_run_logger, scrape_response, scrape_tension};
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
@@ -59,16 +61,11 @@ pub mod handlers {
         let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
         let run_log = build_run_logger(&deps.run_id, region_name, deps.pg_pool.as_ref()).await;
 
-        let state = deps.state.read().await;
-        let mut output = scrape_tension(&phase, &state, &run_log).await;
-        drop(state);
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let output = scrape_tension(&phase, &state, &run_log).await;
 
-        let events = output.take_events();
-        let mut state = deps.state.write().await;
-        state.apply_scrape_output(output);
-        drop(state);
-
-        let mut all_events = events;
+        let (mut all_events, pipeline_event) = output.into_pipeline_event();
+        all_events.push(pipeline_event);
         all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::TensionScrape,
         });
@@ -107,23 +104,14 @@ pub mod handlers {
 
         let run_log = build_run_logger(&deps.run_id, &region.name, deps.pg_pool.as_ref()).await;
 
-        // Drain social topics before reading state
-        let social_topics = {
-            let mut state = deps.state.write().await;
-            std::mem::take(&mut state.social_topics)
-        };
-
-        let state = deps.state.read().await;
-        let mut output =
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let social_topics = state.social_topics.clone();
+        let output =
             scrape_response(&phase, &state, social_topics, &graph, region, &run_log).await;
-        drop(state);
 
-        let events = output.take_events();
-        let mut state = deps.state.write().await;
-        state.apply_scrape_output(output);
-        drop(state);
-
-        let mut all_events = events;
+        let (mut all_events, pipeline_event) = output.into_pipeline_event();
+        all_events.push(PipelineEvent::SocialTopicsConsumed);
+        all_events.push(pipeline_event);
         all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::ResponseScrape,
         });

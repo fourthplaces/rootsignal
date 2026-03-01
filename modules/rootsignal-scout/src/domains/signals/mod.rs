@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use rootsignal_common::types::NodeType;
 
-use crate::core::aggregate::ExtractedBatch;
+use crate::core::aggregate::{ExtractedBatch, PipelineState};
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::activities::{creation, dedup};
 use crate::domains::signals::events::SignalEvent;
@@ -26,7 +26,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         let events = dedup::deduplicate_extracted_batch(&url, &batch, &state, deps).await?;
         Ok(Events::batch(events))
     }
@@ -39,7 +39,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         creation::create_signal_events(node_id, &source_url, &state, deps).await
     }
 
@@ -79,7 +79,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         creation::wire_signal_edges(node_id, node_type, &source_url, &canonical_key, &state, deps)
             .await
     }

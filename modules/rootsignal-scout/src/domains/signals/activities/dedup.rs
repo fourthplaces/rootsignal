@@ -183,7 +183,7 @@ pub async fn deduplicate_extracted_batch(
         }
 
         // 3a: Check in-memory cache first
-        let cache_hit = state.embed_cache.find_match(&embedding, 0.85);
+        let cache_hit = deps.embed_cache.find_match(&embedding, 0.85);
 
         // 3b: Check graph index (region-scoped)
         let graph_hit = match deps
@@ -238,7 +238,7 @@ pub async fn deduplicate_extracted_batch(
                 // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
                     if let Some((_, _, ref sanitized_url, _)) = graph_hit {
-                        state.embed_cache.add(
+                        deps.embed_cache.add(
                             embedding,
                             existing_id,
                             node_type,
@@ -273,7 +273,7 @@ pub async fn deduplicate_extracted_batch(
                 // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
                     if let Some((_, _, ref sanitized_url, _)) = graph_hit {
-                        state.embed_cache.add(
+                        deps.embed_cache.add(
                             embedding,
                             existing_id,
                             node_type,
@@ -293,7 +293,7 @@ pub async fn deduplicate_extracted_batch(
                 let meta_id = node.meta().map(|m| m.id);
 
                 // Add to embed cache (interior mutability — exception for deterministic cache)
-                state
+                deps
                     .embed_cache
                     .add(embedding.clone(), node_id, node_type, url.to_string());
 
@@ -312,7 +312,6 @@ pub async fn deduplicate_extracted_batch(
                 let title = node.title().to_string();
                 let pn = PendingNode {
                     node,
-                    embedding,
                     content_hash: content_hash_str.clone(),
                     resource_tags: node_resource_tags,
                     signal_tags: node_signal_tags,

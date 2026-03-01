@@ -231,7 +231,7 @@ async fn new_signal_emits_accepted_and_stashes_pending_node() {
             assert_eq!(title, "Free Legal Clinic");
             assert_eq!(source_url, "https://example.org/events");
             // PendingNode carried in the event for the reducer to stash
-            assert!(!pending_node.embedding.is_empty());
+            assert!(!pending_node.content_hash.is_empty());
         }
         other => panic!("expected NewSignalAccepted, got {:?}", other),
     }

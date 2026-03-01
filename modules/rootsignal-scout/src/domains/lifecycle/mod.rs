@@ -9,8 +9,10 @@ use tracing::info;
 
 use rootsignal_graph::GraphReader;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use events::LifecycleEvent;
 
 fn is_engine_started(e: &LifecycleEvent) -> bool {
@@ -67,14 +69,17 @@ pub mod handlers {
         let tension_count = output.tension_count;
         let response_count = output.response_count;
 
-        let mut state = deps.state.write().await;
-        state.apply_schedule_output(output);
-        drop(state);
-
-        Ok(events![LifecycleEvent::SourcesScheduled {
-            tension_count,
-            response_count,
-        }])
+        Ok(events![
+            PipelineEvent::ScheduleResolved {
+                scheduled_data: output.scheduled_data,
+                actor_contexts: output.actor_contexts,
+                url_mappings: output.url_mappings,
+            },
+            LifecycleEvent::SourcesScheduled {
+                tension_count,
+                response_count,
+            },
+        ])
     }
 }
 
@@ -85,9 +90,8 @@ pub mod handlers {
 async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
     let deps = ctx.deps();
 
-    let state = deps.state.read().await;
+    let (_, state) = ctx.singleton::<PipelineState>();
     let stats = state.stats.clone();
-    drop(state);
 
     if let Some(ref budget) = deps.budget {
         budget.log_status();

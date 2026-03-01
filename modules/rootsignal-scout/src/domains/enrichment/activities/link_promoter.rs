@@ -13,7 +13,7 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, Source
 use crate::infra::util::sanitize_url;
 
 /// A link discovered during scraping, used by `promote_links` to create new sources.
-#[derive(Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CollectedLink {
     pub url: String,
     pub discovered_on: String,

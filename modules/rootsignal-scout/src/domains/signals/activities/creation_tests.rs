@@ -54,7 +54,6 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         node_id,
         PendingNode {
             node,
-            embedding: vec![0.1; TEST_EMBEDDING_DIM],
             content_hash: "abc123".to_string(),
             resource_tags: vec![],
             signal_tags: vec!["legal".to_string()],

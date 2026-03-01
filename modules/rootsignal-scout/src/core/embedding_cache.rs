@@ -6,7 +6,7 @@
 use rootsignal_common::types::NodeType;
 use uuid::Uuid;
 
-pub(crate) struct EmbeddingCache {
+pub struct EmbeddingCache {
     entries: std::sync::RwLock<Vec<CacheEntry>>,
 }
 

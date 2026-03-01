@@ -14,10 +14,10 @@ use seesaw_core::{events, handle, handlers, on_any, AnyEvent, Context, Events, H
 use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
 
 use crate::core::engine::ScoutEngineDeps;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
 
 #[handlers]
@@ -42,6 +42,8 @@ pub mod handlers {
                 } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
                     (e.event_type_str(), e.to_persist_payload())
                 } else if let Some(e) = event.downcast_ref::<EnrichmentEvent>() {
+                    (e.event_type_str(), e.to_persist_payload())
+                } else if let Some(e) = event.downcast_ref::<PipelineEvent>() {
                     (e.event_type_str(), e.to_persist_payload())
                 } else if let Some(e) = event.downcast_ref::<WorldEvent>() {
                     (e.event_type().to_string(), Event::World(e.clone()).to_payload())
@@ -68,28 +70,7 @@ pub mod handlers {
         Ok(events![])
     }
 
-    /// Priority-1 handler: apply every event to the shared PipelineState.
-    ///
-    /// Replaces the old `ScoutReducer::reduce()` call in the dispatch loop.
-    /// The aggregate's `apply()` method handles all state transitions.
-    #[handle(on_any, id = "state_updater", priority = 1)]
-    async fn apply_to_aggregate(
-        event: AnyEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> anyhow::Result<()> {
-        if let Some(e) = event.downcast_ref::<SignalEvent>() {
-            let mut state = ctx.deps().state.write().await;
-            state.apply_signal(e);
-        } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
-            let mut state = ctx.deps().state.write().await;
-            state.apply_discovery(e);
-        } else if let Some(e) = event.downcast_ref::<ScrapeEvent>() {
-            let mut state = ctx.deps().state.write().await;
-            state.apply_scrape(e);
-        }
-        // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
-        Ok(())
-    }
+    // Priority-1: aggregate state — handled automatically by seesaw aggregators.
 
     /// Priority-2 handler: project events to Neo4j graph.
     ///

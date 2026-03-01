@@ -10,6 +10,7 @@ use tracing::info;
 
 use rootsignal_graph::GraphStore;
 
+use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{BootstrapResult, EmptyRequest, TaskRequest};
@@ -87,7 +88,8 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
 
-                let sources = engine.deps().state.read().await.stats.sources_discovered;
+                let state = engine.singleton::<PipelineState>();
+                let sources = state.stats.sources_discovered;
                 Ok(sources)
             })
             .await

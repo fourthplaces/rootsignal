@@ -60,7 +60,7 @@ pub struct ScrapeOutput {
 }
 
 /// Direct stat mutations accumulated during scraping.
-#[derive(Default)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StatsDelta {
     pub social_media_posts: u32,
     pub discovery_posts_found: u32,
@@ -84,6 +84,25 @@ impl ScrapeOutput {
     /// Take events out, leaving the state-update portion.
     pub fn take_events(&mut self) -> Events {
         std::mem::take(&mut self.events)
+    }
+
+    /// Convert into a PipelineEvent + separated domain events.
+    ///
+    /// Takes ownership and splits into:
+    /// 1. Domain events (SignalsExtracted, etc.) for handler dispatch
+    /// 2. A PipelineEvent::ScrapeAccumulated carrying the state mutation data
+    pub fn into_pipeline_event(mut self) -> (Events, crate::core::pipeline_events::PipelineEvent) {
+        let events = self.take_events();
+        let pe = crate::core::pipeline_events::PipelineEvent::ScrapeAccumulated {
+            url_mappings: self.url_mappings,
+            source_signal_counts: self.source_signal_counts,
+            pub_dates: self.pub_dates,
+            collected_links: self.collected_links,
+            expansion_queries: self.expansion_queries,
+            query_api_errors: self.query_api_errors,
+            stats_delta: self.stats_delta,
+        };
+        (events, pe)
     }
 
     /// Merge another ScrapeOutput into this one.

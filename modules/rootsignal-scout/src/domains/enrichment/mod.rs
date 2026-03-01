@@ -8,6 +8,7 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 
 use rootsignal_graph::GraphReader;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::enrichment::events::EnrichmentEvent;
@@ -81,7 +82,7 @@ pub mod handlers {
         };
 
         let consumed_pin_ids = {
-            let state = deps.state.read().await;
+            let (_, state) = ctx.singleton::<PipelineState>();
             state
                 .scheduled
                 .as_ref()
@@ -123,7 +124,7 @@ pub mod handlers {
         };
         let graph = GraphReader::new(graph_client.clone());
 
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         let all_sources = state
             .scheduled
             .as_ref()
@@ -131,7 +132,6 @@ pub mod handlers {
             .unwrap_or_default();
         let source_signal_counts = state.source_signal_counts.clone();
         let query_api_errors = state.query_api_errors.clone();
-        drop(state);
 
         let metric_events = activities::compute_source_metrics(
             &graph,

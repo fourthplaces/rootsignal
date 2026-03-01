@@ -9,6 +9,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
+use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{EmptyRequest, ScrapeResult, TaskRequest};
@@ -86,7 +87,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
 
-                let state = engine.deps().state.read().await;
+                let state = engine.singleton::<PipelineState>();
                 let budget = engine
                     .deps()
                     .budget

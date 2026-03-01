@@ -9,8 +9,10 @@ use tracing::info;
 
 use rootsignal_graph::GraphReader;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use crate::domains::discovery::activities::{bootstrap, discover_sources_mid_run};
@@ -47,7 +49,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         let events = bootstrap::seed_sources_if_empty(&state, deps).await?;
         Ok(events)
     }
@@ -58,13 +60,11 @@ pub mod handlers {
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let deps = ctx.deps();
-        let state = deps.state.read().await;
+        let (_, state) = ctx.singleton::<PipelineState>();
         if state.collected_links.is_empty() {
             return Ok(events![]);
         }
         let links = state.collected_links.clone();
-        drop(state);
 
         let promoted = link_promoter::promote_links(&links, &PromotionConfig::default());
         if promoted.is_empty() {
@@ -115,13 +115,13 @@ pub mod handlers {
         )
         .await;
 
-        // Stash social topics for response scrape
-        if !output.social_topics.is_empty() {
-            let mut state = deps.state.write().await;
-            state.social_topics = output.social_topics;
-        }
-
+        // Emit social topics as event instead of direct state write
         let mut all_events = output.events;
+        if !output.social_topics.is_empty() {
+            all_events.push(PipelineEvent::SocialTopicsCollected {
+                topics: output.social_topics,
+            });
+        }
         all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::MidRunDiscovery,
         });

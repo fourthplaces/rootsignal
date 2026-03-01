@@ -16,9 +16,9 @@ use rootsignal_common::ScoutScope;
 use rootsignal_events::EventStore as RsEventStore;
 use rootsignal_graph::{GraphClient, GraphProjector};
 use sqlx::PgPool;
-use tokio::sync::RwLock;
 
-use crate::core::aggregate::PipelineState;
+use crate::core::aggregate::pipeline_aggregators;
+use crate::core::embedding_cache::EmbeddingCache;
 use crate::core::projection;
 use crate::domains::{
     discovery, enrichment, expansion, lifecycle, scrape, signals, situation_weaving, supervisor,
@@ -38,9 +38,9 @@ pub struct ScoutEngineDeps {
     pub anthropic_api_key: Option<String>,
     pub graph_client: Option<GraphClient>,
     pub extractor: Option<Arc<dyn SignalExtractor>>,
+    /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
+    pub embed_cache: EmbeddingCache,
     // --- Engine infrastructure ---
-    /// Aggregate state — updated by the apply_to_aggregate handler via apply_* methods.
-    pub state: Arc<RwLock<PipelineState>>,
     /// Neo4j graph projector (None in tests).
     pub graph_projector: Option<GraphProjector>,
     /// Event persistence to rootsignal's Postgres event store (None in tests).
@@ -75,7 +75,7 @@ impl ScoutEngineDeps {
             anthropic_api_key: None,
             graph_client: None,
             extractor: None,
-            state: Arc::new(RwLock::new(PipelineState::default())),
+            embed_cache: EmbeddingCache::new(),
             graph_projector: None,
             event_store: None,
             run_id: run_id.into(),
@@ -103,6 +103,8 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
 
     let mut engine = seesaw_core::Engine::new(deps)
+        // Aggregators — PipelineState maintained by seesaw
+        .with_aggregators(pipeline_aggregators::aggregators())
         // Infrastructure handlers (priority 0–2)
         .with_handlers(projection::handlers::handlers())
         // Domain handlers
@@ -132,6 +134,8 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
 
     let mut engine = seesaw_core::Engine::new(deps)
+        // Aggregators — PipelineState maintained by seesaw
+        .with_aggregators(pipeline_aggregators::aggregators())
         // Infrastructure handlers (priority 0–2)
         .with_handlers(projection::handlers::handlers())
         // Domain handlers — scrape chain

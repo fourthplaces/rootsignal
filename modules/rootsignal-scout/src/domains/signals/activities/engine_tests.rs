@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
@@ -62,7 +63,6 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
 
     let pn = PendingNode {
         node,
-        embedding: vec![0.1; TEST_EMBEDDING_DIM],
         content_hash: "abc123".to_string(),
         resource_tags: vec![],
         signal_tags: vec!["legal".to_string()],
@@ -82,7 +82,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         .await
         .unwrap();
 
-    let state = engine.deps().state.read().await;
+    let state = engine.singleton::<PipelineState>();
 
     // Reducer counted the create
     assert_eq!(state.stats.signals_stored, 1);
@@ -131,7 +131,8 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
         .unwrap();
 
     // Reducer counted the dedup
-    assert_eq!(engine.deps().state.read().await.stats.signals_deduplicated, 1);
+    let state = engine.singleton::<PipelineState>();
+    assert_eq!(state.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
     // CrossSourceMatchDetected → CitationPublished + ObservationCorroborated + CorroborationScored
@@ -167,7 +168,8 @@ async fn same_source_reencountered_dispatches_citation_and_freshness() {
         .unwrap();
 
     // Reducer counted the dedup
-    assert_eq!(engine.deps().state.read().await.stats.signals_deduplicated, 1);
+    let state = engine.singleton::<PipelineState>();
+    assert_eq!(state.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
     // SameSourceReencountered → CitationPublished + FreshnessConfirmed
@@ -211,7 +213,7 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
         .await
         .unwrap();
 
-    let state = engine.deps().state.read().await;
+    let state = engine.singleton::<PipelineState>();
 
     // Reducer counted extraction + creation
     assert_eq!(state.stats.signals_extracted, 1);
@@ -273,7 +275,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
         .await
         .unwrap();
 
-    let state = engine.deps().state.read().await;
+    let state = engine.singleton::<PipelineState>();
 
     // Reducer counted extraction + dedup
     assert_eq!(state.stats.signals_extracted, 1);
@@ -307,22 +309,36 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         Some(mpls_region()),
     );
 
-    // Pre-populate collected links in engine state (simulates links found during scraping)
-    {
-        let mut state = engine.deps().state.write().await;
-        state
-            .collected_links
-            .push(CollectedLink {
-                url: "https://example.org/community".to_string(),
-                discovered_on: "https://localorg.org".to_string(),
-            });
-        state
-            .collected_links
-            .push(CollectedLink {
-                url: "https://another.org/events".to_string(),
-                discovered_on: "https://localorg.org".to_string(),
-            });
-    }
+    // Seed collected links via PipelineEvent (simulates links found during scraping)
+    use crate::core::pipeline_events::PipelineEvent;
+    use crate::domains::scrape::activities::scrape_phase::StatsDelta;
+    use std::collections::HashSet;
+
+    engine
+        .emit(PipelineEvent::ScrapeAccumulated {
+            url_mappings: HashMap::new(),
+            source_signal_counts: HashMap::new(),
+            pub_dates: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://example.org/community".to_string(),
+                    discovered_on: "https://localorg.org".to_string(),
+                },
+                CollectedLink {
+                    url: "https://another.org/events".to_string(),
+                    discovered_on: "https://localorg.org".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            query_api_errors: HashSet::new(),
+            stats_delta: StatsDelta::default(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    // Clear captured events from seeding so we only see link promotion events
+    captured.lock().unwrap().clear();
 
     // Dispatch LifecycleEvent::PhaseCompleted(TensionScrape) — link_promotion_handler fires
     engine
@@ -352,8 +368,9 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     );
 
     // Reducer cleared collected_links on LinksPromoted
+    let state = engine.singleton::<PipelineState>();
     assert!(
-        engine.deps().state.read().await.collected_links.is_empty(),
+        state.collected_links.is_empty(),
         "collected_links should be cleared after LinksPromoted"
     );
 }
