@@ -9,8 +9,8 @@ use rootsignal_graph::{
 use schemars::JsonSchema;
 use serde::{de, Deserialize};
 use tracing::{info, warn};
-
 use crate::scheduling::budget::{BudgetTracker, OperationCost};
+
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_CURIOSITY_QUERIES: usize = 12;
@@ -1949,3 +1949,4 @@ mod tests {
         );
     }
 }
+

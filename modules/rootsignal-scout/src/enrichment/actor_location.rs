@@ -14,6 +14,8 @@
 //! - Signals older than `max_age_days` are excluded.
 
 use chrono::{DateTime, Utc};
+use crate::core::events::ScoutEvent;
+use rootsignal_common::events::SystemEvent;
 
 /// A single signal location observation for triangulation.
 #[derive(Debug, Clone)]
@@ -119,8 +121,6 @@ pub async fn collect_actor_location_events(
         Vec<rootsignal_common::SourceNode>,
     )],
 ) -> Vec<crate::core::events::ScoutEvent> {
-    use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::SystemEvent;
 
     let mut events = Vec::new();
     for (actor, _sources) in actors {
@@ -214,3 +214,4 @@ pub async fn enrich_actor_locations(
     }
     updated
 }
+

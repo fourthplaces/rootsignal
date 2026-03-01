@@ -3,6 +3,8 @@
 use anyhow::Result;
 use clap::Subcommand;
 use devkit_core::AppContext;
+use dialoguer::Select;
+use dialoguer::{Input, Select};
 
 #[derive(Subcommand)]
 pub enum TestCommand {
@@ -242,7 +244,6 @@ fn run_random(ctx: &AppContext) -> Result<()> {
 
 /// Interactive test menu (called from the main interactive menu)
 pub fn interactive_menu(ctx: &AppContext) -> Result<()> {
-    use dialoguer::Select;
 
     let items = vec![
         "Scout integration (fixtures, ~$1-2) →",
@@ -270,7 +271,6 @@ pub fn interactive_menu(ctx: &AppContext) -> Result<()> {
 }
 
 fn scout_interactive(ctx: &AppContext) -> Result<()> {
-    use dialoguer::Select;
 
     let items = vec![
         "Run all 20 scenarios",
@@ -313,7 +313,6 @@ fn scout_interactive(ctx: &AppContext) -> Result<()> {
 }
 
 fn sim_interactive(ctx: &AppContext) -> Result<()> {
-    use dialoguer::Select;
 
     let items = vec![
         "Run all 8 scenarios",
@@ -351,7 +350,6 @@ fn sim_interactive(ctx: &AppContext) -> Result<()> {
 }
 
 fn evolve_interactive(ctx: &AppContext) -> Result<()> {
-    use dialoguer::{Input, Select};
 
     let presets = vec![
         "Quick (1 gen × 1 mut, ~$1)",
@@ -385,3 +383,4 @@ fn evolve_interactive(ctx: &AppContext) -> Result<()> {
 
     run_evolve(ctx, generations, mutations)
 }
+

@@ -15,13 +15,11 @@ use rootsignal_common::types::{
 };
 use tracing::{info, warn};
 use uuid::Uuid;
-
 use crate::enrichment::{files_needing_enrichment, EnrichmentJob, WorkflowDispatcher};
 use crate::error::{ArchiveError, Result};
 use crate::fetch_request::FetchRequest;
 use crate::router::Platform;
 use crate::store::Store;
-
 use crate::services::bluesky::BlueskyService;
 use crate::services::facebook::FacebookService;
 use crate::services::feed::FeedService;
@@ -31,6 +29,7 @@ use crate::services::reddit::RedditService;
 use crate::services::search::SearchService;
 use crate::services::tiktok::TikTokService;
 use crate::services::twitter::TwitterService;
+
 
 /// Internal shared state for the archive. Holds services + store.
 pub(crate) struct ArchiveInner {
@@ -1415,3 +1414,4 @@ mod google_docs_tests {
         assert!(google_docs_export_url("docs.google.com/document/d/").is_none());
     }
 }
+

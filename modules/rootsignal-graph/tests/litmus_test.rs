@@ -1,3 +1,11 @@
+use chrono::Utc;
+use uuid::Uuid;
+use rootsignal_common::events::{Event, Location, WorldEvent};
+use rootsignal_common::system_events::SystemEvent;
+use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
+use rootsignal_world::types::{Entity, EntityType, Reference};
+use rootsignal_events::StoredEvent;
+use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
 //! Integration tests for litmus-test scenarios.
 //!
 //! Validates datetime storage, keyword search, geo queries, source diversity,
@@ -9,15 +17,6 @@
 
 #![cfg(feature = "test-utils")]
 
-use chrono::Utc;
-use uuid::Uuid;
-
-use rootsignal_common::events::{Event, Location, WorldEvent};
-use rootsignal_common::system_events::SystemEvent;
-use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
-use rootsignal_world::types::{Entity, EntityType, Reference};
-use rootsignal_events::StoredEvent;
-use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
 
 /// Spin up a fresh Neo4j container and run migrations.
 async fn setup() -> (impl std::any::Any, GraphClient) {
@@ -4062,3 +4061,4 @@ async fn consolidate_resources_preserves_edge_properties() {
         "PREFERS confidence should be preserved"
     );
 }
+

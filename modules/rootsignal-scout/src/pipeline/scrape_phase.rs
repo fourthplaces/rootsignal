@@ -27,9 +27,10 @@ use rootsignal_common::{
     canonical_value, is_web_query, scraping_strategy, ActorContext, DiscoveryMethod, Node,
     NodeType, Post, ScoutScope, ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
 };
+pub(crate) use crate::pipeline::state::PipelineState as RunContext;
+use rootsignal_common::events::SystemEvent;
 
 // RunContext retired — use PipelineState from crate::pipeline::state instead.
-pub(crate) use crate::pipeline::state::PipelineState as RunContext;
 
 // ---------------------------------------------------------------------------
 // ScrapeOutput — accumulated output from a scrape phase
@@ -1553,7 +1554,6 @@ impl ScrapePhase {
         url: &str,
         now: DateTime<Utc>,
     ) -> Result<Vec<ScoutEvent>> {
-        use rootsignal_common::events::SystemEvent;
 
         let all_ids = self.store.signal_ids_for_url(url).await?;
         if all_ids.is_empty() {
@@ -2383,3 +2383,4 @@ mod tests {
         assert!(!is_owned_source(&ScrapingStrategy::WebQuery));
     }
 }
+

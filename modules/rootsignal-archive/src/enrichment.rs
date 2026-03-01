@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use rootsignal_common::types::ArchiveFile;
+use base64::Engine;
 
 /// A single file to be enriched with extracted text.
 #[derive(Debug, Clone)]
@@ -71,7 +72,6 @@ impl RestateDispatcher {
 #[async_trait]
 impl WorkflowDispatcher for RestateDispatcher {
     async fn enrich(&self, jobs: Vec<EnrichmentJob>) -> Result<()> {
-        use base64::Engine;
 
         // Derive workflow key from sorted file IDs (idempotent)
         let mut ids: Vec<String> = jobs.iter().map(|j| j.file_id.to_string()).collect();
@@ -251,3 +251,4 @@ mod tests {
         assert!(ids.is_empty());
     }
 }
+

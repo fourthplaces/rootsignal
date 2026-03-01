@@ -11,6 +11,7 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::pipeline::state::ExtractedBatch;
 use crate::testing::*;
+use chrono::Utc;
 
 /// Helper: collect event variant names from captured events.
 fn event_names(captured: &Arc<std::sync::Mutex<Vec<ScoutEvent>>>) -> Vec<String> {
@@ -376,7 +377,6 @@ async fn link_promotion_skips_when_no_links() {
 
 #[tokio::test]
 async fn actor_location_emits_events_on_response_complete() {
-    use chrono::Utc;
 
     let store = Arc::new(MockSignalReader::new());
 
@@ -463,3 +463,4 @@ async fn actor_location_emits_events_on_response_complete() {
         "expected ActorEnrichmentCompleted, got: {names:?}"
     );
 }
+

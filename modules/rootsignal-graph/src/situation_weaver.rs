@@ -27,9 +27,9 @@ use rootsignal_common::{
     Clarity, DispatchNode, DispatchType, ScoutScope, SensitivityLevel, SituationArc, SituationNode,
     TextEmbedder,
 };
-
 use crate::writer::GraphWriter;
 use crate::GraphClient;
+
 
 /// Cosine similarity between two vectors.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
@@ -1064,3 +1064,4 @@ mod tests {
         );
     }
 }
+

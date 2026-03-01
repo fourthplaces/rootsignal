@@ -18,13 +18,12 @@ use rootsignal_common::{
     SourceRole, TensionNode, Urgency,
 };
 use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
-
 use rootsignal_archive::Archive;
-
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::events::ScoutEvent;
 use crate::pipeline::extractor::ResourceTag;
+
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
@@ -1151,3 +1150,4 @@ mod tests {
         assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 }
+

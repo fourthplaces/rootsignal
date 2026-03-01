@@ -9,8 +9,8 @@ use rootsignal_common::{
     TensionResponse, Urgency, CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS,
     GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-
 use crate::GraphClient;
+
 
 /// Read-only wrapper for the graph. Used by the web server.
 /// Enforces sensitivity-based coordinate fuzzing, confidence thresholds,
@@ -2228,3 +2228,4 @@ fn row_to_dispatch(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::Di
         fidelity_score,
     })
 }
+

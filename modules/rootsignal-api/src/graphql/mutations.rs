@@ -13,11 +13,10 @@ use rootsignal_common::{
 };
 use rootsignal_graph::GraphWriter;
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
-
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
-
 use super::context::AdminGuard;
+
 
 /// Rate limiter state shared via GraphQL context.
 pub struct RateLimiter(pub Mutex<std::collections::HashMap<IpAddr, Vec<Instant>>>);
@@ -824,3 +823,4 @@ mod tests {
         );
     }
 }
+

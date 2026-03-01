@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use tracing::info;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SocialPlatform, SourceNode, SourceRole};
+use crate::infra::util::sanitize_url;
 
 /// A link discovered during scraping, used by `promote_links` to create new sources.
 #[derive(Clone)]
@@ -39,7 +40,6 @@ const SKIP_EXTENSIONS: &[&str] = &[
     ".mp3", ".mp4",
 ];
 
-use crate::infra::util::sanitize_url;
 
 /// Extract all content-worthy URLs from a list of page links.
 ///
@@ -428,3 +428,4 @@ mod tests {
         );
     }
 }
+

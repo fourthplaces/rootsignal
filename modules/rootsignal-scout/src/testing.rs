@@ -1436,10 +1436,21 @@ pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
 pub fn test_engine_for_store(
     store: std::sync::Arc<dyn crate::traits::SignalReader>,
 ) -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+    test_engine_for_store_with_embedder(
+        store,
+        std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+    )
+}
+
+/// Create a test engine wired to the given store and embedder.
+pub fn test_engine_for_store_with_embedder(
+    store: std::sync::Arc<dyn crate::traits::SignalReader>,
+    embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
+) -> std::sync::Arc<crate::pipeline::ScoutEngine> {
     std::sync::Arc::new(crate::core::engine::build_engine(
         crate::core::engine::ScoutEngineDeps {
             store,
-            embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+            embedder,
             region: None,
             fetcher: None,
             anthropic_api_key: None,

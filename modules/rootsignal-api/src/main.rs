@@ -17,10 +17,29 @@ use tokio::sync::Mutex;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-
 use rootsignal_common::Config;
 use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphWriter, PublicGraphReader};
 use twilio::TwilioService;
+use graphql::context::AuthContext;
+use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
+use graphql::{build_schema, ApiSchema};
+use jwt::JwtService;
+use restate_client::RestateClient;
+use rootsignal_archive::workflows::enrichment::{
+EnrichmentWorkflow, EnrichmentWorkflowImpl,
+};
+use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
+use rootsignal_scout::workflows::full_run::{
+FullScoutRunWorkflow, FullScoutRunWorkflowImpl,
+};
+use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
+use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
+use rootsignal_scout::workflows::situation_weaver::{
+SituationWeaverWorkflow, SituationWeaverWorkflowImpl,
+};
+use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
+use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
+
 
 mod db;
 mod graphql;
@@ -28,11 +47,6 @@ mod jwt;
 mod link_preview;
 mod restate_client;
 
-use graphql::context::AuthContext;
-use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
-use graphql::{build_schema, ApiSchema};
-use jwt::JwtService;
-use restate_client::RestateClient;
 
 pub struct AppState {
     pub schema: ApiSchema,
@@ -252,20 +266,6 @@ async fn main() -> Result<()> {
                 .expect("Invalid Restate identity key");
         }
 
-        use rootsignal_archive::workflows::enrichment::{
-            EnrichmentWorkflow, EnrichmentWorkflowImpl,
-        };
-        use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
-        use rootsignal_scout::workflows::full_run::{
-            FullScoutRunWorkflow, FullScoutRunWorkflowImpl,
-        };
-        use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
-        use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
-        use rootsignal_scout::workflows::situation_weaver::{
-            SituationWeaverWorkflow, SituationWeaverWorkflowImpl,
-        };
-        use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
-        use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
 
         let archive_deps = Arc::new(rootsignal_archive::workflows::ArchiveDeps {
             pg_pool: scout_deps.pg_pool.clone(),
@@ -454,3 +454,4 @@ async fn register_with_restate(admin_url: String, self_url: String, auth_token: 
         }
     }
 }
+

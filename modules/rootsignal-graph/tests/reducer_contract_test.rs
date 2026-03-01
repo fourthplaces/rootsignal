@@ -886,3 +886,4 @@ fn classification_lists_cover_expected_count() {
          Did you add a new event variant without updating both?"
     );
 }
+

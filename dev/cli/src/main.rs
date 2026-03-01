@@ -8,6 +8,8 @@ use devkit_core::AppContext;
 use std::process::ExitCode;
 
 mod cmd;
+use dialoguer::FuzzySelect;
+use dialoguer::Select;
 
 #[derive(Parser)]
 #[command(name = "dev")]
@@ -150,7 +152,6 @@ fn cmd_doctor(ctx: &AppContext) -> Result<()> {
 }
 
 fn interactive_menu(ctx: &AppContext) -> Result<()> {
-    use dialoguer::FuzzySelect;
 
     let items = vec![
         "🐳 Docker →",
@@ -181,7 +182,6 @@ fn interactive_menu(ctx: &AppContext) -> Result<()> {
 }
 
 fn docker_submenu(ctx: &AppContext) -> Result<()> {
-    use dialoguer::Select;
 
     let items = vec![
         "Start services",
@@ -261,3 +261,4 @@ fn docker_submenu(ctx: &AppContext) -> Result<()> {
         _ => Ok(()),
     }
 }
+

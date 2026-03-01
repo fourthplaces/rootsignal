@@ -10,8 +10,8 @@ use rootsignal_common::types::{
     ArchiveFile, ArchivedFeed, ArchivedPage, ArchivedSearchResults, FeedItem, LongVideo, Post,
     SearchResult, ShortVideo, Source, Story,
 };
-
 use crate::error::Result;
+
 
 #[derive(Clone)]
 pub(crate) struct Store {
@@ -727,3 +727,4 @@ impl Store {
         }))
     }
 }
+

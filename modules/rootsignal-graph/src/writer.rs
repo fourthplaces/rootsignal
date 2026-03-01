@@ -10,8 +10,10 @@ use rootsignal_common::{
     ScoutTaskSource, ScoutTaskStatus, SourceNode, SourceRole, FRESHNESS_MAX_DAYS,
     GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-
 use crate::GraphClient;
+use std::collections::HashMap;
+pub use format_datetime_pub as memgraph_datetime_pub;
+
 
 /// Write-side wrapper for the graph. Used by scout only.
 #[derive(Clone)]
@@ -828,7 +830,6 @@ impl GraphWriter {
 
         // Bucket by truncated lat/lng (~5km grid cells)
         // Using 0.05 degree resolution ≈ 5km
-        use std::collections::HashMap;
         let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
         for sig in &signals {
             let lat_cell = (sig.2 / 0.05).round() as i64;
@@ -4252,7 +4253,6 @@ pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
 }
 
 // Backwards-compatible aliases
-pub use format_datetime_pub as memgraph_datetime_pub;
 
 /// Parse a datetime string back into a DateTime<Utc>.
 /// Returns None for empty strings or parse failures.
@@ -4897,3 +4897,4 @@ mod tests {
         assert_eq!(hub.category.as_deref(), Some("housing"));
     }
 }
+

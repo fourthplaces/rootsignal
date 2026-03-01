@@ -7,9 +7,9 @@ pub use types::{
     InstagramScraperInput, RedditPost, RedditScraperInput, RunData, StartUrl, TikTokPost,
     TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor, TweetScraperInput, TweetSearchInput,
 };
-
 use serde::de::DeserializeOwned;
 use types::ApiResponse;
+
 
 const BASE_URL: &str = "https://api.apify.com/v2";
 
@@ -567,3 +567,4 @@ impl ApifyClient {
         Ok(tweets)
     }
 }
+

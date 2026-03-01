@@ -10,6 +10,18 @@ use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;
+use crate::core::events::{PipelineEvent, ScoutEvent};
+use crate::domains::signals::events::SignalEvent;
+use crate::enrichment::link_promoter::{self, PromotionConfig};
+use rootsignal_common::canonical_value;
+use chrono::TimeZone;
+use crate::enrichment::actor_location::enrich_actor_locations;
+use crate::traits::SignalReader;
+use chrono::Utc;
+use rootsignal_common::ActorType;
+use uuid::Uuid;
+use crate::core::events::ScoutEvent;
+use rootsignal_common::events::SystemEvent;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,12 +44,14 @@ async fn dispatch_events_with(
     events: Vec<crate::core::events::ScoutEvent>,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
-    _embedder: Option<std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>>,
+    embedder: Option<std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>>,
 ) {
-    use crate::core::events::{PipelineEvent, ScoutEvent};
-    use crate::domains::signals::events::SignalEvent;
 
-    let engine = test_engine_for_store(store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>);
+    let store_arc = store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>;
+    let engine = match embedder {
+        Some(e) => test_engine_for_store_with_embedder(store_arc, e),
+        None => test_engine_for_store(store_arc),
+    };
     for event in events {
         match event {
             ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
@@ -65,6 +79,28 @@ async fn dispatch_events_with(
     // Only stats — collected_links are written directly by run_web, not via events.
     let state = engine.deps().state.read().await;
     ctx.stats = state.stats.clone();
+}
+
+/// Take events from scrape output, apply state, and dispatch through engine.
+async fn scrape_and_dispatch(
+    output: crate::pipeline::scrape_phase::ScrapeOutput,
+    ctx: &mut RunContext,
+    store: &Arc<MockSignalReader>,
+) {
+    scrape_and_dispatch_with(output, ctx, store, None).await;
+}
+
+/// Take events from scrape output, apply state, and dispatch with custom embedder.
+async fn scrape_and_dispatch_with(
+    output: crate::pipeline::scrape_phase::ScrapeOutput,
+    ctx: &mut RunContext,
+    store: &Arc<MockSignalReader>,
+    embedder: Option<std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>>,
+) {
+    let mut output = output;
+    let events = output.take_events();
+    ctx.apply_scrape_output(output);
+    dispatch_events_with(events, ctx, store, embedder).await;
 }
 
 /// Build a CollectedLink for testing.
@@ -125,10 +161,8 @@ async fn page_with_content_produces_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1, "one signal should be created");
 }
@@ -168,10 +202,8 @@ async fn empty_page_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0);
 }
@@ -200,10 +232,8 @@ async fn unreachable_page_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 0);
 }
 
@@ -258,10 +288,8 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 3,
@@ -310,10 +338,8 @@ async fn same_title_extracted_twice_produces_one_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -372,10 +398,8 @@ async fn all_signals_stored_regardless_of_region() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -420,10 +444,8 @@ async fn blocked_url_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -466,10 +488,8 @@ async fn unchanged_content_is_not_re_extracted() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -524,10 +544,8 @@ async fn outbound_links_on_page_are_collected() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // javascript: links should be filtered out
     assert!(
@@ -546,7 +564,6 @@ async fn outbound_links_on_page_are_collected() {
 
 #[tokio::test]
 async fn discovered_links_become_new_sources() {
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
 
     let links = vec![
         link("https://localorg.org/events", "https://linktree.org"),
@@ -568,7 +585,6 @@ async fn discovered_links_become_new_sources() {
 
 #[tokio::test]
 async fn same_link_from_two_pages_becomes_one_source() {
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
 
     let links = vec![
         link("https://localorg.org/events", "https://page-a.org"),
@@ -592,7 +608,6 @@ async fn same_link_from_two_pages_becomes_one_source() {
 
 #[tokio::test]
 async fn link_promotion_stops_at_configured_cap() {
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
 
     let links: Vec<CollectedLink> = (0..10)
         .map(|i| link(&format!("https://site-{i}.org"), "https://source.org"))
@@ -610,7 +625,6 @@ async fn link_promotion_stops_at_configured_cap() {
 
 #[tokio::test]
 async fn scrape_then_promote_creates_new_sources() {
-    use crate::enrichment::link_promoter::{self, PromotionConfig};
 
     // Full flow: fetch page with links → run_web → collected_links → promote_links
 
@@ -653,10 +667,8 @@ async fn scrape_then_promote_creates_new_sources() {
     let mut log = run_log();
 
     // Step 1: run_web collects links
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
     assert!(!ctx.collected_links.is_empty(), "links should be collected");
 
     // Step 2: promote_links creates source nodes
@@ -702,10 +714,8 @@ async fn unreachable_page_produces_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "fetcher error → no signals");
 }
@@ -748,10 +758,8 @@ async fn page_with_no_extractable_content_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -800,10 +808,8 @@ async fn database_write_failure_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic even when store.create_node fails
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -851,10 +857,8 @@ async fn blocked_url_produces_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "blocked URL → zero signals");
 }
@@ -905,10 +909,8 @@ async fn all_signal_types_are_stored() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 3,
@@ -959,10 +961,8 @@ async fn unicode_and_emoji_titles_are_preserved() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 2);
 }
@@ -1005,10 +1005,8 @@ async fn signal_at_zero_zero_is_still_stored() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1044,10 +1042,8 @@ async fn broken_extraction_skips_page_gracefully() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1096,10 +1092,8 @@ async fn blank_author_name_does_not_create_actor() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1159,10 +1153,8 @@ async fn signal_with_resource_needs_gets_resource_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -1189,10 +1181,8 @@ async fn zero_sources_produces_nothing() {
     let mut log = run_log();
 
     // Should not panic with empty sources
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 0);
 }
 
@@ -1227,10 +1217,8 @@ async fn outbound_links_collected_despite_extraction_failure() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1274,10 +1262,8 @@ async fn empty_social_account_produces_nothing() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "zero posts → no signals");
 }
@@ -1311,10 +1297,8 @@ async fn image_only_posts_produce_no_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "text-less posts → no signals");
 }
@@ -1355,10 +1339,8 @@ async fn empty_markdown_page_still_collects_outbound_links() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1421,10 +1403,8 @@ async fn mixed_outcome_pages_each_handled_independently() {
     let mut ctx = RunContext::from_sources(&all);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1459,10 +1439,8 @@ async fn social_scrape_failure_does_not_crash() {
     let mut log = run_log();
 
     // Should not panic
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 0,
@@ -1513,10 +1491,8 @@ async fn batch_title_dedup_is_case_insensitive() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -1567,15 +1543,12 @@ async fn web_source_without_actor_stores_content_location_only() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 #[tokio::test]
 async fn signal_without_content_location_does_not_backfill_from_actor() {
-    use rootsignal_common::canonical_value;
 
     let ig_url = "https://www.instagram.com/localorg";
 
@@ -1625,15 +1598,12 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
     );
 
     let mut log = run_log();
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 #[tokio::test]
 async fn explicit_content_location_not_overwritten_by_actor() {
-    use rootsignal_common::canonical_value;
 
     let ig_url = "https://www.instagram.com/nycorg";
 
@@ -1683,10 +1653,8 @@ async fn explicit_content_location_not_overwritten_by_actor() {
     );
 
     let mut log = run_log();
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1698,7 +1666,6 @@ async fn explicit_content_location_not_overwritten_by_actor() {
 
 #[tokio::test]
 async fn new_actor_inherits_parent_depth_plus_one() {
-    use rootsignal_common::canonical_value;
 
     let ig_url = "https://www.instagram.com/depthorg";
 
@@ -1750,10 +1717,8 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     );
 
     let mut log = run_log();
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1801,10 +1766,8 @@ async fn bootstrap_actor_gets_depth_zero() {
     // No actor context — this is a bootstrap source
 
     let mut log = run_log();
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -1821,7 +1784,6 @@ async fn bootstrap_actor_gets_depth_zero() {
 
 #[tokio::test]
 async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
-    use chrono::TimeZone;
 
     let feed_url = "https://localorg.org/feed";
     let article_url = "https://localorg.org/article-1";
@@ -1876,15 +1838,12 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 #[tokio::test]
 async fn llm_published_at_not_overwritten_by_rss_pub_date() {
-    use chrono::TimeZone;
 
     let feed_url = "https://localorg.org/feed";
     let article_url = "https://localorg.org/article-2";
@@ -1944,15 +1903,12 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 #[tokio::test]
 async fn social_published_at_becomes_published_at_fallback() {
-    use chrono::TimeZone;
 
     let ig_url = "https://www.instagram.com/localorg";
     let post_date = chrono::Utc
@@ -1995,10 +1951,8 @@ async fn social_published_at_becomes_published_at_fallback() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -2052,10 +2006,8 @@ async fn ocean_coordinates_store_ecological_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -2108,10 +2060,8 @@ async fn antarctic_coordinates_store_signal() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2167,10 +2117,8 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
     let mut log = run_log();
 
     // Pipeline must not panic on absurd coordinates
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal is stored — we don't validate coordinate ranges at pipeline level.
     // Downstream display/query layers are responsible for geo-bounds checks.
@@ -2233,10 +2181,8 @@ async fn environmental_disaster_produces_all_signal_types() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 5,
@@ -2253,7 +2199,6 @@ async fn environmental_disaster_produces_all_signal_types() {
 
 #[tokio::test]
 async fn hallucinated_future_date_does_not_crash() {
-    use chrono::TimeZone;
 
     let fetcher = MockFetcher::new().on_page(
         "https://example.com/future-date",
@@ -2299,10 +2244,8 @@ async fn hallucinated_future_date_does_not_crash() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2312,7 +2255,6 @@ async fn hallucinated_future_date_does_not_crash() {
 
 #[tokio::test]
 async fn epoch_zero_date_does_not_crash() {
-    use chrono::TimeZone;
 
     let fetcher = MockFetcher::new().on_page(
         "https://example.com/epoch-date",
@@ -2354,10 +2296,8 @@ async fn epoch_zero_date_does_not_crash() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2411,10 +2351,8 @@ async fn extremely_long_title_survives_pipeline() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2486,10 +2424,8 @@ async fn same_signal_from_two_sources_corroborates() {
     let mut ctx = RunContext::from_sources(&[source_a.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1, "first source creates signal");
 
@@ -2499,10 +2435,8 @@ async fn same_signal_from_two_sources_corroborates() {
     let mut ctx2 = RunContext::from_sources(&[source_b.clone()]);
     let mut log2 = run_log();
 
-    let mut output = phase.run_web(&sources_b, &ctx2.url_to_canonical_key, &ctx2.actor_contexts, &log2).await;
-    let events = output.take_events();
-    ctx2.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx2, &store).await;
+    let output = phase.run_web(&sources_b, &ctx2.url_to_canonical_key, &ctx2.actor_contexts, &log2).await;
+    scrape_and_dispatch(output, &mut ctx2, &store).await;
 
     assert_eq!(
         ctx2.stats.signals_stored, 1,
@@ -2580,10 +2514,8 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -2636,10 +2568,8 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2694,10 +2624,8 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2744,10 +2672,8 @@ async fn aggregator_source_author_does_not_create_actor_node() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
     assert_eq!(ctx.stats.signals_stored, 1, "signal should still be stored");
 }
 
@@ -2794,10 +2720,8 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -2846,10 +2770,8 @@ async fn signal_has_produced_by_edge_to_its_source() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -2891,10 +2813,8 @@ async fn social_signal_has_produced_by_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -2906,11 +2826,6 @@ async fn social_signal_has_produced_by_edge() {
 // The organ wires: query signals → triangulate → update actor location.
 // ---------------------------------------------------------------------------
 
-use crate::enrichment::actor_location::enrich_actor_locations;
-use crate::traits::SignalReader;
-use chrono::Utc;
-use rootsignal_common::ActorType;
-use uuid::Uuid;
 
 type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>;
 
@@ -2945,8 +2860,6 @@ fn dispatched_location_name(
     captured: &CapturedEvents,
     actor_id: uuid::Uuid,
 ) -> Option<String> {
-    use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::SystemEvent;
     let events = captured.lock().unwrap();
     events.iter().find_map(|e| match e {
         ScoutEvent::System(SystemEvent::ActorLocationIdentified {
@@ -2963,8 +2876,6 @@ fn dispatched_location_coords(
     captured: &CapturedEvents,
     actor_id: uuid::Uuid,
 ) -> Option<(f64, f64)> {
-    use crate::core::events::ScoutEvent;
-    use rootsignal_common::events::SystemEvent;
     let events = captured.lock().unwrap();
     events.iter().find_map(|e| match e {
         ScoutEvent::System(SystemEvent::ActorLocationIdentified {
@@ -3623,10 +3534,8 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -3696,10 +3605,8 @@ async fn resource_roles_wire_to_correct_edge_types() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -3766,10 +3673,8 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
 }
@@ -3862,10 +3767,8 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
     let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events_with(events, &mut ctx, &store, Some(embedder)).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch_with(output, &mut ctx, &store, Some(embedder)).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 1,
@@ -3940,7 +3843,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
     let phase = ScrapePhase::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
+        embedder.clone(),
         Arc::new(fetcher),
         mpls_region(),
         "test-run".to_string(),
@@ -3952,10 +3855,8 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
     let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
-    let mut output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    scrape_and_dispatch_with(output, &mut ctx, &store, Some(embedder)).await;
 
     assert_eq!(
         ctx.stats.signals_stored, 2,
@@ -4031,12 +3932,10 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
     let mut log = run_log();
 
     let topics = vec!["legal clinic".to_string()];
-    let mut output = phase
+    let output = phase
         .discover_from_topics(&topics, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log)
         .await;
-    let events = output.take_events();
-    ctx.apply_scrape_output(output);
-    dispatch_events(events, &mut ctx, &store).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal-producing author's mentions should be collected
     let mention_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
@@ -4094,3 +3993,4 @@ async fn actor_bio_location_corroborated_by_signal_wins() {
         "bio location corroborated by signal should win"
     );
 }
+

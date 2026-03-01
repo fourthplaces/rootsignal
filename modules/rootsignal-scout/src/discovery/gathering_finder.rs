@@ -17,12 +17,11 @@ use rootsignal_common::{
     Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
-
 use rootsignal_archive::Archive;
-
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::pipeline::events::ScoutEvent;
+
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
@@ -1004,3 +1003,4 @@ mod tests {
         assert_eq!(loc.precision, GeoPrecision::Approximate);
     }
 }
+

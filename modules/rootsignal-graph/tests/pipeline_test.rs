@@ -1,3 +1,10 @@
+use chrono::Utc;
+use uuid::Uuid;
+use rootsignal_common::events::{Event, Location, SystemEvent, WorldEvent};
+use rootsignal_common::{ActorType, ChannelType, GeoPoint, GeoPrecision};
+use rootsignal_world::types::{Entity, EntityType, Reference};
+use rootsignal_events::StoredEvent;
+use rootsignal_graph::{query, BBox, GraphClient, Pipeline};
 //! End-to-end pipeline integration tests.
 //!
 //! These tests verify that events processed through the Pipeline
@@ -9,14 +16,6 @@
 
 #![cfg(feature = "test-utils")]
 
-use chrono::Utc;
-use uuid::Uuid;
-
-use rootsignal_common::events::{Event, Location, SystemEvent, WorldEvent};
-use rootsignal_common::{ActorType, ChannelType, GeoPoint, GeoPrecision};
-use rootsignal_world::types::{Entity, EntityType, Reference};
-use rootsignal_events::StoredEvent;
-use rootsignal_graph::{query, BBox, GraphClient, Pipeline};
 
 async fn setup() -> (impl std::any::Any, GraphClient) {
     rootsignal_graph::testutil::neo4j_container().await
@@ -359,3 +358,4 @@ async fn replay_produces_identical_graph() {
 
     assert_eq!(snap1, snap2, "Replay must produce identical graph state");
 }
+

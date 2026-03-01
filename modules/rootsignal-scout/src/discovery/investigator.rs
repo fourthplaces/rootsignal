@@ -16,6 +16,7 @@ use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 use crate::pipeline::events::ScoutEvent;
 
 use rootsignal_archive::Archive;
+use crate::infra::util;
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 15;
 const MAX_SIGNALS_INVESTIGATED: usize = 8;
@@ -465,7 +466,6 @@ fn extract_domain(url: &str) -> String {
         .unwrap_or_default()
 }
 
-use crate::infra::util;
 
 /// FNV-1a content hash — delegates to shared implementation in `util.rs`.
 fn content_hash(content: &str) -> u64 {
@@ -560,3 +560,4 @@ mod tests {
         );
     }
 }
+

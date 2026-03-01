@@ -14,11 +14,12 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::{
-    ActorType, ChannelType, DiscoveryMethod, DispatchType, Entity, EntityType, GeoPoint,
-    GeoPrecision, NodeType, SituationArc, SourceRole,
+ActorType, ChannelType, DiscoveryMethod, DispatchType, Entity, EntityType, GeoPoint,
+GeoPrecision, NodeType, SituationArc, SourceRole,
 };
 use serde_json::json;
 use uuid::Uuid;
+use rootsignal_common::events::{Location, Schedule};
 
 // =========================================================================
 // Reducer classification — which events produce graph changes?
@@ -362,7 +363,6 @@ fn corroboration_world_fact_has_no_scoring_fields() {
 
 #[test]
 fn scout_pipeline_event_chain_is_expressible() {
-    use rootsignal_common::events::{Location, Schedule};
 
     let scrape = Event::Telemetry(TelemetryEvent::UrlScraped {
         url: "https://lakestreetstories.com/events".into(),
@@ -1070,3 +1070,4 @@ fn classification_lists_cover_expected_count() {
          Did you add a new event variant without updating both?"
     );
 }
+

@@ -10,6 +10,7 @@ use std::pin::Pin;
 use tracing::warn;
 
 use crate::types::{AppendEvent, StoredEvent};
+use sqlx::Row;
 
 /// Column list used by all SELECT queries.
 const COLUMNS: &str = "seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id";
@@ -444,7 +445,6 @@ fn async_stream(
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredEvent {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> std::result::Result<Self, sqlx::Error> {
-        use sqlx::Row;
         Ok(StoredEvent {
             seq: row.try_get("seq")?,
             ts: row.try_get("ts")?,
@@ -482,3 +482,4 @@ impl EventStore {
         Ok(rows)
     }
 }
+

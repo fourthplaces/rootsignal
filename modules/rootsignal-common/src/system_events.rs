@@ -16,8 +16,8 @@ use crate::events::{
 };
 use crate::safety::SensitivityLevel;
 use crate::types::{
-    ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
-    Urgency,
+ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
+Urgency,
 };
 
 /// A system event — an editorial judgment Root Signal made about world facts.
@@ -458,3 +458,4 @@ impl SystemEvent {
         serde_json::from_value(payload.clone())
     }
 }
+

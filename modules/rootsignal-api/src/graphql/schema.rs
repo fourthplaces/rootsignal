@@ -16,6 +16,9 @@ use super::loaders::{
 use super::mutations::MutationRoot;
 use super::types::*;
 use crate::restate_client::RestateClient;
+use crate::db::scout_run::{EventRow, ScoutRunRow, StatsJson};
+use crate::jwt::JwtService;
+use rootsignal_common::Config;
 
 pub type ApiSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -1117,7 +1120,6 @@ struct GqlArchiveFile {
 
 // ========== Scout Run Types ==========
 
-use crate::db::scout_run::{EventRow, ScoutRunRow, StatsJson};
 
 /// GraphQL output type for a scout run.
 /// Events are loaded lazily — only queried when the client requests the `events` field.
@@ -1377,5 +1379,3 @@ pub fn build_schema(
         .finish()
 }
 
-use crate::jwt::JwtService;
-use rootsignal_common::Config;

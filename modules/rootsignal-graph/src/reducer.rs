@@ -20,8 +20,8 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::types::{NodeType, SourceNode};
 use rootsignal_events::StoredEvent;
-
 use crate::GraphClient;
+
 
 // ---------------------------------------------------------------------------
 // GraphProjector
@@ -2105,3 +2105,4 @@ fn severity_str(s: rootsignal_common::types::Severity) -> &'static str {
         rootsignal_common::types::Severity::Critical => "critical",
     }
 }
+

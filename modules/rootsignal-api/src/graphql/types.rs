@@ -3,21 +3,20 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-
 use async_graphql::dataloader::DataLoader;
 use async_graphql::{Context, Object, Result, SimpleObject, Union};
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::TimeZone;
 use uuid::Uuid;
-
 use rootsignal_common::{
-    ActorNode, AidNode, CitationNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
-    ScheduleNode, TagNode, TensionNode,
+ActorNode, AidNode, CitationNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
+ScheduleNode, TagNode, TensionNode,
 };
 use rootsignal_graph::CachedReader;
-
 use super::loaders::{
-    ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader, TagsBySituationLoader,
+ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader, TagsBySituationLoader,
 };
+
 
 // --- GraphQL Enums ---
 
@@ -262,7 +261,6 @@ impl GqlSchedule {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<DateTime<Utc>>> {
-        use chrono::TimeZone;
 
         // Cap window at 365 days
         let max_window = chrono::Duration::days(365);
@@ -1257,3 +1255,4 @@ impl GqlScoutTask {
         }
     }
 }
+

@@ -11,11 +11,11 @@ use uuid::Uuid;
 use rootsignal_common::{
     ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse, CONFIDENCE_DISPLAY_LIMITED,
 };
-
 use crate::reader::{
-    extract_citation, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label,
+extract_citation, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label,
 };
 use crate::GraphClient;
+
 
 /// In-memory snapshot of all displayable signals, actors, and relationships.
 /// Signals are pre-fuzzed at load time. Expiry filtering is NOT pre-applied — it runs
@@ -363,3 +363,4 @@ async fn load_situation_tag_edges(
     }
     Ok(edges)
 }
+

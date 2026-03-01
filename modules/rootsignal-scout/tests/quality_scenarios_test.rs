@@ -507,3 +507,4 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         q_b.confidence
     );
 }
+

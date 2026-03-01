@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use client::ClaudeClient;
 use types::*;
+use base64::Engine;
 
 // =============================================================================
 // Claude Agent
@@ -130,7 +131,6 @@ impl Claude {
         mime_type: &str,
         prompt: &str,
     ) -> Result<String> {
-        use base64::Engine;
 
         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
         let source = ImageSource {
@@ -192,3 +192,4 @@ mod tests {
         assert_eq!(ai.base_url, Some("https://custom.api.com".to_string()));
     }
 }
+

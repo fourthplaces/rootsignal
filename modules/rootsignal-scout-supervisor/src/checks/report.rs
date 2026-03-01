@@ -4,13 +4,13 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
 use tracing::{info, warn};
+use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdict};
 
 /// Root data directory, controlled by `DATA_DIR` env var (default: `"data"`).
 fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()))
 }
 
-use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdict};
 
 // =============================================================================
 // Data dump
@@ -188,3 +188,4 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}…", &s[..max - 1])
     }
 }
+

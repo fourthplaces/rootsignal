@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::writer::GraphWriter;
 use crate::GraphClient;
+use neo4rs::query;
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper {
@@ -117,7 +118,6 @@ impl ResponseMapper {
         &self,
         tension_embedding: &[f64],
     ) -> Result<Vec<(Uuid, f64)>, neo4rs::Error> {
-        use neo4rs::query;
 
         let mut candidates = Vec::new();
 
@@ -156,7 +156,6 @@ impl ResponseMapper {
 
     /// Get basic info about a signal for LLM verification.
     async fn get_signal_info(&self, id: Uuid) -> Result<Option<SignalInfo>, neo4rs::Error> {
-        use neo4rs::query;
 
         for label in &["Tension", "Need", "Aid", "Gathering"] {
             let q = query(&format!(
@@ -229,3 +228,4 @@ impl std::fmt::Display for ResponseMappingStats {
         Ok(())
     }
 }
+

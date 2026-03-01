@@ -18,8 +18,8 @@ use rootsignal_common::{
     FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
 use rootsignal_graph::{DuplicateMatch, GraphWriter};
-
 use crate::traits::SignalReader;
+
 
 /// Read-only SignalReader backed by Neo4j via GraphWriter.
 pub struct EventSourcedReader {
@@ -817,3 +817,4 @@ mod tests {
         }
     }
 }
+

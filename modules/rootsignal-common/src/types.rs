@@ -2008,3 +2008,4 @@ mod tests {
         assert_eq!(format!("{}", ScrapingStrategy::Rss), "rss");
     }
 }
+

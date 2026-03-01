@@ -1,3 +1,4 @@
+pub use rootsignal_common::content_hash;
 // Shared utility functions and constants for the scout module.
 //
 // These were consolidated from duplicate implementations across scout.rs,
@@ -28,7 +29,6 @@ pub const TENSION_CATEGORIES: &str =
 environment, social, governance, immigration, civil_rights, other";
 
 // Re-export content_hash from common for backwards compatibility within scout.
-pub use rootsignal_common::content_hash;
 
 /// Cosine similarity between two f64 vectors. Returns 0.0 for zero-norm inputs.
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
@@ -188,3 +188,4 @@ mod tests {
         assert!(!clean.contains("utm_source"));
     }
 }
+

@@ -10,6 +10,7 @@ use rootsignal_common::{
     AidNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta, NoticeNode,
     ReviewStatus, ScheduleNode, SensitivityLevel, Severity, TensionNode, Urgency,
 };
+use serde::de;
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -132,7 +133,6 @@ fn deserialize_signals<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de;
     let value = serde_json::Value::deserialize(deserializer)?;
     match value {
         serde_json::Value::Array(_) => serde_json::from_value(value).map_err(de::Error::custom),
@@ -1118,3 +1118,4 @@ mod tests {
         );
     }
 }
+

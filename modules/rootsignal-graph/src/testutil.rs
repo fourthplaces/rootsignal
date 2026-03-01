@@ -5,8 +5,9 @@ use testcontainers::{
     runners::AsyncRunner,
     ContainerAsync, GenericImage, ImageExt,
 };
-
 use crate::GraphClient;
+pub use neo4j_container as memgraph_container;
+
 
 const TEST_PASSWORD: &str = "testpassword";
 
@@ -66,4 +67,4 @@ pub async fn neo4j_container() -> (Box<dyn std::any::Any + Send>, GraphClient) {
 }
 
 /// Backwards-compatible alias.
-pub use neo4j_container as memgraph_container;
+

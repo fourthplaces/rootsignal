@@ -1,3 +1,5 @@
+use uuid::Uuid;
+use rootsignal_graph::{query, GraphClient, GraphWriter};
 //! Integration tests for get_sources_for_region filtering.
 //!
 //! Verifies that:
@@ -11,9 +13,6 @@
 
 #![cfg(feature = "test-utils")]
 
-use uuid::Uuid;
-
-use rootsignal_graph::{query, GraphClient, GraphWriter};
 
 async fn setup() -> (impl std::any::Any, GraphClient) {
     rootsignal_graph::testutil::neo4j_container().await
@@ -221,3 +220,4 @@ async fn source_with_signal_outside_region_excluded() {
         "Source with signals only in Miami should not appear in Minneapolis region"
     );
 }
+

@@ -1,3 +1,6 @@
+use chrono::Utc;
+use uuid::Uuid;
+use rootsignal_graph::{enrich, query, GraphClient};
 //! Integration tests for enrichment passes.
 //!
 //! These tests verify that compute_diversity and compute_actor_stats
@@ -9,10 +12,6 @@
 
 #![cfg(feature = "test-utils")]
 
-use chrono::Utc;
-use uuid::Uuid;
-
-use rootsignal_graph::{enrich, query, GraphClient};
 
 async fn setup() -> (impl std::any::Any, GraphClient) {
     rootsignal_graph::testutil::neo4j_container().await
@@ -380,3 +379,4 @@ async fn cause_heat_not_written_for_signals_outside_bbox() {
         "signal outside bbox should have no cause_heat, got {heat:?}"
     );
 }
+

@@ -10,8 +10,8 @@ use rootsignal_common::types::{
     ArchivedFeed, ArchivedPage, ArchivedSearchResults, Post, SearchResult,
 };
 use simweb::SimulatedWeb;
-
 use crate::traits::ContentFetcher;
+
 
 #[async_trait]
 impl ContentFetcher for SimulatedWeb {
@@ -208,3 +208,4 @@ mod tests {
         assert_eq!(id, "community.bsky.social");
     }
 }
+
