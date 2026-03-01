@@ -18,8 +18,10 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphStore, ResponseHeuristic};
 use rootsignal_archive::Archive;
+use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
+use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
 
@@ -697,8 +699,8 @@ impl<'a> GatheringFinder<'a> {
         let node_id = node.meta().unwrap().id;
 
         // Collect world event + system events for causal chain dispatch
-        let world_event = crate::store::event_sourced::node_to_world_event(&node);
-        let system_events = crate::store::event_sourced::node_system_events(&node);
+        let world_event = node_to_world_event(&node);
+        let system_events = node_system_events(&node);
 
         events.push(world_event);
         for se in system_events {
@@ -804,10 +806,7 @@ impl<'a> GatheringFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::domains::discovery::activities::source_finder::initial_weight_for_method(
-                DiscoveryMethod::GapAnalysis,
-                Some("unmet_tension"),
-            ),
+            weight: initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,

@@ -19,6 +19,8 @@ use rootsignal_graph::{GraphStore, SituationBrief, TensionLinkerOutcome, Tension
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::TENSION_CATEGORIES;
+use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
 
@@ -142,7 +144,7 @@ Extract the tensions discovered in the investigation. For each tension:
 
 If the signal is self-explanatory (not curious), set curious=false and provide a skip_reason. \
 Return at most 3 tensions. Only include tensions you have evidence for.",
-        crate::infra::util::TENSION_CATEGORIES,
+        TENSION_CATEGORIES,
     )
 }
 
@@ -513,8 +515,8 @@ impl<'a> TensionLinker<'a> {
         let node = Node::Tension(tension_node);
 
         // Collect world event + system events for causal chain dispatch
-        let world_event = crate::store::event_sourced::node_to_world_event(&node);
-        let system_events = crate::store::event_sourced::node_system_events(&node);
+        let world_event = node_to_world_event(&node);
+        let system_events = node_system_events(&node);
 
         events.push(world_event);
         for se in system_events {

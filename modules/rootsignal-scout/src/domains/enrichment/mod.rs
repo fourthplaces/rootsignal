@@ -35,7 +35,7 @@ pub mod handlers {
 
     /// PhaseCompleted(ResponseScrape) → enrich actor locations from signal evidence.
     #[handle(on = LifecycleEvent, id = "enrichment:actor_location", filter = is_response_scrape_completed)]
-    async fn actor_location(
+    async fn enrich_actor_locations(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -50,7 +50,7 @@ pub mod handlers {
         }
 
         let mut all_events =
-            activities::actor_location::collect_actor_location_events(&*deps.store, &actors).await;
+            activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await;
         let count = all_events.len();
         if count == 0 {
             return Ok(events![]);
@@ -64,7 +64,7 @@ pub mod handlers {
     /// PhaseCompleted(ResponseScrape) → delete pins, actor extraction, embedding + metric enrichment,
     /// emit PhaseCompleted(ActorEnrichment).
     #[handle(on = LifecycleEvent, id = "enrichment:post_scrape", filter = is_response_scrape_completed)]
-    async fn signal_enrichment(
+    async fn enrich_signals(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -108,7 +108,7 @@ pub mod handlers {
 
     /// PhaseCompleted(ActorEnrichment) → update source weights/cadence, emit MetricsCompleted.
     #[handle(on = LifecycleEvent, id = "enrichment:metrics", filter = is_actor_enrichment_completed)]
-    async fn source_weight(
+    async fn update_source_weights(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

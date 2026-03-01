@@ -9,6 +9,7 @@ use rootsignal_graph::GraphStore;
 
 use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
+use crate::domains::discovery::activities::source_finder::SourceFinder;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::RunLogger;
 use self::expansion::{Expansion, ExpansionOutput};
@@ -41,7 +42,7 @@ pub async fn expand_and_discover(
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
     let expansion_queries = state.expansion_queries.clone();
-    let expansion_output = expansion.expand_queries_to_sources(expansion_queries, run_log).await;
+    let expansion_output = expansion.generate_expansion_sources(expansion_queries, run_log).await;
 
     let mut collected_events = Events::new();
     if !expansion_output.sources.is_empty() {
@@ -52,7 +53,7 @@ pub async fn expand_and_discover(
     }
 
     // End-of-run discovery
-    let end_discoverer = crate::domains::discovery::activities::source_finder::SourceFinder::new(
+    let end_discoverer = SourceFinder::new(
         writer,
         region_name,
         region_name,

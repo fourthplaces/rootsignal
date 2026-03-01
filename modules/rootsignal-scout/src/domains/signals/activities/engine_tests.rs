@@ -11,10 +11,12 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
-use crate::core::aggregate::ExtractedBatch;
+use crate::core::aggregate::{ExtractedBatch, PendingNode};
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::testing::*;
 use chrono::Utc;
 use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
+use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
 
 /// Helper: collect event variant names from captured events.
@@ -58,7 +60,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
     let node_id = node.id();
 
-    let pn = crate::core::aggregate::PendingNode {
+    let pn = PendingNode {
         node,
         embedding: vec![0.1; TEST_EMBEDDING_DIM],
         content_hash: "abc123".to_string(),
@@ -71,7 +73,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
     engine
         .emit(SignalEvent::NewSignalAccepted {
             node_id,
-            node_type: rootsignal_common::types::NodeType::Tension,
+            node_type: NodeType::Tension,
             title: "Free Legal Clinic".to_string(),
             source_url: "https://www.instagram.com/locallegalaid".to_string(),
             pending_node: Box::new(pn),
@@ -120,7 +122,7 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
     engine
         .emit(SignalEvent::CrossSourceMatchDetected {
             existing_id,
-            node_type: rootsignal_common::types::NodeType::Tension,
+            node_type: NodeType::Tension,
             source_url: "https://org-b.org/events".to_string(),
             similarity: 0.95,
         })
@@ -156,7 +158,7 @@ async fn same_source_reencountered_dispatches_citation_and_freshness() {
     engine
         .emit(SignalEvent::SameSourceReencountered {
             existing_id,
-            node_type: rootsignal_common::types::NodeType::Gathering,
+            node_type: NodeType::Gathering,
             source_url: "https://example.org".to_string(),
             similarity: 1.0,
         })
@@ -243,7 +245,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
     // Pre-populate: "Community Dinner" exists at same URL
     store.insert_signal(
         "Community Dinner",
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://example.org/events",
     );
     let (engine, captured) = test_engine_with_capture_for_store(
@@ -310,13 +312,13 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         let mut state = engine.deps().state.write().await;
         state
             .collected_links
-            .push(crate::domains::enrichment::activities::link_promoter::CollectedLink {
+            .push(CollectedLink {
                 url: "https://example.org/community".to_string(),
                 discovered_on: "https://localorg.org".to_string(),
             });
         state
             .collected_links
-            .push(crate::domains::enrichment::activities::link_promoter::CollectedLink {
+            .push(CollectedLink {
                 url: "https://another.org/events".to_string(),
                 discovered_on: "https://localorg.org".to_string(),
             });

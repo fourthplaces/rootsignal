@@ -13,7 +13,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
-use crate::domains::discovery::activities::bootstrap;
+use crate::domains::discovery::activities::{bootstrap, discover_sources_mid_run};
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_engine_started(e: &LifecycleEvent) -> bool {
@@ -106,7 +106,7 @@ pub mod handlers {
         };
         let writer = GraphStore::new(graph_client.clone());
 
-        let output = crate::domains::discovery::activities::discover_sources_mid_run(
+        let output = discover_sources_mid_run(
             &writer,
             &region.name,
             &*deps.embedder,

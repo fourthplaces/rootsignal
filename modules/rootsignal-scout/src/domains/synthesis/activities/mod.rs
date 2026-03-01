@@ -12,7 +12,7 @@ use std::sync::Arc;
 use seesaw_core::Events;
 use tracing::{info, warn};
 
-use rootsignal_graph::{GraphClient, GraphStore, SimilarityBuilder};
+use rootsignal_graph::{severity_inference::run_severity_inference, GraphClient, GraphStore, SimilarityBuilder};
 
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::infra::embedder::TextEmbedder;
@@ -241,7 +241,7 @@ pub async fn run_synthesis(
         region_owned.center_lng - lng_delta,
         region_owned.center_lng + lng_delta,
     );
-    match rootsignal_graph::severity_inference::run_severity_inference(
+    match run_severity_inference(
         writer, min_lat, max_lat, min_lng, max_lng,
     )
     .await

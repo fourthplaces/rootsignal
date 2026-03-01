@@ -7,7 +7,7 @@ pub mod link_promoter;
 pub mod quality;
 pub mod universe_check;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use tracing::{info, warn};
@@ -16,6 +16,7 @@ use uuid::Uuid;
 use rootsignal_common::SourceNode;
 use rootsignal_graph::{GraphClient, GraphStore};
 
+use crate::domains::scheduling::activities::metrics::Metrics;
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::SignalReader;
 
@@ -87,10 +88,10 @@ pub async fn update_source_weights(
     writer: &GraphStore,
     region_name: &str,
     all_sources: &[SourceNode],
-    source_signal_counts: &std::collections::HashMap<String, u32>,
+    source_signal_counts: &HashMap<String, u32>,
     query_api_errors: &HashSet<String>,
 ) -> seesaw_core::Events {
-    let metrics = crate::domains::scheduling::activities::metrics::Metrics::new(writer, region_name);
+    let metrics = Metrics::new(writer, region_name);
     metrics
         .update_weights_and_cadence(all_sources, source_signal_counts, query_api_errors, Utc::now())
         .await

@@ -6,6 +6,7 @@ pub mod source_finder;
 use tracing::info;
 
 use seesaw_core::Events;
+use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 use rootsignal_graph::GraphStore;
@@ -24,7 +25,7 @@ pub async fn discover_sources_mid_run(
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,
-    budget: &crate::domains::scheduling::activities::budget::BudgetTracker,
+    budget: &BudgetTracker,
 ) -> MidRunOutput {
     let discoverer = source_finder::SourceFinder::new(
         writer,

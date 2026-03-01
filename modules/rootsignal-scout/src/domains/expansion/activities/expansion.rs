@@ -10,6 +10,7 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphStore;
 use tracing::{info, warn};
 
+use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 
@@ -64,7 +65,7 @@ impl<'a> Expansion<'a> {
     /// 3. Return `ExpansionOutput` with new sources and stats
     ///
     /// Pure: takes expansion queries as input, returns output. No state mutation.
-    pub async fn expand_queries_to_sources(
+    pub async fn generate_expansion_sources(
         &self,
         expansion_queries: Vec<String>,
         run_log: &RunLogger,
@@ -148,10 +149,7 @@ impl<'a> Expansion<'a> {
                 cv,
                 None,
                 DiscoveryMethod::SignalExpansion,
-                crate::domains::discovery::activities::source_finder::initial_weight_for_method(
-                    DiscoveryMethod::SignalExpansion,
-                    None,
-                ),
+                initial_weight_for_method(DiscoveryMethod::SignalExpansion, None),
                 rootsignal_common::SourceRole::Response,
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );

@@ -19,8 +19,10 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphStore, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
+use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
+use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use crate::core::extractor::ResourceTag;
 
 
@@ -461,7 +463,7 @@ impl<'a> ResponseFinder<'a> {
         // Validate URLs: only keep responses whose URLs were actually visited
         // Clone the set and drop the MutexGuard before the async boundary so the
         // future remains Send (required by tokio::spawn / Restate workflows).
-        let visited: std::collections::HashSet<String> = {
+        let visited: HashSet<String> = {
             let guard = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
             guard.clone()
         };
@@ -753,8 +755,8 @@ impl<'a> ResponseFinder<'a> {
         let node_id = node.meta().unwrap().id;
 
         // Push world event + system events into caller's event collection
-        let world_event = crate::store::event_sourced::node_to_world_event(&node);
-        let system_events = crate::store::event_sourced::node_system_events(&node);
+        let world_event = node_to_world_event(&node);
+        let system_events = node_system_events(&node);
 
         events.push(world_event);
         for se in system_events {
@@ -921,8 +923,8 @@ impl<'a> ResponseFinder<'a> {
         let tension_id = node.meta().unwrap().id;
 
         // Push world event + system events into caller's event collection
-        let world_event = crate::store::event_sourced::node_to_world_event(&node);
-        let system_events = crate::store::event_sourced::node_system_events(&node);
+        let world_event = node_to_world_event(&node);
+        let system_events = node_system_events(&node);
 
         events.push(world_event);
         for se in system_events {
@@ -968,10 +970,7 @@ impl<'a> ResponseFinder<'a> {
             consecutive_empty_runs: 0,
             active: true,
             gap_context: Some(gap_context),
-            weight: crate::domains::discovery::activities::source_finder::initial_weight_for_method(
-                DiscoveryMethod::GapAnalysis,
-                Some("unmet_tension"),
-            ),
+            weight: initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
             cadence_hours: None,
             avg_signals_per_scrape: 0.0,
             quality_penalty: 1.0,

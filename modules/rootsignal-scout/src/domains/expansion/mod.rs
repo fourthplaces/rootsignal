@@ -12,6 +12,7 @@ use crate::core::events::PipelinePhase;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
+use crate::infra::run_log::RunLogger;
 
 fn is_metrics_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::MetricsCompleted)
@@ -46,14 +47,14 @@ pub mod handlers {
 
         let run_log = match deps.pg_pool.as_ref() {
             Some(pool) => {
-                crate::infra::run_log::RunLogger::new(
+                RunLogger::new(
                     deps.run_id.clone(),
                     region.name.clone(),
                     pool.clone(),
                 )
                 .await
             }
-            None => crate::infra::run_log::RunLogger::noop(),
+            None => RunLogger::noop(),
         };
 
         let expansion = Expansion::new(&writer, &*deps.embedder, &region.name);

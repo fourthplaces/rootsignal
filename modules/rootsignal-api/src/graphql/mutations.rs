@@ -222,12 +222,10 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::core::events::ScoutEvent::Pipeline(
-                rootsignal_scout::core::events::PipelineEvent::SourceDiscovered {
-                    source,
-                    discovered_by: "admin".into(),
-                },
-            ))
+            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourceDiscovered {
+                source,
+                discovered_by: "admin".into(),
+            })
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
@@ -445,12 +443,10 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::core::events::ScoutEvent::Pipeline(
-                rootsignal_scout::core::events::PipelineEvent::SourceDiscovered {
-                    source,
-                    discovered_by: "human_submission".into(),
-                },
-            ))
+            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourceDiscovered {
+                source,
+                discovered_by: "human_submission".into(),
+            })
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;

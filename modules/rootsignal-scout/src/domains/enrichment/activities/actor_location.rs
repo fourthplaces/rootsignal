@@ -113,7 +113,7 @@ const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 ///
 /// Returns the world events to emit — does NOT dispatch them.
 /// Used by the actor_location_handler to emit events through seesaw.
-pub async fn collect_actor_location_events(
+pub async fn triangulate_actor_location_events(
     store: &dyn crate::traits::SignalReader,
     actors: &[(
         rootsignal_common::ActorNode,
@@ -204,7 +204,7 @@ pub async fn enrich_actor_locations(
         Vec<rootsignal_common::SourceNode>,
     )],
 ) -> u32 {
-    let events = collect_actor_location_events(store, actors).await;
+    let events = triangulate_actor_location_events(store, actors).await;
     let mut updated = 0u32;
     for output in events.into_outputs() {
         if let Some(e) = output.value.downcast_ref::<SystemEvent>() {

@@ -12,6 +12,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::events::SignalEvent;
 use crate::core::aggregate::{ExtractedBatch, PipelineState};
 use crate::testing::*;
+use rootsignal_common::types::NodeType;
 
 fn test_deps(store: Arc<MockSignalReader>) -> ScoutEngineDeps {
     test_scout_deps(store as Arc<dyn crate::traits::SignalReader>)
@@ -111,7 +112,7 @@ async fn global_title_match_same_source_emits_reencountered() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://example.org/events",
     );
     let deps = test_deps(store);
@@ -152,7 +153,7 @@ async fn global_title_match_different_source_emits_cross_source_match() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://other-source.org/events",
     );
     let deps = test_deps(store);
@@ -298,7 +299,7 @@ async fn mixed_batch_emits_correct_verdicts() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Existing Event",
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://other-source.org",
     );
     let deps = test_deps(store);

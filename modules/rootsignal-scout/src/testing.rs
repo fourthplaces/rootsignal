@@ -9,7 +9,7 @@
 // Plus test helpers for constructing ScoutScope, SourceNode, NodeMeta etc.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -17,13 +17,17 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::canonical_value;
+use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeType,
-    Post, ReviewStatus, ScoutScope, SourceNode,
+    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeMeta,
+    NodeType, Post, ReviewStatus, ScoutScope, SourceNode,
 };
 use rootsignal_graph::DuplicateMatch;
 
+use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
 use crate::core::extractor::{ExtractionResult, SignalExtractor};
+use crate::infra::embedder::TextEmbedder;
+use RunLogger;
 use crate::traits::{ContentFetcher, SignalReader};
 
 // ---------------------------------------------------------------------------
@@ -901,7 +905,6 @@ impl SignalExtractor for MockExtractor {
 
 /// Create a Tension node with just a title (no location).
 pub fn tension(title: &str) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{NodeMeta, Severity, TensionNode};
     Node::Tension(TensionNode {
         meta: NodeMeta {
@@ -938,7 +941,6 @@ pub fn tension(title: &str) -> Node {
 
 /// Create a Tension node with a title and geographic coordinates.
 pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GeoPoint, NodeMeta, Severity, TensionNode};
     use rootsignal_common::GeoPrecision;
     Node::Tension(TensionNode {
@@ -980,7 +982,6 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Need node with just a title (no location).
 pub fn need(title: &str) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{NeedNode, NodeMeta, Urgency};
     Node::Need(NeedNode {
         meta: NodeMeta {
@@ -1018,7 +1019,6 @@ pub fn need(title: &str) -> Node {
 
 /// Create a Need node with a title and geographic coordinates.
 pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GeoPoint, NeedNode, NodeMeta, Urgency};
     use rootsignal_common::GeoPrecision;
     Node::Need(NeedNode {
@@ -1061,7 +1061,6 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Gathering node with just a title (no location).
 pub fn gathering(title: &str) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GatheringNode, NodeMeta};
     Node::Gathering(GatheringNode {
         meta: NodeMeta {
@@ -1100,7 +1099,6 @@ pub fn gathering(title: &str) -> Node {
 
 /// Create a Gathering node with a title and geographic coordinates.
 pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GatheringNode, GeoPoint, NodeMeta};
     use rootsignal_common::GeoPrecision;
     Node::Gathering(GatheringNode {
@@ -1144,7 +1142,6 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create an Aid node with just a title (no location).
 pub fn aid(title: &str) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{AidNode, NodeMeta};
     Node::Aid(AidNode {
         meta: NodeMeta {
@@ -1181,7 +1178,6 @@ pub fn aid(title: &str) -> Node {
 
 /// Create an Aid node with a title and geographic coordinates.
 pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{AidNode, GeoPoint, NodeMeta};
     use rootsignal_common::GeoPrecision;
     Node::Aid(AidNode {
@@ -1223,7 +1219,6 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create a Notice node with just a title (no location).
 pub fn notice(title: &str) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{NodeMeta, NoticeNode, Severity};
     Node::Notice(NoticeNode {
         meta: NodeMeta {
@@ -1261,7 +1256,6 @@ pub fn notice(title: &str) -> Node {
 
 /// Create a Notice node with a title and geographic coordinates.
 pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GeoPoint, NodeMeta, NoticeNode, Severity};
     use rootsignal_common::GeoPrecision;
     Node::Notice(NoticeNode {
@@ -1373,12 +1367,12 @@ pub fn test_post(text: &str) -> Post {
 }
 
 /// Create a default NodeMeta for testing.
-pub fn test_meta(source_url: &str) -> rootsignal_common::NodeMeta {
-    rootsignal_common::NodeMeta {
+pub fn test_meta(source_url: &str) -> NodeMeta {
+    NodeMeta {
         id: Uuid::new_v4(),
         title: String::new(),
         summary: String::new(),
-        sensitivity: rootsignal_common::safety::SensitivityLevel::General,
+        sensitivity: SensitivityLevel::General,
         confidence: 0.8,
         corroboration_count: 0,
         about_location: None,
@@ -1421,34 +1415,34 @@ pub fn archived_page(url: &str, markdown: &str) -> ArchivedPage {
 }
 
 /// Create a RunLogger for tests (encapsulates "test-run" and "Minneapolis").
-pub fn run_log() -> crate::infra::run_log::RunLogger {
-    crate::infra::run_log::RunLogger::noop()
+pub fn run_log() -> RunLogger {
+    RunLogger::noop()
 }
 
 /// Create a test engine with a dummy store, no event store, no projector.
-pub fn test_engine() -> std::sync::Arc<crate::core::engine::ScoutEngine> {
+pub fn test_engine() -> Arc<ScoutEngine> {
     test_engine_for_store(
-        std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
+        Arc::new(MockSignalReader::new()) as Arc<dyn SignalReader>,
     )
 }
 
 /// Create a test engine wired to the given store.
 pub fn test_engine_for_store(
-    store: std::sync::Arc<dyn crate::traits::SignalReader>,
-) -> std::sync::Arc<crate::core::engine::ScoutEngine> {
+    store: Arc<dyn SignalReader>,
+) -> Arc<ScoutEngine> {
     test_engine_for_store_with_embedder(
         store,
-        std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
     )
 }
 
 /// Create a test engine wired to the given store and embedder.
 pub fn test_engine_for_store_with_embedder(
-    store: std::sync::Arc<dyn crate::traits::SignalReader>,
-    embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
-) -> std::sync::Arc<crate::core::engine::ScoutEngine> {
-    std::sync::Arc::new(crate::core::engine::build_engine(
-        crate::core::engine::ScoutEngineDeps {
+    store: Arc<dyn SignalReader>,
+    embedder: Arc<dyn TextEmbedder>,
+) -> Arc<ScoutEngine> {
+    Arc::new(build_engine(
+        ScoutEngineDeps {
             store,
             embedder,
             region: None,
@@ -1456,7 +1450,7 @@ pub fn test_engine_for_store_with_embedder(
             anthropic_api_key: None,
             graph_client: None,
             extractor: None,
-            state: std::sync::Arc::new(tokio::sync::RwLock::new(
+            state: Arc::new(tokio::sync::RwLock::new(
                 crate::core::aggregate::PipelineState::default(),
             )),
             graph_projector: None,
@@ -1473,34 +1467,34 @@ pub fn test_engine_for_store_with_embedder(
 
 /// Create a test engine that captures all dispatched events for inspection.
 pub fn test_engine_with_capture() -> (
-    std::sync::Arc<crate::core::engine::ScoutEngine>,
-    std::sync::Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<ScoutEngine>,
+    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
     test_engine_with_capture_for_store(
-        std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
+        Arc::new(MockSignalReader::new()) as Arc<dyn SignalReader>,
         None,
     )
 }
 
 /// Create a test engine with capture, wired to the given store and optional region.
 pub fn test_engine_with_capture_for_store(
-    store: std::sync::Arc<dyn crate::traits::SignalReader>,
+    store: Arc<dyn SignalReader>,
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
-    std::sync::Arc<crate::core::engine::ScoutEngine>,
-    std::sync::Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<ScoutEngine>,
+    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
-    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let engine = std::sync::Arc::new(crate::core::engine::build_engine(
-        crate::core::engine::ScoutEngineDeps {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let engine = Arc::new(build_engine(
+        ScoutEngineDeps {
             store,
-            embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+            embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
             region,
             fetcher: None,
             anthropic_api_key: None,
             graph_client: None,
             extractor: None,
-            state: std::sync::Arc::new(tokio::sync::RwLock::new(
+            state: Arc::new(tokio::sync::RwLock::new(
                 crate::core::aggregate::PipelineState::default(),
             )),
             graph_projector: None,
@@ -1518,17 +1512,17 @@ pub fn test_engine_with_capture_for_store(
 
 /// Create a test ScoutEngineDeps with a given store (for activity-level tests).
 pub fn test_scout_deps(
-    store: std::sync::Arc<dyn crate::traits::SignalReader>,
-) -> crate::core::engine::ScoutEngineDeps {
-    crate::core::engine::ScoutEngineDeps {
+    store: Arc<dyn SignalReader>,
+) -> ScoutEngineDeps {
+    ScoutEngineDeps {
         store,
-        embedder: std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         region: None,
         fetcher: None,
         anthropic_api_key: None,
         graph_client: None,
         extractor: None,
-        state: std::sync::Arc::new(tokio::sync::RwLock::new(
+        state: Arc::new(tokio::sync::RwLock::new(
             crate::core::aggregate::PipelineState::default(),
         )),
         graph_projector: None,

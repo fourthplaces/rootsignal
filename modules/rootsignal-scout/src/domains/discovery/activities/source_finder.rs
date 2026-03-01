@@ -10,6 +10,7 @@ use schemars::JsonSchema;
 use serde::{de, Deserialize};
 use tracing::{info, warn};
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
+use crate::infra::embedder::TextEmbedder;
 
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
@@ -435,7 +436,7 @@ pub struct SourceFinder<'a> {
     region_name: String,
     claude: Option<Claude>,
     budget: &'a BudgetTracker,
-    embedder: Option<&'a dyn crate::infra::embedder::TextEmbedder>,
+    embedder: Option<&'a dyn TextEmbedder>,
 }
 
 /// Cosine similarity threshold for embedding-based query dedup.
@@ -468,7 +469,7 @@ impl<'a> SourceFinder<'a> {
     /// When set, new queries are embedded and checked against existing query
     /// embeddings before creation. Without an embedder, falls back to
     /// substring-based dedup only.
-    pub fn with_embedder(mut self, embedder: &'a dyn crate::infra::embedder::TextEmbedder) -> Self {
+    pub fn with_embedder(mut self, embedder: &'a dyn TextEmbedder) -> Self {
         self.embedder = Some(embedder);
         self
     }

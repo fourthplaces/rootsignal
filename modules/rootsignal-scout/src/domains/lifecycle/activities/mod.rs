@@ -5,10 +5,13 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use tracing::{info, warn};
 
+use rootsignal_common::events::SystemEvent;
+use rootsignal_common::types::NodeType;
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphStore;
 
 use crate::core::aggregate::{ScheduleOutput, ScheduledData};
+use crate::domains::scheduling::activities::scheduler::{schedule_web_queries, SourceScheduler};
 use crate::infra::util::sanitize_url;
 use crate::traits::SignalReader;
 
@@ -28,14 +31,14 @@ pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
     let mut stale = 0u64;
 
     for (signal_id, node_type, reason) in &expired {
-        events.push(rootsignal_common::events::SystemEvent::EntityExpired {
+        events.push(SystemEvent::EntityExpired {
             signal_id: *signal_id,
             node_type: *node_type,
             reason: reason.clone(),
         });
         match node_type {
-            rootsignal_common::types::NodeType::Gathering => gatherings += 1,
-            rootsignal_common::types::NodeType::Need => needs += 1,
+            NodeType::Gathering => gatherings += 1,
+            NodeType::Need => needs += 1,
             _ => stale += 1,
         }
     }
@@ -145,7 +148,7 @@ pub async fn schedule_sources(
 
     // Schedule sources
     let now_schedule = Utc::now();
-    let scheduler = crate::domains::scheduling::activities::scheduler::SourceScheduler::new();
+    let scheduler = SourceScheduler::new();
     let schedule = scheduler.schedule(&all_sources, now_schedule);
     let scheduled_keys: HashSet<String> = schedule
         .scheduled
@@ -169,7 +172,7 @@ pub async fn schedule_sources(
     );
 
     // Web query tiered scheduling
-    let wq_schedule = crate::domains::scheduling::activities::scheduler::schedule_web_queries(
+    let wq_schedule = schedule_web_queries(
         &all_sources,
         0,
         now_schedule,

@@ -12,8 +12,10 @@ use rootsignal_common::{canonical_value, ScheduleNode};
 use uuid::Uuid;
 
 use crate::core::extractor::ExtractionResult;
-use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
+use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapeOutput, ScrapePhase};
+use crate::infra::util::sanitize_url;
 use crate::testing::*;
+use crate::traits::SignalReader;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 
 async fn dispatch_events(
@@ -21,7 +23,7 @@ async fn dispatch_events(
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
 ) {
-    let engine = test_engine_for_store(store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>);
+    let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
     for output in events.into_outputs() {
         let _ = engine.emit_output(output).settled().await;
     }
@@ -33,7 +35,7 @@ async fn dispatch_events(
 
 /// Take events from scrape output, apply state, and dispatch through engine.
 async fn scrape_and_dispatch(
-    output: crate::domains::scrape::activities::scrape_phase::ScrapeOutput,
+    output: ScrapeOutput,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
 ) {
@@ -698,7 +700,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     );
 
     // run_web sanitizes the URL before checking — pre-populate with sanitized URL
-    let clean_url = crate::infra::util::sanitize_url(url);
+    let clean_url = sanitize_url(url);
     let store = Arc::new(MockSignalReader::new().with_processed_hash(&hash, &clean_url));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 

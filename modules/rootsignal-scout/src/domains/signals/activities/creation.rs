@@ -16,6 +16,7 @@ use seesaw_core::{events, Events};
 use uuid::Uuid;
 
 use crate::core::engine::ScoutEngineDeps;
+use crate::domains::signals::activities::dedup_utils::is_owned_source;
 use crate::domains::signals::events::SignalEvent;
 use crate::core::aggregate::PipelineState;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
@@ -24,7 +25,7 @@ use crate::store::event_sourced::{node_system_events, node_to_world_event};
 /// Emits World + System + Citation events, then triggers edge wiring via SignalCreated.
 ///
 /// Reads PendingNode from state (stashed by reducer). Pure — no state mutations.
-pub async fn emit_new_signal_events(
+pub async fn create_signal_events(
     node_id: Uuid,
     scrape_url: &str,
     state: &PipelineState,
@@ -83,7 +84,7 @@ pub async fn emit_new_signal_events(
 
 /// CrossSourceMatchDetected: cross-source match found.
 /// Emits citation, corroboration, and scoring events.
-pub async fn emit_corroboration_events(
+pub async fn create_corroboration_events(
     existing_id: Uuid,
     node_type: NodeType,
     source_url: &str,
@@ -123,7 +124,7 @@ pub async fn emit_corroboration_events(
 
 /// SameSourceReencountered: same-source re-encounter.
 /// Emits citation and freshness confirmation events.
-pub async fn emit_freshness_events(
+pub async fn create_freshness_events(
     existing_id: Uuid,
     node_type: NodeType,
     source_url: &str,
@@ -225,7 +226,7 @@ pub async fn wire_signal_edges(
 
     // Actor wiring — only for owned (social) sources
     let strategy = rootsignal_common::scraping_strategy(source_url);
-    if crate::domains::signals::activities::dedup_utils::is_owned_source(&strategy) {
+    if is_owned_source(&strategy) {
         if let Some(ref author_name) = ctx.author_name {
             let discovery_depth = state
                 .actor_contexts

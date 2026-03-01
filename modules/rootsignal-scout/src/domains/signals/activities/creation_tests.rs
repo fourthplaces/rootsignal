@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
+use rootsignal_common::types::NodeType;
 use seesaw_core::Events;
 use uuid::Uuid;
 
@@ -37,7 +38,7 @@ fn extract_events(events: Events) -> (Vec<WorldEvent>, Vec<SystemEvent>, Vec<Sig
 }
 
 // ---------------------------------------------------------------------------
-// emit_new_signal_events
+// create_signal_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -63,7 +64,7 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
     );
 
     let events =
-        super::creation::emit_new_signal_events(node_id, "https://localorg.org/events", &state, &deps)
+        super::creation::create_signal_events(node_id, "https://localorg.org/events", &state, &deps)
             .await
             .unwrap();
 
@@ -105,7 +106,7 @@ async fn missing_pending_node_returns_empty_events() {
     let state = PipelineState::new(HashMap::new());
     let bogus_id = Uuid::new_v4();
 
-    let events = super::creation::emit_new_signal_events(bogus_id, "https://example.org", &state, &deps)
+    let events = super::creation::create_signal_events(bogus_id, "https://example.org", &state, &deps)
         .await
         .unwrap();
 
@@ -114,7 +115,7 @@ async fn missing_pending_node_returns_empty_events() {
 }
 
 // ---------------------------------------------------------------------------
-// emit_corroboration_events
+// create_corroboration_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -123,10 +124,10 @@ async fn corroboration_emits_citation_world_and_system_events() {
     let deps = test_deps(store);
 
     let existing_id = Uuid::new_v4();
-    let node_type = rootsignal_common::types::NodeType::Tension;
+    let node_type = NodeType::Tension;
     let similarity = 0.92;
 
-    let events = super::creation::emit_corroboration_events(
+    let events = super::creation::create_corroboration_events(
         existing_id,
         node_type,
         "https://org-b.org/events",
@@ -168,7 +169,7 @@ async fn corroboration_emits_citation_world_and_system_events() {
 }
 
 // ---------------------------------------------------------------------------
-// emit_freshness_events
+// create_freshness_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -177,10 +178,10 @@ async fn refresh_emits_citation_and_freshness_confirmed() {
     let deps = test_deps(store);
 
     let existing_id = Uuid::new_v4();
-    let node_type = rootsignal_common::types::NodeType::Gathering;
+    let node_type = NodeType::Gathering;
 
     let events =
-        super::creation::emit_freshness_events(existing_id, node_type, "https://example.org", &deps)
+        super::creation::create_freshness_events(existing_id, node_type, "https://example.org", &deps)
             .await
             .unwrap();
 
@@ -227,7 +228,7 @@ async fn signal_stored_wires_tags_and_source_link() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://localorg.org/events",
         "localorg.org",
         &state,
@@ -289,7 +290,7 @@ async fn signal_stored_with_author_emits_actor_linked() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://instagram.com/northsidemutualaid",
         "instagram.com/northsidemutualaid",
         &state,
@@ -344,7 +345,7 @@ async fn blank_author_name_does_not_create_actor() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        rootsignal_common::types::NodeType::Tension,
+        NodeType::Tension,
         "https://example.org",
         "example.org",
         &state,
