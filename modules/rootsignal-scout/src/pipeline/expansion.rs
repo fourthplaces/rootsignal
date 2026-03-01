@@ -12,7 +12,24 @@ use tracing::{info, warn};
 
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
-use crate::pipeline::scrape_phase::RunContext;
+
+// ---------------------------------------------------------------------------
+// ExpansionOutput — accumulated output from the expansion stage
+// ---------------------------------------------------------------------------
+
+/// Accumulated output from the expansion stage.
+/// Replaces direct mutations to PipelineState during expansion.
+pub struct ExpansionOutput {
+    /// New WebQuery sources created from expansion queries.
+    pub sources: Vec<SourceNode>,
+    /// Social topics to queue for the social flywheel.
+    pub social_expansion_topics: Vec<String>,
+    /// Stats from the expansion stage.
+    pub expansion_deferred_expanded: u32,
+    pub expansion_queries_collected: u32,
+    pub expansion_sources_created: u32,
+    pub expansion_social_topics_queued: u32,
+}
 
 // --- Constants ---
 
@@ -44,29 +61,45 @@ impl<'a> Expansion<'a> {
     /// Run the expansion stage:
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
-    /// 3. Return new WebQuery SourceNodes for surviving queries
-    pub async fn run(&self, ctx: &mut RunContext, run_log: &RunLogger) -> Vec<SourceNode> {
+    /// 3. Return `ExpansionOutput` with new sources and stats
+    ///
+    /// Pure: takes expansion queries as input, returns output. No state mutation.
+    pub async fn run(
+        &self,
+        expansion_queries: Vec<String>,
+        run_log: &RunLogger,
+    ) -> ExpansionOutput {
+        let mut all_queries = expansion_queries;
+
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
+        let mut deferred_expanded = 0u32;
         match self.writer.get_recently_linked_signals_with_queries().await {
             Ok(deferred) => {
                 let deferred_count = deferred.len();
-                ctx.expansion_queries.extend(deferred);
+                all_queries.extend(deferred);
                 if deferred_count > 0 {
                     info!(
                         deferred = deferred_count,
                         "Deferred signal expansion queries collected"
                     );
                 }
-                ctx.stats.expansion_deferred_expanded = deferred_count as u32;
+                deferred_expanded = deferred_count as u32;
             }
             Err(e) => warn!(error = %e, "Failed to get deferred expansion queries"),
         }
 
-        ctx.stats.expansion_queries_collected = ctx.expansion_queries.len() as u32;
+        let queries_collected = all_queries.len() as u32;
 
-        if ctx.expansion_queries.is_empty() {
-            return Vec::new();
+        if all_queries.is_empty() {
+            return ExpansionOutput {
+                sources: Vec::new(),
+                social_expansion_topics: Vec::new(),
+                expansion_deferred_expanded: deferred_expanded,
+                expansion_queries_collected: 0,
+                expansion_sources_created: 0,
+                expansion_social_topics_queued: 0,
+            };
         }
 
         let existing = self
@@ -74,8 +107,7 @@ impl<'a> Expansion<'a> {
             .get_active_web_queries()
             .await
             .unwrap_or_default();
-        let deduped: Vec<String> = ctx
-            .expansion_queries
+        let deduped: Vec<String> = all_queries
             .iter()
             .filter(|q| {
                 !existing
@@ -136,26 +168,31 @@ impl<'a> Expansion<'a> {
                 }
             }
         }
-        ctx.stats.expansion_sources_created = sources.len() as u32;
+        let expansion_sources_created = sources.len() as u32;
 
         // Social expansion: route deduped queries as social topics too.
         // This creates the social flywheel — expansion from social-sourced
         // tensions stays in the social channel instead of always going web.
         let social_count = deduped.len().min(MAX_EXPANSION_SOCIAL_TOPICS);
-        ctx.social_expansion_topics
-            .extend(deduped[..social_count].iter().cloned());
-        ctx.stats.expansion_social_topics_queued = social_count as u32;
+        let social_expansion_topics = deduped[..social_count].to_vec();
 
         info!(
-            collected = ctx.expansion_queries.len(),
+            collected = queries_collected,
             created = sources.len(),
-            deferred = ctx.stats.expansion_deferred_expanded,
+            deferred = deferred_expanded,
             embedding_dupes = expansion_dupes_skipped,
             social_topics = social_count,
             "Signal expansion complete"
         );
 
-        sources
+        ExpansionOutput {
+            sources,
+            social_expansion_topics,
+            expansion_deferred_expanded: deferred_expanded,
+            expansion_queries_collected: queries_collected,
+            expansion_sources_created,
+            expansion_social_topics_queued: social_count as u32,
+        }
     }
 }
 

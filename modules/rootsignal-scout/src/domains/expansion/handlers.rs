@@ -1,14 +1,16 @@
 //! Seesaw handlers for the expansion domain.
+//!
+//! Thin wrapper that delegates to activity functions.
 
 use std::sync::Arc;
 
 use seesaw_core::{events, on, Context, Events, Handler};
-use tracing::info;
 
 use rootsignal_graph::GraphWriter;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::domains::expansion::activities;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::pipeline::expansion::Expansion;
 use crate::pipeline::scrape_phase::ScrapePhase;
@@ -51,64 +53,40 @@ pub fn expansion_handler() -> Handler<ScoutEngineDeps> {
                     None => crate::infra::run_log::RunLogger::noop(),
                 };
 
-                let mut state = std::mem::take(&mut *deps.state.write().await);
-
-                // Signal expansion — create sources from implied queries
                 let expansion = Expansion::new(&writer, &*deps.embedder, &region.name);
-                let expansion_sources = expansion.run(&mut state, &run_log).await;
+                let phase = ScrapePhase::new(
+                    deps.store.clone(),
+                    deps.extractor.as_ref().expect("extractor set").clone(),
+                    deps.embedder.clone(),
+                    deps.fetcher.as_ref().expect("fetcher set").clone(),
+                    region.clone(),
+                    deps.run_id.clone(),
+                );
 
-                let mut collected_events = Vec::new();
-                if !expansion_sources.is_empty() {
-                    collected_events.extend(ScrapePhase::register_sources_events(
-                        expansion_sources,
-                        "signal_expansion",
-                    ));
-                }
-
-                // End-of-run discovery
-                let end_discoverer = crate::discovery::source_finder::SourceFinder::new(
+                let state = deps.state.read().await;
+                let output = activities::expand_and_discover(
+                    &expansion,
+                    Some(&phase),
+                    &state,
                     &writer,
-                    &region.name,
                     &region.name,
                     deps.anthropic_api_key.as_deref(),
                     budget,
+                    &*deps.embedder,
+                    &run_log,
                 )
-                .with_embedder(&*deps.embedder);
-                let (end_stats, end_social_topics, end_sources) = end_discoverer.run().await;
-                if !end_sources.is_empty() {
-                    collected_events.extend(ScrapePhase::register_sources_events(
-                        end_sources,
-                        "source_finder",
-                    ));
-                }
-                if end_stats.actor_sources + end_stats.gap_sources > 0 {
-                    info!("{end_stats}");
-                }
+                .await;
+                drop(state);
 
-                // End-of-run topic discovery
-                if !end_social_topics.is_empty() {
-                    info!(
-                        count = end_social_topics.len(),
-                        "Consuming end-of-run social topics"
-                    );
-                    let phase = ScrapePhase::new(
-                        deps.store.clone(),
-                        deps.extractor.as_ref().expect("extractor set").clone(),
-                        deps.embedder.clone(),
-                        deps.fetcher.as_ref().expect("fetcher set").clone(),
-                        region.clone(),
-                        deps.run_id.clone(),
-                    );
-                    let topic_events = phase
-                        .discover_from_topics(&end_social_topics, &mut state, &run_log)
-                        .await;
-                    collected_events.extend(topic_events);
+                // Apply state updates
+                let mut state = deps.state.write().await;
+                state.apply_expansion_output(output.expansion);
+                if let Some(topic_scrape) = output.topic_scrape {
+                    state.apply_scrape_output(topic_scrape);
                 }
+                drop(state);
 
-                // Put state back
-                *deps.state.write().await = state;
-
-                Ok(Events::batch(collected_events).add(LifecycleEvent::PhaseCompleted {
+                Ok(Events::batch(output.events).add(LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::Expansion,
                 }))
             },

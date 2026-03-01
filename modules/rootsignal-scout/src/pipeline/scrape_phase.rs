@@ -32,6 +32,75 @@ use rootsignal_common::{
 pub(crate) use crate::pipeline::state::PipelineState as RunContext;
 
 // ---------------------------------------------------------------------------
+// ScrapeOutput — accumulated output from a scrape phase
+// ---------------------------------------------------------------------------
+
+/// Accumulated output from a scrape phase (web, social, or topic discovery).
+/// Replaces direct mutations to PipelineState during scraping.
+pub struct ScrapeOutput {
+    /// Events to emit (SignalsExtracted, FreshnessConfirmed, etc.)
+    pub events: Vec<ScoutEvent>,
+    /// New URL→canonical_key mappings discovered during this scrape.
+    pub url_mappings: HashMap<String, String>,
+    /// Per-source signal counts (canonical_key → count).
+    pub source_signal_counts: HashMap<String, u32>,
+    /// Canonical keys where the query API errored.
+    pub query_api_errors: HashSet<String>,
+    /// RSS/Atom pub_dates keyed by article URL.
+    pub pub_dates: HashMap<String, DateTime<Utc>>,
+    /// Links collected during scraping for promotion.
+    pub collected_links: Vec<CollectedLink>,
+    /// Expansion queries extracted from signals.
+    pub expansion_queries: Vec<String>,
+    /// Direct stat mutations not tracked through events.
+    pub stats_delta: StatsDelta,
+}
+
+/// Direct stat mutations accumulated during scraping.
+#[derive(Default)]
+pub struct StatsDelta {
+    pub social_media_posts: u32,
+    pub discovery_posts_found: u32,
+    pub discovery_accounts_found: u32,
+}
+
+impl ScrapeOutput {
+    pub fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            url_mappings: HashMap::new(),
+            source_signal_counts: HashMap::new(),
+            query_api_errors: HashSet::new(),
+            pub_dates: HashMap::new(),
+            collected_links: Vec::new(),
+            expansion_queries: Vec::new(),
+            stats_delta: StatsDelta::default(),
+        }
+    }
+
+    /// Take events out, leaving the state-update portion.
+    pub fn take_events(&mut self) -> Vec<ScoutEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Merge another ScrapeOutput into this one.
+    pub fn merge(&mut self, other: ScrapeOutput) {
+        self.events.extend(other.events);
+        self.url_mappings.extend(other.url_mappings);
+        for (k, v) in other.source_signal_counts {
+            *self.source_signal_counts.entry(k).or_default() += v;
+        }
+        self.query_api_errors.extend(other.query_api_errors);
+        self.pub_dates.extend(other.pub_dates);
+        self.collected_links.extend(other.collected_links);
+        self.expansion_queries.extend(other.expansion_queries);
+        self.stats_delta.social_media_posts += other.stats_delta.social_media_posts;
+        self.stats_delta.discovery_posts_found += other.stats_delta.discovery_posts_found;
+        self.stats_delta.discovery_accounts_found += other.stats_delta.discovery_accounts_found;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EmbeddingCache — in-memory cross-batch dedup
 // ---------------------------------------------------------------------------
 
@@ -333,20 +402,22 @@ impl ScrapePhase {
     }
 
     /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals.
-    /// Returns collected events (SignalsExtracted, FreshnessConfirmed, etc.) for seesaw to process.
+    /// Returns accumulated `ScrapeOutput` with events and state updates.
     ///
-    /// Mutates `ctx.url_to_canonical_key` (resolved WebQuery URLs are inserted so
-    /// scrape results can be attributed back to the originating query source).
-    ///
-    /// Query API errors are inserted into `ctx.query_api_errors`. These queries
-    /// should NOT be counted as empty scrapes — the query was never executed.
+    /// Pure: takes specific inputs, returns output. No state mutation.
     pub async fn run_web(
         &self,
         sources: &[&SourceNode],
-        ctx: &mut RunContext,
+        url_to_canonical_key: &HashMap<String, String>,
+        actor_contexts: &HashMap<String, ActorContext>,
         run_log: &RunLogger,
-    ) -> Vec<ScoutEvent> {
-        let mut collected_events: Vec<ScoutEvent> = Vec::new();
+    ) -> ScrapeOutput {
+        let mut output = ScrapeOutput::new();
+        // Local url_to_ck seeded from caller — handles read-after-write cycle
+        // (query resolution adds entries that store_signals_events reads later).
+        let mut url_to_ck = url_to_canonical_key.clone();
+        // Local pub_dates for RSS fallback within this invocation.
+        let mut local_pub_dates: HashMap<String, DateTime<Utc>> = HashMap::new();
         // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
@@ -402,11 +473,14 @@ impl ScrapePhase {
                         });
                         for r in &archived.results {
                             let clean = sanitize_url(&r.url);
-                            ctx.url_to_canonical_key
+                            url_to_ck
+                                .entry(clean.clone())
+                                .or_insert_with(|| canonical_key.clone());
+                            output.url_mappings
                                 .entry(clean)
                                 .or_insert_with(|| canonical_key.clone());
                         }
-                        ctx.source_signal_counts
+                        output.source_signal_counts
                             .entry(canonical_key.clone())
                             .or_default();
                         for r in archived.results {
@@ -415,7 +489,7 @@ impl ScrapePhase {
                     }
                     Err(e) => {
                         warn!(query_str, error = %e, "Web search failed");
-                        ctx.query_api_errors.insert(canonical_key);
+                        output.query_api_errors.insert(canonical_key);
                     }
                 }
             }
@@ -480,15 +554,19 @@ impl ScrapePhase {
                                 url: feed_url.clone(),
                                 items: archived.items.len() as u32,
                             });
-                            ctx.source_signal_counts
+                            output.source_signal_counts
                                 .entry(source.canonical_key.clone())
                                 .or_default();
                             for item in archived.items {
-                                ctx.url_to_canonical_key
+                                url_to_ck
+                                    .entry(item.url.clone())
+                                    .or_insert_with(|| source.canonical_key.clone());
+                                output.url_mappings
                                     .entry(item.url.clone())
                                     .or_insert_with(|| source.canonical_key.clone());
                                 if let Some(pub_date) = item.pub_date {
-                                    ctx.url_to_pub_date.insert(item.url.clone(), pub_date);
+                                    local_pub_dates.insert(item.url.clone(), pub_date);
+                                    output.pub_dates.insert(item.url.clone(), pub_date);
                                 }
                                 phase_urls.push(item.url);
                             }
@@ -523,7 +601,7 @@ impl ScrapePhase {
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         if phase_urls.is_empty() {
-            return collected_events;
+            return output;
         }
 
         // Scrape + extract in parallel
@@ -597,7 +675,6 @@ impl ScrapePhase {
 
         // Process results
         let now = Utc::now();
-        let known_urls = ctx.known_urls();
         let ck_to_source_id: HashMap<String, Uuid> = sources
             .iter()
             .map(|s| (s.canonical_key.clone(), s.id))
@@ -606,14 +683,13 @@ impl ScrapePhase {
             // Extract outbound links for promotion as new sources
             let discovered = link_promoter::extract_links(&page_links);
             for link_url in discovered {
-                ctx.collected_links.push(CollectedLink {
+                output.collected_links.push(CollectedLink {
                     url: link_url,
                     discovered_on: url.clone(),
                 });
             }
 
-            let ck = ctx
-                .url_to_canonical_key
+            let ck = url_to_ck
                 .get(&url)
                 .cloned()
                 .unwrap_or_else(|| url.clone());
@@ -639,7 +715,7 @@ impl ScrapePhase {
                         if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                             if let Some(meta) = node.meta() {
                                 implied_q_count += meta.implied_queries.len() as u32;
-                                ctx.expansion_queries
+                                output.expansion_queries
                                     .extend(meta.implied_queries.iter().cloned());
                             }
                         }
@@ -653,7 +729,7 @@ impl ScrapePhase {
                     });
 
                     // Apply RSS/Atom pub_date as fallback published_at
-                    if let Some(pub_date) = ctx.url_to_pub_date.get(&url) {
+                    if let Some(pub_date) = local_pub_dates.get(&url) {
                         for node in &mut nodes {
                             if let Some(meta) = node.meta_mut() {
                                 if meta.published_at.is_none() {
@@ -671,24 +747,25 @@ impl ScrapePhase {
                         resource_tags,
                         signal_tags,
                         &author_actors,
-                        ctx,
+                        &url_to_ck,
+                        actor_contexts,
                         source_id,
                     );
                     if !events.is_empty() {
-                        ctx.source_signal_counts.entry(ck).or_default();
+                        output.source_signal_counts.entry(ck).or_default();
                     }
-                    collected_events.extend(events);
+                    output.events.extend(events);
                 }
                 ScrapeOutcome::Unchanged => {
                     match self.refresh_url_signals_events(&url, now).await {
                         Ok(events) if !events.is_empty() => {
                             info!(url, refreshed = events.len(), "Refreshed unchanged signals");
-                            collected_events.extend(events);
+                            output.events.extend(events);
                         }
                         Ok(_) => {}
                         Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
                     }
-                    ctx.source_signal_counts.entry(ck).or_default();
+                    output.source_signal_counts.entry(ck).or_default();
                 }
                 ScrapeOutcome::Failed => {
                     run_log.log(EventKind::ScrapeUrl {
@@ -700,18 +777,19 @@ impl ScrapePhase {
                 }
             }
         }
-        collected_events
+        output
     }
 
     /// Scrape social media accounts, feed posts through LLM extraction.
-    /// Returns collected events for seesaw to process.
+    /// Returns accumulated `ScrapeOutput` with events and state updates.
     pub async fn run_social(
         &self,
         social_sources: &[&SourceNode],
-        ctx: &mut RunContext,
+        url_to_canonical_key: &HashMap<String, String>,
+        actor_contexts: &HashMap<String, ActorContext>,
         run_log: &RunLogger,
-    ) -> Vec<ScoutEvent> {
-        let mut collected_events: Vec<ScoutEvent> = Vec::new();
+    ) -> ScrapeOutput {
+        let mut output = ScrapeOutput::new();
         type SocialResult = Option<(
             String,
             String,
@@ -836,7 +914,7 @@ impl ScrapePhase {
         let actor_prefixes: HashMap<String, String> = accounts
             .iter()
             .filter_map(|(ck, _, _)| {
-                ctx.actor_contexts.get(ck).map(|ac| {
+                actor_contexts.get(ck).map(|ac| {
                     let mut prefix = format!(
                         "ACTOR CONTEXT: This content is from {}", ac.actor_name
                     );
@@ -1016,7 +1094,6 @@ impl ScrapePhase {
 
         let results: Vec<_> = stream::iter(futures).buffer_unordered(10).collect().await;
 
-        let known_urls = ctx.known_urls();
         let promotion_config = link_promoter::PromotionConfig::default();
         let ck_to_source_id: HashMap<String, Uuid> = social_sources
             .iter()
@@ -1051,7 +1128,7 @@ impl ScrapePhase {
             // Accumulate mentions as URLs for promotion (capped per source)
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
                 let mention_url = link_promoter::platform_url(&result_platform, &handle);
-                ctx.collected_links.push(CollectedLink {
+                output.collected_links.push(CollectedLink {
                     url: mention_url,
                     discovered_on: source_url.clone(),
                 });
@@ -1074,12 +1151,12 @@ impl ScrapePhase {
             for node in &nodes {
                 if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
                     if let Some(meta) = node.meta() {
-                        ctx.expansion_queries
+                        output.expansion_queries
                             .extend(meta.implied_queries.iter().cloned());
                     }
                 }
             }
-            ctx.stats.social_media_posts += post_count as u32;
+            output.stats_delta.social_media_posts += post_count as u32;
             let source_id = ck_to_source_id.get(&canonical_key).copied();
             let events = self.store_signals_events(
                 &source_url,
@@ -1088,13 +1165,14 @@ impl ScrapePhase {
                 resource_tags,
                 signal_tags,
                 &author_actors,
-                ctx,
+                url_to_canonical_key,
+                actor_contexts,
                 source_id,
             );
-            ctx.source_signal_counts.entry(canonical_key).or_default();
-            collected_events.extend(events);
+            output.source_signal_counts.entry(canonical_key).or_default();
+            output.events.extend(events);
         }
-        collected_events
+        output
     }
 
     /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
@@ -1102,10 +1180,11 @@ impl ScrapePhase {
     pub async fn discover_from_topics(
         &self,
         topics: &[String],
-        ctx: &mut RunContext,
+        url_to_canonical_key: &HashMap<String, String>,
+        actor_contexts: &HashMap<String, ActorContext>,
         run_log: &RunLogger,
-    ) -> Vec<ScoutEvent> {
-        let mut collected_events: Vec<ScoutEvent> = Vec::new();
+    ) -> ScrapeOutput {
+        let mut output = ScrapeOutput::new();
         const MAX_SOCIAL_SEARCHES: usize = 10;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
@@ -1113,12 +1192,12 @@ impl ScrapePhase {
         const SITE_SEARCH_RESULTS: usize = 5;
 
         if topics.is_empty() {
-            return collected_events;
+            return output;
         }
 
         info!(topics = ?topics, "Starting social topic discovery...");
 
-        let known_urls = ctx.known_urls();
+        let known_urls: HashSet<String> = url_to_canonical_key.keys().cloned().collect();
 
         // Load existing sources for dedup across all platforms
         let existing_sources = self.store.get_active_sources().await.unwrap_or_default();
@@ -1174,7 +1253,7 @@ impl ScrapePhase {
                 posts_found: discovered_posts.len() as u32,
             });
 
-            ctx.stats.discovery_posts_found += discovered_posts.len() as u32;
+            output.stats_delta.discovery_posts_found += discovered_posts.len() as u32;
 
             // Group posts by author
             let mut by_author: HashMap<String, Vec<&Post>> = HashMap::new();
@@ -1260,11 +1339,12 @@ impl ScrapePhase {
                     result.resource_tags,
                     result.signal_tags,
                     &author_actors,
-                    ctx,
+                    url_to_canonical_key,
+                    actor_contexts,
                     None,
                 );
                 let produced = events.len() as u32;
-                collected_events.extend(events);
+                output.events.extend(events);
 
                 // Only follow mentions from authors whose posts produced signals
                 if produced > 0 {
@@ -1272,7 +1352,7 @@ impl ScrapePhase {
                         for post in posts {
                             for handle in post.mentions.iter().take(5) {
                                 let mention_url = link_promoter::platform_url(sp, handle);
-                                ctx.collected_links.push(CollectedLink {
+                                output.collected_links.push(CollectedLink {
                                     url: mention_url,
                                     discovered_on: source_url.clone(),
                                 });
@@ -1303,7 +1383,7 @@ impl ScrapePhase {
                     )
                 };
 
-                *ctx.source_signal_counts.entry(ck).or_default() += produced;
+                *output.source_signal_counts.entry(ck).or_default() += produced;
 
                 new_sources.push(source);
                 new_accounts += 1;
@@ -1385,25 +1465,26 @@ impl ScrapePhase {
                         extracted.resource_tags,
                         extracted.signal_tags,
                         &author_actors,
-                        ctx,
+                        url_to_canonical_key,
+                        actor_contexts,
                         None,
                     );
-                    collected_events.extend(events);
+                    output.events.extend(events);
                 }
             }
         }
 
         // Collect source discovery events
         if !new_sources.is_empty() {
-            collected_events.extend(Self::register_sources_events(new_sources, "topic_discovery"));
+            output.events.extend(Self::register_sources_events(new_sources, "topic_discovery"));
         }
 
-        ctx.stats.discovery_accounts_found = new_accounts;
+        output.stats_delta.discovery_accounts_found = new_accounts;
         info!(
             topics = topics.len(),
             new_accounts, "Social topic discovery complete"
         );
-        collected_events
+        output
     }
 
     // -----------------------------------------------------------------------
@@ -1411,7 +1492,9 @@ impl ScrapePhase {
     // -----------------------------------------------------------------------
 
     /// Collect events for extracted signals (no dispatch).
-    /// Stashes ExtractedBatch in state and returns a SignalsExtracted event.
+    /// Returns a SignalsExtracted event wrapping an ExtractedBatch.
+    ///
+    /// Pure: reads from the provided maps, does not mutate any shared state.
     fn store_signals_events(
         &self,
         url: &str,
@@ -1420,19 +1503,19 @@ impl ScrapePhase {
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         signal_tags: Vec<(Uuid, Vec<String>)>,
         author_actors: &HashMap<Uuid, String>,
-        ctx: &mut RunContext,
+        url_to_canonical_key: &HashMap<String, String>,
+        actor_contexts: &HashMap<String, ActorContext>,
         source_id: Option<Uuid>,
     ) -> Vec<ScoutEvent> {
         let url = sanitize_url(url);
         let raw_count = nodes.len() as u32;
 
         // Score quality, populate from/about locations, remove Evidence nodes
-        let ck_for_fallback = ctx
-            .url_to_canonical_key
+        let ck_for_fallback = url_to_canonical_key
             .get(&url)
             .cloned()
             .unwrap_or_else(|| url.clone());
-        let actor_ctx = ctx.actor_contexts.get(&ck_for_fallback);
+        let actor_ctx = actor_contexts.get(&ck_for_fallback);
         let nodes = score_and_filter(nodes, &url, actor_ctx);
 
         if nodes.is_empty() {
@@ -1442,8 +1525,7 @@ impl ScrapePhase {
         // Layer 1: Within-batch dedup by (normalized_title, node_type)
         let nodes = batch_title_dedup(nodes);
 
-        let canonical_key = ctx
-            .url_to_canonical_key
+        let canonical_key = url_to_canonical_key
             .get(&url)
             .cloned()
             .unwrap_or_else(|| url.clone());

@@ -1,4 +1,6 @@
 //! Seesaw handlers for the discovery domain.
+//!
+//! Thin wrappers that delegate to activity functions.
 
 use std::sync::Arc;
 
@@ -12,7 +14,6 @@ use crate::core::events::{PipelinePhase, ScoutEvent};
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
 use crate::pipeline::handlers::bootstrap;
-use crate::pipeline::scrape_phase::ScrapePhase;
 
 /// EngineStarted → seed sources when the region has none.
 pub fn bootstrap_handler() -> Handler<ScoutEngineDeps> {
@@ -103,37 +104,23 @@ pub fn mid_run_handler() -> Handler<ScoutEngineDeps> {
                     }
                 };
                 let writer = GraphWriter::new(graph_client.clone());
-                let discoverer = crate::discovery::source_finder::SourceFinder::new(
+
+                let output = crate::domains::discovery::activities::discover_mid_run(
                     &writer,
                     &region.name,
-                    &region.name,
+                    &*deps.embedder,
                     deps.anthropic_api_key.as_deref(),
                     budget,
                 )
-                .with_embedder(&*deps.embedder);
-
-                let (stats, social_topics, sources) = discoverer.run().await;
-                if stats.actor_sources + stats.gap_sources > 0 {
-                    info!("{stats}");
-                }
-
-                let mut scout_events: Vec<ScoutEvent> = Vec::new();
-
-                // Register discovered sources
-                if !sources.is_empty() {
-                    scout_events.extend(ScrapePhase::register_sources_events(
-                        sources,
-                        "source_finder",
-                    ));
-                }
+                .await;
 
                 // Stash social topics for response scrape
-                if !social_topics.is_empty() {
+                if !output.social_topics.is_empty() {
                     let mut state = deps.state.write().await;
-                    state.social_topics = social_topics;
+                    state.social_topics = output.social_topics;
                 }
 
-                Ok(Events::batch(scout_events).add(LifecycleEvent::PhaseCompleted {
+                Ok(Events::batch(output.events).add(LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::MidRunDiscovery,
                 }))
             },

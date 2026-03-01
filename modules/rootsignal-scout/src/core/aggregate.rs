@@ -34,6 +34,15 @@ pub struct ScheduledData {
     pub consumed_pin_ids: Vec<Uuid>,
 }
 
+/// Accumulated output from the schedule phase.
+pub struct ScheduleOutput {
+    pub scheduled_data: ScheduledData,
+    pub actor_contexts: HashMap<String, ActorContext>,
+    pub url_mappings: HashMap<String, String>,
+    pub tension_count: u32,
+    pub response_count: u32,
+}
+
 /// Mutable state for a scout run, updated by the reducer.
 pub struct PipelineState {
     /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
@@ -343,6 +352,42 @@ impl PipelineState {
     }
 
     // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
+
+    // -----------------------------------------------------------------
+    // Apply accumulated outputs from pure activity functions
+    // -----------------------------------------------------------------
+
+    /// Apply accumulated scrape output to pipeline state.
+    pub fn apply_scrape_output(&mut self, output: crate::pipeline::scrape_phase::ScrapeOutput) {
+        self.url_to_canonical_key.extend(output.url_mappings);
+        for (k, v) in output.source_signal_counts {
+            *self.source_signal_counts.entry(k).or_default() += v;
+        }
+        self.query_api_errors.extend(output.query_api_errors);
+        self.url_to_pub_date.extend(output.pub_dates);
+        self.collected_links.extend(output.collected_links);
+        self.expansion_queries.extend(output.expansion_queries);
+        self.stats.social_media_posts += output.stats_delta.social_media_posts;
+        self.stats.discovery_posts_found += output.stats_delta.discovery_posts_found;
+        self.stats.discovery_accounts_found += output.stats_delta.discovery_accounts_found;
+    }
+
+    /// Apply accumulated expansion output to pipeline state.
+    pub fn apply_expansion_output(&mut self, output: crate::pipeline::expansion::ExpansionOutput) {
+        self.social_expansion_topics
+            .extend(output.social_expansion_topics);
+        self.stats.expansion_deferred_expanded = output.expansion_deferred_expanded;
+        self.stats.expansion_queries_collected = output.expansion_queries_collected;
+        self.stats.expansion_sources_created = output.expansion_sources_created;
+        self.stats.expansion_social_topics_queued = output.expansion_social_topics_queued;
+    }
+
+    /// Apply schedule output: stash scheduled data, actor contexts, URL mappings.
+    pub fn apply_schedule_output(&mut self, output: ScheduleOutput) {
+        self.actor_contexts.extend(output.actor_contexts);
+        self.url_to_canonical_key.extend(output.url_mappings);
+        self.scheduled = Some(output.scheduled_data);
+    }
 }
 
 
