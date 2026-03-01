@@ -25,7 +25,7 @@
 
 ## What's missing
 
-- Direct `GraphWriter` unit tests (methods were removed/refactored)
+- Direct `GraphStore` unit tests (methods were removed/refactored)
 - Schedule node creation and linking via graph layer
 - Long text / special character round-trip at the graph layer
 - Signal lint tests (`signal_lint_test.rs` deleted — `signal_lint.rs` and `lint_tools.rs` call

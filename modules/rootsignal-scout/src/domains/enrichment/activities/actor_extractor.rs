@@ -11,7 +11,6 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
-use crate::core::events::ScoutEvent;
 use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.
@@ -76,8 +75,8 @@ pub async fn run_actor_extraction(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> (ActorExtractorStats, Vec<ScoutEvent>) {
-    match run_actor_extraction_inner(
+) -> (ActorExtractorStats, seesaw_core::Events) {
+    match try_extract_actors(
         store,
         client,
         anthropic_api_key,
@@ -96,7 +95,7 @@ pub async fn run_actor_extraction(
     }
 }
 
-async fn run_actor_extraction_inner(
+async fn try_extract_actors(
     store: &dyn SignalReader,
     client: &GraphClient,
     anthropic_api_key: &str,

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use super::types::{EmptyRequest, NewsScanResult};
 use super::ScoutDeps;
@@ -43,7 +43,7 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 
         let result = ctx
             .run(|| async {
-                run_news_scan_from_deps(&deps)
+                scan_news(&deps)
                     .await
                     .map_err(|e| -> HandlerError { e.into() })
             })
@@ -76,9 +76,9 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 }
 
 /// Run a news scan using shared deps. Usable from both Restate and CLI.
-pub async fn run_news_scan_from_deps(deps: &ScoutDeps) -> anyhow::Result<NewsScanResult> {
+pub async fn scan_news(deps: &ScoutDeps) -> anyhow::Result<NewsScanResult> {
     let archive = super::create_archive(deps);
-    let writer = GraphWriter::new(deps.graph_client.clone());
+    let writer = GraphStore::new(deps.graph_client.clone());
 
     let scanner = crate::news_scanner::NewsScanner::new(
         archive,

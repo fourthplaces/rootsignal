@@ -8,7 +8,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
 
@@ -45,7 +45,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = GraphWriter::new(graph_client);
+            let writer = GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,

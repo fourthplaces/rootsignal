@@ -24,7 +24,7 @@ use crate::store::event_sourced::{node_system_events, node_to_world_event};
 /// Emits World + System + Citation events, then triggers edge wiring via SignalCreated.
 ///
 /// Reads PendingNode from state (stashed by reducer). Pure — no state mutations.
-pub async fn handle_create(
+pub async fn emit_new_signal_events(
     node_id: Uuid,
     scrape_url: &str,
     state: &PipelineState,
@@ -83,7 +83,7 @@ pub async fn handle_create(
 
 /// CrossSourceMatchDetected: cross-source match found.
 /// Emits citation, corroboration, and scoring events.
-pub async fn handle_corroborate(
+pub async fn emit_corroboration_events(
     existing_id: Uuid,
     node_type: NodeType,
     source_url: &str,
@@ -123,7 +123,7 @@ pub async fn handle_corroborate(
 
 /// SameSourceReencountered: same-source re-encounter.
 /// Emits citation and freshness confirmation events.
-pub async fn handle_refresh(
+pub async fn emit_freshness_events(
     existing_id: Uuid,
     node_type: NodeType,
     source_url: &str,
@@ -152,7 +152,7 @@ pub async fn handle_refresh(
 
 /// SignalCreated: wire edges (source, actor, resources, tags) via events.
 /// Reads WiringContext from state (stashed by reducer). Pure — no state mutations.
-pub async fn handle_signal_stored(
+pub async fn wire_signal_edges(
     node_id: Uuid,
     _node_type: NodeType,
     source_url: &str,
@@ -232,7 +232,7 @@ pub async fn handle_signal_stored(
                 .get(canonical_key)
                 .map(|ac| ac.discovery_depth + 1)
                 .unwrap_or(0);
-            events = handle_author_actor(
+            events = resolve_author_actor(
                 events,
                 node_id,
                 author_name,
@@ -250,7 +250,7 @@ pub async fn handle_signal_stored(
 
 /// Resolve author → Actor node on owned sources.
 /// Adds ActorIdentified + ActorLinkedToSource + ActorLinkedToSignal events to the collection.
-async fn handle_author_actor(
+async fn resolve_author_actor(
     mut events: Events,
     signal_id: Uuid,
     author_name: &str,

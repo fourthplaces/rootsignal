@@ -19,7 +19,7 @@ mod engine_tests {
     use super::events::{PipelineEvent, ScoutEvent};
 
     #[tokio::test]
-    async fn seesaw_engine_applies_state_via_state_updater() {
+    async fn seesaw_engine_applies_state_via_apply_to_aggregate() {
         let state = Arc::new(RwLock::new(PipelineState::default()));
         let deps = ScoutEngineDeps {
             store: Arc::new(crate::testing::MockSignalReader::new()),
@@ -52,6 +52,6 @@ mod engine_tests {
         assert!(result.is_ok(), "settled should succeed: {:?}", result.err());
 
         let s = state.read().await;
-        assert_eq!(s.stats.urls_scraped, 1, "state_updater should have incremented urls_scraped");
+        assert_eq!(s.stats.urls_scraped, 1, "apply_to_aggregate should have incremented urls_scraped");
     }
 }

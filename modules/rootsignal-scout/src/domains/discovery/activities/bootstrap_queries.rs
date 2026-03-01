@@ -8,12 +8,12 @@ use anyhow::Result;
 use tracing::info;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 /// Generate tension-seeded follow-up queries from existing tensions.
 /// For each tension, creates targeted search queries to find organizations helping.
 pub async fn tension_seed_queries(
-    writer: &GraphWriter,
+    writer: &GraphStore,
     region: &ScoutScope,
 ) -> Result<Vec<SourceNode>> {
     // Get existing tensions from the graph

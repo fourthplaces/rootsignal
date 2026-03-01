@@ -76,11 +76,11 @@ pub struct PipelineState {
     pub collected_links: Vec<CollectedLink>,
 
     /// Nodes awaiting creation (passed dedup as new).
-    /// Stashed by the dedup handler, consumed by `handle_create`,
+    /// Stashed by the dedup handler, consumed by `emit_new_signal_events`,
     /// which moves wiring data to `wiring_contexts`.
     pub pending_nodes: HashMap<Uuid, PendingNode>,
 
-    /// Edge-wiring context stashed by `handle_create` for `handle_signal_stored`.
+    /// Edge-wiring context stashed by `emit_new_signal_events` for `wire_signal_edges`.
     /// Separate from `pending_nodes` so each handler has a clear lifecycle:
     /// dedup stashes → create consumes + stashes wiring → signal_stored consumes.
     pub wiring_contexts: HashMap<Uuid, WiringContext>,
@@ -117,7 +117,7 @@ pub struct PendingNode {
     pub source_id: Option<Uuid>,
 }
 
-/// Edge-wiring data stashed by `handle_create` for `handle_signal_stored`.
+/// Edge-wiring data stashed by `emit_new_signal_events` for `wire_signal_edges`.
 /// Only the fields needed for wiring — the Node itself is already projected.
 pub struct WiringContext {
     pub resource_tags: Vec<ResourceTag>,

@@ -1,7 +1,7 @@
 //! Integration test: verify bbox-scoped queries work correctly against live Neo4j.
 //! Run with: cargo test -p rootsignal-graph --test bbox_scoping_test -- --ignored --nocapture
 
-use rootsignal_graph::{query, GraphClient, GraphWriter};
+use rootsignal_graph::{query, GraphClient, GraphStore};
 
 fn load_env() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,7 +64,7 @@ fn compute_bbox(center_lat: f64, center_lng: f64, radius_km: f64) -> (f64, f64, 
 #[ignore]
 async fn test_get_active_tensions_respects_bbox() {
     let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let regions = get_regions();
 
     println!("\n=== Testing get_active_tensions bbox scoping ===");
@@ -113,7 +113,7 @@ async fn test_get_active_tensions_respects_bbox() {
 #[ignore]
 async fn test_find_tension_hubs_respects_bbox() {
     let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let regions = get_regions();
 
     println!("\n=== Testing find_tension_hubs bbox scoping ===");
@@ -443,7 +443,7 @@ async fn test_find_recent_signals_by_location() {
 #[ignore]
 async fn test_find_duplicate_respects_bbox() {
     let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     println!("\n=== Testing find_duplicate bbox scoping ===");
 
@@ -529,7 +529,7 @@ async fn test_find_duplicate_respects_bbox() {
 #[ignore]
 async fn test_get_tension_landscape_respects_bbox() {
     let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     println!("\n=== Testing get_tension_landscape bbox scoping ===");
 
@@ -577,7 +577,7 @@ async fn test_get_tension_landscape_respects_bbox() {
 #[ignore]
 async fn test_find_tension_linker_targets_respects_bbox() {
     let client = connect().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     println!("\n=== Testing find_tension_linker_targets bbox scoping ===");
 
@@ -632,7 +632,7 @@ async fn test_tension_bbox_scoping() {
 
     for (slug, lat, lng, radius) in &regions {
         let (min_lat, max_lat, min_lng, max_lng) = compute_bbox(*lat, *lng, *radius);
-        let writer = GraphWriter::new(client.clone());
+        let writer = GraphStore::new(client.clone());
         let scoped = writer
             .get_active_tensions(min_lat, max_lat, min_lng, max_lng)
             .await

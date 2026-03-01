@@ -9,7 +9,7 @@ use tracing::info;
 use crate::core::events::ScoutEvent;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 /// Output from mid-run discovery.
 pub struct MidRunOutput {
@@ -20,8 +20,8 @@ pub struct MidRunOutput {
 /// Run mid-run source discovery. Returns discovered source events and social topics.
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
-pub async fn discover_mid_run(
-    writer: &GraphWriter,
+pub async fn discover_sources_mid_run(
+    writer: &GraphStore,
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,

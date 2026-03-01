@@ -1,6 +1,6 @@
 //! ScrapePipeline — one dispatch, handler chain.
 //!
-//! `run_all()` dispatches `EngineStarted` and the seesaw handler chain
+//! `dispatch_pipeline()` dispatches `EngineStarted` and the seesaw handler chain
 //! drives the entire scout run through phase lifecycle events.
 
 use std::sync::atomic::AtomicBool;
@@ -16,7 +16,7 @@ use crate::traits::SignalReader;
 
 use rootsignal_common::ScoutScope;
 use rootsignal_events::EventStore;
-use rootsignal_graph::{GraphClient, GraphProjector, GraphWriter};
+use rootsignal_graph::{GraphClient, GraphProjector, GraphStore};
 
 use rootsignal_archive::Archive;
 
@@ -39,7 +39,7 @@ pub struct ScrapePipeline {
 
 impl ScrapePipeline {
     pub fn new(
-        writer: GraphWriter,
+        writer: GraphStore,
         graph_client: GraphClient,
         event_store: EventStore,
         extractor: Arc<dyn SignalExtractor>,
@@ -92,7 +92,7 @@ impl ScrapePipeline {
     /// link_promotion + mid_run → response_scrape → link_promotion +
     /// actor_location + post_scrape → metrics → expansion →
     /// link_promotion + finalize → RunCompleted
-    pub async fn run_all(self) -> Result<ScoutStats> {
+    pub async fn dispatch_pipeline(self) -> Result<ScoutStats> {
         self.engine
             .emit(LifecycleEvent::EngineStarted {
                 run_id: self.run_id.clone(),

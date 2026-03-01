@@ -230,7 +230,7 @@ Wire reducer + enrich into a Pipeline struct that sequences the two steps.
 - [x] Test names describe behavior, not implementation
 
 ### Non-Goals
-- GraphWriter migration (Phase 3 of foundation plan — separate work)
+- GraphStore migration (Phase 3 of foundation plan — separate work)
 - SIMILAR_TO edge rebuilding (separate enrichment pass, not in scope)
 - EmbeddingStore backfill from existing Neo4j data (migration script, separate)
 - Real-time NOTIFY subscription for enrichment triggering (future)

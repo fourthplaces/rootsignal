@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{CitationNode, ScoutScope};
-use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
+use rootsignal_graph::{EvidenceSummary, GraphStore, InvestigationTarget};
 
 use crate::core::events::ScoutEvent;
 
@@ -23,7 +23,7 @@ const MAX_SIGNALS_INVESTIGATED: usize = 8;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -117,7 +117,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 
 impl<'a> Investigator<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{Clarity, SituationArc};
 
-use crate::writer::GraphWriter;
+use crate::writer::GraphStore;
 use crate::GraphClient;
 
 /// All computed temperature components for a situation.
@@ -120,7 +120,7 @@ pub async fn compute_temperature(
 /// Recompute and persist temperature for a situation.
 pub async fn recompute_situation_temperature(
     client: &GraphClient,
-    writer: &GraphWriter,
+    writer: &GraphStore,
     situation_id: &Uuid,
 ) -> Result<TemperatureComponents, Box<dyn std::error::Error + Send + Sync>> {
     let components = compute_temperature(client, situation_id).await?;

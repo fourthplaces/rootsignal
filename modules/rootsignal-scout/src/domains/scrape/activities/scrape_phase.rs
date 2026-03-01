@@ -176,7 +176,7 @@ impl ScrapePhase {
     /// Returns accumulated `ScrapeOutput` with events and state updates.
     ///
     /// Pure: takes specific inputs, returns output. No state mutation.
-    pub async fn run_web(
+    pub async fn scrape_web_sources(
         &self,
         sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,
@@ -553,7 +553,7 @@ impl ScrapePhase {
 
     /// Scrape social media accounts, feed posts through LLM extraction.
     /// Returns accumulated `ScrapeOutput` with events and state updates.
-    pub async fn run_social(
+    pub async fn scrape_social_sources(
         &self,
         social_sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,

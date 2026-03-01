@@ -97,7 +97,7 @@ Safe to re-run: if values are already migrated, `WHERE` matches nothing.
 
 - `set_review_status(id, &str, Option<&str>)` → `set_review_status(id, ReviewStatus, Option<&str>)`
 - Add `quarantine_signal(id: Uuid, reason: &str) -> Result<()>` to trait
-- Update the proxy wrapper impl to call through to `GraphWriter`
+- Update the proxy wrapper impl to call through to `GraphStore`
 
 **File:** `modules/rootsignal-scout/src/testing.rs` (MockSignalStore)
 
@@ -146,7 +146,7 @@ Safe to re-run: if values are already migrated, `WHERE` matches nothing.
 
 - Add `resolveQuarantinedSignal(id: ID!, action: ReviewAction!, reason: String!): Signal!` mutation
 - `ReviewAction` enum: `Publish`, `Reject`
-- Calls `resolve_quarantine()` on `GraphWriter`
+- Calls `resolve_quarantine()` on `GraphStore`
 
 **File:** `modules/rootsignal-api/src/graphql/schema.rs`
 

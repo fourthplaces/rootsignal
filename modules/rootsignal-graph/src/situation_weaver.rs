@@ -27,7 +27,7 @@ use rootsignal_common::{
     Clarity, DispatchNode, DispatchType, ScoutScope, SensitivityLevel, SituationArc, SituationNode,
     TextEmbedder,
 };
-use crate::writer::GraphWriter;
+use crate::writer::GraphStore;
 use crate::GraphClient;
 
 
@@ -162,7 +162,7 @@ impl std::fmt::Display for SituationWeaverStats {
 
 pub struct SituationWeaver {
     client: GraphClient,
-    writer: GraphWriter,
+    writer: GraphStore,
     embedder: Arc<dyn TextEmbedder>,
     anthropic_api_key: String,
     scope: ScoutScope,
@@ -183,7 +183,7 @@ impl SituationWeaver {
         scope: ScoutScope,
     ) -> Self {
         Self {
-            writer: GraphWriter::new(client.clone()),
+            writer: GraphStore::new(client.clone()),
             client,
             embedder,
             anthropic_api_key: anthropic_api_key.to_string(),

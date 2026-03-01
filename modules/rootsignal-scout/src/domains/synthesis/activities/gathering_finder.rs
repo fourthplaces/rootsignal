@@ -16,7 +16,7 @@ use rootsignal_common::{
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
     Urgency,
 };
-use rootsignal_graph::{GatheringFinderTarget, GraphWriter, ResponseHeuristic};
+use rootsignal_graph::{GatheringFinderTarget, GraphStore, ResponseHeuristic};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -267,7 +267,7 @@ Return valid JSON matching the GravityFinding schema.";
 // =============================================================================
 
 pub struct GatheringFinder<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -282,7 +282,7 @@ pub struct GatheringFinder<'a> {
 
 impl<'a> GatheringFinder<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,

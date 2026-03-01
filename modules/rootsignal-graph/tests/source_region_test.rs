@@ -1,5 +1,5 @@
 use uuid::Uuid;
-use rootsignal_graph::{query, GraphClient, GraphWriter};
+use rootsignal_graph::{query, GraphClient, GraphStore};
 //! Integration tests for get_sources_for_region filtering.
 //!
 //! Verifies that:
@@ -98,7 +98,7 @@ const RADIUS_KM: f64 = 30.0;
 #[tokio::test]
 async fn never_scraped_source_included() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     create_source(
         &client,
@@ -121,7 +121,7 @@ async fn never_scraped_source_included() {
 #[tokio::test]
 async fn scraped_source_with_signal_in_region_included() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     create_source(
         &client,
@@ -155,7 +155,7 @@ async fn scraped_source_with_signal_in_region_included() {
 #[tokio::test]
 async fn scraped_unproductive_source_excluded() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Scraped but produced zero signals — should NOT appear
     create_source(&client, "src:dud", "https://dud.example.com", true, 0, true).await;
@@ -174,7 +174,7 @@ async fn scraped_unproductive_source_excluded() {
 #[tokio::test]
 async fn inactive_source_excluded() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Inactive, never scraped — should NOT appear (active: false)
     create_source(
@@ -197,7 +197,7 @@ async fn inactive_source_excluded() {
 #[tokio::test]
 async fn source_with_signal_outside_region_excluded() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Scraped, produced signals, but signals are in Miami — not in Minneapolis region
     create_source(

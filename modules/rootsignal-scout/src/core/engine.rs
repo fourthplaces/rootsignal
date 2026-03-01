@@ -31,7 +31,7 @@ pub struct ScoutEngineDeps {
     pub graph_client: Option<GraphClient>,
     pub extractor: Option<Arc<dyn SignalExtractor>>,
     // --- Engine infrastructure ---
-    /// Aggregate state — updated by the state_updater handler via apply_* methods.
+    /// Aggregate state — updated by the apply_to_aggregate handler via apply_* methods.
     pub state: Arc<RwLock<PipelineState>>,
     /// Neo4j graph projector (None in tests).
     pub graph_projector: Option<GraphProjector>,
@@ -62,7 +62,7 @@ pub type ScoutEngine = SeesawEngine;
 ///
 /// Handler registration order matches the old dispatch loop:
 /// 1. **persist** (priority 0) — persist event to rootsignal event store
-/// 2. **state_updater** (priority 1) — apply event to shared PipelineState
+/// 2. **apply_to_aggregate** (priority 1) — apply event to shared PipelineState
 /// 3. **neo4j_projection** (priority 2) — project to graph (projectable events only)
 /// 4. **domain handlers** (default priority) — react to events, emit children
 pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
@@ -71,33 +71,16 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let mut engine = seesaw_core::Engine::new(deps)
         // Infrastructure handlers (priority 0–2)
         .with_handler(projection::persist_handler())
-        .with_handler(projection::state_updater())
-        .with_handler(projection::neo4j_handler())
-        // Signal domain handlers
-        .with_handler(signals::handlers::dedup_handler())
-        .with_handler(signals::handlers::create_handler())
-        .with_handler(signals::handlers::corroborate_handler())
-        .with_handler(signals::handlers::refresh_handler())
-        .with_handler(signals::handlers::signal_created_handler())
-        // Lifecycle domain handlers
-        .with_handler(lifecycle::handlers::reap_handler())
-        .with_handler(lifecycle::handlers::schedule_handler())
-        .with_handler(lifecycle::handlers::finalize_handler())
-        // Scrape domain handlers
-        .with_handler(scrape::handlers::tension_scrape_handler())
-        .with_handler(scrape::handlers::response_scrape_handler())
-        // Discovery domain handlers
-        .with_handler(discovery::handlers::bootstrap_handler())
-        .with_handler(discovery::handlers::link_promotion_handler())
-        .with_handler(discovery::handlers::mid_run_handler())
-        // Enrichment domain handlers
-        .with_handler(enrichment::handlers::actor_location_handler())
-        .with_handler(enrichment::handlers::post_scrape_handler())
-        .with_handler(enrichment::handlers::metrics_handler())
-        // Expansion domain handlers
-        .with_handler(expansion::handlers::expansion_handler())
-        // Synthesis domain handlers
-        .with_handler(synthesis::handlers::synthesis_handler());
+        .with_handler(projection::apply_to_aggregate_handler())
+        .with_handler(projection::project_to_graph_handler())
+        // Domain handlers
+        .with_handlers(signals::handlers::handlers())
+        .with_handlers(lifecycle::handlers::handlers())
+        .with_handlers(scrape::handlers::handlers())
+        .with_handlers(discovery::handlers::handlers())
+        .with_handlers(enrichment::handlers::handlers())
+        .with_handlers(expansion::handlers::handlers())
+        .with_handlers(synthesis::handlers::handlers());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {

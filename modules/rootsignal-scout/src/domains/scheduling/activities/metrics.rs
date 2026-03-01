@@ -11,18 +11,18 @@ use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{is_web_query, SourceNode};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::core::events::ScoutEvent;
 
 pub(crate) struct Metrics<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         region_slug: &'a str,
     ) -> Self {
         Self {
@@ -36,7 +36,7 @@ impl<'a> Metrics<'a> {
     /// Takes signal counts and query errors collected during the scrape run.
     /// Uses `all_sources` (the snapshot from the start of the run, NOT
     /// `fresh_sources`).
-    pub async fn update(
+    pub async fn update_weights_and_cadence(
         &self,
         all_sources: &[SourceNode],
         source_signal_counts: &HashMap<String, u32>,

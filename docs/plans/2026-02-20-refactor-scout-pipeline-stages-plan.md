@@ -26,14 +26,14 @@ The existing finder modules (ResponseFinder, TensionLinker, GatheringFinder, Inv
 ```rust
 // Lifetime-parameterized struct with borrowed deps
 pub struct ScrapePhase<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     extractor: &'a dyn SignalExtractor,
     // ...
 }
 
 // Constructor takes all deps explicitly
 impl<'a> ScrapePhase<'a> {
-    pub fn new(writer: &'a GraphWriter, ...) -> Self { ... }
+    pub fn new(writer: &'a GraphStore, ...) -> Self { ... }
 }
 
 // Entry point: &self + mutable context
@@ -112,7 +112,7 @@ impl RunContext {
 ```rust
 // scrape_phase.rs
 pub(crate) struct ScrapePhase<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     extractor: &'a dyn SignalExtractor,
     embedder: &'a dyn TextEmbedder,
     scraper: Arc<dyn PageScraper>,
@@ -140,7 +140,7 @@ Contains (moved from scout.rs):
 ```rust
 // expansion.rs
 pub(crate) struct Expansion<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     embedder: &'a dyn TextEmbedder,
     city_slug: &'a str,
 }
@@ -159,7 +159,7 @@ Contains (moved from scout.rs):
 ```rust
 // metrics.rs
 pub(crate) struct Metrics<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
 }
 ```
 

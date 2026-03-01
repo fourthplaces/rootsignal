@@ -6,36 +6,33 @@ use chrono::Utc;
 use tracing::{info, warn};
 
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::core::aggregate::{ScheduleOutput, ScheduledData};
-use crate::core::events::ScoutEvent;
 use crate::infra::util::sanitize_url;
 use crate::traits::SignalReader;
 
 /// Reap expired signals, return EntityExpired events.
-pub async fn reap_expired(store: &dyn SignalReader) -> Vec<ScoutEvent> {
+pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
     let expired = match store.find_expired_signals().await {
         Ok(e) => e,
         Err(e) => {
             warn!(error = %e, "Failed to find expired signals, continuing");
-            return Vec::new();
+            return seesaw_core::Events::new();
         }
     };
 
-    let mut scout_events: Vec<ScoutEvent> = Vec::new();
+    let mut events = seesaw_core::Events::new();
     let mut gatherings = 0u64;
     let mut needs = 0u64;
     let mut stale = 0u64;
 
     for (signal_id, node_type, reason) in &expired {
-        scout_events.push(ScoutEvent::System(
-            rootsignal_common::events::SystemEvent::EntityExpired {
-                signal_id: *signal_id,
-                node_type: *node_type,
-                reason: reason.clone(),
-            },
-        ));
+        events.push(rootsignal_common::events::SystemEvent::EntityExpired {
+            signal_id: *signal_id,
+            node_type: *node_type,
+            reason: reason.clone(),
+        });
         match node_type {
             rootsignal_common::types::NodeType::Gathering => gatherings += 1,
             rootsignal_common::types::NodeType::Need => needs += 1,
@@ -47,12 +44,12 @@ pub async fn reap_expired(store: &dyn SignalReader) -> Vec<ScoutEvent> {
         info!(gatherings, needs, stale, "Expired signals removed");
     }
 
-    scout_events
+    events
 }
 
 /// Load, boost, and schedule sources. Returns ScheduleOutput for state application.
 pub async fn schedule_sources(
-    writer: &GraphWriter,
+    writer: &GraphStore,
     region: &rootsignal_common::ScoutScope,
 ) -> ScheduleOutput {
     // Load sources

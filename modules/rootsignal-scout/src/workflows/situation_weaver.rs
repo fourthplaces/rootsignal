@@ -8,7 +8,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::{info, warn};
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
@@ -45,7 +45,7 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphWriter::new(graph_client);
+            let writer = rootsignal_graph::GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
@@ -76,7 +76,7 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                run_situation_weaving_from_deps(&deps, &scope, spent_cents)
+                weave_situations(&deps, &scope, spent_cents)
                     .await
                     .map_err(|e| -> HandlerError { e.into() })
             })
@@ -115,12 +115,12 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
     }
 }
 
-pub async fn run_situation_weaving_from_deps(
+pub async fn weave_situations(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,
 ) -> anyhow::Result<SituationWeaverResult> {
-    let writer = GraphWriter::new(deps.graph_client.clone());
+    let writer = GraphStore::new(deps.graph_client.clone());
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);

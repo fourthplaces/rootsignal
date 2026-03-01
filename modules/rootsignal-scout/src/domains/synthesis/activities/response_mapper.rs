@@ -3,20 +3,31 @@
 //!
 //! Moved from `rootsignal-graph::response` — this is discovery logic (query → LLM
 //! verify → write), not a graph primitive. Follows the same pattern as the other
-//! finders: `&GraphWriter` for reads, engine dispatch for writes.
+//! finders: `&GraphStore` for reads, engine dispatch for writes.
 
 use ai_client::claude::Claude;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 use seesaw_core::Events;
 
 use crate::core::events::ScoutEvent;
 
+/// Structured output for response verification.
+#[derive(Deserialize, JsonSchema)]
+struct ResponseVerdict {
+    /// Whether signal B responds to problem A
+    matches: bool,
+    /// Brief explanation of how B helps address A (only when matches is true)
+    explanation: Option<String>,
+}
+
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     anthropic_api_key: String,
     min_lat: f64,
     max_lat: f64,
@@ -26,7 +37,7 @@ pub struct ResponseMapper<'a> {
 
 impl<'a> ResponseMapper<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         anthropic_api_key: &str,
         center_lat: f64,
         center_lng: f64,
@@ -140,25 +151,21 @@ impl<'a> ResponseMapper<'a> {
 Problem A: {tension_title} — {tension_summary}
 Signal B: {candidate_title} — {candidate_summary}
 
-If yes, respond with a brief explanation (1 sentence) of how B helps address A.
-If no, respond with just "NO".
-
-Respond with ONLY the explanation or "NO"."#,
+Determine whether B genuinely helps address A. Be strict — only confirm genuine matches."#,
         );
 
         let claude = Claude::new(&self.anthropic_api_key, "claude-haiku-4-5-20251001");
-        let response = claude
-            .chat_completion(
+        let verdict = claude
+            .extract::<ResponseVerdict>(
                 "You evaluate whether community resources respond to community needs. Be strict — only confirm genuine matches.",
                 &prompt,
             )
             .await?;
 
-        let response = response.trim();
-        if response == "NO" || response.to_lowercase().starts_with("no") {
-            Ok(None)
+        if verdict.matches {
+            Ok(verdict.explanation)
         } else {
-            Ok(Some(response.to_string()))
+            Ok(None)
         }
     }
 }

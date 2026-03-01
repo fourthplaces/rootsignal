@@ -148,7 +148,7 @@ async fn linktree_page_discovers_outbound_links() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No signals from Linktree pages
@@ -241,7 +241,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal created
@@ -294,7 +294,7 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No geo-filter — all signals stored
@@ -357,7 +357,7 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
     let mut ctx = RunContext::from_sources(&source_nodes);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // ONE signal, not three
@@ -440,7 +440,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     );
 
     let mut log = run_log();
-    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal stored (actor fallback gave it Minneapolis coords → survives geo filter)
@@ -518,7 +518,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     );
 
     let mut log = run_log();
-    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No geo-filter — signal stored with actor location as fallback
@@ -584,7 +584,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     );
 
     let mut log = run_log();
-    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -670,7 +670,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
     );
 
     let mut log = run_log();
-    let output = phase.run_social(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // All three signals stored — no geo-filter rejection
@@ -739,7 +739,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No new signals (extraction skipped)
@@ -836,7 +836,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     let mut ctx = RunContext::from_sources(&[linktree_source.clone()]);
     let mut log = run_log();
 
-    let output = phase_a.run_web(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase_a.scrape_web_sources(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // After Phase A: localorg.org discovered in collected_links
@@ -876,7 +876,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     let mut ctx_b = RunContext::from_sources(&[org_source.clone()]);
     let mut log_b = run_log();
 
-    let output = phase_b.run_web(&sources_b, &ctx_b.url_to_canonical_key, &ctx_b.actor_contexts, &log_b).await;
+    let output = phase_b.scrape_web_sources(&sources_b, &ctx_b.url_to_canonical_key, &ctx_b.actor_contexts, &log_b).await;
     scrape_and_dispatch(output, &mut ctx_b, &store).await;
 
     // Signal from Phase B
@@ -953,7 +953,7 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -1007,7 +1007,7 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -1070,7 +1070,7 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
     let mut ctx = RunContext::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    let output = phase.run_web(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
+    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);

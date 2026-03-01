@@ -8,7 +8,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::{info, warn};
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use super::types::{EmptyRequest, SupervisorResult, TaskRequest};
 use super::ScoutDeps;
@@ -43,7 +43,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphWriter::new(graph_client);
+            let writer = rootsignal_graph::GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
@@ -69,7 +69,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                run_supervisor_pipeline(&deps, &scope)
+                supervise_region(&deps, &scope)
                     .await
                     .map_err(|e| -> HandlerError { e.into() })
             })
@@ -108,11 +108,11 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
     }
 }
 
-pub async fn run_supervisor_pipeline(
+pub async fn supervise_region(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<SupervisorResult> {
-    let writer = GraphWriter::new(deps.graph_client.clone());
+    let writer = GraphStore::new(deps.graph_client.clone());
     let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
     // 1. Run supervisor checks

@@ -212,14 +212,14 @@ Seq 30: GatheringDiscovered {id=X}     ← Layer 1, node recreated
 
 ### Codebase refresh (post event-sourcing migration)
 
-All signal writes now go through EventSourcedStore → event append → reducer projection. The GraphWriter bypass has been removed. This is exactly what the three-layer model needs — every mutation is an event.
+All signal writes now go through EventSourcedStore → event append → reducer projection. The GraphStore bypass has been removed. This is exactly what the three-layer model needs — every mutation is an event.
 
 Three relationship events were missing from the original audit:
 - `ResourceEdgeCreated` — "this need requires this resource" → Layer 1 (world relationship)
 - `ResponseLinked` — "this aid responds to this tension" → Layer 1 (world relationship)
 - `GravityLinked` — "this signal is drawn to this tension" → Layer 1 (world relationship)
 
-**One event-sourcing gap found:** `TensionLinker` calls `GraphWriter.create_response_edge()` directly instead of `store.create_drawn_to_edge()`, bypassing event emission for gravity links during tension creation. This is a bug to fix independently of the crate split.
+**One event-sourcing gap found:** `TensionLinker` calls `GraphStore.create_response_edge()` directly instead of `store.create_drawn_to_edge()`, bypassing event emission for gravity links during tension creation. This is a bug to fix independently of the crate split.
 
 ### Not broken: Bootstrap self-containment
 

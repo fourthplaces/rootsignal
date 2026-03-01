@@ -12,7 +12,7 @@ use std::sync::Arc;
 use seesaw_core::Events;
 use tracing::{info, warn};
 
-use rootsignal_graph::{GraphClient, GraphWriter, SimilarityBuilder};
+use rootsignal_graph::{GraphClient, GraphStore, SimilarityBuilder};
 
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::infra::embedder::TextEmbedder;
@@ -28,7 +28,7 @@ pub struct SynthesisOutput {
 ///
 /// Pure: takes specific deps, returns events and discovered sources.
 pub async fn run_synthesis(
-    writer: &GraphWriter,
+    writer: &GraphStore,
     graph_client: &GraphClient,
     archive: Arc<rootsignal_archive::Archive>,
     embedder: &dyn TextEmbedder,

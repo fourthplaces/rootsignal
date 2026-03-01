@@ -3,7 +3,7 @@ pub mod event_sourced;
 use std::sync::Arc;
 
 use rootsignal_events::EventStore;
-use rootsignal_graph::{GraphClient, GraphProjector, GraphWriter};
+use rootsignal_graph::{GraphClient, GraphProjector, GraphStore};
 use sqlx::PgPool;
 
 use crate::traits::SignalReader;
@@ -12,7 +12,7 @@ use crate::traits::SignalReader;
 ///
 /// Pure assembly — no logic, no side effects.
 pub fn build_signal_reader(graph_client: GraphClient) -> event_sourced::EventSourcedReader {
-    event_sourced::EventSourcedReader::new(GraphWriter::new(graph_client))
+    event_sourced::EventSourcedReader::new(GraphStore::new(graph_client))
 }
 
 /// Factory for creating per-operation SignalReader instances.

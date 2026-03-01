@@ -10,7 +10,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use super::types::{EmptyRequest, ScrapeResult, TaskRequest};
 use super::{create_archive, ScoutDeps};
@@ -45,7 +45,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphWriter::new(graph_client);
+            let writer = rootsignal_graph::GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
@@ -77,7 +77,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                run_scrape_from_deps(&deps, &scope)
+                scrape_region(&deps, &scope)
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
             })
@@ -117,11 +117,11 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
     }
 }
 
-async fn run_scrape_from_deps(
+async fn scrape_region(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<ScrapeResult> {
-    let writer = GraphWriter::new(deps.graph_client.clone());
+    let writer = GraphStore::new(deps.graph_client.clone());
     let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
     let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
         Arc::new(crate::core::extractor::Extractor::new(
@@ -151,7 +151,7 @@ async fn run_scrape_from_deps(
         deps.pg_pool.clone(),
     );
 
-    let stats = pipeline.run_all().await?;
+    let stats = pipeline.dispatch_pipeline().await?;
 
     Ok(ScrapeResult {
         urls_scraped: stats.urls_scraped,

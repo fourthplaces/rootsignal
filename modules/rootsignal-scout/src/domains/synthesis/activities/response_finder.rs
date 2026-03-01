@@ -17,7 +17,7 @@ use rootsignal_common::{
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
     SourceRole, TensionNode, Urgency,
 };
-use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
+use rootsignal_graph::{GraphStore, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -274,7 +274,7 @@ Return valid JSON matching the ResponseFinding schema.";
 // =============================================================================
 
 pub struct ResponseFinder<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -290,7 +290,7 @@ pub struct ResponseFinder<'a> {
 
 impl<'a> ResponseFinder<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,

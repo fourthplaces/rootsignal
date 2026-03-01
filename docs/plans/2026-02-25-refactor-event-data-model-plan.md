@@ -80,7 +80,7 @@ The brainstorm said "remove derived values" but the reducer **cannot read the gr
 
 ### Relationship Events Scope
 
-`RelationshipEstablished` is only used in test fixtures — no production code constructs it. However, the typed replacements are forward-looking for when `GraphWriter` operations migrate to the event store (Phase 3 of the event-sourcing plan). The initial set covers relationships that the reducer already handles or that `writer.rs` creates:
+`RelationshipEstablished` is only used in test fixtures — no production code constructs it. However, the typed replacements are forward-looking for when `GraphStore` operations migrate to the event store (Phase 3 of the event-sourcing plan). The initial set covers relationships that the reducer already handles or that `writer.rs` creates:
 
 - `EvidenceLinked` — already handled by `CitationRecorded` (keep as-is, don't duplicate)
 - `MentionObserved` — already handled by `ActorLinkedToSignal` (keep as-is)
@@ -454,7 +454,7 @@ Replace the mega-struct with 5 typed discovery events. Each owns all its fields 
 
 ### Non-Goals (Explicit)
 - EventStore changes — it's domain-agnostic, stores `event_type: String` + `payload: Value`
-- Scout pipeline changes — it still writes via `GraphWriter`, not events
+- Scout pipeline changes — it still writes via `GraphStore`, not events
 - Enrichment pass changes — embeddings/diversity/cause_heat are separate
 - Production data migration — no production events exist yet
 

@@ -5,7 +5,7 @@ use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
 use rootsignal_world::types::{Entity, EntityType, Reference};
 use rootsignal_events::StoredEvent;
-use rootsignal_graph::{query, BBox, GraphClient, GraphWriter, Pipeline};
+use rootsignal_graph::{query, BBox, GraphClient, GraphStore, Pipeline};
 //! Integration tests for litmus-test scenarios.
 //!
 //! Validates datetime storage, keyword search, geo queries, source diversity,
@@ -1274,7 +1274,7 @@ async fn bbox_proximity_signal_lookup() {
 async fn source_last_scraped_round_trip() {
     let (_container, client) = setup().await;
     let pipeline = Pipeline::new(client.clone(), 0.3);
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let source_id = Uuid::new_v4();
     let events = vec![stored(
@@ -1401,7 +1401,7 @@ async fn create_tension_with_embedding(
 #[tokio::test]
 async fn merge_duplicate_tensions_collapses_near_dupes() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create 3 near-identical youth violence tensions (would be >0.85 cosine)
     let mut base_emb = vec![0.0f64; 1024];
@@ -1536,7 +1536,7 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
 #[tokio::test]
 async fn merge_duplicate_tensions_noop_when_no_dupes() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create two very different tensions
     let mut emb1 = vec![0.0f64; 1024];
@@ -1563,7 +1563,7 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
 #[tokio::test]
 async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create two near-identical tensions (cosine >0.85) in different cities
     let mut base_emb = vec![0.0f64; 1024];
@@ -1616,7 +1616,7 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
 #[tokio::test]
 async fn merge_duplicate_tensions_repoints_situation_edges() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Two near-identical tensions (cosine >0.85)
     let mut base_emb = vec![0.0f64; 1024];
@@ -1777,7 +1777,7 @@ async fn create_tension_for_response_finder(
 #[tokio::test]
 async fn response_finder_targets_finds_unscouted_tensions() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
     let t2 = Uuid::new_v4();
@@ -1811,7 +1811,7 @@ async fn response_finder_targets_finds_unscouted_tensions() {
 #[tokio::test]
 async fn response_finder_targets_includes_stale_scouted_tensions() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
@@ -1840,7 +1840,7 @@ async fn response_finder_targets_includes_stale_scouted_tensions() {
 #[tokio::test]
 async fn response_finder_targets_sorted_by_response_count_then_heat() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
     let t2 = Uuid::new_v4();
@@ -1888,7 +1888,7 @@ async fn response_finder_targets_sorted_by_response_count_then_heat() {
 #[tokio::test]
 async fn get_existing_responses_returns_heuristics() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_response_finder(&client, tension_id, "Housing Crisis", 0.7, None).await;
@@ -1927,7 +1927,7 @@ async fn get_existing_responses_returns_heuristics() {
 #[tokio::test]
 async fn mark_response_found_sets_timestamp() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
@@ -1960,7 +1960,7 @@ async fn mark_response_found_sets_timestamp() {
 #[tokio::test]
 async fn create_response_edge_wires_give_to_tension() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
@@ -2067,7 +2067,7 @@ async fn create_tension_for_gathering_finder(
 #[tokio::test]
 async fn gathering_finder_targets_requires_minimum_heat() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
     let t2 = Uuid::new_v4();
@@ -2089,7 +2089,7 @@ async fn gathering_finder_targets_requires_minimum_heat() {
 #[tokio::test]
 async fn gathering_finder_targets_sorted_by_heat_desc() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
     let t2 = Uuid::new_v4();
@@ -2115,7 +2115,7 @@ async fn gathering_finder_targets_sorted_by_heat_desc() {
 #[tokio::test]
 async fn gathering_finder_respects_scouted_timestamp() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
@@ -2145,7 +2145,7 @@ async fn gathering_finder_respects_scouted_timestamp() {
 #[tokio::test]
 async fn gathering_finder_backoff_on_consecutive_misses() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
@@ -2195,7 +2195,7 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
 #[tokio::test]
 async fn gathering_finder_backoff_resets_on_success() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let t1 = Uuid::new_v4();
 
@@ -2232,7 +2232,7 @@ async fn gathering_finder_backoff_resets_on_success() {
 #[tokio::test]
 async fn create_drawn_to_edge_includes_gathering_type() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None)
@@ -2279,7 +2279,7 @@ async fn create_drawn_to_edge_includes_gathering_type() {
 #[tokio::test]
 async fn drawn_to_edge_coexists_with_response_edge() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_gathering_finder(
@@ -2354,7 +2354,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
 #[tokio::test]
 async fn get_existing_gathering_signals_filters_by_bbox() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let tension_id = Uuid::new_v4();
     create_tension_for_gathering_finder(
@@ -2537,7 +2537,7 @@ async fn create_web_query_source(
 #[tokio::test]
 async fn tension_response_shape_correct_breakdown() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create a high-heat tension
     let tension_id = Uuid::new_v4();
@@ -2628,7 +2628,7 @@ async fn tension_response_shape_correct_breakdown() {
 #[tokio::test]
 async fn tension_response_shape_filters_low_heat_and_confidence() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Hot tension with responses — should appear
     let hot_id = Uuid::new_v4();
@@ -2727,7 +2727,7 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
 #[tokio::test]
 async fn tension_response_shape_excludes_zero_responses() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Hot tension with NO responses — should NOT appear
     let t1 = Uuid::new_v4();
@@ -2751,7 +2751,7 @@ async fn tension_response_shape_excludes_zero_responses() {
 #[tokio::test]
 async fn recently_linked_signals_collects_and_clears_queries() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
@@ -2827,7 +2827,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 #[tokio::test]
 async fn recently_linked_signals_ignores_cold_tensions() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create a COLD tension (heat = 0.0)
     let tension_id = Uuid::new_v4();
@@ -2870,7 +2870,7 @@ async fn recently_linked_signals_ignores_cold_tensions() {
 #[tokio::test]
 async fn recently_linked_signals_works_with_drawn_to() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create a heated tension
     let tension_id = Uuid::new_v4();
@@ -2930,7 +2930,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
 #[tokio::test]
 async fn active_web_queries_filters_inactive() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     create_web_query_source(
         &client,
@@ -3132,7 +3132,7 @@ fn make_dissimilar_embedding() -> Vec<f32> {
 #[tokio::test]
 async fn resource_find_or_create_is_idempotent() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let emb = make_embedding(0.5);
     let id1 = writer
@@ -3158,7 +3158,7 @@ async fn resource_find_or_create_is_idempotent() {
 #[tokio::test]
 async fn resource_find_by_slug() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let emb = make_embedding(0.3);
     let created_id = writer
@@ -3184,7 +3184,7 @@ async fn resource_find_by_slug() {
 #[tokio::test]
 async fn resource_find_by_embedding_similarity() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let emb = make_embedding(0.7);
     writer
@@ -3216,7 +3216,7 @@ async fn resource_find_by_embedding_similarity() {
 #[tokio::test]
 async fn resource_requires_edge_creation() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create a Need signal
     let need_id = Uuid::new_v4();
@@ -3274,7 +3274,7 @@ async fn resource_requires_edge_creation() {
 #[tokio::test]
 async fn resource_prefers_edge_creation() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let need_id = Uuid::new_v4();
     create_signal(
@@ -3322,7 +3322,7 @@ async fn resource_prefers_edge_creation() {
 #[tokio::test]
 async fn resource_offers_edge_creation() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let aid_id = Uuid::new_v4();
     create_signal(
@@ -3368,7 +3368,7 @@ async fn resource_offers_edge_creation() {
 #[tokio::test]
 async fn resource_edges_are_idempotent() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     let need_id = Uuid::new_v4();
     create_signal(
@@ -3419,7 +3419,7 @@ async fn resource_edges_are_idempotent() {
 #[tokio::test]
 async fn find_needs_by_single_resource() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
 
     // Create two Needs and one Aid, all needing "vehicle"
@@ -3489,7 +3489,7 @@ async fn find_needs_by_single_resource() {
 #[tokio::test]
 async fn find_aids_by_resource() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
 
     let aid1 = Uuid::new_v4();
@@ -3541,7 +3541,7 @@ async fn find_aids_by_resource() {
 #[tokio::test]
 async fn multi_resource_fuzzy_and_scoring() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
 
     // Create resources
@@ -3672,7 +3672,7 @@ async fn multi_resource_fuzzy_and_scoring() {
 #[tokio::test]
 async fn list_resources_sorted_by_signal_count() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
 
     let emb1 = make_embedding(0.1);
@@ -3712,7 +3712,7 @@ async fn list_resources_sorted_by_signal_count() {
 #[tokio::test]
 async fn resource_gap_analysis_shows_unmet_needs() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
     let reader = rootsignal_graph::PublicGraphReader::new(client.clone());
 
     let emb_v = make_embedding(0.5);
@@ -3814,7 +3814,7 @@ async fn resource_gap_analysis_shows_unmet_needs() {
 #[tokio::test]
 async fn consolidate_resources_merges_similar() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create two similar resources (should merge)
     let emb1 = make_embedding(0.8);
@@ -3921,7 +3921,7 @@ async fn consolidate_resources_merges_similar() {
 #[tokio::test]
 async fn consolidate_resources_below_threshold_not_merged() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create two dissimilar resources
     let emb1 = make_embedding(1.0);
@@ -3956,7 +3956,7 @@ async fn consolidate_resources_below_threshold_not_merged() {
 #[tokio::test]
 async fn consolidate_resources_preserves_edge_properties() {
     let (_container, client) = setup().await;
-    let writer = GraphWriter::new(client.clone());
+    let writer = GraphStore::new(client.clone());
 
     // Create two similar resources
     let emb1 = make_embedding(0.9);

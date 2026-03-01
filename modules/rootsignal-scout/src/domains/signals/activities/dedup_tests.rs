@@ -1,6 +1,6 @@
 //! Dedup handler tests — MOCK → FUNCTION → OUTPUT.
 //!
-//! Stash an ExtractedBatch in state, call handle_signals_extracted,
+//! Stash an ExtractedBatch in state, call deduplicate_extracted_batch,
 //! assert which verdict events came out.
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ async fn run_dedup(
     state: &mut PipelineState,
     deps: &ScoutEngineDeps,
 ) -> Vec<SignalEvent> {
-    super::dedup::handle_signals_extracted(url, &batch, &*state, deps)
+    super::dedup::deduplicate_extracted_batch(url, &batch, &*state, deps)
         .await
         .unwrap()
 }

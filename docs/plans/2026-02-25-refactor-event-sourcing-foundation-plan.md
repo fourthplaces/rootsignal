@@ -127,7 +127,7 @@ Each distinct thing that happened is one event. A scout pipeline that discovers 
 
 ### 10. Supervisor bypass: Route through the event stream
 
-`batch_review.rs`, `auto_fix.rs`, and `cause_heat` mutations currently bypass GraphWriter and write directly to Neo4j. These must emit facts like everything else. No `client.inner().run(query(...))` backdoors.
+`batch_review.rs`, `auto_fix.rs`, and `cause_heat` mutations currently bypass GraphStore and write directly to Neo4j. These must emit facts like everything else. No `client.inner().run(query(...))` backdoors.
 
 ### 11. `get_recently_linked_signals_with_queries()`: Refactor
 
@@ -508,7 +508,7 @@ modules/rootsignal-common/src/events.rs (new)
 
 Typed Rust enum with serde Serialize/Deserialize. Each variant carries the complete fact. Variants are named as facts about the world, not as database operations.
 
-### GraphWriter refactor
+### GraphStore refactor
 
 `writer.rs` methods become thin wrappers:
 1. Compute the decision (same logic as today)
@@ -599,7 +599,7 @@ The writer no longer contains Cypher queries. All Cypher lives in the reducer. A
 
 ### Phase 3: Wire writer.rs through EventStore + GraphReducer
 
-**Goal:** Every GraphWriter method emits a fact to the event store, then the reducer projects it into Neo4j. Direct Cypher removed from writer.rs. A catch-up loop guarantees eventual consistency.
+**Goal:** Every GraphStore method emits a fact to the event store, then the reducer projects it into Neo4j. Direct Cypher removed from writer.rs. A catch-up loop guarantees eventual consistency.
 
 **Files:**
 - `modules/rootsignal-graph/src/writer.rs` — refactor all ~70 methods
@@ -614,7 +614,7 @@ The writer no longer contains Cypher queries. All Cypher lives in the reducer. A
 **Catch-up loop (required from day one):** A periodic background task (e.g., every 30 seconds) compares the reducer's `last_processed_seq` with `EventStore::latest_seq()`. If the graph is behind (inline reduce failed, process crashed, Neo4j was briefly down), the catch-up loop replays the gap. The inline reducer is a performance optimization. The catch-up loop is the correctness guarantee. Both must exist from Phase 3.
 
 **Acceptance criteria:**
-- [ ] All GraphWriter methods produce events
+- [ ] All GraphStore methods produce events
 - [ ] All signal CREATE in reducer converted to MERGE
 - [ ] `events` table populates during scout runs
 - [ ] Existing tests pass — graph state identical to pre-refactor

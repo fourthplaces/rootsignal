@@ -58,7 +58,7 @@ One scout run processes "ICE protest this weekend" from a scraped community cale
 
 ### Curiosity writes to Neo4j before Response Scout queries it
 
-Both systems use the same `GraphWriter` connected to the same Neo4j instance. Curiosity creates tensions via `create_node()` (committed writes), and the Response Scout queries `find_response_scout_targets()` against live Neo4j state. No caching layer or eventual consistency delay — the tension is immediately visible.
+Both systems use the same `GraphStore` connected to the same Neo4j instance. Curiosity creates tensions via `create_node()` (committed writes), and the Response Scout queries `find_response_scout_targets()` against live Neo4j state. No caching layer or eventual consistency delay — the tension is immediately visible.
 
 ### Confidence levels enable the chain
 

@@ -179,7 +179,7 @@ Scout pipeline (4 files):
 - `modules/rootsignal-scout/src/pipeline/traits.rs` — `create_evidence` → `create_citation`
 - `modules/rootsignal-scout/src/pipeline/scrape_phase.rs` — constructs `CitationNode` (~5 call sites)
 - `modules/rootsignal-scout/src/discovery/investigator.rs` — constructs `CitationNode`
-- `modules/rootsignal-scout/src/testing.rs` — `MockGraphWriter` stores `Vec<(Uuid, CitationNode)>`
+- `modules/rootsignal-scout/src/testing.rs` — `MockGraphStore` stores `Vec<(Uuid, CitationNode)>`
 
 Tests (2 files):
 - `modules/rootsignal-graph/tests/litmus_test.rs`

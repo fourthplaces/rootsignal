@@ -2,14 +2,14 @@ use ai_client::claude::Claude;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::writer::GraphWriter;
+use crate::writer::GraphStore;
 use crate::GraphClient;
 use neo4rs::query;
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper {
     client: GraphClient,
-    writer: GraphWriter,
+    writer: GraphStore,
     anthropic_api_key: String,
     min_lat: f64,
     max_lat: f64,
@@ -28,7 +28,7 @@ impl ResponseMapper {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         Self {
-            writer: GraphWriter::new(client.clone()),
+            writer: GraphStore::new(client.clone()),
             client,
             anthropic_api_key: anthropic_api_key.to_string(),
             min_lat: center_lat - lat_delta,

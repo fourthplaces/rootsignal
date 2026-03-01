@@ -37,7 +37,7 @@ fn extract_events(events: Events) -> (Vec<WorldEvent>, Vec<SystemEvent>, Vec<Sig
 }
 
 // ---------------------------------------------------------------------------
-// handle_create
+// emit_new_signal_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -63,7 +63,7 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
     );
 
     let events =
-        super::creation::handle_create(node_id, "https://localorg.org/events", &state, &deps)
+        super::creation::emit_new_signal_events(node_id, "https://localorg.org/events", &state, &deps)
             .await
             .unwrap();
 
@@ -105,7 +105,7 @@ async fn missing_pending_node_returns_empty_events() {
     let state = PipelineState::new(HashMap::new());
     let bogus_id = Uuid::new_v4();
 
-    let events = super::creation::handle_create(bogus_id, "https://example.org", &state, &deps)
+    let events = super::creation::emit_new_signal_events(bogus_id, "https://example.org", &state, &deps)
         .await
         .unwrap();
 
@@ -114,7 +114,7 @@ async fn missing_pending_node_returns_empty_events() {
 }
 
 // ---------------------------------------------------------------------------
-// handle_corroborate
+// emit_corroboration_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -126,7 +126,7 @@ async fn corroboration_emits_citation_world_and_system_events() {
     let node_type = rootsignal_common::types::NodeType::Tension;
     let similarity = 0.92;
 
-    let events = super::creation::handle_corroborate(
+    let events = super::creation::emit_corroboration_events(
         existing_id,
         node_type,
         "https://org-b.org/events",
@@ -168,7 +168,7 @@ async fn corroboration_emits_citation_world_and_system_events() {
 }
 
 // ---------------------------------------------------------------------------
-// handle_refresh
+// emit_freshness_events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -180,7 +180,7 @@ async fn refresh_emits_citation_and_freshness_confirmed() {
     let node_type = rootsignal_common::types::NodeType::Gathering;
 
     let events =
-        super::creation::handle_refresh(existing_id, node_type, "https://example.org", &deps)
+        super::creation::emit_freshness_events(existing_id, node_type, "https://example.org", &deps)
             .await
             .unwrap();
 
@@ -202,7 +202,7 @@ async fn refresh_emits_citation_and_freshness_confirmed() {
 }
 
 // ---------------------------------------------------------------------------
-// handle_signal_stored
+// wire_signal_edges
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -225,7 +225,7 @@ async fn signal_stored_wires_tags_and_source_link() {
         },
     );
 
-    let events = super::creation::handle_signal_stored(
+    let events = super::creation::wire_signal_edges(
         node_id,
         rootsignal_common::types::NodeType::Tension,
         "https://localorg.org/events",
@@ -287,7 +287,7 @@ async fn signal_stored_with_author_emits_actor_linked() {
         },
     );
 
-    let events = super::creation::handle_signal_stored(
+    let events = super::creation::wire_signal_edges(
         node_id,
         rootsignal_common::types::NodeType::Tension,
         "https://instagram.com/northsidemutualaid",
@@ -342,7 +342,7 @@ async fn blank_author_name_does_not_create_actor() {
         },
     );
 
-    let events = super::creation::handle_signal_stored(
+    let events = super::creation::wire_signal_edges(
         node_id,
         rootsignal_common::types::NodeType::Tension,
         "https://example.org",

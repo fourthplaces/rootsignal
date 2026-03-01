@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 use tracing::{info, warn};
 
 use crate::infra::embedder::TextEmbedder;
@@ -40,14 +40,14 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 // --- Expansion stage ---
 
 pub(crate) struct Expansion<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {
@@ -64,7 +64,7 @@ impl<'a> Expansion<'a> {
     /// 3. Return `ExpansionOutput` with new sources and stats
     ///
     /// Pure: takes expansion queries as input, returns output. No state mutation.
-    pub async fn run(
+    pub async fn expand_queries_to_sources(
         &self,
         expansion_queries: Vec<String>,
         run_log: &RunLogger,

@@ -8,13 +8,13 @@ date: 2026-02-24
 
 ## Overview
 
-Multiple test files bypass the code they're supposed to test. `litmus_test.rs` creates graph data via raw Cypher instead of `GraphWriter`. `extraction_test.rs` reimplements 280 lines of conversion logic instead of calling the real converter. This refactoring fixes the test architecture so every test follows MOCK → FUNCTION → OUTPUT with no code taken out of context.
+Multiple test files bypass the code they're supposed to test. `litmus_test.rs` creates graph data via raw Cypher instead of `GraphStore`. `extraction_test.rs` reimplements 280 lines of conversion logic instead of calling the real converter. This refactoring fixes the test architecture so every test follows MOCK → FUNCTION → OUTPUT with no code taken out of context.
 
 ## Problem Statement
 
 ### litmus_test.rs (rootsignal-graph)
 
-~60 tests use hand-rolled Cypher helpers (`create_signal`, `create_gathering_with_date`, `create_actor_and_link`) to set up graph data. These helpers duplicate what `GraphWriter::create_node()`, `upsert_actor()`, and `link_actor_to_signal()` do — but with subtle differences (different property sets, different Cypher patterns). The tests prove Neo4j works, not that our write layer works.
+~60 tests use hand-rolled Cypher helpers (`create_signal`, `create_gathering_with_date`, `create_actor_and_link`) to set up graph data. These helpers duplicate what `GraphStore::create_node()`, `upsert_actor()`, and `link_actor_to_signal()` do — but with subtle differences (different property sets, different Cypher patterns). The tests prove Neo4j works, not that our write layer works.
 
 ### extraction_test.rs (rootsignal-scout)
 
@@ -29,7 +29,7 @@ The conversion logic inside `extract_impl` is private and welded to the LLM call
 The data flow has four natural test boundaries:
 
 ```
-Content → LLM → ExtractionResponse → [conversion] → ExtractionResult → GraphWriter → Neo4j → PublicGraphReader → API
+Content → LLM → ExtractionResponse → [conversion] → ExtractionResult → GraphStore → Neo4j → PublicGraphReader → API
                                        ^^^^^^^^^^^                        ^^^^^^^^^^^
                                        Layer 1: pure logic                Layer 2: persistence
 ```
@@ -37,7 +37,7 @@ Content → LLM → ExtractionResponse → [conversion] → ExtractionResult →
 | Layer | Input | Function under test | Output | I/O |
 |---|---|---|---|---|
 | 1. Conversion | ExtractionResponse JSON | Extractor::convert_signals() | ExtractionResult | None |
-| 2. Write | Node structs | GraphWriter::create_node, create_evidence, etc. | Graph state | Neo4j |
+| 2. Write | Node structs | GraphStore::create_node, create_evidence, etc. | Graph state | Neo4j |
 | 3. Read | Graph state | PublicGraphReader methods | Typed results | Neo4j |
 | 4. Extraction quality | Fixture content + LLM snapshot | convert_signals() | Domain correctness | None |
 
@@ -164,7 +164,7 @@ Existing snapshots were saved via `extraction_result_to_response()` — a lossy 
 
 ## Phase 4: Rewrite litmus_test.rs setup (rootsignal-graph)
 
-**Goal:** All litmus tests create data through `GraphWriter`, not raw Cypher.
+**Goal:** All litmus tests create data through `GraphStore`, not raw Cypher.
 
 ### Changes
 
@@ -175,7 +175,7 @@ Existing snapshots were saved via `extraction_result_to_response()` — a lossy 
    - `create_actor_and_link()` (~40 lines)
    - `dummy_embedding()` string-literal version (~5 lines)
 
-2. **Replace** with typed helper functions that call `GraphWriter`:
+2. **Replace** with typed helper functions that call `GraphStore`:
 
 ```rust
 /// Build a minimal Gathering node for testing.
@@ -220,25 +220,25 @@ writer.upsert_actor(&actor_node).await.unwrap();
 writer.link_actor_to_signal(actor_id, signal_id).await.unwrap();
 ```
 
-4. **Evidence tests** (9-11) already use `GraphWriter` for evidence — switch their signal setup from raw Cypher to `GraphWriter::create_node()` for consistency.
+4. **Evidence tests** (9-11) already use `GraphStore` for evidence — switch their signal setup from raw Cypher to `GraphStore::create_node()` for consistency.
 
 5. **Assertion queries stay as raw Cypher.** These are verification — they check what's in the graph. Raw Cypher is the most direct way to verify and doesn't need to go through our code.
 
 ### Risk: property mismatches
 
-`GraphWriter::create_node()` may set different properties than the raw Cypher helpers did. This is **intentional** — if the tests break, it means the raw Cypher was testing a graph state that `GraphWriter` never actually produces. Those tests were providing false confidence. Failures here surface real gaps.
+`GraphStore::create_node()` may set different properties than the raw Cypher helpers did. This is **intentional** — if the tests break, it means the raw Cypher was testing a graph state that `GraphStore` never actually produces. Those tests were providing false confidence. Failures here surface real gaps.
 
 ### Acceptance criteria
 
 - [ ] Zero raw Cypher `CREATE` statements in test setup (only in assertions)
-- [ ] All litmus tests use `GraphWriter` for data creation
-- [ ] All tests pass (or failures are documented as real bugs in GraphWriter)
+- [ ] All litmus tests use `GraphStore` for data creation
+- [ ] All tests pass (or failures are documented as real bugs in GraphStore)
 - [ ] Helper functions build typed `Node` structs, not Cypher strings
 
 ## Out of Scope
 
 - **PublicGraphReader test coverage** — The litmus tests that verify query behavior (keyword search, bbox filtering, sorting) will still assert via raw Cypher. Moving them to use `PublicGraphReader` is a separate effort that should happen once the write side is clean.
-- **graph_write_test.rs changes** — This file already follows the correct pattern (uses `GraphWriter` for creation). No changes needed unless litmus rewrites create duplication.
+- **graph_write_test.rs changes** — This file already follows the correct pattern (uses `GraphStore` for creation). No changes needed unless litmus rewrites create duplication.
 - **bbox_scoping_test.rs** — These are intentionally `#[ignore]`d smoke tests against a live DB. Keep as-is.
 
 ## Execution Order
@@ -256,5 +256,5 @@ Phases must be done in order — each builds on the previous:
 | Duplicated conversion logic | 280 lines in extraction_test.rs | 0 |
 | Raw Cypher setup helpers | ~170 lines in litmus_test.rs | 0 |
 | Conversion logic test coverage | 0 (only deserialization tested) | ~20 edge case tests |
-| Tests that actually call GraphWriter | graph_write_test.rs only | graph_write_test.rs + litmus_test.rs |
+| Tests that actually call GraphStore | graph_write_test.rs only | graph_write_test.rs + litmus_test.rs |
 | Untested behaviors | junk filtering, firsthand rejection, date parsing, RRULE validation, tag slugification, enum defaults | All covered |

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::{info, warn};
 
-use rootsignal_graph::{GraphWriter, SimilarityBuilder};
+use rootsignal_graph::{GraphStore, SimilarityBuilder};
 
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
@@ -46,7 +46,7 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphWriter::new(graph_client);
+            let writer = rootsignal_graph::GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
@@ -78,7 +78,7 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                run_synthesis_from_deps(&deps, &scope, spent_cents)
+                synthesize_region(&deps, &scope, spent_cents)
                     .await
                     .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
             })
@@ -108,12 +108,12 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
     }
 }
 
-pub async fn run_synthesis_from_deps(
+pub async fn synthesize_region(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,
 ) -> anyhow::Result<SynthesisResult> {
-    let writer = GraphWriter::new(deps.graph_client.clone());
+    let writer = GraphStore::new(deps.graph_client.clone());
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let archive = create_archive(deps);

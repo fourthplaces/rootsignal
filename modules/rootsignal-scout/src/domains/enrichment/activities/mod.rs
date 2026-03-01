@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::SourceNode;
-use rootsignal_graph::{GraphClient, GraphWriter};
+use rootsignal_graph::{GraphClient, GraphStore};
 
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::infra::embedder::TextEmbedder;
@@ -22,7 +22,7 @@ use crate::traits::SignalReader;
 
 /// Run post-scrape enrichment: delete consumed pins, actor extraction, embeddings, metrics.
 /// Returns enrichment events.
-pub async fn run_post_scrape(
+pub async fn enrich_scraped_signals(
     store: &dyn SignalReader,
     graph_client: &GraphClient,
     region: &rootsignal_common::ScoutScope,
@@ -30,7 +30,7 @@ pub async fn run_post_scrape(
     embedder: &dyn TextEmbedder,
     consumed_pin_ids: &[Uuid],
 ) -> Vec<ScoutEvent> {
-    let writer = GraphWriter::new(graph_client.clone());
+    let writer = GraphStore::new(graph_client.clone());
 
     // Delete consumed pins
     if !consumed_pin_ids.is_empty() {
@@ -84,8 +84,8 @@ pub async fn run_post_scrape(
 }
 
 /// Update source weights and cadence metrics.
-pub async fn update_metrics(
-    writer: &GraphWriter,
+pub async fn update_source_weights(
+    writer: &GraphStore,
     region_name: &str,
     all_sources: &[SourceNode],
     source_signal_counts: &std::collections::HashMap<String, u32>,
@@ -93,6 +93,6 @@ pub async fn update_metrics(
 ) -> Vec<ScoutEvent> {
     let metrics = crate::domains::scheduling::activities::metrics::Metrics::new(writer, region_name);
     metrics
-        .update(all_sources, source_signal_counts, query_api_errors, Utc::now())
+        .update_weights_and_cadence(all_sources, source_signal_counts, query_api_errors, Utc::now())
         .await
 }

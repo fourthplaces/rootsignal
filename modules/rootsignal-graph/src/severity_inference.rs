@@ -2,7 +2,7 @@ use tracing::info;
 
 use rootsignal_common::types::{Severity, SourceNode};
 
-use crate::writer::{FieldCorrection, GraphWriter, NoticeInferenceRow};
+use crate::writer::{FieldCorrection, GraphStore, NoticeInferenceRow};
 
 /// A source is trusted when it has sustained history, corroborated output,
 /// and hasn't been penalized for quality issues.
@@ -70,7 +70,7 @@ fn severity_str(s: Severity) -> &'static str {
 /// and writes back any changes via `update_signal_fields`.
 /// Returns the number of notices whose severity was updated.
 pub async fn run_severity_inference(
-    writer: &GraphWriter,
+    writer: &GraphStore,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,

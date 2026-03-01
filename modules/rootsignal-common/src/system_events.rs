@@ -384,7 +384,7 @@ pub enum SystemEvent {
     },
 
     // -----------------------------------------------------------------------
-    // Source scrape telemetry (event-sourced, not a direct GraphWriter write)
+    // Source scrape telemetry (event-sourced, not a direct GraphStore write)
     // -----------------------------------------------------------------------
     SourceScraped {
         canonical_key: String,

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
 use crate::jwt::{self, JwtService};
 use crate::restate_client::RestateClient;
@@ -256,7 +256,7 @@ impl MutationRoot {
             });
         }
 
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let restate = require_restate(ctx)?;
 
         // Load the task
@@ -313,7 +313,7 @@ impl MutationRoot {
             });
         }
 
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let restate = require_restate(ctx)?;
         let restate_phase: crate::restate_client::ScoutPhase = phase.into();
 
@@ -381,7 +381,7 @@ impl MutationRoot {
     /// Reset a stuck scout task status to idle.
     #[graphql(guard = "AdminGuard")]
     async fn reset_scout_status(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         info!(task_id = task_id.as_str(), "Scout status reset requested");
         writer
             .reset_task_phase_status(&task_id)
@@ -465,7 +465,7 @@ impl MutationRoot {
 
     /// Add a curated tag to a signal.
     ///
-    /// TODO: batch_tag_signals was removed from GraphWriter; re-implement
+    /// TODO: batch_tag_signals was removed from GraphStore; re-implement
     /// once tagging flows through the engine event path.
     #[graphql(guard = "AdminGuard")]
     async fn tag_signal(
@@ -487,7 +487,7 @@ impl MutationRoot {
         situation_id: Uuid,
         tag_slug: String,
     ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         writer
             .suppress_situation_tag(situation_id, &tag_slug)
             .await
@@ -503,7 +503,7 @@ impl MutationRoot {
         source_slug: String,
         target_slug: String,
     ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         writer
             .merge_tags(&source_slug, &target_slug)
             .await
@@ -514,7 +514,7 @@ impl MutationRoot {
     /// Dismiss a supervisor finding (validation issue).
     #[graphql(guard = "AdminGuard")]
     async fn dismiss_finding(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let dismissed = writer
             .dismiss_validation_issue(&id)
             .await
@@ -542,7 +542,7 @@ impl MutationRoot {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let task = rootsignal_common::ScoutTask {
             id: Uuid::new_v4(),
             center_lat: lat,
@@ -568,7 +568,7 @@ impl MutationRoot {
     /// Cancel a scout task.
     #[graphql(guard = "AdminGuard")]
     async fn cancel_scout_task(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let cancelled = writer
             .cancel_scout_task(&id)
             .await
@@ -602,7 +602,7 @@ impl MutationRoot {
             return Err("radius_km must be between 1 and 500".into());
         }
 
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let signal = DemandSignal {
             id: Uuid::new_v4(),
             query: query.clone(),

@@ -86,7 +86,7 @@ RRULE expansion at query time for 50 signals is fast for simple weekly/monthly r
 
 ### Graph Write
 - [x] `SignalStore` trait gains `create_schedule(&self, schedule: &ScheduleNode) -> Result<Uuid>` and `link_schedule_to_signal(&self, signal_id: Uuid, schedule_id: Uuid) -> Result<()>`
-- [x] `GraphWriter` implements both methods with Cypher CREATE + MERGE
+- [x] `GraphStore` implements both methods with Cypher CREATE + MERGE
 - [x] RRULE string validated at write time via `rrule` crate parse; invalid RRULEs discarded with warning
 - [x] Neo4j migration adds `Schedule` label with uniqueness constraint on `id`
 
@@ -122,7 +122,7 @@ RRULE expansion at query time for 50 signals is fast for simple weekly/monthly r
 1. Add `rrule` crate to workspace
 2. Define `ScheduleNode` struct in `rootsignal-common/src/types.rs`
 3. Add Neo4j migration for `Schedule` label + constraints
-4. Add `create_schedule` + `link_schedule_to_signal` to `SignalStore` trait and `GraphWriter`
+4. Add `create_schedule` + `link_schedule_to_signal` to `SignalStore` trait and `GraphStore`
 5. Add methods to `MockSignalStore` in `testing.rs`
 6. Write graph write tests
 

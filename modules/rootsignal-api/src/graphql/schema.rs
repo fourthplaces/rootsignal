@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::NodeType;
-use rootsignal_graph::{CachedReader, GraphWriter};
+use rootsignal_graph::{CachedReader, GraphStore};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
@@ -248,7 +248,7 @@ impl QueryRoot {
         region: String,
     ) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
         let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
 
@@ -418,7 +418,7 @@ impl QueryRoot {
     /// List active sources with schedule preview.
     #[graphql(guard = "AdminGuard")]
     async fn admin_region_sources(&self, ctx: &Context<'_>) -> Result<Vec<AdminSource>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let sources = writer.get_active_sources().await?;
         Ok(sources
             .iter()
@@ -455,7 +455,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let (running, due) = tokio::join!(
             writer.is_region_task_running(&region_slug),
             writer.count_due_sources(),
@@ -573,7 +573,7 @@ impl QueryRoot {
         status: Option<String>,
         limit: Option<i32>,
     ) -> Result<Vec<GqlScoutTask>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let lim = limit.unwrap_or(50).min(200) as u32;
         let tasks = writer
             .list_scout_tasks(status.as_deref(), lim)
@@ -1305,7 +1305,7 @@ fn source_label_from_value(value: &str) -> String {
 
 pub fn build_schema(
     reader: Arc<CachedReader>,
-    writer: Arc<GraphWriter>,
+    writer: Arc<GraphStore>,
     store_factory: Option<rootsignal_scout::store::SignalReaderFactory>,
     engine_factory: Option<rootsignal_scout::store::EngineFactory>,
     jwt_service: JwtService,

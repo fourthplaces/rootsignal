@@ -426,14 +426,14 @@ rootsignal-common          rootsignal-graph              rootsignal-scout
                                                          └──────────────────┘
 ```
 
-This follows the same pattern as `GraphWriter` (defined in graph, constructed in scout) and keeps domain logic in the domain crate.
+This follows the same pattern as `GraphStore` (defined in graph, constructed in scout) and keeps domain logic in the domain crate.
 
 #### New file: `modules/rootsignal-graph/src/situation_weaver.rs`
 
 ```rust
 pub struct SituationWeaver {
     client: GraphClient,
-    writer: GraphWriter,
+    writer: GraphStore,
     embedder: Arc<dyn TextEmbedder>,  // Voyage AI, injected
     anthropic_api_key: String,
     scope: ScoutScope,

@@ -18,7 +18,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use rootsignal_common::Config;
-use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphWriter, PublicGraphReader};
+use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphStore, PublicGraphReader};
 use twilio::TwilioService;
 use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
@@ -51,7 +51,7 @@ mod restate_client;
 pub struct AppState {
     pub schema: ApiSchema,
     pub reader: PublicGraphReader,
-    pub writer: GraphWriter,
+    pub writer: GraphStore,
     pub graph_client: GraphClient,
     pub config: Config,
     pub twilio: Option<TwilioService>,
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
 
     let neo4j_reader = PublicGraphReader::new(client.clone());
     let reader = Arc::new(CachedReader::new(cache_store.clone(), neo4j_reader));
-    let writer = Arc::new(GraphWriter::new(client.clone()));
+    let writer = Arc::new(GraphStore::new(client.clone()));
     let jwt_service = JwtService::new(
         if config.session_secret.is_empty() {
             &config.admin_password
@@ -319,7 +319,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         schema,
         reader: PublicGraphReader::new(client.clone()),
-        writer: GraphWriter::new(client.clone()),
+        writer: GraphStore::new(client.clone()),
         graph_client: client,
         config: config.clone(),
         twilio: twilio.map(|t| (*t).clone()),

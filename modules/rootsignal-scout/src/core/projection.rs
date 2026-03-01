@@ -77,7 +77,7 @@ pub fn persist_handler() -> Handler<ScoutEngineDeps> {
 ///
 /// Replaces the old `ScoutReducer::reduce()` call in the dispatch loop.
 /// The aggregate's `apply()` method handles all state transitions.
-pub fn state_updater() -> Handler<ScoutEngineDeps> {
+pub fn apply_to_aggregate_handler() -> Handler<ScoutEngineDeps> {
     on_any()
         .id("state_updater")
         .priority(1)
@@ -137,7 +137,7 @@ pub fn capture_handler(
 ///
 /// Only processes projectable events (World, System, and select Pipeline events).
 /// Constructs a `rootsignal_events::StoredEvent` for the `GraphProjector`.
-pub fn neo4j_handler() -> Handler<ScoutEngineDeps> {
+pub fn project_to_graph_handler() -> Handler<ScoutEngineDeps> {
     on_any()
         .id("neo4j_projection")
         .priority(2)

@@ -8,7 +8,7 @@ date: 2026-02-23
 
 ## Overview
 
-Make every organ of Scout testable with the pattern: **MOCK -> FUNCTION -> OUTPUT**. Extract trait abstractions for the two concrete dependencies (`Archive`, `GraphWriter`), extract pure decision functions from `store_signals`, and build hand-written mocks that enable deterministic end-to-end chain tests with zero infrastructure.
+Make every organ of Scout testable with the pattern: **MOCK -> FUNCTION -> OUTPUT**. Extract trait abstractions for the two concrete dependencies (`Archive`, `GraphStore`), extract pure decision functions from `store_signals`, and build hand-written mocks that enable deterministic end-to-end chain tests with zero infrastructure.
 
 Brainstorm: `docs/brainstorms/2026-02-23-scout-pipeline-testing-brainstorm.md`
 Chain test examples: `docs/brainstorms/2026-02-23-chain-test-examples.rs`
@@ -30,7 +30,7 @@ This plan delivers Zoom 1–4 and 6. Zoom 5 (`run_all`) is a follow-up that requ
 
 ## Problem Statement
 
-Scout's core logic (`ScrapePhase::run_web`, `run_social`, `store_signals`) takes concrete `GraphWriter` and `Arc<Archive>`. Testing any of it requires Neo4j + Chrome + API keys. The testing constraint from CLAUDE.md is clear: if code can't be tested as MOCK -> FUNCTION -> OUTPUT, refactor it. Today, `ScrapePhase` can't be.
+Scout's core logic (`ScrapePhase::run_web`, `run_social`, `store_signals`) takes concrete `GraphStore` and `Arc<Archive>`. Testing any of it requires Neo4j + Chrome + API keys. The testing constraint from CLAUDE.md is clear: if code can't be tested as MOCK -> FUNCTION -> OUTPUT, refactor it. Today, `ScrapePhase` can't be.
 
 ## Technical Approach
 
@@ -39,7 +39,7 @@ Scout's core logic (`ScrapePhase::run_web`, `run_social`, `store_signals`) takes
 Two traits replace two concrete types. Everything else follows.
 
 ```
-Before:  ScrapePhase(GraphWriter, Arc<Archive>, Arc<dyn SignalExtractor>, Arc<dyn TextEmbedder>)
+Before:  ScrapePhase(GraphStore, Arc<Archive>, Arc<dyn SignalExtractor>, Arc<dyn TextEmbedder>)
 After:   ScrapePhase(Arc<dyn SignalStore>, Arc<dyn ContentFetcher>, Arc<dyn SignalExtractor>, Arc<dyn TextEmbedder>)
                      ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^
                      NEW                   NEW
@@ -50,7 +50,7 @@ After:   ScrapePhase(Arc<dyn SignalStore>, Arc<dyn ContentFetcher>, Arc<dyn Sign
 ### Design Decisions (from SpecFlow analysis)
 
 **Where do traits live?**
-Both traits are defined in `rootsignal-scout::pipeline::traits` (new module). `ArchivedPage`, `ArchivedFeed`, `ArchivedSearchResults`, `Post`, `SourceNode`, `ActorNode`, `Node`, `NodeType` are all already in `rootsignal-common`, so the traits reference common types only. Impl for `Archive` lives in `rootsignal-scout::pipeline::traits` too (thin adapter wrapping `Archive` methods). Impl for `GraphWriter` same. No circular dependencies — scout depends on archive and graph, not the other way around.
+Both traits are defined in `rootsignal-scout::pipeline::traits` (new module). `ArchivedPage`, `ArchivedFeed`, `ArchivedSearchResults`, `Post`, `SourceNode`, `ActorNode`, `Node`, `NodeType` are all already in `rootsignal-common`, so the traits reference common types only. Impl for `Archive` lives in `rootsignal-scout::pipeline::traits` too (thin adapter wrapping `Archive` methods). Impl for `GraphStore` same. No circular dependencies — scout depends on archive and graph, not the other way around.
 
 **MockSignalStore is a smart mock.**
 It maintains internal state: `create_node` adds to internal maps, `find_by_titles_and_types` queries those maps, `corroborate` increments counts. This is required for multi-source corroboration chain tests where Source B's dedup query must return Source A's previously created signal. The mock gets its own unit tests.
@@ -187,10 +187,10 @@ impl ContentFetcher for Archive {
 
 **Same file:** `modules/rootsignal-scout/src/pipeline/traits.rs`
 
-20 methods (listed in brainstorm). Impl for `GraphWriter`:
+20 methods (listed in brainstorm). Impl for `GraphStore`:
 
 ```rust
-impl SignalStore for GraphWriter {
+impl SignalStore for GraphStore {
     async fn create_node(&self, node: &Node, embedding: &[f32], created_by: &str, run_id: &str) -> Result<Uuid> {
         self.create_node(node, embedding, created_by, run_id).await
     }
@@ -198,14 +198,14 @@ impl SignalStore for GraphWriter {
 }
 ```
 
-**Also update `promote_links`** in `link_promoter.rs` to take `&dyn SignalStore` instead of `&GraphWriter`. It only calls `upsert_source`, which is on the trait.
+**Also update `promote_links`** in `link_promoter.rs` to take `&dyn SignalStore` instead of `&GraphStore`. It only calls `upsert_source`, which is on the trait.
 
 #### 2c. Refactor `ScrapePhase` ✅
 
 ```rust
 // Before
 pub(crate) struct ScrapePhase {
-    writer: GraphWriter,
+    writer: GraphStore,
     archive: Arc<Archive>,
     // ...
 }
@@ -466,7 +466,7 @@ Wire existing 8 scenarios through `ScrapePhase::run_web` with Judge evaluation. 
 - [x] `extract_all_links()` has 15+ tests covering hrefs, relative URLs, empty/malformed
 - [x] `normalize_title()` is `pub(crate)` with tests
 - [x] `ContentFetcher` trait exists with 6 methods and `impl for Archive`
-- [x] `SignalStore` trait exists with 20 methods and `impl for GraphWriter`
+- [x] `SignalStore` trait exists with 20 methods and `impl for GraphStore`
 - [x] `ScrapePhase` accepts `Arc<dyn SignalStore>` and `Arc<dyn ContentFetcher>`
 - [x] `promote_links` accepts `&dyn SignalStore`
 - [x] `discover_from_topics` uses `ContentFetcher` methods (no `SourceHandle`)
@@ -541,7 +541,7 @@ After this plan lands, the path to `MOCK → pipeline.run_all() → OUTPUT` is i
 - Chain test examples: `docs/brainstorms/2026-02-23-chain-test-examples.rs`
 - Boundary test examples: `docs/brainstorms/2026-02-23-example-tests.rs`
 - Existing traits: `modules/rootsignal-scout/src/pipeline/extractor.rs:146` (`SignalExtractor`), `modules/rootsignal-common/src/types.rs:1388` (`TextEmbedder`)
-- Concrete types to abstract: `modules/rootsignal-graph/src/writer.rs:17` (`GraphWriter`), `modules/rootsignal-archive/src/archive.rs:37` (`Archive`)
+- Concrete types to abstract: `modules/rootsignal-graph/src/writer.rs:17` (`GraphStore`), `modules/rootsignal-archive/src/archive.rs:37` (`Archive`)
 - `ScrapePhase` constructor: `modules/rootsignal-scout/src/pipeline/scrape_phase.rs:192`
 - `store_signals`: `modules/rootsignal-scout/src/pipeline/scrape_phase.rs:~1241` (700 lines)
 - `promote_links`: `modules/rootsignal-scout/src/enrichment/link_promoter.rs:124`

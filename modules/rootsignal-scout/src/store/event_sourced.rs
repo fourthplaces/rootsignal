@@ -3,7 +3,7 @@
 //! The events table is the single source of truth. The graph is a projection.
 //! All domain writes flow through the engine dispatch loop.
 //!
-//! Read methods delegate to GraphWriter (graph is always current).
+//! Read methods delegate to GraphStore (graph is always current).
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,17 +17,17 @@ use rootsignal_common::types::{ActorNode, Entity, EntityType, GeoPoint, Node, No
 use rootsignal_common::{
     FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-use rootsignal_graph::{DuplicateMatch, GraphWriter};
+use rootsignal_graph::{DuplicateMatch, GraphStore};
 use crate::traits::SignalReader;
 
 
-/// Read-only SignalReader backed by Neo4j via GraphWriter.
+/// Read-only SignalReader backed by Neo4j via GraphStore.
 pub struct EventSourcedReader {
-    writer: GraphWriter,
+    writer: GraphStore,
 }
 
 impl EventSourcedReader {
-    pub fn new(writer: GraphWriter) -> Self {
+    pub fn new(writer: GraphStore) -> Self {
         Self { writer }
     }
 }

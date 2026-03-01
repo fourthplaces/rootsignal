@@ -495,7 +495,7 @@ mod source_location_bug {
     use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
     use rootsignal_scout::enrichment::link_promoter;
 
-    // NOTE: promote_links currently takes &GraphWriter (concrete), so these tests
+    // NOTE: promote_links currently takes &GraphStore (concrete), so these tests
     // can't run until the SignalStore trait lands. The logic being tested is the
     // SourceNode construction inside promote_links.
     //

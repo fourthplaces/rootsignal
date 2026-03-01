@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ai_client::claude::Claude;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
-    ExtractionYield, GapTypeStats, GraphWriter, SignalTypeCounts, SituationBrief, SourceBrief,
+    ExtractionYield, GapTypeStats, GraphStore, SignalTypeCounts, SituationBrief, SourceBrief,
     TensionResponseShape, UnmetTension,
 };
 use schemars::JsonSchema;
@@ -430,7 +430,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -445,7 +445,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 
 impl<'a> SourceFinder<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,

@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use rootsignal_common::{ScoutTask, ScoutTaskSource, ScoutTaskStatus};
 
-use crate::{GraphClient, GraphWriter};
+use crate::{GraphClient, GraphStore};
 
 /// A candidate beacon from the news scanner — an article with an extracted location.
 pub struct BeaconCandidate {
@@ -22,7 +22,7 @@ pub struct BeaconCandidate {
 // ---------------------------------------------------------------------------
 
 /// Get geohash-5 cells of existing pending/running tasks.
-async fn existing_task_hashes(writer: &GraphWriter) -> Result<HashSet<String>, neo4rs::Error> {
+async fn existing_task_hashes(writer: &GraphStore) -> Result<HashSet<String>, neo4rs::Error> {
     let existing_tasks = writer.list_scout_tasks(Some("pending"), 100).await?;
     let mut running_tasks = writer.list_scout_tasks(Some("running"), 100).await?;
     running_tasks.extend(existing_tasks);
@@ -74,7 +74,7 @@ fn most_common_location_name<'a>(
 /// 4. If not, create a ScoutTask with source: Beacon
 pub async fn detect_beacons(
     client: &GraphClient,
-    writer: &GraphWriter,
+    writer: &GraphStore,
 ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
     let q = query(
         "MATCH (s)
@@ -174,7 +174,7 @@ pub async fn detect_beacons(
 /// and creates tasks for cells with >= 2 candidates (a single article isn't enough
 /// signal, but two independent articles about the same area means something is happening).
 pub async fn create_beacons_from_news(
-    writer: &GraphWriter,
+    writer: &GraphStore,
     candidates: Vec<BeaconCandidate>,
 ) -> Result<u32, neo4rs::Error> {
     if candidates.is_empty() {

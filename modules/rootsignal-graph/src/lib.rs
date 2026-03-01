@@ -34,7 +34,7 @@ pub use similarity::SimilarityBuilder;
 pub use situation_weaver::SituationWeaver;
 pub use writer::{
 ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
-FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphWriter, InvestigationTarget,
+FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphStore, InvestigationTarget,
 NoticeInferenceRow, ReapStats, ResponseFinderTarget, ResponseHeuristic, SignalBrief,
 SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal, TensionHub,
 TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent, TensionResponseShape,

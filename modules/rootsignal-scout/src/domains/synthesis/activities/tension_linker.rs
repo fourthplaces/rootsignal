@@ -15,7 +15,7 @@ use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, TensionNode,
 };
-use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
+use rootsignal_graph::{GraphStore, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -173,7 +173,7 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 // =============================================================================
 
 pub struct TensionLinker<'a> {
-    writer: &'a GraphWriter,
+    writer: &'a GraphStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -187,7 +187,7 @@ pub struct TensionLinker<'a> {
 
 impl<'a> TensionLinker<'a> {
     pub fn new(
-        writer: &'a GraphWriter,
+        writer: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,

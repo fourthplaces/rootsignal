@@ -8,7 +8,7 @@ pub(crate) mod scrape_phase;
 use std::collections::HashSet;
 
 use rootsignal_common::{scraping_strategy, ScrapingStrategy, SourceNode};
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 use tracing::{info, warn};
 
 use crate::core::aggregate::PipelineState;
@@ -46,7 +46,7 @@ pub fn partition_into_events(collected: Vec<ScoutEvent>, tail: LifecycleEvent) -
     events.add(tail)
 }
 
-pub async fn make_run_log(
+pub async fn build_run_logger(
     run_id: &str,
     region_name: &str,
     pg_pool: Option<&sqlx::PgPool>,
@@ -86,7 +86,7 @@ pub async fn scrape_tension(
 
     let tension_web_refs: Vec<&SourceNode> = tension_web.iter().collect();
     let mut output = phase
-        .run_web(
+        .scrape_web_sources(
             &tension_web_refs,
             &state.url_to_canonical_key,
             &state.actor_contexts,
@@ -97,7 +97,7 @@ pub async fn scrape_tension(
     if !tension_social.is_empty() {
         let tension_social_refs: Vec<&SourceNode> = tension_social.iter().collect();
         let social_output = phase
-            .run_social(
+            .scrape_social_sources(
                 &tension_social_refs,
                 &state.url_to_canonical_key,
                 &state.actor_contexts,
@@ -118,7 +118,7 @@ pub async fn scrape_response(
     phase: &ScrapePhase,
     state: &PipelineState,
     social_topics: Vec<String>,
-    writer: &GraphWriter,
+    writer: &GraphStore,
     region: &rootsignal_common::ScoutScope,
     run_log: &RunLogger,
 ) -> ScrapeOutput {
@@ -181,7 +181,7 @@ pub async fn scrape_response(
         );
         let phase_b_refs: Vec<&SourceNode> = phase_b_sources.iter().collect();
         let web_output = phase
-            .run_web(&phase_b_refs, &url_to_ck, &state.actor_contexts, run_log)
+            .scrape_web_sources(&phase_b_refs, &url_to_ck, &state.actor_contexts, run_log)
             .await;
         // Merge web URL mappings into local for subsequent calls
         url_to_ck.extend(
@@ -197,7 +197,7 @@ pub async fn scrape_response(
     if !response_social_sources.is_empty() {
         let social_refs: Vec<&SourceNode> = response_social_sources.iter().collect();
         let social_output = phase
-            .run_social(&social_refs, &url_to_ck, &state.actor_contexts, run_log)
+            .scrape_social_sources(&social_refs, &url_to_ck, &state.actor_contexts, run_log)
             .await;
         output.merge(social_output);
     }

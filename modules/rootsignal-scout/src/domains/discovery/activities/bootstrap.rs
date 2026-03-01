@@ -5,32 +5,34 @@
 //! via LLM, returning `SourceDiscovered` events for each.
 
 use anyhow::Result;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 
-use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::PipelineState;
+use crate::domains::discovery::events::DiscoveryEvent;
 
 /// Handle the EngineStarted event: seed sources if region is empty.
-pub async fn handle_engine_started(
+pub async fn seed_sources_if_empty(
     _state: &PipelineState,
     deps: &ScoutEngineDeps,
-) -> Result<Vec<ScoutEvent>> {
+) -> Result<seesaw_core::Events> {
     let sources = deps.store.get_active_sources().await?;
     if !sources.is_empty() {
-        return Ok(vec![]);
+        return Ok(seesaw_core::Events::new());
     }
 
     let api_key = match &deps.anthropic_api_key {
         Some(k) => k.clone(),
-        None => return Ok(vec![]),
+        None => return Ok(seesaw_core::Events::new()),
     };
 
     let region = match &deps.region {
         Some(r) => r,
-        None => return Ok(vec![]),
+        None => return Ok(seesaw_core::Events::new()),
     };
 
     info!(
@@ -42,14 +44,21 @@ pub async fn handle_engine_started(
     let platform_sources =
         generate_platform_sources(&api_key, region, deps.fetcher.as_deref()).await;
 
-    let mut events = Vec::new();
+    let mut events = seesaw_core::Events::new();
     for source in seed_sources.into_iter().chain(platform_sources) {
-        events.push(ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+        events.push(DiscoveryEvent::SourceDiscovered {
             source,
             discovered_by: "engine_started".into(),
-        }));
+        });
     }
     Ok(events)
+}
+
+/// Structured output for seed query generation.
+#[derive(Deserialize, JsonSchema)]
+struct SeedQueryList {
+    /// The generated search queries or terms
+    queries: Vec<String>,
 }
 
 /// Use Claude Haiku to generate seed web search queries for the region.
@@ -60,6 +69,7 @@ pub async fn generate_seed_queries(
 ) -> Result<Vec<SourceNode>> {
     let region_name = &region.name;
     let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let system = "Generate search queries for community signal discovery.";
 
     let tension_prompt = format!(
         r#"Generate 15 search queries that would surface community tensions, problems, and unmet needs in {region_name}. These should find:
@@ -76,9 +86,7 @@ pub async fn generate_seed_queries(
 - Industrial impacts on land and water
 - Rural access gaps and isolation
 
-Each query should be the kind of thing someone would type into Google to find real community friction — not resources or programs.
-
-Return ONLY the queries, one per line. No numbering, no explanations."#
+Each query should be the kind of thing someone would type into Google to find real community friction — not resources or programs."#
     );
 
     let response_prompt = format!(
@@ -92,9 +100,7 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 - Disaster preparedness and community resilience programs
 - Volunteer networks and community organizing
 
-Each query should find specific organizations doing real work — not event calendars, festivals, or generic community directories.
-
-Return ONLY the queries, one per line. No numbering, no explanations."#
+Each query should find specific organizations doing real work — not event calendars, festivals, or generic community directories."#
     );
 
     let social_prompt = format!(
@@ -108,28 +114,19 @@ Return ONLY the queries, one per line. No numbering, no explanations."#
 Include a mix of:
 - Hashtags (e.g. #{region_name}MutualAid, #{region_name}Community)
 - Search terms for GoFundMe, Instagram, X/Twitter, TikTok
-- Neighborhood or region-specific terms people use locally
-
-Return ONLY the terms, one per line. No numbering, no explanations."#
+- Neighborhood or region-specific terms people use locally"#
     );
 
     let (tension_resp, response_resp, social_resp) = tokio::join!(
-        claude.complete(&tension_prompt),
-        claude.complete(&response_prompt),
-        claude.complete(&social_prompt),
+        claude.extract::<SeedQueryList>(system, &tension_prompt),
+        claude.extract::<SeedQueryList>(system, &response_prompt),
+        claude.extract::<SeedQueryList>(system, &social_prompt),
     );
 
     let mut sources = Vec::new();
 
-    let parse_lines = |text: &str| -> Vec<String> {
-        text.lines()
-            .map(|l| l.trim().trim_start_matches('#').to_string())
-            .filter(|l| !l.is_empty() && l.len() > 3)
-            .collect()
-    };
-
-    if let Ok(text) = tension_resp {
-        for q in parse_lines(&text) {
+    if let Ok(list) = tension_resp {
+        for q in list.queries {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
                 ck,
@@ -143,8 +140,8 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         }
     }
 
-    if let Ok(text) = response_resp {
-        for q in parse_lines(&text) {
+    if let Ok(list) = response_resp {
+        for q in list.queries {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
                 ck,
@@ -158,8 +155,8 @@ Return ONLY the terms, one per line. No numbering, no explanations."#
         }
     }
 
-    if let Ok(text) = social_resp {
-        for q in parse_lines(&text) {
+    if let Ok(list) = social_resp {
+        for q in list.queries {
             let ck = canonical_value(&q);
             sources.push(SourceNode::new(
                 ck,
@@ -310,6 +307,13 @@ pub async fn generate_platform_sources(
     sources
 }
 
+/// Structured output for subreddit discovery.
+#[derive(Deserialize, JsonSchema)]
+struct SubredditList {
+    /// Subreddit names without the r/ prefix
+    subreddits: Vec<String>,
+}
+
 /// Ask Claude for relevant subreddits for this region.
 async fn discover_subreddits(anthropic_api_key: &str, region: &ScoutScope) -> Result<Vec<String>> {
     let region_name = &region.name;
@@ -322,27 +326,30 @@ Rules:
 - Do NOT include national/global topic subreddits (e.g. r/FuckCars, r/urbanplanning, r/housing)
 - Do NOT include subreddits for cities more than 30 miles away
 - Each subreddit must have {region_name} or a neighborhood/suburb name in its name or be the well-known main sub for the area
-
-Return ONLY the subreddit names (without r/ prefix), one per line. No numbering, no explanations.
-Maximum 5 subreddits."#
+- Return names without the r/ prefix
+- Maximum 5 subreddits"#
     );
 
     let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
-    let response = claude.complete(&prompt).await?;
+    let list = claude
+        .extract::<SubredditList>("Discover relevant subreddits for a geographic region.", &prompt)
+        .await?;
 
-    let subreddits: Vec<String> = response
-        .lines()
-        .map(|l| {
-            l.trim()
-                .trim_start_matches("r/")
-                .trim_start_matches("/r/")
-                .to_string()
-        })
-        .filter(|l| !l.is_empty() && !l.contains(' ') && l.len() >= 2)
-        .take(5)
-        .collect();
-
+    let subreddits = list.subreddits.into_iter().take(5).collect();
     Ok(subreddits)
+}
+
+/// Structured output for news outlet discovery.
+#[derive(Deserialize, JsonSchema)]
+struct NewsOutlet {
+    name: String,
+    url: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct NewsOutletList {
+    /// Local news outlets with name and homepage URL
+    outlets: Vec<NewsOutlet>,
 }
 
 /// Ask Claude for local news outlets, then discover their real RSS feed URLs
@@ -360,33 +367,17 @@ Do NOT include national wire services (AP, Reuters, NPR national, CNN, Fox News)
 Only include outlets that primarily cover {region_name} and its surrounding area.
 
 For each outlet, provide the name and homepage URL.
-Return as JSON array: [{{"name": "Outlet Name", "url": "https://..."}}]
-Maximum 8 outlets. Return ONLY the JSON array, no explanation."#
+Maximum 8 outlets."#
     );
 
     let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
-    let response = claude.complete(&prompt).await?;
-
-    let json_str = response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-
-    #[derive(serde::Deserialize)]
-    struct NewsOutlet {
-        name: String,
-        url: String,
-    }
-
-    let outlets: Vec<NewsOutlet> = serde_json::from_str(json_str).unwrap_or_else(|e| {
-        warn!(error = %e, "Failed to parse news outlet JSON");
-        Vec::new()
-    });
+    let list = claude
+        .extract::<NewsOutletList>("Identify local news outlets for a geographic region.", &prompt)
+        .await?;
 
     let mut results = Vec::new();
-    for outlet in outlets
+    for outlet in list
+        .outlets
         .into_iter()
         .filter(|o| !o.name.is_empty() && !o.url.is_empty())
         .take(8)

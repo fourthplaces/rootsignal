@@ -5,7 +5,7 @@ pub(crate) mod expansion;
 use tracing::info;
 
 use rootsignal_common::SourceNode;
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::events::ScoutEvent;
@@ -32,7 +32,7 @@ pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
     phase: Option<&ScrapePhase>,
     state: &PipelineState,
-    writer: &GraphWriter,
+    writer: &GraphStore,
     region_name: &str,
     api_key: Option<&str>,
     budget: &BudgetTracker,
@@ -41,7 +41,7 @@ pub async fn expand_and_discover(
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
     let expansion_queries = state.expansion_queries.clone();
-    let expansion_output = expansion.run(expansion_queries, run_log).await;
+    let expansion_output = expansion.expand_queries_to_sources(expansion_queries, run_log).await;
 
     let mut collected_events: Vec<ScoutEvent> = Vec::new();
     if !expansion_output.sources.is_empty() {

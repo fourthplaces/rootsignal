@@ -15,13 +15,13 @@ use std::collections::HashMap;
 pub use format_datetime_pub as memgraph_datetime_pub;
 
 
-/// Write-side wrapper for the graph. Used by scout only.
+/// Graph store for scout — reads and writes.
 #[derive(Clone)]
-pub struct GraphWriter {
+pub struct GraphStore {
     client: GraphClient,
 }
 
-impl GraphWriter {
+impl GraphStore {
     pub fn new(client: GraphClient) -> Self {
         Self { client }
     }
@@ -4289,7 +4289,7 @@ pub fn row_datetime_opt_pub(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc
 
 // --- Situation / Dispatch writer methods ---
 
-impl GraphWriter {
+impl GraphStore {
     /// Create a Situation node in the graph. Returns the situation's UUID.
     pub async fn create_situation(
         &self,

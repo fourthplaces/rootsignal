@@ -9,7 +9,7 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use crate::infra::run_log::RunLogger;
 use crate::lint::signal_lint::SignalLinter;
@@ -48,7 +48,7 @@ impl SignalLintWorkflow for SignalLintWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = GraphWriter::new(graph_client);
+            let writer = GraphStore::new(graph_client);
             let transitioned = writer
                 .transition_task_phase_status(
                     &tid,
@@ -72,7 +72,7 @@ impl SignalLintWorkflow for SignalLintWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                run_signal_lint_from_deps(&deps, &scope, &tid_for_lint)
+                lint_signals(&deps, &scope, &tid_for_lint)
                     .await
                     .map_err(|e| -> HandlerError { e.into() })
             })
@@ -103,12 +103,12 @@ impl SignalLintWorkflow for SignalLintWorkflowImpl {
     }
 }
 
-pub async fn run_signal_lint_from_deps(
+pub async fn lint_signals(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
     task_id: &str,
 ) -> anyhow::Result<SignalLintResult> {
-    let store: Arc<dyn SignalReader> = Arc::new(GraphWriter::new(deps.graph_client.clone()));
+    let store: Arc<dyn SignalReader> = Arc::new(GraphStore::new(deps.graph_client.clone()));
     let archive = super::create_archive(deps);
     let fetcher: Arc<dyn ContentFetcher> = archive;
     let logger = RunLogger::new(

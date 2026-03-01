@@ -25,7 +25,7 @@ use crate::core::aggregate::{ExtractedBatch, PendingNode, PipelineState};
 /// Handle `SignalsExtracted`: run 4-layer dedup on the extracted batch.
 ///
 /// The batch is carried directly on the event payload — no stash/cleanup needed.
-pub async fn handle_signals_extracted(
+pub async fn deduplicate_extracted_batch(
     url: &str,
     batch: &ExtractedBatch,
     state: &PipelineState,

@@ -1,16 +1,16 @@
 ---
-title: "refactor: Migrate scout from direct GraphWriter writes to event-sourcing"
+title: "refactor: Migrate scout from direct GraphStore writes to event-sourcing"
 type: refactor
 date: 2026-02-25
 updated: 2026-02-26
 depends_on: docs/plans/2026-02-25-refactor-enrichment-pipeline-plan.md
 ---
 
-# Migrate Scout from GraphWriter to Event-Sourcing
+# Migrate Scout from GraphStore to Event-Sourcing
 
 ## Overview
 
-Migrate all scout write operations from direct `GraphWriter` Cypher to the event-sourcing path: append events to Postgres via `EventStore`, then project each event to Neo4j via `GraphProjector`. The graph is a materialized view of the event log. Enrichment (embeddings, diversity, cause_heat) runs as post-projection passes at end of each scout run.
+Migrate all scout write operations from direct `GraphStore` Cypher to the event-sourcing path: append events to Postgres via `EventStore`, then project each event to Neo4j via `GraphProjector`. The graph is a materialized view of the event log. Enrichment (embeddings, diversity, cause_heat) runs as post-projection passes at end of each scout run.
 
 **Architecture (implemented):**
 ```
@@ -67,35 +67,35 @@ No coverage gaps in the reducer. Every Event variant is accounted for.
 
 ### What still bypasses events
 
-**Discovery workflows create signals via `GraphWriter` directly:**
+**Discovery workflows create signals via `GraphStore` directly:**
 - `gathering_finder.rs` — calls `writer.create_node()` for discovered gatherings
 - `response_finder.rs` — calls `writer.create_node()` for discovered aid signals and tensions
 
 These are the only remaining signal creation paths not going through events. They're called from `ScrapePhase` discovery methods, which run during scrape phases.
 
-**Actor lifecycle via `GraphWriter` (pass-through in EventSourcedStore):**
+**Actor lifecycle via `GraphStore` (pass-through in EventSourcedStore):**
 - `upsert_actor()` → `ActorIdentified` event variant exists, reducer handler exists, but EventSourcedStore passes through to writer
 - `link_actor_to_signal()` → `ActorLinkedToEntity` event exists + handler, but passes through
 - `link_actor_to_source()` → `ActorLinkedToSource` event exists + handler, but passes through
 - `update_actor_location()` → `ActorLocationIdentified` event exists + handler, but passes through
 - `actor_extractor.rs` calls `writer.upsert_actor()` and `writer.find_actor_by_name()` directly
 
-**Source lifecycle via `GraphWriter`:**
+**Source lifecycle via `GraphStore`:**
 - `upsert_source()` → `SourceRegistered` event exists + handler, but passes through
 - `record_source_scrape()` → `SourceScrapeRecorded` event exists + handler, called from `metrics.rs` directly
 - Source weight/cadence updates via `update_source_weight()` → `SourceChanged` event exists
 
-**Resource/place lifecycle via `GraphWriter`:**
+**Resource/place lifecycle via `GraphStore`:**
 - `find_or_create_resource()` — no event variant (graph-only operation)
 - `create_requires/prefers/offers_edge()` — no event variants
 - `find_or_create_place()` — no event variant
 
 **Other direct writer writes (not through EventSourcedStore):**
 - `reap_expired()` → `EntityExpired`/`EntityPurged` events exist + handlers
-- ~~`batch_tag_signals()`~~ → now event-sourced via `TagsAggregated`, removed from GraphWriter
+- ~~`batch_tag_signals()`~~ → now event-sourced via `TagsAggregated`, removed from GraphStore
 - `delete_pins()` → `PinsRemoved` event exists + handler
 - `set_query_embedding()` — no event variant (infrastructure)
-- ~~`touch_signal_timestamp()`~~ → replaced by `store.refresh_signal()` (`FreshnessConfirmed`), removed from GraphWriter
+- ~~`touch_signal_timestamp()`~~ → replaced by `store.refresh_signal()` (`FreshnessConfirmed`), removed from GraphStore
 - Task management (`set_task_phase_status`, etc.) — operational, not domain events
 
 ---
@@ -117,7 +117,7 @@ These are the only remaining signal creation paths not going through events. The
 - [x] EventSourcedStore: `link_actor_to_signal()` → emit `ActorLinkedToEntity` event → project
 - [x] EventSourcedStore: `link_actor_to_source()` → emit `ActorLinkedToSource` event → project
 - [x] EventSourcedStore: `update_actor_location()` → emit `ActorLocationIdentified` event → project
-- [x] Refactor `actor_extractor.rs` to accept `&dyn SignalStore` instead of `&GraphWriter`
+- [x] Refactor `actor_extractor.rs` to accept `&dyn SignalStore` instead of `&GraphStore`
 - [x] Verify: 301 scout tests pass, actor lifecycle test still passes
 
 **Files:**
@@ -159,7 +159,7 @@ These are the only remaining signal creation paths not going through events. The
 - `modules/rootsignal-scout/src/pipeline/expansion.rs`
 - `modules/rootsignal-scout/src/scheduling/metrics.rs`
 
-**Complication:** Many of these callers hold a `&GraphWriter` reference, not `&dyn SignalStore`. Some source management methods aren't on the `SignalStore` trait yet. Two options:
+**Complication:** Many of these callers hold a `&GraphStore` reference, not `&dyn SignalStore`. Some source management methods aren't on the `SignalStore` trait yet. Two options:
 1. Add source methods to `SignalStore` trait (makes trait larger but keeps one interface)
 2. Create a separate `SourceStore` trait (cleaner separation but more wiring)
 
@@ -174,12 +174,12 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 **Scope:** These are the last remaining signal creation paths that bypass events. They need access to `EventSourcedStore` (or at least `&dyn SignalStore`).
 
 **Tasks:**
-- [x] Refactor `GatheringFinder` to accept `&dyn SignalStore` alongside `&GraphWriter`
+- [x] Refactor `GatheringFinder` to accept `&dyn SignalStore` alongside `&GraphStore`
   - `writer.create_node()` → `store.create_node()` (event-sourced)
   - `writer.upsert_source()` → `store.upsert_source()` (event-sourced)
   - `writer.find_duplicate()` → `store.find_duplicate()` (pass-through read)
   - Keep `writer` for read-only methods (`find_gathering_finder_targets()`, etc.) and non-trait writes (`create_drawn_to_edge`, `touch_signal_timestamp`, etc.)
-- [x] Refactor `ResponseFinder` to accept `&dyn SignalStore` alongside `&GraphWriter`
+- [x] Refactor `ResponseFinder` to accept `&dyn SignalStore` alongside `&GraphStore`
   - `writer.create_node()` → `store.create_node()` (event-sourced)
   - `writer.upsert_source()` → `store.upsert_source()` (event-sourced)
   - `writer.find_duplicate()` → `store.find_duplicate()` (pass-through read)
@@ -216,7 +216,7 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [x] Add `ResponseLinked { signal_id, tension_id, strength, explanation }` to Event enum
 - [x] Add `GravityLinked { signal_id, tension_id, strength, explanation, gathering_type }` to Event enum
 - [x] Add reducer handlers for each new variant
-- [x] Add `create_response_edge` and `create_drawn_to_edge` to SignalStore trait + GraphWriter impl
+- [x] Add `create_response_edge` and `create_drawn_to_edge` to SignalStore trait + GraphStore impl
 - [x] Convert EventSourcedStore resource edge methods to emit events
 - [x] Implement EventSourcedStore `create_response_edge` and `create_drawn_to_edge`
 - [x] Route GatheringFinder `writer.create_drawn_to_edge()` through `store`
@@ -227,12 +227,12 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 **Explicitly pass-through (not domain events):**
 - `find_or_create_resource` — query+command hybrid returning UUID
 - `find_or_create_place` — query+command hybrid returning UUID
-- ~~`batch_tag_signals`~~ — now event-sourced via `TagsAggregated`, removed from GraphWriter
+- ~~`batch_tag_signals`~~ — now event-sourced via `TagsAggregated`, removed from GraphStore
 
 **Files:**
 - `modules/rootsignal-common/src/events.rs` — 3 new variants
 - `modules/rootsignal-graph/src/reducer.rs` — 3 new handlers
-- `modules/rootsignal-scout/src/pipeline/traits.rs` — 2 new trait methods + GraphWriter impls
+- `modules/rootsignal-scout/src/pipeline/traits.rs` — 2 new trait methods + GraphStore impls
 - `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs` — 3 converted + 2 new methods
 - `modules/rootsignal-scout/src/discovery/gathering_finder.rs` — routed 2 writer calls through store
 - `modules/rootsignal-scout/src/discovery/response_finder.rs` — routed 2 writer calls through store
@@ -240,12 +240,12 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 
 ---
 
-## Phase 6: Clean Up GraphWriter
+## Phase 6: Clean Up GraphStore
 
-**Goal:** Once all writes go through events, GraphWriter becomes read-only. Remove write methods, rename to clarify its role.
+**Goal:** Once all writes go through events, GraphStore becomes read-only. Remove write methods, rename to clarify its role.
 
 **Tasks:**
-- [x] Remove signal write methods from GraphWriter (`create_node`, `upsert_node`, `corroborate`, `create_evidence`, `refresh_signal`, `refresh_url_signals`)
+- [x] Remove signal write methods from GraphStore (`create_node`, `upsert_node`, `corroborate`, `create_evidence`, `refresh_signal`, `refresh_url_signals`)
 - [x] Remove source write methods (`upsert_source`); `record_source_scrape` kept (still called directly from metrics)
 - [x] Remove actor write methods (`upsert_actor`, `link_actor_to_signal`, `link_actor_to_source`, `link_signal_to_source`, `update_actor_location`)
 - [x] Remove private helpers (`create_gathering`, `create_aid`, `create_need`, `create_notice`, `create_tension`, `add_location_params`)
@@ -253,16 +253,16 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - [x] Migrate discovery modules: `investigator` and `tension_linker` now take `&dyn SignalStore` for writes
 - [x] Remove enrichment methods that are now in `enrich.rs` (already moved; no duplicates in writer.rs)
 - [x] Remove inline diversity computation from corroborate (removed with corroborate method)
-- [x] Remove `impl SignalStore for GraphWriter` (non-event bypass path)
+- [x] Remove `impl SignalStore for GraphStore` (non-event bypass path)
 - [x] Route API mutations (`add_source`, `tag_story`) through `Arc<dyn SignalStore>`
 - [x] Add `build_signal_store` factory + `ScoutDeps::build_store` convenience
 - [x] Audit: no direct writes bypass the event path
 - [x] Add `SignalStoreFactory` — per-mutation run_ids for proper event correlation
 - [x] Remove startup panic — graceful error when Postgres is unavailable
-- [x] ~~Make GraphWriter write methods `pub(crate)`~~ — resolved by design: GraphWriter is called cross-crate from EventSourcedStore, so `pub(crate)` isn't feasible. Protection is architectural: the `SignalStore` trait is the public interface, all domain writes go through `EventSourcedStore`.
-- [x] ~~Rename `GraphWriter`~~ — deferred: name is slightly misleading (mostly reads + infrastructure now) but not worth the churn across the codebase.
+- [x] ~~Make GraphStore write methods `pub(crate)`~~ — resolved by design: GraphStore is called cross-crate from EventSourcedStore, so `pub(crate)` isn't feasible. Protection is architectural: the `SignalStore` trait is the public interface, all domain writes go through `EventSourcedStore`.
+- [x] ~~Rename `GraphStore`~~ — deferred: name is slightly misleading (mostly reads + infrastructure now) but not worth the churn across the codebase.
 
-**Not removed** (kept on GraphWriter or moved to GraphAdmin):
+**Not removed** (kept on GraphStore or moved to GraphAdmin):
 - Task management methods (operational, not domain events)
 - `set_query_embedding()` (infrastructure)
 - Discovery marking methods (`mark_response_found`, etc.) — operational flags
@@ -280,7 +280,7 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 ## Risks
 
 - **Performance**: append+project is two DB round-trips (Postgres + Neo4j) per write. Acceptable — scout is I/O bound on scraping, not on graph writes. Monitor if batch operations (reap, tag) become slow.
-- **Discovery refactor scope**: `gathering_finder` and `response_finder` take `&GraphWriter` and use both read and write methods. Refactoring to `Arc<dyn SignalStore>` + `&GraphWriter` (reads) is the pragmatic path.
+- **Discovery refactor scope**: `gathering_finder` and `response_finder` take `&GraphStore` and use both read and write methods. Refactoring to `Arc<dyn SignalStore>` + `&GraphStore` (reads) is the pragmatic path.
 - **Trait growth**: `SignalStore` trait already has ~30 methods. Adding source/actor/resource methods makes it larger. Consider splitting into focused traits if it gets unwieldy.
 
 ## References
@@ -289,6 +289,6 @@ Recommend option 1 for now — the trait already has source methods (`get_active
 - Event data model: `docs/plans/2026-02-25-refactor-event-data-model-plan.md`
 - Event sourcing brainstorm: `docs/brainstorms/2026-02-25-event-sourcing-brainstorm.md`
 - Enrichment brainstorm: `docs/brainstorms/2026-02-25-enrichment-pipeline-design-brainstorm.md`
-- GraphWriter: `modules/rootsignal-graph/src/writer.rs` (~5,126 lines after final cleanup, down from ~5,990)
+- GraphStore: `modules/rootsignal-graph/src/writer.rs` (~5,126 lines after final cleanup, down from ~5,990)
 - EventSourcedStore: `modules/rootsignal-scout/src/pipeline/event_sourced_store.rs`
 - Reducer: `modules/rootsignal-graph/src/reducer.rs` (all 71 event handlers)

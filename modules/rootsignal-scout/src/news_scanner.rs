@@ -6,7 +6,7 @@ use rootsignal_common::Node;
 use tracing::{info, warn};
 
 use rootsignal_graph::beacon::BeaconCandidate;
-use rootsignal_graph::GraphWriter;
+use rootsignal_graph::GraphStore;
 
 use rootsignal_archive::Archive;
 
@@ -47,7 +47,7 @@ const NEWS_FEEDS: &[&str] = &[
 pub struct NewsScanner {
     archive: Arc<Archive>,
     extractor: Box<dyn SignalExtractor>,
-    writer: GraphWriter,
+    writer: GraphStore,
     budget: BudgetTracker,
 }
 
@@ -55,7 +55,7 @@ impl NewsScanner {
     pub fn new(
         archive: Arc<Archive>,
         anthropic_api_key: &str,
-        writer: GraphWriter,
+        writer: GraphStore,
         daily_budget_cents: u64,
     ) -> Self {
         // Use a generic "Global" scope for extraction — no region bias
