@@ -45,8 +45,8 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphStore::new(graph_client);
-            let transitioned = writer
+            let graph = rootsignal_graph::GraphStore::new(graph_client);
+            let transitioned = graph
                 .transition_task_phase_status(
                     &tid,
                     &[
@@ -121,7 +121,7 @@ async fn scrape_region(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<ScrapeResult> {
-    let writer = GraphStore::new(deps.graph_client.clone());
+    let graph = GraphStore::new(deps.graph_client.clone());
     let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
     let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
         Arc::new(crate::core::extractor::Extractor::new(
@@ -136,8 +136,8 @@ async fn scrape_region(
     let budget = Arc::new(crate::domains::scheduling::activities::budget::BudgetTracker::new(deps.daily_budget_cents));
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    let pipeline = crate::core::scrape_pipeline::ScrapePipeline::new(
-        writer,
+    let pipeline = crate::workflows::scrape_pipeline::ScrapePipeline::new(
+        graph,
         deps.graph_client.clone(),
         event_store,
         extractor,

@@ -27,7 +27,7 @@ use rootsignal_graph::DuplicateMatch;
 use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
 use crate::core::extractor::{ExtractionResult, SignalExtractor};
 use crate::infra::embedder::TextEmbedder;
-use RunLogger;
+use crate::infra::run_log::RunLogger;
 use crate::traits::{ContentFetcher, SignalReader};
 
 // ---------------------------------------------------------------------------
@@ -1442,26 +1442,7 @@ pub fn test_engine_for_store_with_embedder(
     embedder: Arc<dyn TextEmbedder>,
 ) -> Arc<ScoutEngine> {
     Arc::new(build_engine(
-        ScoutEngineDeps {
-            store,
-            embedder,
-            region: None,
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
-            extractor: None,
-            state: Arc::new(tokio::sync::RwLock::new(
-                crate::core::aggregate::PipelineState::default(),
-            )),
-            graph_projector: None,
-            event_store: None,
-            run_id: "test-run".to_string(),
-            captured_events: None,
-            budget: None,
-            cancelled: None,
-            pg_pool: None,
-            archive: None,
-        },
+        ScoutEngineDeps::new(store, embedder, "test-run"),
     ))
 }
 
@@ -1485,28 +1466,14 @@ pub fn test_engine_with_capture_for_store(
     Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
     let captured = Arc::new(Mutex::new(Vec::new()));
-    let engine = Arc::new(build_engine(
-        ScoutEngineDeps {
-            store,
-            embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-            region,
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
-            extractor: None,
-            state: Arc::new(tokio::sync::RwLock::new(
-                crate::core::aggregate::PipelineState::default(),
-            )),
-            graph_projector: None,
-            event_store: None,
-            run_id: "test-run".to_string(),
-            captured_events: Some(captured.clone()),
-            budget: None,
-            cancelled: None,
-            pg_pool: None,
-            archive: None,
-        },
-    ));
+    let mut deps = ScoutEngineDeps::new(
+        store,
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        "test-run",
+    );
+    deps.region = region;
+    deps.captured_events = Some(captured.clone());
+    let engine = Arc::new(build_engine(deps));
     (engine, captured)
 }
 
@@ -1514,26 +1481,11 @@ pub fn test_engine_with_capture_for_store(
 pub fn test_scout_deps(
     store: Arc<dyn SignalReader>,
 ) -> ScoutEngineDeps {
-    ScoutEngineDeps {
+    ScoutEngineDeps::new(
         store,
-        embedder: Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        region: None,
-        fetcher: None,
-        anthropic_api_key: None,
-        graph_client: None,
-        extractor: None,
-        state: Arc::new(tokio::sync::RwLock::new(
-            crate::core::aggregate::PipelineState::default(),
-        )),
-        graph_projector: None,
-        event_store: None,
-        run_id: "test-run".to_string(),
-        captured_events: None,
-        budget: None,
-        cancelled: None,
-        pg_pool: None,
-        archive: None,
-    }
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        "test-run",
+    )
 }
 
 /// Create a minimal ArchivedSearchResults for testing.

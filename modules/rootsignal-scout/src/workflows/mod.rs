@@ -10,6 +10,7 @@ pub mod bootstrap;
 pub mod full_run;
 pub mod news_scanner;
 pub mod scrape;
+pub mod scrape_pipeline;
 pub mod situation_weaver;
 pub mod supervisor;
 pub mod synthesis;
@@ -22,6 +23,10 @@ use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, RestateDispatcher}
 use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
+
+use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
+use crate::infra::embedder::TextEmbedder;
+use crate::traits::{ContentFetcher, SignalReader};
 
 /// Shared dependency container for all scout workflows.
 ///
@@ -61,35 +66,24 @@ impl ScoutDeps {
     /// come from ScoutDeps.
     pub fn build_engine(
         &self,
-        store: std::sync::Arc<dyn crate::traits::SignalReader>,
-        embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
-        fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
+        store: Arc<dyn SignalReader>,
+        embedder: Arc<dyn TextEmbedder>,
+        fetcher: Option<Arc<dyn ContentFetcher>>,
         region: Option<rootsignal_common::ScoutScope>,
         run_id: &str,
-    ) -> crate::core::engine::ScoutEngine {
+    ) -> ScoutEngine {
         let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
         let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
         let archive = create_archive(self);
-        crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
-            store,
-            embedder,
-            region,
-            fetcher,
-            anthropic_api_key: Some(self.anthropic_api_key.clone()),
-            graph_client: Some(self.graph_client.clone()),
-            extractor: None,
-            state: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::core::aggregate::PipelineState::default(),
-            )),
-            graph_projector: Some(projector),
-            event_store: Some(event_store),
-            run_id: run_id.into(),
-            captured_events: None,
-            budget: None,
-            cancelled: None,
-            pg_pool: None,
-            archive: Some(archive),
-        })
+        let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
+        deps.region = region;
+        deps.fetcher = fetcher;
+        deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
+        deps.graph_client = Some(self.graph_client.clone());
+        deps.graph_projector = Some(projector);
+        deps.event_store = Some(event_store);
+        deps.archive = Some(archive);
+        build_engine(deps)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.
@@ -157,8 +151,8 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
 /// Write phase status to the ScoutTask node.
 /// Called by individual workflows to persist completion status for the admin UI.
 pub async fn write_task_phase_status(deps: &ScoutDeps, task_id: &str, status: &str) {
-    let writer = rootsignal_graph::GraphStore::new(deps.graph_client.clone());
-    if let Err(e) = writer.set_task_phase_status(task_id, status).await {
+    let graph = rootsignal_graph::GraphStore::new(deps.graph_client.clone());
+    if let Err(e) = graph.set_task_phase_status(task_id, status).await {
         tracing::warn!(%e, task_id, status, "Failed to write task phase status to graph");
     }
 }
@@ -182,8 +176,8 @@ pub async fn journaled_write_task_phase_status(
     let tid = task_id.to_string();
     let st = status.to_string();
     ctx.run::<_, _, ()>(|| async move {
-        let writer = rootsignal_graph::GraphStore::new(graph_client);
-        if let Err(e) = writer.set_task_phase_status(&tid, &st).await {
+        let graph = rootsignal_graph::GraphStore::new(graph_client);
+        if let Err(e) = graph.set_task_phase_status(&tid, &st).await {
             tracing::warn!(%e, task_id = %tid, status = %st, "Failed to write task phase status");
         }
         Ok(())

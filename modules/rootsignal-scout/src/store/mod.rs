@@ -6,6 +6,8 @@ use rootsignal_events::EventStore;
 use rootsignal_graph::{GraphClient, GraphProjector, GraphStore};
 use sqlx::PgPool;
 
+use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
+use crate::infra::embedder::{NoOpEmbedder, TextEmbedder};
 use crate::traits::SignalReader;
 
 /// Build the production SignalReader: read-only queries via Neo4j.
@@ -51,7 +53,7 @@ impl SignalReaderFactory {
 /// Used by API mutations to dispatch `SourceDiscovered` through the engine
 /// instead of calling `upsert_source` directly.
 pub struct EngineFactory {
-    create_fn: Box<dyn Fn() -> crate::core::engine::ScoutEngine + Send + Sync>,
+    create_fn: Box<dyn Fn() -> ScoutEngine + Send + Sync>,
 }
 
 impl EngineFactory {
@@ -64,28 +66,12 @@ impl EngineFactory {
                 let projector = GraphProjector::new(graph_client.clone());
                 let store =
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
-                let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
-                    as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
-                    store,
-                    embedder,
-                    region: None,
-                    fetcher: None,
-                    anthropic_api_key: None,
-                    graph_client: Some(graph_client.clone()),
-                    extractor: None,
-                    state: Arc::new(tokio::sync::RwLock::new(
-                        crate::core::aggregate::PipelineState::default(),
-                    )),
-                    graph_projector: Some(projector),
-                    event_store: Some(event_store),
-                    run_id,
-                    captured_events: None,
-                    budget: None,
-                    cancelled: None,
-                    pg_pool: None,
-                    archive: None,
-                })
+                let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
+                let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
+                deps.graph_client = Some(graph_client.clone());
+                deps.graph_projector = Some(projector);
+                deps.event_store = Some(event_store);
+                build_engine(deps)
             }),
         }
     }
@@ -95,34 +81,14 @@ impl EngineFactory {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("test-{}", uuid::Uuid::new_v4());
-                let embedder = Arc::new(crate::infra::embedder::NoOpEmbedder)
-                    as Arc<dyn crate::infra::embedder::TextEmbedder>;
-                crate::core::engine::build_engine(crate::core::engine::ScoutEngineDeps {
-                    store: store.clone(),
-                    embedder,
-                    region: None,
-                    fetcher: None,
-                    anthropic_api_key: None,
-                    graph_client: None,
-                    extractor: None,
-                    state: Arc::new(tokio::sync::RwLock::new(
-                        crate::core::aggregate::PipelineState::default(),
-                    )),
-                    graph_projector: None,
-                    event_store: None,
-                    run_id,
-                    captured_events: None,
-                    budget: None,
-                    cancelled: None,
-                    pg_pool: None,
-                    archive: None,
-                })
+                let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
+                build_engine(ScoutEngineDeps::new(store.clone(), embedder, run_id))
             }),
         }
     }
 
     /// Create an engine for a single operation.
-    pub fn create(&self) -> crate::core::engine::ScoutEngine {
+    pub fn create(&self) -> ScoutEngine {
         (self.create_fn)()
     }
 }

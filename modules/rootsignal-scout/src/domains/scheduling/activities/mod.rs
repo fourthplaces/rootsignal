@@ -1,7 +1,5 @@
-// Scheduling activities: metrics, budget, scheduler, expansion.
+// Scheduling activities: budget, metrics, scheduler.
 
 pub mod budget;
 pub mod metrics;
 pub mod scheduler;
-
-pub(crate) use crate::domains::expansion::activities::expansion;

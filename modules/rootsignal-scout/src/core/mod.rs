@@ -6,39 +6,23 @@ pub mod engine;
 pub mod events;
 pub mod extractor;
 pub mod projection;
-pub mod scrape_pipeline;
 pub mod stats;
 
 #[cfg(test)]
 mod engine_tests {
     use std::sync::Arc;
-    use tokio::sync::RwLock;
 
-    use super::aggregate::PipelineState;
     use super::engine::{build_engine, ScoutEngineDeps};
     use crate::domains::scrape::events::ScrapeEvent;
 
     #[tokio::test]
     async fn seesaw_engine_applies_state_via_apply_to_aggregate() {
-        let state = Arc::new(RwLock::new(PipelineState::default()));
-        let deps = ScoutEngineDeps {
-            store: Arc::new(crate::testing::MockSignalReader::new()),
-            embedder: Arc::new(crate::infra::embedder::NoOpEmbedder),
-            region: None,
-            fetcher: None,
-            anthropic_api_key: None,
-            graph_client: None,
-            extractor: None,
-            state: state.clone(),
-            graph_projector: None,
-            event_store: None,
-            run_id: "test".into(),
-            captured_events: None,
-            budget: None,
-            cancelled: None,
-            pg_pool: None,
-            archive: None,
-        };
+        let deps = ScoutEngineDeps::new(
+            Arc::new(crate::testing::MockSignalReader::new()),
+            Arc::new(crate::infra::embedder::NoOpEmbedder),
+            "test",
+        );
+        let state = deps.state.clone();
         let engine = build_engine(deps);
 
         let event = ScrapeEvent::ContentFetched {

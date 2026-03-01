@@ -11,8 +11,8 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::core::engine::ScoutEngine;
-use crate::traits::SignalReader;
+use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
+use crate::traits::{ContentFetcher, SignalReader};
 
 use rootsignal_common::ScoutScope;
 use rootsignal_events::EventStore;
@@ -39,7 +39,7 @@ pub struct ScrapePipeline {
 
 impl ScrapePipeline {
     pub fn new(
-        writer: GraphStore,
+        graph: GraphStore,
         graph_client: GraphClient,
         event_store: EventStore,
         extractor: Arc<dyn SignalExtractor>,
@@ -52,30 +52,24 @@ impl ScrapePipeline {
         run_id: String,
         pg_pool: PgPool,
     ) -> Self {
-        let store = Arc::new(EventSourcedReader::new(writer));
+        let store = Arc::new(EventSourcedReader::new(graph));
         let engine_projector = GraphProjector::new(graph_client.clone());
-        let engine = Arc::new(crate::core::engine::build_engine(
-            crate::core::engine::ScoutEngineDeps {
-                store: store as Arc<dyn SignalReader>,
-                embedder,
-                region: Some(region.clone()),
-                fetcher: Some(archive as Arc<dyn crate::traits::ContentFetcher>),
-                anthropic_api_key: Some(anthropic_api_key),
-                graph_client: Some(graph_client),
-                extractor: Some(extractor),
-                state: Arc::new(tokio::sync::RwLock::new(
-                    crate::core::aggregate::PipelineState::default(),
-                )),
-                graph_projector: Some(engine_projector),
-                event_store: Some(event_store),
-                run_id: run_id.clone(),
-                captured_events: None,
-                budget: Some(budget.clone()),
-                cancelled: Some(cancelled),
-                pg_pool: Some(pg_pool.clone()),
-                archive: None,
-            },
-        ));
+        let mut deps = ScoutEngineDeps::new(
+            store as Arc<dyn SignalReader>,
+            embedder,
+            run_id.clone(),
+        );
+        deps.region = Some(region.clone());
+        deps.fetcher = Some(archive as Arc<dyn ContentFetcher>);
+        deps.anthropic_api_key = Some(anthropic_api_key);
+        deps.graph_client = Some(graph_client);
+        deps.extractor = Some(extractor);
+        deps.graph_projector = Some(engine_projector);
+        deps.event_store = Some(event_store);
+        deps.budget = Some(budget.clone());
+        deps.cancelled = Some(cancelled);
+        deps.pg_pool = Some(pg_pool.clone());
+        let engine = Arc::new(build_engine(deps));
         Self {
             budget,
             run_id,

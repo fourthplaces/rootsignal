@@ -52,6 +52,34 @@ pub struct ScoutEngineDeps {
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
 }
 
+impl ScoutEngineDeps {
+    /// Create deps with required fields; all optional fields default to None.
+    pub fn new(
+        store: Arc<dyn SignalReader>,
+        embedder: Arc<dyn TextEmbedder>,
+        run_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            store,
+            embedder,
+            region: None,
+            fetcher: None,
+            anthropic_api_key: None,
+            graph_client: None,
+            extractor: None,
+            state: Arc::new(RwLock::new(PipelineState::default())),
+            graph_projector: None,
+            event_store: None,
+            run_id: run_id.into(),
+            captured_events: None,
+            budget: None,
+            cancelled: None,
+            pg_pool: None,
+            archive: None,
+        }
+    }
+}
+
 /// The seesaw-backed scout engine type.
 pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
 
