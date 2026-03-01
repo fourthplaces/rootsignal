@@ -10,7 +10,6 @@ use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;
-use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use rootsignal_common::canonical_value;
@@ -21,6 +20,7 @@ use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
+use seesaw_core::AnyEvent;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,7 +28,7 @@ use rootsignal_common::events::SystemEvent;
 
 /// Dispatch collected events through a test engine, updating state.
 async fn dispatch_events(
-    events: Vec<crate::core::events::ScoutEvent>,
+    events: seesaw_core::Events,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
 ) {
@@ -36,43 +36,19 @@ async fn dispatch_events(
 }
 
 /// Dispatch collected events with an optional custom embedder for dedup.
-///
-/// Converts PipelineEvent::SignalsExtracted → SignalEvent::SignalsExtracted
-/// at the boundary (same conversion the scrape handlers do in production).
 async fn dispatch_events_with(
-    events: Vec<crate::core::events::ScoutEvent>,
+    events: seesaw_core::Events,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
     embedder: Option<std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>>,
 ) {
-
     let store_arc = store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>;
     let engine = match embedder {
         Some(e) => test_engine_for_store_with_embedder(store_arc, e),
         None => test_engine_for_store(store_arc),
     };
-    for event in events {
-        match event {
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                url,
-                canonical_key,
-                count,
-                batch,
-            }) => {
-                let _ = engine
-                    .emit(SignalEvent::SignalsExtracted {
-                        url,
-                        canonical_key,
-                        count,
-                        batch,
-                    })
-                    .settled()
-                    .await;
-            }
-            other => {
-                let _ = engine.emit(other).settled().await;
-            }
-        }
+    for output in events.into_outputs() {
+        let _ = engine.emit_output(output).settled().await;
     }
     // Sync engine stats back to ctx so test assertions work.
     // Only stats — collected_links are written directly by run_web, not via events.
@@ -2826,7 +2802,7 @@ async fn social_signal_has_produced_by_edge() {
 // ---------------------------------------------------------------------------
 
 
-type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>;
+type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<AnyEvent>>>;
 
 /// Wrapper that creates test engine+deps and calls enrich_actor_locations.
 /// Returns the updated count and a vec of captured events for inspection.
@@ -2860,13 +2836,18 @@ fn dispatched_location_name(
     actor_id: uuid::Uuid,
 ) -> Option<String> {
     let events = captured.lock().unwrap();
-    events.iter().find_map(|e| match e {
-        ScoutEvent::System(SystemEvent::ActorLocationIdentified {
+    events.iter().find_map(|e| {
+        if let Some(SystemEvent::ActorLocationIdentified {
             actor_id: id,
             location_name,
             ..
-        }) if *id == actor_id => location_name.clone().or(Some(String::new())),
-        _ => None,
+        }) = e.downcast_ref::<SystemEvent>()
+        {
+            if *id == actor_id {
+                return location_name.clone().or(Some(String::new()));
+            }
+        }
+        None
     })
 }
 
@@ -2876,14 +2857,19 @@ fn dispatched_location_coords(
     actor_id: uuid::Uuid,
 ) -> Option<(f64, f64)> {
     let events = captured.lock().unwrap();
-    events.iter().find_map(|e| match e {
-        ScoutEvent::System(SystemEvent::ActorLocationIdentified {
+    events.iter().find_map(|e| {
+        if let Some(SystemEvent::ActorLocationIdentified {
             actor_id: id,
             location_lat,
             location_lng,
             ..
-        }) if *id == actor_id => Some((*location_lat, *location_lng)),
-        _ => None,
+        }) = e.downcast_ref::<SystemEvent>()
+        {
+            if *id == actor_id {
+                return Some((*location_lat, *location_lng));
+            }
+        }
+        None
     })
 }
 

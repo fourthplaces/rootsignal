@@ -9,7 +9,8 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use rootsignal_graph::GraphStore;
 
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::{PipelineEvent, PipelinePhase, ScoutEvent};
+use crate::core::events::PipelinePhase;
+use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_response_scrape_completed(e: &LifecycleEvent) -> bool {
@@ -48,17 +49,16 @@ pub mod handlers {
             return Ok(events![]);
         }
 
-        let events =
+        let mut all_events =
             activities::actor_location::collect_actor_location_events(&*deps.store, &actors).await;
-        if events.is_empty() {
+        let count = all_events.len();
+        if count == 0 {
             return Ok(events![]);
         }
-        let actors_updated = events.len() as u32;
-        let mut all_events = events;
-        all_events.push(ScoutEvent::Pipeline(
-            PipelineEvent::ActorEnrichmentCompleted { actors_updated },
-        ));
-        Ok(events![..all_events])
+        all_events.push(EnrichmentEvent::ActorEnrichmentCompleted {
+            actors_updated: count as u32,
+        });
+        Ok(all_events)
     }
 
     /// PhaseCompleted(ResponseScrape) → delete pins, actor extraction, embedding + metric enrichment,
@@ -100,10 +100,10 @@ pub mod handlers {
         .await;
 
         let mut all_events = actor_events;
-        all_events.push(ScoutEvent::Lifecycle(LifecycleEvent::PhaseCompleted {
+        all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::ActorEnrichment,
-        }));
-        Ok(events![..all_events])
+        });
+        Ok(all_events)
     }
 
     /// PhaseCompleted(ActorEnrichment) → update source weights/cadence, emit MetricsCompleted.
@@ -147,7 +147,7 @@ pub mod handlers {
         }
 
         let mut all_events = metric_events;
-        all_events.push(ScoutEvent::Lifecycle(LifecycleEvent::MetricsCompleted));
-        Ok(events![..all_events])
+        all_events.push(LifecycleEvent::MetricsCompleted);
+        Ok(all_events)
     }
 }

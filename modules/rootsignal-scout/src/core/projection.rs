@@ -3,8 +3,7 @@
 //! These run before domain handlers and replicate the old engine's
 //! PERSIST → REDUCE → PROJECT flow.
 //!
-//! All four use `on_any()` so they fire for every event type —
-//! both the legacy `ScoutEvent` and per-domain events as they're introduced.
+//! All four use `on_any()` so they fire for every event type.
 
 use std::sync::Arc;
 
@@ -15,10 +14,10 @@ use seesaw_core::{events, on_any, AnyEvent, Context, Events, Handler};
 use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
 
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::ScoutEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
 
 /// Priority-0 handler: persist every event to rootsignal's Postgres event store.
@@ -36,9 +35,7 @@ pub fn persist_handler() -> Handler<ScoutEngineDeps> {
                 if let Some(ref event_store) = deps.event_store {
                     // Downcast to known event types for persistence
                     let (event_type, payload) =
-                        if let Some(e) = event.downcast_ref::<ScoutEvent>() {
-                            (e.event_type_str(), e.to_persist_payload())
-                        } else if let Some(e) = event.downcast_ref::<LifecycleEvent>() {
+                        if let Some(e) = event.downcast_ref::<LifecycleEvent>() {
                             (e.event_type_str(), e.to_persist_payload())
                         } else if let Some(e) = event.downcast_ref::<SignalEvent>() {
                             (e.event_type_str(), e.to_persist_payload())
@@ -83,15 +80,15 @@ pub fn apply_to_aggregate_handler() -> Handler<ScoutEngineDeps> {
         .priority(1)
         .then(
             |event: AnyEvent, ctx: Context<ScoutEngineDeps>| async move {
-                if let Some(e) = event.downcast_ref::<ScoutEvent>() {
-                    let mut state = ctx.deps().state.write().await;
-                    state.apply(e.clone());
-                } else if let Some(e) = event.downcast_ref::<SignalEvent>() {
+                if let Some(e) = event.downcast_ref::<SignalEvent>() {
                     let mut state = ctx.deps().state.write().await;
                     state.apply_signal(e);
                 } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
                     let mut state = ctx.deps().state.write().await;
                     state.apply_discovery(e);
+                } else if let Some(e) = event.downcast_ref::<ScrapeEvent>() {
+                    let mut state = ctx.deps().state.write().await;
+                    state.apply_scrape(e);
                 }
                 // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
                 Ok::<Events, anyhow::Error>(events![])
@@ -102,10 +99,9 @@ pub fn apply_to_aggregate_handler() -> Handler<ScoutEngineDeps> {
 /// Test-only handler: capture every event into a shared Vec for inspection.
 ///
 /// Only registered when `ScoutEngineDeps.captured_events` is Some.
-/// Wraps per-domain events in ScoutEvent variants so test assertions
-/// can use a single `event_type_str()` path.
+/// Stores raw `AnyEvent`s — test code uses `downcast_ref` to inspect.
 pub fn capture_handler(
-    sink: Arc<std::sync::Mutex<Vec<ScoutEvent>>>,
+    sink: Arc<std::sync::Mutex<Vec<AnyEvent>>>,
 ) -> Handler<ScoutEngineDeps> {
     on_any()
         .id("test_capture")
@@ -113,21 +109,7 @@ pub fn capture_handler(
         .then(move |event: AnyEvent, _ctx: Context<ScoutEngineDeps>| {
             let sink = sink.clone();
             async move {
-                if let Some(e) = event.downcast_ref::<ScoutEvent>() {
-                    sink.lock().unwrap().push(e.clone());
-                } else if let Some(e) = event.downcast_ref::<LifecycleEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::Lifecycle(e.clone()));
-                } else if let Some(e) = event.downcast_ref::<SignalEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::Signal(e.clone()));
-                } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::Discovery(e.clone()));
-                } else if let Some(e) = event.downcast_ref::<EnrichmentEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::Enrichment(e.clone()));
-                } else if let Some(e) = event.downcast_ref::<WorldEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::World(e.clone()));
-                } else if let Some(e) = event.downcast_ref::<SystemEvent>() {
-                    sink.lock().unwrap().push(ScoutEvent::System(e.clone()));
-                }
+                sink.lock().unwrap().push(event);
                 Ok::<Events, anyhow::Error>(events![])
             }
         })
@@ -144,17 +126,12 @@ pub fn project_to_graph_handler() -> Handler<ScoutEngineDeps> {
         .then(
             |event: AnyEvent, ctx: Context<ScoutEngineDeps>| async move {
                 // Check event projectability — World/System always project,
-                // ScoutEvent/DiscoveryEvent check is_projectable().
+                // DiscoveryEvent checks is_projectable().
                 let (event_type, payload) =
                     if let Some(e) = event.downcast_ref::<WorldEvent>() {
                         (e.event_type().to_string(), Event::World(e.clone()).to_payload())
                     } else if let Some(e) = event.downcast_ref::<SystemEvent>() {
                         (e.event_type().to_string(), Event::System(e.clone()).to_payload())
-                    } else if let Some(e) = event.downcast_ref::<ScoutEvent>() {
-                        if !e.is_projectable() {
-                            return Ok::<Events, anyhow::Error>(events![]);
-                        }
-                        (e.event_type_str(), e.to_persist_payload())
                     } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
                         if !e.is_projectable() {
                             return Ok::<Events, anyhow::Error>(events![]);

@@ -12,39 +12,9 @@ use rootsignal_graph::GraphStore;
 use tracing::{info, warn};
 
 use crate::core::aggregate::PipelineState;
-use crate::core::events::{PipelineEvent, PipelinePhase, ScoutEvent};
-use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::signals::events::SignalEvent;
 use crate::infra::run_log::RunLogger;
 use crate::infra::util::sanitize_url;
 use self::scrape_phase::{ScrapeOutput, ScrapePhase};
-
-/// Partition collected events: convert PipelineEvent::SignalsExtracted to
-/// SignalEvent::SignalsExtracted for TypeId routing, keep everything else as ScoutEvent.
-pub fn partition_into_events(collected: Vec<ScoutEvent>, tail: LifecycleEvent) -> seesaw_core::Events {
-    let mut events = seesaw_core::Events::new();
-    for e in collected {
-        match e {
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                url,
-                canonical_key,
-                count,
-                batch,
-            }) => {
-                events = events.add(SignalEvent::SignalsExtracted {
-                    url,
-                    canonical_key,
-                    count,
-                    batch,
-                });
-            }
-            other => {
-                events = events.add(other);
-            }
-        }
-    }
-    events.add(tail)
-}
 
 pub async fn build_run_logger(
     run_id: &str,

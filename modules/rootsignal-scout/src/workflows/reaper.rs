@@ -65,13 +65,11 @@ impl SignalReaper for SignalReaperImpl {
                 let mut stale = 0u64;
 
                 for (signal_id, node_type, reason) in &expired {
-                    let event = crate::core::events::ScoutEvent::System(
-                        rootsignal_common::events::SystemEvent::EntityExpired {
-                            signal_id: *signal_id,
-                            node_type: *node_type,
-                            reason: reason.clone(),
-                        },
-                    );
+                    let event = rootsignal_common::events::SystemEvent::EntityExpired {
+                        signal_id: *signal_id,
+                        node_type: *node_type,
+                        reason: reason.clone(),
+                    };
                     if let Err(e) = engine.emit(event).settled().await {
                         tracing::warn!(error = %e, signal_id = %signal_id, "Failed to expire signal");
                         continue;

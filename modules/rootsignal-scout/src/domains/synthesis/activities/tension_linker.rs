@@ -19,7 +19,7 @@ use rootsignal_graph::{GraphStore, SituationBrief, TensionLinkerOutcome, Tension
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::core::events::ScoutEvent;
+use rootsignal_common::events::WorldEvent;
 
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
@@ -447,13 +447,13 @@ impl<'a> TensionLinker<'a> {
             }
         };
 
-        events.push(ScoutEvent::System(SystemEvent::ResponseLinked {
+        events.push(SystemEvent::ResponseLinked {
             signal_id: target.signal_id,
             tension_id,
             strength: tension.match_strength.clamp(0.0, 1.0),
             explanation: tension.explanation.clone(),
             source_url: None,
-        }));
+        });
         stats.edges_created += 1;
 
         Ok(())
@@ -516,9 +516,9 @@ impl<'a> TensionLinker<'a> {
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        events.push(ScoutEvent::World(world_event));
+        events.push(world_event);
         for se in system_events {
-            events.push(ScoutEvent::System(se));
+            events.push(se);
         }
 
         info!(

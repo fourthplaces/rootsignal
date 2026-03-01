@@ -90,7 +90,7 @@ pub async fn run_actor_extraction(
         Ok(result) => result,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
-            (ActorExtractorStats::default(), vec![])
+            (ActorExtractorStats::default(), seesaw_core::Events::new())
         }
     }
 }
@@ -103,9 +103,9 @@ async fn try_extract_actors(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> Result<(ActorExtractorStats, Vec<ScoutEvent>)> {
+) -> Result<(ActorExtractorStats, seesaw_core::Events)> {
     let mut stats = ActorExtractorStats::default();
-    let mut events: Vec<ScoutEvent> = Vec::new();
+    let mut events = seesaw_core::Events::new();
 
     // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
@@ -197,7 +197,7 @@ async fn try_extract_actors(
                 Ok(Some(id)) => id,
                 Ok(None) => {
                     let new_id = Uuid::new_v4();
-                    events.push(ScoutEvent::System(SystemEvent::ActorIdentified {
+                    events.push(SystemEvent::ActorIdentified {
                         actor_id: new_id,
                         name: extracted.name.clone(),
                         actor_type,
@@ -209,7 +209,7 @@ async fn try_extract_actors(
                         location_lat: Some((min_lat + max_lat) / 2.0),
                         location_lng: Some((min_lng + max_lng) / 2.0),
                         location_name: None,
-                    }));
+                    });
                     stats.actors_created += 1;
                     new_id
                 }
@@ -219,11 +219,11 @@ async fn try_extract_actors(
                 }
             };
 
-            events.push(ScoutEvent::System(SystemEvent::ActorLinkedToSignal {
+            events.push(SystemEvent::ActorLinkedToSignal {
                 actor_id,
                 signal_id: signal.id,
                 role: "mentioned".into(),
-            }));
+            });
             stats.edges_created += 1;
         }
     }

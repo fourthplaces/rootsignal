@@ -19,7 +19,7 @@ use rootsignal_graph::GraphStore;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::{build_run_logger, partition_into_events, scrape_response, scrape_tension};
+use crate::domains::scrape::activities::{build_run_logger, scrape_response, scrape_tension};
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 
 fn is_sources_scheduled(e: &LifecycleEvent) -> bool {
@@ -68,12 +68,11 @@ pub mod handlers {
         state.apply_scrape_output(output);
         drop(state);
 
-        Ok(partition_into_events(
-            events,
-            LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::TensionScrape,
-            },
-        ))
+        let mut all_events = events;
+        all_events.push(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        });
+        Ok(all_events)
     }
 
     /// PhaseCompleted(MidRunDiscovery) → scrape response sources + social + topics,
@@ -124,11 +123,10 @@ pub mod handlers {
         state.apply_scrape_output(output);
         drop(state);
 
-        Ok(partition_into_events(
-            events,
-            LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::ResponseScrape,
-            },
-        ))
+        let mut all_events = events;
+        all_events.push(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::ResponseScrape,
+        });
+        Ok(all_events)
     }
 }

@@ -294,23 +294,17 @@ pub async fn synthesize_region(
             "Registering finder-discovered sources through engine"
         );
         for source in finder_sources {
-            all_events.push(crate::core::events::ScoutEvent::Pipeline(
-                crate::core::events::PipelineEvent::SourceDiscovered {
-                    source,
-                    discovered_by: "synthesis".into(),
-                },
-            ));
+            all_events.push(crate::domains::discovery::events::DiscoveryEvent::SourceDiscovered {
+                source,
+                discovered_by: "synthesis".into(),
+            });
         }
     }
 
     // Emit all collected events through the engine (legitimate chain root)
     for output in all_events.into_outputs() {
-        if let Some(event) = output.value.downcast_ref::<crate::core::events::ScoutEvent>() {
-            if let Err(e) = engine.emit(event.clone()).settled().await {
-                warn!(error = %e, "Failed to emit synthesis event (non-fatal)");
-            }
-        } else {
-            warn!(event_type = output.event_type.as_str(), "Unknown event type from finder, skipping");
+        if let Err(e) = engine.emit_output(output).settled().await {
+            warn!(error = %e, "Failed to emit synthesis event (non-fatal)");
         }
     }
 

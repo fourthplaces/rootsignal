@@ -1474,7 +1474,7 @@ pub fn test_engine_for_store_with_embedder(
 /// Create a test engine that captures all dispatched events for inspection.
 pub fn test_engine_with_capture() -> (
     std::sync::Arc<crate::core::engine::ScoutEngine>,
-    std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
+    std::sync::Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
     test_engine_with_capture_for_store(
         std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
@@ -1488,7 +1488,7 @@ pub fn test_engine_with_capture_for_store(
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
     std::sync::Arc<crate::core::engine::ScoutEngine>,
-    std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
+    std::sync::Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
     let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let engine = std::sync::Arc::new(crate::core::engine::build_engine(

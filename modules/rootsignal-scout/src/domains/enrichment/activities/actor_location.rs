@@ -14,7 +14,6 @@
 //! - Signals older than `max_age_days` are excluded.
 
 use chrono::{DateTime, Utc};
-use crate::core::events::ScoutEvent;
 use rootsignal_common::events::SystemEvent;
 
 /// A single signal location observation for triangulation.
@@ -120,9 +119,9 @@ pub async fn collect_actor_location_events(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
     )],
-) -> Vec<crate::core::events::ScoutEvent> {
+) -> seesaw_core::Events {
 
-    let mut events = Vec::new();
+    let mut events = seesaw_core::Events::new();
     for (actor, _sources) in actors {
         let signals = match store.get_signals_for_actor(actor.id).await {
             Ok(s) => s,
@@ -177,7 +176,7 @@ pub async fn collect_actor_location_events(
         if let Some(new_loc) = result {
             let changed = current.as_ref().map_or(true, |c| c.name != new_loc.name);
             if changed {
-                events.push(ScoutEvent::System(SystemEvent::ActorLocationIdentified {
+                events.push(SystemEvent::ActorLocationIdentified {
                     actor_id: actor.id,
                     location_lat: new_loc.lat,
                     location_lng: new_loc.lng,
@@ -186,7 +185,7 @@ pub async fn collect_actor_location_events(
                     } else {
                         Some(new_loc.name.clone())
                     },
-                }));
+                });
             }
         }
     }
@@ -207,9 +206,11 @@ pub async fn enrich_actor_locations(
 ) -> u32 {
     let events = collect_actor_location_events(store, actors).await;
     let mut updated = 0u32;
-    for event in events {
-        if engine.emit(event).settled().await.is_ok() {
-            updated += 1;
+    for output in events.into_outputs() {
+        if let Some(e) = output.value.downcast_ref::<SystemEvent>() {
+            if engine.emit(e.clone()).settled().await.is_ok() {
+                updated += 1;
+            }
         }
     }
     updated

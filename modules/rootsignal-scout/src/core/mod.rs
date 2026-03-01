@@ -16,7 +16,7 @@ mod engine_tests {
 
     use super::aggregate::PipelineState;
     use super::engine::{build_engine, ScoutEngineDeps};
-    use super::events::{PipelineEvent, ScoutEvent};
+    use crate::domains::scrape::events::ScrapeEvent;
 
     #[tokio::test]
     async fn seesaw_engine_applies_state_via_apply_to_aggregate() {
@@ -41,12 +41,13 @@ mod engine_tests {
         };
         let engine = build_engine(deps);
 
-        let event = ScoutEvent::Pipeline(PipelineEvent::ContentFetched {
+        let event = ScrapeEvent::ContentFetched {
+            run_id: uuid::Uuid::new_v4(),
             url: "https://test.com".into(),
             canonical_key: "test".into(),
             content_hash: "abc123".into(),
             link_count: 0,
-        });
+        };
         // dispatch().settled() drives the full settlement loop
         let result = engine.dispatch(event).settled().await;
         assert!(result.is_ok(), "settled should succeed: {:?}", result.err());

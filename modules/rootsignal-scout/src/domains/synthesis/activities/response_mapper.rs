@@ -14,7 +14,6 @@ use rootsignal_common::system_events::SystemEvent;
 use rootsignal_graph::GraphStore;
 use seesaw_core::Events;
 
-use crate::core::events::ScoutEvent;
 
 /// Structured output for response verification.
 #[derive(Deserialize, JsonSchema)]
@@ -112,13 +111,13 @@ impl<'a> ResponseMapper<'a> {
                     .await
                 {
                     Ok(Some(explanation)) => {
-                        events.push(ScoutEvent::System(SystemEvent::ResponseLinked {
+                        events.push(SystemEvent::ResponseLinked {
                             signal_id: *candidate_id,
                             tension_id: *tension_id,
                             strength: *candidate_similarity,
                             explanation: explanation.clone(),
                             source_url: None,
-                        }));
+                        });
                         stats.edges_created += 1;
                     }
                     Ok(None) => {}

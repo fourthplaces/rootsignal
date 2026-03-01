@@ -14,39 +14,16 @@ use uuid::Uuid;
 use crate::core::extractor::ExtractionResult;
 use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
-use crate::core::events::{PipelineEvent, ScoutEvent};
-use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 
 async fn dispatch_events(
-    events: Vec<crate::core::events::ScoutEvent>,
+    events: seesaw_core::Events,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
 ) {
-
     let engine = test_engine_for_store(store.clone() as std::sync::Arc<dyn crate::traits::SignalReader>);
-    for event in events {
-        match event {
-            ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
-                url,
-                canonical_key,
-                count,
-                batch,
-            }) => {
-                let _ = engine
-                    .emit(SignalEvent::SignalsExtracted {
-                        url,
-                        canonical_key,
-                        count,
-                        batch,
-                    })
-                    .settled()
-                    .await;
-            }
-            other => {
-                let _ = engine.emit(other).settled().await;
-            }
-        }
+    for output in events.into_outputs() {
+        let _ = engine.emit_output(output).settled().await;
     }
     // Sync engine stats back to ctx so test assertions work.
     // Only stats — collected_links are written directly by run_web, not via events.

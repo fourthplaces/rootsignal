@@ -13,7 +13,7 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphStore;
 
-use crate::core::events::ScoutEvent;
+use seesaw_core::Events;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphStore,
@@ -42,19 +42,19 @@ impl<'a> Metrics<'a> {
         source_signal_counts: &HashMap<String, u32>,
         query_api_errors: &HashSet<String>,
         now: DateTime<Utc>,
-    ) -> Vec<ScoutEvent> {
-        let mut events: Vec<ScoutEvent> = Vec::new();
+    ) -> Events {
+        let mut events = Events::new();
 
         // Record per-source scrape metrics. Skip queries where the search API errored.
         for (canonical_key, signals_produced) in source_signal_counts {
             if query_api_errors.contains(canonical_key) {
                 continue;
             }
-            events.push(ScoutEvent::System(SystemEvent::SourceScraped {
+            events.push(SystemEvent::SourceScraped {
                 canonical_key: canonical_key.clone(),
                 signals_produced: *signals_produced,
                 scraped_at: now,
-            }));
+            });
         }
 
         // Update source weights based on scrape results.

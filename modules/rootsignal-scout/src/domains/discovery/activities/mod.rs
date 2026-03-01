@@ -1,19 +1,18 @@
 //! Discovery domain activity functions: pure logic extracted from handlers.
 
 pub(crate) mod bootstrap;
-pub(crate) mod bootstrap_queries;
 pub mod source_finder;
 
 use tracing::info;
 
-use crate::core::events::ScoutEvent;
+use seesaw_core::Events;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 use rootsignal_graph::GraphStore;
 
 /// Output from mid-run discovery.
 pub struct MidRunOutput {
-    pub events: Vec<ScoutEvent>,
+    pub events: Events,
     pub social_topics: Vec<String>,
 }
 
@@ -41,7 +40,7 @@ pub async fn discover_sources_mid_run(
         info!("{stats}");
     }
 
-    let mut scout_events: Vec<ScoutEvent> = Vec::new();
+    let mut scout_events = Events::new();
     if !sources.is_empty() {
         scout_events.extend(ScrapePhase::register_sources_events(
             sources,

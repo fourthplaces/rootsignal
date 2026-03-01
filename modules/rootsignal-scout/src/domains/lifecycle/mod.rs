@@ -36,11 +36,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let scout_events = activities::reap_expired(&*deps.store).await;
-
-        Ok(Events::batch(scout_events).add(LifecycleEvent::PhaseCompleted {
+        let mut events = activities::reap_expired(&*deps.store).await;
+        events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::ReapExpired,
-        }))
+        });
+        Ok(events)
     }
 
     /// PhaseCompleted(ReapExpired) → load + schedule sources, stash in state, emit SourcesScheduled.

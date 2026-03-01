@@ -6,20 +6,40 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::events::{PipelinePhase, ScoutEvent};
+use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
+use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::core::aggregate::ExtractedBatch;
 use crate::testing::*;
 use chrono::Utc;
+use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
+use seesaw_core::AnyEvent;
 
 /// Helper: collect event variant names from captured events.
-fn event_names(captured: &Arc<std::sync::Mutex<Vec<ScoutEvent>>>) -> Vec<String> {
+fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
     captured
         .lock()
         .unwrap()
         .iter()
-        .map(|e| e.event_type_str())
+        .filter_map(|e| {
+            if let Some(le) = e.downcast_ref::<LifecycleEvent>() {
+                Some(le.event_type_str())
+            } else if let Some(se) = e.downcast_ref::<SignalEvent>() {
+                Some(se.event_type_str())
+            } else if let Some(de) = e.downcast_ref::<DiscoveryEvent>() {
+                Some(de.event_type_str())
+            } else if let Some(ee) = e.downcast_ref::<EnrichmentEvent>() {
+                Some(ee.event_type_str())
+            } else if let Some(we) = e.downcast_ref::<WorldEvent>() {
+                Some(we.event_type().to_string())
+            } else if let Some(se) = e.downcast_ref::<SystemEvent>() {
+                Some(se.event_type().to_string())
+            } else {
+                Some("unknown".to_string())
+            }
+        })
         .collect()
 }
 

@@ -89,8 +89,10 @@ pub mod handlers {
         }
         drop(state);
 
-        Ok(Events::batch(output.events).add(LifecycleEvent::PhaseCompleted {
+        let mut all_events = output.events;
+        all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::Expansion,
-        }))
+        });
+        Ok(all_events)
     }
 }

@@ -13,7 +13,6 @@ use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphStore, InvestigationTarget};
 
-use crate::core::events::ScoutEvent;
 
 use rootsignal_archive::Archive;
 use crate::infra::util;
@@ -341,7 +340,7 @@ impl<'a> Investigator<'a> {
                 channel_type: Some(rootsignal_common::channel_type(&item.source_url)),
             };
 
-            events.push(ScoutEvent::World(WorldEvent::CitationPublished {
+            events.push(WorldEvent::CitationPublished {
                 citation_id: evidence.id,
                 signal_id: target.signal_id,
                 url: evidence.source_url.clone(),
@@ -350,7 +349,7 @@ impl<'a> Investigator<'a> {
                 relevance: evidence.relevance.clone(),
                 channel_type: evidence.channel_type,
                 evidence_confidence: evidence.confidence,
-            }));
+            });
             evidence_count += 1;
             info!(
                 signal_id = %target.signal_id,

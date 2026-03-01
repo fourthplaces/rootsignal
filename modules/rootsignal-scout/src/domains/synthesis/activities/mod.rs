@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use rootsignal_graph::{GraphClient, GraphStore, SimilarityBuilder};
 
-use crate::core::events::{PipelineEvent, ScoutEvent};
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 
@@ -222,10 +222,10 @@ pub async fn run_synthesis(
             "Registering finder-discovered sources"
         );
         for source in finder_sources {
-            all_events.push(ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
+            all_events.push(DiscoveryEvent::SourceDiscovered {
                 source,
                 discovered_by: "synthesis".into(),
-            }));
+            });
         }
     }
 

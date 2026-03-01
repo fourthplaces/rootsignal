@@ -20,7 +20,7 @@ use rootsignal_graph::{GatheringFinderTarget, GraphStore, ResponseHeuristic};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::core::events::ScoutEvent;
+use rootsignal_common::events::WorldEvent;
 
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
@@ -557,11 +557,11 @@ impl<'a> GatheringFinder<'a> {
                 was_new = false;
 
                 // Touch the existing signal so it doesn't age out
-                events.push(ScoutEvent::System(SystemEvent::FreshnessConfirmed {
+                events.push(SystemEvent::FreshnessConfirmed {
                     signal_ids: vec![dup.id],
                     node_type: NodeType::Gathering,
                     confirmed_at: Utc::now(),
-                }));
+                });
 
                 dup.id
             }
@@ -575,13 +575,13 @@ impl<'a> GatheringFinder<'a> {
         };
 
         // Wire DRAWN_TO edge to the target tension
-        events.push(ScoutEvent::System(SystemEvent::TensionLinked {
+        events.push(SystemEvent::TensionLinked {
             signal_id,
             tension_id: target.tension_id,
             strength: gathering.match_strength.clamp(0.0, 1.0),
             explanation: gathering.explanation.clone(),
             source_url: None,
-        }));
+        });
         stats.edges_created += 1;
 
         // Wire additional DRAWN_TO edges for also_addresses
@@ -700,9 +700,9 @@ impl<'a> GatheringFinder<'a> {
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        events.push(ScoutEvent::World(world_event));
+        events.push(world_event);
         for se in system_events {
-            events.push(ScoutEvent::System(se));
+            events.push(se);
         }
 
         info!(
@@ -763,13 +763,13 @@ impl<'a> GatheringFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring gravity also_addresses edge"
                 );
-                events.push(ScoutEvent::System(SystemEvent::TensionLinked {
+                events.push(SystemEvent::TensionLinked {
                     signal_id,
                     tension_id,
                     strength: sim.clamp(0.0, 1.0),
                     explanation: explanation.to_string(),
                     source_url: None,
-                }));
+                });
             }
         }
 

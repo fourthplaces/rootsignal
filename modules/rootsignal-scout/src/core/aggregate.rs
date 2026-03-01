@@ -1,8 +1,8 @@
 //! Pipeline state managed by the aggregate + handler stash.
 //!
 //! `PipelineState` is the mutable state for a scout run. State mutations
-//! happen in `apply()` (pure, synchronous), not scattered across handlers.
-//! Per-domain `apply_*` methods handle the new domain event types.
+//! happen in per-domain `apply_*` methods (pure, synchronous), not
+//! scattered across handlers.
 //!
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use rootsignal_common::Node;
 
-use crate::core::events::{FreshnessBucket, PipelineEvent, ScoutEvent};
+use crate::core::events::FreshnessBucket;
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
@@ -172,81 +172,6 @@ impl Default for PipelineState {
 }
 
 impl PipelineState {
-    /// Apply a scout event to pipeline state (reducer).
-    ///
-    /// Only Pipeline events mutate state; World and System events are no-ops.
-    pub fn apply(&mut self, event: ScoutEvent) {
-        let ScoutEvent::Pipeline(ref pe) = event else {
-            // World and System events don't update pipeline state.
-            return;
-        };
-
-        match pe {
-            // Content fetching
-            PipelineEvent::ContentFetched { .. } => {
-                self.stats.urls_scraped += 1;
-            }
-            PipelineEvent::ContentUnchanged { .. } => {
-                self.stats.urls_unchanged += 1;
-            }
-            PipelineEvent::ContentFetchFailed { .. } => {
-                self.stats.urls_failed += 1;
-            }
-
-            // Extraction
-            PipelineEvent::SignalsExtracted { count, .. } => {
-                self.stats.signals_extracted += count;
-            }
-
-            // Links
-            PipelineEvent::LinkCollected { url, discovered_on } => {
-                self.collected_links.push(CollectedLink {
-                    url: url.clone(),
-                    discovered_on: discovered_on.clone(),
-                });
-            }
-
-            // Expansion
-            PipelineEvent::ExpansionQueryCollected { query, .. } => {
-                self.expansion_queries.push(query.clone());
-                self.stats.expansion_queries_collected += 1;
-            }
-            PipelineEvent::SocialTopicCollected { topic } => {
-                self.social_expansion_topics.push(topic.clone());
-                self.stats.expansion_social_topics_queued += 1;
-            }
-
-            // Social
-            PipelineEvent::SocialPostsFetched { count, .. } => {
-                self.stats.social_media_posts += count;
-            }
-
-            // Freshness
-            PipelineEvent::FreshnessRecorded { bucket, .. } => match bucket {
-                FreshnessBucket::Within7d => self.stats.fresh_7d += 1,
-                FreshnessBucket::Within30d => self.stats.fresh_30d += 1,
-                FreshnessBucket::Within90d => self.stats.fresh_90d += 1,
-                FreshnessBucket::Older | FreshnessBucket::Unknown => {}
-            },
-
-            // LinksPromoted — clear collected links (they've been promoted to sources)
-            PipelineEvent::LinksPromoted { .. } => {
-                self.collected_links.clear();
-            }
-
-            // No state changes
-            PipelineEvent::ActorEnrichmentCompleted { .. } => {}
-
-            PipelineEvent::SourceDiscovered { .. } => {
-                self.stats.sources_discovered += 1;
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Per-domain apply methods (used by new domain event types)
-    // -----------------------------------------------------------------
-
     /// Apply a scrape domain event.
     pub fn apply_scrape(&mut self, event: &ScrapeEvent) {
         match event {

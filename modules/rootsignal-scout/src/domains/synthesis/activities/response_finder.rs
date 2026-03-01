@@ -21,7 +21,6 @@ use rootsignal_graph::{GraphStore, ResponseFinderTarget, ResponseHeuristic, Situ
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::core::events::ScoutEvent;
 use crate::core::extractor::ResourceTag;
 
 
@@ -592,13 +591,13 @@ impl<'a> ResponseFinder<'a> {
         };
 
         // Wire RESPONDS_TO edge to the target tension
-        events.push(ScoutEvent::System(SystemEvent::ResponseLinked {
+        events.push(SystemEvent::ResponseLinked {
             signal_id,
             tension_id: target.tension_id,
             strength: response.match_strength.clamp(0.0, 1.0),
             explanation: response.explanation.clone(),
             source_url: None,
-        }));
+        });
         stats.edges_created += 1;
 
         // Wire additional edges for also_addresses
@@ -640,12 +639,12 @@ impl<'a> ResponseFinder<'a> {
             let slug = rootsignal_common::slugify(&tag.slug);
             let description = tag.context.as_deref().unwrap_or("");
 
-            events.push(ScoutEvent::World(WorldEvent::ResourceIdentified {
+            events.push(WorldEvent::ResourceIdentified {
                 resource_id: Uuid::new_v4(),
                 name: tag.slug.clone(),
                 slug: slug.clone(),
                 description: description.to_string(),
-            }));
+            });
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
             let (role, quantity, notes, capacity): (
@@ -667,7 +666,7 @@ impl<'a> ResponseFinder<'a> {
                 }
             };
 
-            events.push(ScoutEvent::World(WorldEvent::ResourceLinked {
+            events.push(WorldEvent::ResourceLinked {
                 signal_id,
                 resource_slug: slug.clone(),
                 role: role.to_string(),
@@ -675,7 +674,7 @@ impl<'a> ResponseFinder<'a> {
                 quantity: quantity.map(|s| s.to_string()),
                 notes: notes.map(|s| s.to_string()),
                 capacity: capacity.map(|s| s.to_string()),
-            }));
+            });
 
             info!(
                 signal_id = %signal_id,
@@ -757,9 +756,9 @@ impl<'a> ResponseFinder<'a> {
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        events.push(ScoutEvent::World(world_event));
+        events.push(world_event);
         for se in system_events {
-            events.push(ScoutEvent::System(se));
+            events.push(se);
         }
 
         info!(
@@ -819,13 +818,13 @@ impl<'a> ResponseFinder<'a> {
                     also_addresses = tension_title.as_str(),
                     "Wiring also_addresses edge"
                 );
-                let also_event = ScoutEvent::System(SystemEvent::ResponseLinked {
+                let also_event = SystemEvent::ResponseLinked {
                     signal_id,
                     tension_id,
                     strength: sim.clamp(0.0, 1.0),
                     explanation: explanation.to_string(),
                     source_url: None,
-                });
+                };
                 events.push(also_event);
             }
         }
@@ -925,9 +924,9 @@ impl<'a> ResponseFinder<'a> {
         let world_event = crate::store::event_sourced::node_to_world_event(&node);
         let system_events = crate::store::event_sourced::node_system_events(&node);
 
-        events.push(ScoutEvent::World(world_event));
+        events.push(world_event);
         for se in system_events {
-            events.push(ScoutEvent::System(se));
+            events.push(se);
         }
 
         info!(

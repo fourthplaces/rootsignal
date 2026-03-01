@@ -16,7 +16,6 @@ use uuid::Uuid;
 use rootsignal_common::SourceNode;
 use rootsignal_graph::{GraphClient, GraphStore};
 
-use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::SignalReader;
 
@@ -29,7 +28,7 @@ pub async fn enrich_scraped_signals(
     api_key: &str,
     embedder: &dyn TextEmbedder,
     consumed_pin_ids: &[Uuid],
-) -> Vec<ScoutEvent> {
+) -> seesaw_core::Events {
     let writer = GraphStore::new(graph_client.clone());
 
     // Delete consumed pins
@@ -90,7 +89,7 @@ pub async fn update_source_weights(
     all_sources: &[SourceNode],
     source_signal_counts: &std::collections::HashMap<String, u32>,
     query_api_errors: &HashSet<String>,
-) -> Vec<ScoutEvent> {
+) -> seesaw_core::Events {
     let metrics = crate::domains::scheduling::activities::metrics::Metrics::new(writer, region_name);
     metrics
         .update_weights_and_cadence(all_sources, source_signal_counts, query_api_errors, Utc::now())

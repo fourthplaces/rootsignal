@@ -10,7 +10,8 @@ use tracing::info;
 use rootsignal_graph::GraphStore;
 
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::{PipelinePhase, ScoutEvent};
+use crate::core::events::PipelinePhase;
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use crate::domains::discovery::activities::bootstrap;
 use crate::domains::lifecycle::events::LifecycleEvent;
@@ -48,7 +49,7 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = deps.state.read().await;
         let events = bootstrap::seed_sources_if_empty(&state, deps).await?;
-        Ok(events![..events])
+        Ok(events)
     }
 
     /// PhaseCompleted(TensionScrape|ResponseScrape|Expansion) → promote collected links to sources.
@@ -70,19 +71,15 @@ pub mod handlers {
             return Ok(events![]);
         }
         let count = promoted.len() as u32;
-        let mut events: Vec<ScoutEvent> = promoted
-            .into_iter()
-            .map(|s| {
-                ScoutEvent::Pipeline(crate::core::events::PipelineEvent::SourceDiscovered {
-                    source: s,
-                    discovered_by: "link_promoter".into(),
-                })
-            })
-            .collect();
-        events.push(ScoutEvent::Pipeline(
-            crate::core::events::PipelineEvent::LinksPromoted { count },
-        ));
-        Ok(events![..events])
+        let mut events = Events::new();
+        for s in promoted {
+            events.push(DiscoveryEvent::SourceDiscovered {
+                source: s,
+                discovered_by: "link_promoter".into(),
+            });
+        }
+        events.push(DiscoveryEvent::LinksPromoted { count });
+        Ok(events)
     }
 
     /// PhaseCompleted(TensionScrape) → discover mid-run sources, emit PhaseCompleted(MidRunDiscovery).
@@ -124,8 +121,10 @@ pub mod handlers {
             state.social_topics = output.social_topics;
         }
 
-        Ok(Events::batch(output.events).add(LifecycleEvent::PhaseCompleted {
+        let mut all_events = output.events;
+        all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::MidRunDiscovery,
-        }))
+        });
+        Ok(all_events)
     }
 }

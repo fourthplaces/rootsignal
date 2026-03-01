@@ -20,9 +20,11 @@ use crate::domains::enrichment::activities::quality;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
-use crate::core::events::{PipelineEvent, ScoutEvent};
+use seesaw_core::Events;
 use crate::core::extractor::{ResourceTag, SignalExtractor};
 use crate::core::aggregate::ExtractedBatch;
+use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::signals::events::SignalEvent;
 use rootsignal_common::{
     canonical_value, is_web_query, scraping_strategy, ActorContext, DiscoveryMethod, Node,
     NodeType, Post, ScoutScope, ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
@@ -40,7 +42,7 @@ use rootsignal_common::events::SystemEvent;
 /// Replaces direct mutations to PipelineState during scraping.
 pub struct ScrapeOutput {
     /// Events to emit (SignalsExtracted, FreshnessConfirmed, etc.)
-    pub events: Vec<ScoutEvent>,
+    pub events: Events,
     /// New URL→canonical_key mappings discovered during this scrape.
     pub url_mappings: HashMap<String, String>,
     /// Per-source signal counts (canonical_key → count).
@@ -68,7 +70,7 @@ pub struct StatsDelta {
 impl ScrapeOutput {
     pub fn new() -> Self {
         Self {
-            events: Vec::new(),
+            events: Events::new(),
             url_mappings: HashMap::new(),
             source_signal_counts: HashMap::new(),
             query_api_errors: HashSet::new(),
@@ -80,7 +82,7 @@ impl ScrapeOutput {
     }
 
     /// Take events out, leaving the state-update portion.
-    pub fn take_events(&mut self) -> Vec<ScoutEvent> {
+    pub fn take_events(&mut self) -> Events {
         std::mem::take(&mut self.events)
     }
 
@@ -160,16 +162,15 @@ impl ScrapePhase {
     pub fn register_sources_events(
         sources: Vec<SourceNode>,
         discovered_by: &str,
-    ) -> Vec<ScoutEvent> {
-        sources
-            .into_iter()
-            .map(|source| {
-                ScoutEvent::Pipeline(PipelineEvent::SourceDiscovered {
-                    source,
-                    discovered_by: discovered_by.into(),
-                })
-            })
-            .collect()
+    ) -> Events {
+        let mut events = Events::new();
+        for source in sources {
+            events.push(DiscoveryEvent::SourceDiscovered {
+                source,
+                discovered_by: discovered_by.into(),
+            });
+        }
+        events
     }
 
     /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals.
@@ -1277,7 +1278,7 @@ impl ScrapePhase {
         url_to_canonical_key: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
         source_id: Option<Uuid>,
-    ) -> Vec<ScoutEvent> {
+    ) -> Events {
         let url = sanitize_url(url);
         let raw_count = nodes.len() as u32;
 
@@ -1290,7 +1291,7 @@ impl ScrapePhase {
         let nodes = score_and_filter(nodes, &url, actor_ctx);
 
         if nodes.is_empty() {
-            return Vec::new();
+            return Events::new();
         }
 
         // Layer 1: Within-batch dedup by (normalized_title, node_type)
@@ -1310,12 +1311,14 @@ impl ScrapePhase {
             source_id,
         };
 
-        vec![ScoutEvent::Pipeline(PipelineEvent::SignalsExtracted {
+        let mut events = Events::new();
+        events.push(SignalEvent::SignalsExtracted {
             url,
             canonical_key,
             count: raw_count,
             batch: Box::new(batch),
-        })]
+        });
+        events
     }
 
     /// Collect FreshnessConfirmed events for unchanged URLs (no dispatch).
@@ -1323,11 +1326,11 @@ impl ScrapePhase {
         &self,
         url: &str,
         now: DateTime<Utc>,
-    ) -> Result<Vec<ScoutEvent>> {
+    ) -> Result<Events> {
 
         let all_ids = self.store.signal_ids_for_url(url).await?;
         if all_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Events::new());
         }
 
         // Group by NodeType for batch FreshnessConfirmed events
@@ -1336,16 +1339,14 @@ impl ScrapePhase {
             by_type.entry(*nt).or_default().push(*id);
         }
 
-        let events: Vec<ScoutEvent> = by_type
-            .into_iter()
-            .map(|(node_type, ids)| {
-                ScoutEvent::System(SystemEvent::FreshnessConfirmed {
-                    signal_ids: ids,
-                    node_type,
-                    confirmed_at: now,
-                })
-            })
-            .collect();
+        let mut events = Events::new();
+        for (node_type, ids) in by_type {
+            events.push(SystemEvent::FreshnessConfirmed {
+                signal_ids: ids,
+                node_type,
+                confirmed_at: now,
+            });
+        }
         Ok(events)
     }
 }

@@ -41,7 +41,7 @@ pub struct ScoutEngineDeps {
     pub run_id: String,
     /// Test-only: capture all dispatched events for inspection.
     /// None in production, Some in tests that need event inspection.
-    pub captured_events: Option<Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>>,
+    pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
     /// Budget tracker for LLM/API cost tracking.
     pub budget: Option<Arc<crate::domains::scheduling::activities::budget::BudgetTracker>>,
     /// Cancellation flag — checked by handlers between phases.

@@ -7,8 +7,8 @@ use tracing::info;
 use rootsignal_common::SourceNode;
 use rootsignal_graph::GraphStore;
 
+use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
-use crate::core::events::ScoutEvent;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::RunLogger;
 use self::expansion::{Expansion, ExpansionOutput};
@@ -20,7 +20,7 @@ pub struct ExpansionActivityOutput {
     /// Expansion output for state application.
     pub expansion: ExpansionOutput,
     /// Events from source registration.
-    pub events: Vec<ScoutEvent>,
+    pub events: Events,
     /// Scrape output from end-of-run topic discovery (if any).
     pub topic_scrape: Option<ScrapeOutput>,
 }
@@ -43,7 +43,7 @@ pub async fn expand_and_discover(
     let expansion_queries = state.expansion_queries.clone();
     let expansion_output = expansion.expand_queries_to_sources(expansion_queries, run_log).await;
 
-    let mut collected_events: Vec<ScoutEvent> = Vec::new();
+    let mut collected_events = Events::new();
     if !expansion_output.sources.is_empty() {
         collected_events.extend(ScrapePhase::register_sources_events(
             expansion_output.sources.clone(),
