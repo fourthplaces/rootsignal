@@ -104,9 +104,7 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Infrastructure handlers (priority 0–2)
-        .with_handler(projection::persist_handler())
-        .with_handler(projection::apply_to_aggregate_handler())
-        .with_handler(projection::project_to_graph_handler())
+        .with_handlers(projection::handlers::handlers())
         // Domain handlers
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
@@ -116,7 +114,7 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
         // Scrape chain finalize — triggers on PhaseCompleted(Synthesis)
-        .with_handler(lifecycle::scrape_finalize_handler());
+        .with_handler(lifecycle::__seesaw_effect_scrape_finalize());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -135,9 +133,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Infrastructure handlers (priority 0–2)
-        .with_handler(projection::persist_handler())
-        .with_handler(projection::apply_to_aggregate_handler())
-        .with_handler(projection::project_to_graph_handler())
+        .with_handlers(projection::handlers::handlers())
         // Domain handlers — scrape chain
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
@@ -150,7 +146,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
         // Full chain finalize — triggers on PhaseCompleted(Supervisor)
-        .with_handler(lifecycle::full_finalize_handler());
+        .with_handler(lifecycle::__seesaw_effect_full_finalize());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {

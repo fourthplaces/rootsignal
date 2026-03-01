@@ -3,10 +3,8 @@
 pub mod activities;
 pub mod events;
 
-use std::sync::Arc;
-
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, on, Context, Events, Handler};
+use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
 use rootsignal_graph::GraphReader;
@@ -21,6 +19,14 @@ fn is_engine_started(e: &LifecycleEvent) -> bool {
 
 fn is_reap_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::ReapExpired))
+}
+
+fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Synthesis))
+}
+
+fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Supervisor))
 }
 
 #[handlers]
@@ -92,33 +98,19 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
 }
 
 /// Finalize handler for the scrape chain: triggers on PhaseCompleted(Synthesis).
-pub fn scrape_finalize_handler() -> Handler<ScoutEngineDeps> {
-    on::<LifecycleEvent>()
-        .id("lifecycle:finalize")
-        .filter(|e: &LifecycleEvent| {
-            matches!(
-                e,
-                LifecycleEvent::PhaseCompleted { phase }
-                    if matches!(phase, PipelinePhase::Synthesis)
-            )
-        })
-        .then(|_event: Arc<LifecycleEvent>, ctx: Context<ScoutEngineDeps>| {
-            finalize_impl(ctx)
-        })
+#[handle(on = LifecycleEvent, id = "lifecycle:finalize", filter = is_synthesis_completed)]
+pub async fn scrape_finalize(
+    _event: LifecycleEvent,
+    ctx: Context<ScoutEngineDeps>,
+) -> Result<Events> {
+    finalize_impl(ctx).await
 }
 
 /// Finalize handler for the full chain: triggers on PhaseCompleted(Supervisor).
-pub fn full_finalize_handler() -> Handler<ScoutEngineDeps> {
-    on::<LifecycleEvent>()
-        .id("lifecycle:finalize")
-        .filter(|e: &LifecycleEvent| {
-            matches!(
-                e,
-                LifecycleEvent::PhaseCompleted { phase }
-                    if matches!(phase, PipelinePhase::Supervisor)
-            )
-        })
-        .then(|_event: Arc<LifecycleEvent>, ctx: Context<ScoutEngineDeps>| {
-            finalize_impl(ctx)
-        })
+#[handle(on = LifecycleEvent, id = "lifecycle:finalize", filter = is_supervisor_completed)]
+pub async fn full_finalize(
+    _event: LifecycleEvent,
+    ctx: Context<ScoutEngineDeps>,
+) -> Result<Events> {
+    finalize_impl(ctx).await
 }
