@@ -21,7 +21,7 @@ use rootsignal_graph::{GraphWriter, ResponseFinderTarget, ResponseHeuristic, Sit
 use rootsignal_archive::Archive;
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 use crate::pipeline::extractor::ResourceTag;
 
 

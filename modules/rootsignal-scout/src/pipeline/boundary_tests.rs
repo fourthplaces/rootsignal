@@ -20,7 +20,6 @@ use crate::traits::SignalReader;
 use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
-use crate::core::events::ScoutEvent;
 use rootsignal_common::events::SystemEvent;
 
 // ---------------------------------------------------------------------------

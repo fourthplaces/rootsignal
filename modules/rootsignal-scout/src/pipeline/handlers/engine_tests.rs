@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::core::events::{PipelinePhase, ScoutEvent};
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
-use crate::pipeline::state::ExtractedBatch;
+use crate::core::aggregate::ExtractedBatch;
 use crate::testing::*;
 use chrono::Utc;
 

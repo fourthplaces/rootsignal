@@ -9,9 +9,9 @@ use tracing::{info, warn};
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 
-use crate::pipeline::events::{PipelineEvent, ScoutEvent};
+use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::core::engine::ScoutEngineDeps;
-use crate::pipeline::state::PipelineState;
+use crate::core::aggregate::PipelineState;
 
 /// Handle the EngineStarted event: seed sources if region is empty.
 pub async fn handle_engine_started(

@@ -13,7 +13,7 @@ use rootsignal_common::events::WorldEvent;
 use rootsignal_common::{CitationNode, ScoutScope};
 use rootsignal_graph::{EvidenceSummary, GraphWriter, InvestigationTarget};
 
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 
 use rootsignal_archive::Archive;
 use crate::infra::util;

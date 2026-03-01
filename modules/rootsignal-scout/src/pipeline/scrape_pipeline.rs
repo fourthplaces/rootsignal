@@ -25,7 +25,7 @@ use crate::store::event_sourced::EventSourcedReader;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::pipeline::extractor::SignalExtractor;
-use crate::pipeline::stats::ScoutStats;
+use crate::core::stats::ScoutStats;
 use crate::scheduling::budget::BudgetTracker;
 
 /// Bundles the shared dependencies for the scrape pipeline.

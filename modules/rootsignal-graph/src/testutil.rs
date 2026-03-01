@@ -65,6 +65,3 @@ pub async fn neo4j_container() -> (Box<dyn std::any::Any + Send>, GraphClient) {
         (Box::new(container), client)
     }
 }
-
-/// Backwards-compatible alias.
-

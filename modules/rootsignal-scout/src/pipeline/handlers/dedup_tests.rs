@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::events::SignalEvent;
-use crate::pipeline::state::{ExtractedBatch, PipelineState};
+use crate::core::aggregate::{ExtractedBatch, PipelineState};
 use crate::testing::*;
 
 fn test_deps(store: Arc<MockSignalReader>) -> ScoutEngineDeps {

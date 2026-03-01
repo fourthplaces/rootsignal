@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::events::SignalEvent;
-use crate::pipeline::state::PipelineState;
+use crate::core::aggregate::PipelineState;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
 /// NewSignalAccepted: a new signal passed all dedup layers.

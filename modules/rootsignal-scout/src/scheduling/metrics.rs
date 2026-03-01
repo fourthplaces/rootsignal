@@ -13,7 +13,7 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphWriter;
 
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 
 pub(crate) struct Metrics<'a> {
     writer: &'a GraphWriter,

@@ -11,7 +11,7 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.

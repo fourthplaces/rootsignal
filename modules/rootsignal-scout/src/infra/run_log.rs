@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::pipeline::stats::ScoutStats;
+use crate::core::stats::ScoutStats;
 
 // ---------------------------------------------------------------------------
 // RunLogger — root logger for a scout run

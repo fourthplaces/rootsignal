@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::events::SignalEvent;
-use crate::pipeline::state::{PendingNode, PipelineState, WiringContext};
+use crate::core::aggregate::{PendingNode, PipelineState, WiringContext};
 use crate::testing::*;
 
 /// Build test ScoutEngineDeps with a mock store.

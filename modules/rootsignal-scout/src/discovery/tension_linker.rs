@@ -19,7 +19,7 @@ use rootsignal_graph::{GraphWriter, SituationBrief, TensionLinkerOutcome, Tensio
 use rootsignal_archive::Archive;
 use super::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";

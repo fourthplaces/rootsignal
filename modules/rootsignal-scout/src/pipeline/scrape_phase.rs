@@ -20,17 +20,17 @@ use crate::enrichment::quality;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
-use crate::pipeline::events::{PipelineEvent, ScoutEvent};
+use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::pipeline::extractor::{ResourceTag, SignalExtractor};
-use crate::pipeline::state::ExtractedBatch;
+use crate::core::aggregate::ExtractedBatch;
 use rootsignal_common::{
     canonical_value, is_web_query, scraping_strategy, ActorContext, DiscoveryMethod, Node,
     NodeType, Post, ScoutScope, ScrapingStrategy, SocialPlatform, SourceNode, SourceRole,
 };
-pub(crate) use crate::pipeline::state::PipelineState as RunContext;
+pub(crate) use crate::core::aggregate::PipelineState as RunContext;
 use rootsignal_common::events::SystemEvent;
 
-// RunContext retired — use PipelineState from crate::pipeline::state instead.
+// RunContext retired — use PipelineState from crate::core::aggregate instead.
 
 // ---------------------------------------------------------------------------
 // ScrapeOutput — accumulated output from a scrape phase

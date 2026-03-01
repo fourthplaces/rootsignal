@@ -12,7 +12,7 @@ use rootsignal_common::system_events::SystemEvent;
 use rootsignal_graph::GraphWriter;
 use seesaw_core::Events;
 
-use crate::pipeline::events::ScoutEvent;
+use crate::core::events::ScoutEvent;
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {
