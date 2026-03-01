@@ -15,7 +15,7 @@ use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, TensionNode,
 };
-use rootsignal_graph::{GraphStore, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
+use rootsignal_graph::{GraphReader, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -175,7 +175,7 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 // =============================================================================
 
 pub struct TensionLinker<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -189,7 +189,7 @@ pub struct TensionLinker<'a> {
 
 impl<'a> TensionLinker<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -231,6 +231,11 @@ impl<'a> TensionLinker<'a> {
 
     pub async fn run(&self, events: &mut seesaw_core::Events) -> TensionLinkerStats {
         let mut stats = TensionLinkerStats::default();
+
+        // Pre-pass: promote exhausted retries to abandoned (via event)
+        events.push(SystemEvent::ExhaustedRetriesPromoted {
+            promoted_at: Utc::now(),
+        });
 
         let targets = match self
             .graph
@@ -351,17 +356,12 @@ impl<'a> TensionLinker<'a> {
                 }
             };
 
-            if let Err(e) = self
-                .graph
-                .mark_tension_linker_investigated(target.signal_id, &target.label, outcome)
-                .await
-            {
-                warn!(
-                    signal_id = %target.signal_id,
-                    error = %e,
-                    "Failed to mark signal as curiosity-investigated"
-                );
-            }
+            events.push(SystemEvent::TensionLinkerOutcomeRecorded {
+                signal_id: target.signal_id,
+                label: target.label.clone(),
+                outcome: outcome.as_str().to_string(),
+                increment_retry: outcome == TensionLinkerOutcome::Failed,
+            });
         }
 
         stats

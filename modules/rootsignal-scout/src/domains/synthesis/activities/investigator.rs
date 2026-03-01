@@ -9,9 +9,9 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::WorldEvent;
+use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{CitationNode, ScoutScope};
-use rootsignal_graph::{EvidenceSummary, GraphStore, InvestigationTarget};
+use rootsignal_graph::{EvidenceSummary, GraphReader, InvestigationTarget};
 
 
 use rootsignal_archive::Archive;
@@ -22,7 +22,7 @@ const MAX_SIGNALS_INVESTIGATED: usize = 8;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -116,7 +116,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 
 impl<'a> Investigator<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
@@ -188,7 +188,7 @@ impl<'a> Investigator<'a> {
 
                     // Revise confidence based on accumulated evidence
                     if evidence_count > 0 {
-                        self.revise_confidence(target, &mut stats).await;
+                        self.compute_confidence_revision(target, &mut stats, events).await;
                     }
                 }
                 Err(e) => {
@@ -203,13 +203,11 @@ impl<'a> Investigator<'a> {
             }
 
             // Always mark investigated (even on failure — prevents retry loops)
-            if let Err(e) = self
-                .graph
-                .mark_investigated(target.signal_id, target.node_type)
-                .await
-            {
-                warn!(signal_id = %target.signal_id, error = %e, "Failed to mark signal as investigated");
-            }
+            events.push(SystemEvent::SignalInvestigated {
+                signal_id: target.signal_id,
+                node_type: target.node_type,
+                investigated_at: Utc::now(),
+            });
         }
 
         stats
@@ -363,11 +361,12 @@ impl<'a> Investigator<'a> {
         Ok(evidence_count)
     }
 
-    /// Revise signal confidence based on accumulated evidence.
-    async fn revise_confidence(
+    /// Compute confidence revision and emit ConfidenceScored event.
+    async fn compute_confidence_revision(
         &self,
         target: &InvestigationTarget,
         stats: &mut InvestigationStats,
+        events: &mut seesaw_core::Events,
     ) {
         let evidence = match self
             .graph
@@ -407,14 +406,11 @@ impl<'a> Investigator<'a> {
             return;
         }
 
-        if let Err(e) = self
-            .graph
-            .update_signal_confidence(target.signal_id, target.node_type, new_confidence)
-            .await
-        {
-            warn!(signal_id = %target.signal_id, error = %e, "Failed to update signal confidence");
-            return;
-        }
+        events.push(SystemEvent::ConfidenceScored {
+            signal_id: target.signal_id,
+            old_confidence,
+            new_confidence,
+        });
 
         stats.confidence_adjustments += 1;
         info!(

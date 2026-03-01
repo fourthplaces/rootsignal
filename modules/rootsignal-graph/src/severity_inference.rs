@@ -1,8 +1,9 @@
 use tracing::info;
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::types::{Severity, SourceNode};
 
-use crate::writer::{FieldCorrection, GraphStore, NoticeInferenceRow};
+use crate::writer::GraphReader;
 
 /// A source is trusted when it has sustained history, corroborated output,
 /// and hasn't been penalized for quality issues.
@@ -56,30 +57,22 @@ fn parse_severity(s: &str) -> Severity {
     }
 }
 
-fn severity_str(s: Severity) -> &'static str {
-    match s {
-        Severity::Low => "low",
-        Severity::Medium => "medium",
-        Severity::High => "high",
-        Severity::Critical => "critical",
-    }
-}
-
 /// Re-evaluate severity for all Notices in a bounding box.
 /// Fetches inference data in one batch query, applies pure inference logic,
-/// and writes back any changes via `update_signal_fields`.
-/// Returns the number of notices whose severity was updated.
-pub async fn run_severity_inference(
-    writer: &GraphStore,
+/// and returns `SeverityClassified` events for any changes.
+/// Returns (count_updated, events).
+pub async fn compute_severity_inference(
+    writer: &GraphReader,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> anyhow::Result<u32> {
+) -> anyhow::Result<(u32, Vec<SystemEvent>)> {
     let rows = writer
         .notice_inference_batch(min_lat, max_lat, min_lng, max_lng)
         .await?;
 
+    let mut events = Vec::new();
     let mut updated = 0u32;
     for row in &rows {
         let extracted = parse_severity(&row.severity);
@@ -96,15 +89,10 @@ pub async fn run_severity_inference(
             row.source_diversity,
         );
         if inferred != extracted {
-            let correction = FieldCorrection {
-                field: "severity".to_string(),
-                old_value: severity_str(extracted).to_string(),
-                new_value: severity_str(inferred).to_string(),
-                reason: "severity_inference".to_string(),
-            };
-            writer
-                .update_signal_fields(row.notice_id, &[correction])
-                .await?;
+            events.push(SystemEvent::SeverityClassified {
+                signal_id: row.notice_id,
+                severity: inferred,
+            });
             updated += 1;
         }
     }
@@ -113,5 +101,5 @@ pub async fn run_severity_inference(
         info!(updated, total = rows.len(), "Severity inference complete");
     }
 
-    Ok(updated)
+    Ok((updated, events))
 }

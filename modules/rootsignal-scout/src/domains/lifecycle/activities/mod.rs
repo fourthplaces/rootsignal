@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::types::NodeType;
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use crate::core::aggregate::{ScheduleOutput, ScheduledData};
 use crate::domains::scheduling::activities::scheduler::{self as scheduler, schedule_web_queries};
@@ -52,7 +52,7 @@ pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
 
 /// Load, boost, and schedule sources. Returns ScheduleOutput for state application.
 pub async fn schedule_sources(
-    graph: &GraphStore,
+    graph: &GraphReader,
     region: &rootsignal_common::ScoutScope,
 ) -> ScheduleOutput {
     // Load sources

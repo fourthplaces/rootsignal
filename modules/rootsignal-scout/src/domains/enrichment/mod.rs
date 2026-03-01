@@ -6,7 +6,7 @@ pub mod events;
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
@@ -89,7 +89,7 @@ pub mod handlers {
                 .unwrap_or_default()
         };
 
-        let actor_events = activities::enrich_scraped_signals(
+        let actor_events = activities::compute_post_scrape_enrichment(
             &*deps.store,
             graph_client,
             region,
@@ -121,7 +121,7 @@ pub mod handlers {
                 return Ok(events![LifecycleEvent::MetricsCompleted]);
             }
         };
-        let graph = GraphStore::new(graph_client.clone());
+        let graph = GraphReader::new(graph_client.clone());
 
         let state = deps.state.read().await;
         let all_sources = state
@@ -133,7 +133,7 @@ pub mod handlers {
         let query_api_errors = state.query_api_errors.clone();
         drop(state);
 
-        let metric_events = activities::update_source_weights(
+        let metric_events = activities::compute_source_metrics(
             &graph,
             &region.name,
             &all_sources,

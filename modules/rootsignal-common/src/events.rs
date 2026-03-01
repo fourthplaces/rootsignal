@@ -64,6 +64,10 @@ pub enum SourceChange {
         old: bool,
         new: bool,
     },
+    Cadence {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
 }
 
 /// A tag with its computed weight.

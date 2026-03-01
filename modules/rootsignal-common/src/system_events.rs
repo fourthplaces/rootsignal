@@ -376,6 +376,30 @@ pub enum SystemEvent {
     },
 
     // -----------------------------------------------------------------------
+    // Response scouting
+    // -----------------------------------------------------------------------
+    ResponseScouted {
+        tension_id: Uuid,
+        scouted_at: DateTime<Utc>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Query embedding storage
+    // -----------------------------------------------------------------------
+    QueryEmbeddingStored {
+        canonical_key: String,
+        embedding: Vec<f32>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Situation curiosity
+    // -----------------------------------------------------------------------
+    CuriosityTriggered {
+        situation_id: Uuid,
+        signal_ids: Vec<Uuid>,
+    },
+
+    // -----------------------------------------------------------------------
     // System curiosity
     // -----------------------------------------------------------------------
     ExpansionQueryCollected {
@@ -390,6 +414,57 @@ pub enum SystemEvent {
         canonical_key: String,
         signals_produced: u32,
         scraped_at: DateTime<Utc>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Investigation & curiosity bookkeeping
+    // -----------------------------------------------------------------------
+    SignalInvestigated {
+        signal_id: Uuid,
+        node_type: NodeType,
+        investigated_at: DateTime<Utc>,
+    },
+
+    ExhaustedRetriesPromoted {
+        promoted_at: DateTime<Utc>,
+    },
+
+    TensionLinkerOutcomeRecorded {
+        signal_id: Uuid,
+        label: String,
+        outcome: String,
+        increment_retry: bool,
+    },
+
+    GatheringScouted {
+        tension_id: Uuid,
+        found_gatherings: bool,
+        scouted_at: DateTime<Utc>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Place & gathering geography
+    // -----------------------------------------------------------------------
+    PlaceDiscovered {
+        place_id: Uuid,
+        name: String,
+        slug: String,
+        lat: f64,
+        lng: f64,
+        discovered_at: DateTime<Utc>,
+    },
+
+    GathersAtPlaceLinked {
+        signal_id: Uuid,
+        place_slug: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Tension deduplication
+    // -----------------------------------------------------------------------
+    DuplicateTensionMerged {
+        survivor_id: Uuid,
+        duplicate_id: Uuid,
     },
 }
 
@@ -442,8 +517,18 @@ impl Eventlike for SystemEvent {
             SystemEvent::PinsConsumed { .. } => "pins_consumed",
             SystemEvent::DemandReceived { .. } => "demand_received",
             SystemEvent::SubmissionReceived { .. } => "submission_received",
+            SystemEvent::ResponseScouted { .. } => "response_scouted",
+            SystemEvent::QueryEmbeddingStored { .. } => "query_embedding_stored",
+            SystemEvent::CuriosityTriggered { .. } => "curiosity_triggered",
             SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
             SystemEvent::SourceScraped { .. } => "source_scraped",
+            SystemEvent::SignalInvestigated { .. } => "signal_investigated",
+            SystemEvent::ExhaustedRetriesPromoted { .. } => "exhausted_retries_promoted",
+            SystemEvent::TensionLinkerOutcomeRecorded { .. } => "tension_linker_outcome_recorded",
+            SystemEvent::GatheringScouted { .. } => "gathering_scouted",
+            SystemEvent::PlaceDiscovered { .. } => "place_discovered",
+            SystemEvent::GathersAtPlaceLinked { .. } => "gathers_at_place_linked",
+            SystemEvent::DuplicateTensionMerged { .. } => "duplicate_tension_merged",
         }
     }
 

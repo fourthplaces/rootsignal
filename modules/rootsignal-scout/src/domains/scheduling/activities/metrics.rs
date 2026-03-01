@@ -9,20 +9,20 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
-use rootsignal_common::events::SystemEvent;
+use rootsignal_common::events::{SourceChange, SystemEvent};
 use rootsignal_common::{is_web_query, SourceNode};
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use seesaw_core::Events;
 
 pub(crate) struct Metrics<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         region_slug: &'a str,
     ) -> Self {
         Self {
@@ -31,12 +31,11 @@ impl<'a> Metrics<'a> {
         }
     }
 
-    /// Update source metrics, weights, cadences, and deactivate dead sources.
+    /// Compute source metrics, weights, cadences, and find dead sources.
     ///
-    /// Takes signal counts and query errors collected during the scrape run.
-    /// Uses `all_sources` (the snapshot from the start of the run, NOT
-    /// `fresh_sources`).
-    pub async fn update_weights_and_cadence(
+    /// Emits SourceScraped, SourceChanged (Weight/Cadence), and SourceDeactivated events.
+    /// Graph reads (count_source_tensions, find_dead_*, get_source_stats) remain.
+    pub async fn compute_source_metrics(
         &self,
         all_sources: &[SourceNode],
         source_signal_counts: &HashMap<String, u32>,
@@ -57,7 +56,7 @@ impl<'a> Metrics<'a> {
             });
         }
 
-        // Update source weights based on scrape results.
+        // Compute source weights and emit change events.
         for source in all_sources {
             let tension_count = self
                 .graph
@@ -103,27 +102,53 @@ impl<'a> Metrics<'a> {
             } else {
                 super::scheduler::cadence_hours_for_weight(new_weight)
             };
-            if let Err(e) = self
-                .graph
-                .update_source_weight(&source.canonical_key, new_weight, cadence)
-                .await
-            {
-                warn!(canonical_key = source.canonical_key.as_str(), error = %e, "Failed to update source weight");
+
+            if (new_weight - source.weight).abs() > f64::EPSILON {
+                events.push(SystemEvent::SourceChanged {
+                    source_id: source.id,
+                    canonical_key: source.canonical_key.clone(),
+                    change: SourceChange::Weight {
+                        old: source.weight,
+                        new: new_weight,
+                    },
+                });
+            }
+            if source.cadence_hours != Some(cadence) {
+                events.push(SystemEvent::SourceChanged {
+                    source_id: source.id,
+                    canonical_key: source.canonical_key.clone(),
+                    change: SourceChange::Cadence {
+                        old: source.cadence_hours,
+                        new: Some(cadence),
+                    },
+                });
             }
         }
 
-        // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
-        match self.graph.deactivate_dead_sources(10).await {
-            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
+        // Find and deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
+        match self.graph.find_dead_sources(10).await {
+            Ok(ids) if !ids.is_empty() => {
+                info!(deactivated = ids.len(), "Found dead sources to deactivate");
+                events.push(SystemEvent::SourceDeactivated {
+                    source_ids: ids,
+                    reason: "consecutive_empty_runs >= 10".into(),
+                });
+            }
             Ok(_) => {}
-            Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
+            Err(e) => warn!(error = %e, "Failed to find dead sources"),
         }
 
-        // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
-        match self.graph.deactivate_dead_web_queries().await {
-            Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
+        // Find and deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
+        match self.graph.find_dead_web_queries().await {
+            Ok(ids) if !ids.is_empty() => {
+                info!(deactivated = ids.len(), "Found dead web queries to deactivate");
+                events.push(SystemEvent::SourceDeactivated {
+                    source_ids: ids,
+                    reason: "unproductive_web_query".into(),
+                });
+            }
             Ok(_) => {}
-            Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),
+            Err(e) => warn!(error = %e, "Failed to find dead web queries"),
         }
 
         // Source stats

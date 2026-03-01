@@ -13,7 +13,7 @@ use rootsignal_graph::GraphStore;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{BootstrapResult, EmptyRequest, TaskRequest};
-use super::{create_archive, ScoutDeps};
+use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "BootstrapWorkflow"]
@@ -72,23 +72,13 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         .await?;
 
         ctx.set("status", "Starting bootstrap...".to_string());
-        let archive = create_archive(&self.deps);
         let scope = req.scope.clone();
 
         let deps = self.deps.clone();
         let sources_created = match ctx
             .run(|| async {
                 let run_id = uuid::Uuid::new_v4().to_string();
-                let store: Arc<dyn crate::traits::SignalReader> = Arc::new(deps.build_store());
-                let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
-                    Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
-                let engine = deps.build_engine(
-                    store,
-                    embedder,
-                    Some(archive as Arc<dyn crate::traits::ContentFetcher>),
-                    Some(scope),
-                    &run_id,
-                );
+                let engine = deps.build_scrape_engine(&scope, &run_id);
                 engine
                     .emit(LifecycleEvent::EngineStarted {
                         run_id: run_id.clone(),

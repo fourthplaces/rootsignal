@@ -17,7 +17,7 @@ use rootsignal_common::{
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
     SourceRole, TensionNode, Urgency,
 };
-use rootsignal_graph::{GraphStore, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
+use rootsignal_graph::{GraphReader, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
@@ -275,7 +275,7 @@ Return valid JSON matching the ResponseFinding schema.";
 // =============================================================================
 
 pub struct ResponseFinder<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -291,7 +291,7 @@ pub struct ResponseFinder<'a> {
 
 impl<'a> ResponseFinder<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -406,14 +406,11 @@ impl<'a> ResponseFinder<'a> {
                 }
             }
 
-            // Mark scouted regardless of success/failure (timestamp prevents re-investigation)
-            if let Err(e) = self.graph.mark_response_found(target.tension_id).await {
-                warn!(
-                    tension_id = %target.tension_id,
-                    error = %e,
-                    "Failed to mark tension as response-scouted"
-                );
-            }
+            // Emit event — projector sets response_scouted_at on the Tension node
+            events.push(SystemEvent::ResponseScouted {
+                tension_id: target.tension_id,
+                scouted_at: Utc::now(),
+            });
         }
 
         (stats, discovered_sources)

@@ -5,7 +5,7 @@ pub(crate) mod expansion;
 use tracing::info;
 
 use rootsignal_common::SourceNode;
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
@@ -33,7 +33,7 @@ pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
     phase: Option<&ScrapePhase>,
     state: &PipelineState,
-    graph: &GraphStore,
+    graph: &GraphReader,
     region_name: &str,
     api_key: Option<&str>,
     budget: &BudgetTracker,
@@ -42,9 +42,11 @@ pub async fn expand_and_discover(
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
     let expansion_queries = state.expansion_queries.clone();
-    let expansion_output = expansion.generate_expansion_sources(expansion_queries, run_log).await;
+    let mut expansion_output = expansion.generate_expansion_sources(expansion_queries, run_log).await;
+    let expansion_events = std::mem::replace(&mut expansion_output.events, Events::new());
 
     let mut collected_events = Events::new();
+    collected_events.extend(expansion_events);
     if !expansion_output.sources.is_empty() {
         collected_events.extend(ScrapePhase::register_sources_events(
             expansion_output.sources.clone(),
@@ -61,7 +63,8 @@ pub async fn expand_and_discover(
         budget,
     )
     .with_embedder(embedder);
-    let (end_stats, end_social_topics, end_sources) = end_discoverer.run().await;
+    let (end_stats, end_social_topics, end_sources, finder_events) = end_discoverer.run().await;
+    collected_events.extend(finder_events);
     if !end_sources.is_empty() {
         collected_events.extend(ScrapePhase::register_sources_events(
             end_sources,

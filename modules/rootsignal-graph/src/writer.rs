@@ -15,13 +15,13 @@ use std::collections::HashMap;
 pub use format_datetime_pub as memgraph_datetime_pub;
 
 
-/// Graph store for scout — reads and writes.
+/// Read-only graph access for handlers and activities.
 #[derive(Clone)]
-pub struct GraphStore {
+pub struct GraphReader {
     client: GraphClient,
 }
 
-impl GraphStore {
+impl GraphReader {
     pub fn new(client: GraphClient) -> Self {
         Self { client }
     }
@@ -39,7 +39,7 @@ impl GraphStore {
         )
         .param("url", url);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let exists: bool = row.get("exists").unwrap_or(false);
             Ok(exists)
@@ -124,7 +124,7 @@ impl GraphStore {
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let similarity: f64 = row.get("similarity").unwrap_or(0.0);
@@ -158,7 +158,7 @@ impl GraphStore {
         .param("hash", content_hash)
         .param("url", source_url);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
 
@@ -177,7 +177,7 @@ impl GraphStore {
         .param("url", source_url);
 
         let mut titles = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Ok(title) = row.get::<String>("title") {
                 titles.push(title);
@@ -230,7 +230,7 @@ impl GraphStore {
             ))
             .param("titles", titles_for_type);
 
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client().graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let title: String = row.get("title").unwrap_or_default();
                 let id_str: String = row.get("id").unwrap_or_default();
@@ -269,7 +269,7 @@ impl GraphStore {
         ))
         .param("id", node_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let evidence_urls: Vec<String> = row.get("evidence_urls").unwrap_or_default();
 
@@ -313,7 +313,7 @@ impl GraphStore {
         ))
         .param("id", node_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let self_url: String = row.get("self_url").unwrap_or_default();
             let evidence: Vec<neo4rs::BoltMap> = row.get("evidence").unwrap_or_default();
@@ -342,210 +342,6 @@ impl GraphStore {
         }
     }
 
-    /// Reap expired signals from the graph. Runs at the start of each scout cycle.
-    ///
-    /// Deletes:
-    /// - Non-recurring events whose end (or start) is past the grace period
-    /// - Need signals older than NEED_EXPIRE_DAYS
-    /// - Any signal not confirmed within FRESHNESS_MAX_DAYS (except ongoing gives, recurring events)
-    ///
-    /// Also detaches and deletes orphaned Evidence nodes.
-    pub async fn reap_expired(&self) -> Result<ReapStats, neo4rs::Error> {
-        let mut stats = ReapStats::default();
-
-        // 1. Past non-recurring events (only those with a known start date)
-        let q = query(&format!(
-            "MATCH (n:Gathering)
-             WHERE n.is_recurring = false
-               AND n.starts_at IS NOT NULL AND n.starts_at <> ''
-               AND CASE
-                   WHEN n.ends_at IS NOT NULL AND n.ends_at <> ''
-                   THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
-                   ELSE datetime(n.starts_at) < datetime() - duration('PT{}H')
-               END
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             DETACH DELETE n, ev
-             RETURN count(DISTINCT n) AS deleted",
-            GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
-        ));
-        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
-            stats.gatherings = row.get::<i64>("deleted").unwrap_or(0) as u64;
-        }
-
-        // 2. Expired needs
-        let q = query(&format!(
-            "MATCH (n:Need)
-             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             DETACH DELETE n, ev
-             RETURN count(DISTINCT n) AS deleted",
-            NEED_EXPIRE_DAYS
-        ));
-        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
-            stats.needs = row.get::<i64>("deleted").unwrap_or(0) as u64;
-        }
-
-        // 3. Expired notices
-        let q = query(&format!(
-            "MATCH (n:Notice)
-             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             DETACH DELETE n, ev
-             RETURN count(DISTINCT n) AS deleted",
-            NOTICE_EXPIRE_DAYS
-        ));
-        if let Some(row) = self.client.graph.execute(q).await?.next().await? {
-            stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
-        }
-
-        // 4. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
-        for label in &["Aid", "Tension"] {
-            let q = query(&format!(
-                "MATCH (n:{label})
-                 WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
-                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-                 DETACH DELETE n, ev
-                 RETURN count(DISTINCT n) AS deleted",
-                label = label,
-                days = FRESHNESS_MAX_DAYS,
-            ));
-            if let Some(row) = self.client.graph.execute(q).await?.next().await? {
-                stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
-            }
-        }
-
-        let total = stats.gatherings + stats.needs + stats.stale;
-        if total > 0 {
-            info!(
-                gatherings = stats.gatherings,
-                needs = stats.needs,
-                stale = stats.stale,
-                "Reaped expired signals"
-            );
-        }
-
-        Ok(stats)
-    }
-
-    /// Delete all nodes sourced from a given URL (opt-out support).
-    pub async fn delete_by_source_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
-        // Delete evidence nodes linked to signals from this URL, then the signals themselves
-        let q = query(
-            "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             WHERE n.source_url = $url
-             DETACH DELETE n, ev
-             RETURN count(*) AS deleted",
-        )
-        .param("url", url);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        let deleted = if let Some(row) = stream.next().await? {
-            row.get::<i64>("deleted").unwrap_or(0) as u64
-        } else {
-            0
-        };
-
-        warn!(%url, deleted, "Deleted nodes by source URL (opt-out)");
-        Ok(deleted)
-    }
-
-    /// Atomically transition a region's scout run status. Returns false if the current
-    /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
-    /// Cleans up stale running statuses (>5 min) before attempting transition.
-    // --- Task-scoped phase status operations ---
-
-    /// CAS guard: only transitions if current phase_status is in allowed_from set.
-    /// Also auto-resets stale running statuses (>5 min) on the same task.
-    pub async fn transition_task_phase_status(
-        &self,
-        task_id: &str,
-        allowed_from: &[&str],
-        new_status: &str,
-    ) -> Result<bool, neo4rs::Error> {
-        // Clean up stale running status for this task (>5 min).
-        self.client
-            .graph
-            .run(
-                query(
-                    "MATCH (t:ScoutTask {id: $id}) \
-                 WHERE t.phase_status STARTS WITH 'running_' \
-                   AND t.phase_status_updated_at < datetime() - duration('PT5M') \
-                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()",
-                )
-                .param("id", task_id),
-            )
-            .await?;
-
-        // Atomic conditional SET: only transitions if current phase_status is allowed
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             WHERE t.phase_status IN $allowed_from
-             SET t.phase_status = $new_status, t.phase_status_updated_at = datetime()
-             RETURN true AS transitioned",
-        )
-        .param("id", task_id)
-        .param("allowed_from", allowed_from.to_vec())
-        .param("new_status", new_status);
-
-        let mut result = self.client.graph.execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let transitioned: bool = row.get("transitioned").unwrap_or(false);
-            return Ok(transitioned);
-        }
-
-        // No row returned means the WHERE filtered it out
-        Ok(false)
-    }
-
-    /// Directly set a task's phase status.
-    pub async fn set_task_phase_status(
-        &self,
-        task_id: &str,
-        status: &str,
-    ) -> Result<(), neo4rs::Error> {
-        self.client
-            .graph
-            .run(
-                query(
-                    "MATCH (t:ScoutTask {id: $id})
-                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()",
-                )
-                .param("id", task_id)
-                .param("status", status),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Reset a stuck task's phase status to "idle".
-    pub async fn reset_task_phase_status(&self, task_id: &str) -> Result<(), neo4rs::Error> {
-        self.client
-            .graph
-            .run(query(
-                "MATCH (t:ScoutTask {id: $id}) SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
-            ).param("id", task_id))
-            .await?;
-        Ok(())
-    }
-
-    /// Clean up all stale running task statuses (>30 min).
-    pub async fn cleanup_stale_task_statuses(&self) -> Result<u32, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask)
-             WHERE t.phase_status STARTS WITH 'running_'
-               AND t.phase_status_updated_at < datetime() - duration('PT30M')
-             SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()
-             RETURN count(t) AS cleaned",
-        );
-
-        let mut result = self.client.graph.execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let cleaned: i64 = row.get("cleaned").unwrap_or(0);
-            return Ok(cleaned as u32);
-        }
-        Ok(0)
-    }
-
     /// Check if any task for a region (by context) is currently running.
     pub async fn is_region_task_running(&self, context: &str) -> Result<bool, neo4rs::Error> {
         let q = query(
@@ -556,7 +352,7 @@ impl GraphStore {
         )
         .param("context", context);
 
-        let mut result = self.client.graph.execute(q).await?;
+        let mut result = self.client().graph.execute(q).await?;
         if let Some(row) = result.next().await? {
             let running: bool = row.get("running").unwrap_or(false);
             return Ok(running);
@@ -573,7 +369,7 @@ impl GraphStore {
              RETURN count(s) AS due"
         );
 
-        let mut result = self.client.graph.execute(q).await?;
+        let mut result = self.client().graph.execute(q).await?;
         if let Some(row) = result.next().await? {
             let due: i64 = row.get("due").unwrap_or(0);
             return Ok(due as u32);
@@ -600,7 +396,7 @@ impl GraphStore {
         )
         .param("slugs", slugs.to_vec());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let slug: String = row.get("slug").unwrap_or_default();
             let due: i64 = row.get("due").unwrap_or(0);
@@ -618,7 +414,7 @@ impl GraphStore {
              RETURN min(datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H')) AS next_due"
         );
 
-        let mut result = self.client.graph.execute(q).await?;
+        let mut result = self.client().graph.execute(q).await?;
         if let Some(row) = result.next().await? {
             let next_due_str: String = row.get("next_due").unwrap_or_default();
             if !next_due_str.is_empty() {
@@ -634,38 +430,6 @@ impl GraphStore {
 
     // --- ScoutTask operations ---
 
-    /// Create or update a ScoutTask node. MERGE on id for idempotency.
-    pub async fn upsert_scout_task(&self, task: &ScoutTask) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MERGE (t:ScoutTask {id: $id})
-             SET t.center_lat = $center_lat,
-                 t.center_lng = $center_lng,
-                 t.radius_km = $radius_km,
-                 t.context = $context,
-                 t.geo_terms = $geo_terms,
-                 t.priority = $priority,
-                 t.source = $source,
-                 t.status = $status,
-                 t.phase_status = coalesce(t.phase_status, $phase_status),
-                 t.created_at = datetime($created_at)",
-        )
-        .param("id", task.id.to_string())
-        .param("center_lat", task.center_lat)
-        .param("center_lng", task.center_lng)
-        .param("radius_km", task.radius_km)
-        .param("context", task.context.as_str())
-        .param("geo_terms", task.geo_terms.clone())
-        .param("priority", task.priority)
-        .param("source", task.source.to_string())
-        .param("status", task.status.to_string())
-        .param("phase_status", task.phase_status.as_str())
-        .param("created_at", format_datetime(&task.created_at));
-
-        self.client.graph.run(q).await?;
-        info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
-        Ok(())
-    }
-
     /// Get a ScoutTask by id.
     pub async fn get_scout_task(&self, id: &str) -> Result<Option<ScoutTask>, neo4rs::Error> {
         let q = query(
@@ -679,7 +443,7 @@ impl GraphStore {
         )
         .param("id", id);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(Some(row_to_scout_task(&row)))
         } else {
@@ -721,206 +485,11 @@ impl GraphStore {
         }
 
         let mut tasks = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             tasks.push(row_to_scout_task(&row));
         }
         Ok(tasks)
-    }
-
-    /// Cancel a scout task by setting its status to "cancelled".
-    pub async fn cancel_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             WHERE t.status IN ['pending', 'running']
-             SET t.status = 'cancelled'
-             RETURN count(t) AS updated",
-        )
-        .param("id", id);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let updated: i64 = row.get("updated").unwrap_or(0);
-            Ok(updated > 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Mark a scout task as completed.
-    pub async fn complete_scout_task(&self, id: &str) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             SET t.status = 'completed', t.completed_at = datetime()",
-        )
-        .param("id", id);
-
-        self.client.graph.run(q).await
-    }
-
-    /// Claim a scout task by setting its status from pending → running.
-    pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id, status: 'pending'})
-             SET t.status = 'running'
-             RETURN count(t) AS updated",
-        )
-        .param("id", id);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let updated: i64 = row.get("updated").unwrap_or(0);
-            Ok(updated > 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    // --- Demand Signal operations (Driver A) ---
-
-    /// Store a raw demand signal from a user search.
-    pub async fn upsert_demand_signal(&self, signal: &DemandSignal) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MERGE (d:DemandSignal {id: $id})
-             SET d.query = $query,
-                 d.center_lat = $center_lat,
-                 d.center_lng = $center_lng,
-                 d.radius_km = $radius_km,
-                 d.created_at = datetime($created_at)",
-        )
-        .param("id", signal.id.to_string())
-        .param("query", signal.query.as_str())
-        .param("center_lat", signal.center_lat)
-        .param("center_lng", signal.center_lng)
-        .param("radius_km", signal.radius_km)
-        .param("created_at", format_datetime(&signal.created_at));
-
-        self.client.graph.run(q).await?;
-        info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
-        Ok(())
-    }
-
-    /// Aggregate recent demand signals into ScoutTasks.
-    /// Buckets by geohash-5 (~5km cells), creates tasks for cells with ≥ 2 signals.
-    /// Deletes consumed demand signals.
-    pub async fn aggregate_demand(&self) -> Result<Vec<ScoutTask>, neo4rs::Error> {
-        // Fetch recent demand signals (last 24h)
-        let q = query(
-            "MATCH (d:DemandSignal)
-             WHERE d.created_at > datetime() - duration('P1D')
-             RETURN d.id AS id, d.query AS query,
-                    d.center_lat AS center_lat, d.center_lng AS center_lng,
-                    d.radius_km AS radius_km",
-        );
-
-        let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let q_text: String = row.get("query").unwrap_or_default();
-            let lat: f64 = row.get("center_lat").unwrap_or(0.0);
-            let lng: f64 = row.get("center_lng").unwrap_or(0.0);
-            let radius: f64 = row.get("radius_km").unwrap_or(30.0);
-            signals.push((id, q_text, lat, lng, radius));
-        }
-
-        if signals.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Bucket by truncated lat/lng (~5km grid cells)
-        // Using 0.05 degree resolution ≈ 5km
-        let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
-        for sig in &signals {
-            let lat_cell = (sig.2 / 0.05).round() as i64;
-            let lng_cell = (sig.3 / 0.05).round() as i64;
-            cells.entry((lat_cell, lng_cell)).or_default().push(sig);
-        }
-
-        let mut tasks = Vec::new();
-        let mut consumed_ids = Vec::new();
-
-        for ((_lat_cell, _lng_cell), cell_signals) in &cells {
-            if cell_signals.len() < 2 {
-                continue;
-            }
-
-            // Compute centroid
-            let n = cell_signals.len() as f64;
-            let avg_lat: f64 = cell_signals.iter().map(|s| s.2).sum::<f64>() / n;
-            let avg_lng: f64 = cell_signals.iter().map(|s| s.3).sum::<f64>() / n;
-            let avg_radius: f64 = cell_signals.iter().map(|s| s.4).sum::<f64>() / n;
-
-            // Collect unique query terms for context
-            let queries: Vec<&str> = cell_signals.iter().map(|s| s.1.as_str()).collect();
-            let context = queries.join("; ");
-
-            let task = ScoutTask {
-                id: Uuid::new_v4(),
-                center_lat: avg_lat,
-                center_lng: avg_lng,
-                radius_km: avg_radius.min(100.0),
-                context,
-                geo_terms: queries.iter().map(|q| q.to_string()).collect(),
-                priority: 0.5,
-                source: ScoutTaskSource::DriverA,
-                status: ScoutTaskStatus::Pending,
-                phase_status: "idle".to_string(),
-                created_at: chrono::Utc::now(),
-                completed_at: None,
-            };
-
-            self.upsert_scout_task(&task).await?;
-            tasks.push(task);
-
-            // Mark these signals as consumed
-            for sig in cell_signals {
-                consumed_ids.push(sig.0.clone());
-            }
-        }
-
-        // Delete consumed demand signals
-        if !consumed_ids.is_empty() {
-            let q = query(
-                "UNWIND $ids AS id
-                 MATCH (d:DemandSignal {id: id})
-                 DELETE d",
-            )
-            .param("ids", consumed_ids);
-            self.client.graph.run(q).await?;
-        }
-
-        info!(tasks = tasks.len(), "Demand aggregation complete");
-        Ok(tasks)
-    }
-
-    // --- Source operations (emergent source discovery) ---
-
-    /// Create a Submission node and link it to its associated Source.
-    pub async fn upsert_submission(
-        &self,
-        submission: &rootsignal_common::SubmissionNode,
-        source_canonical_key: &str,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "CREATE (sub:Submission {
-                id: $id,
-                url: $url,
-                reason: $reason,
-                submitted_at: datetime($submitted_at)
-            })
-            WITH sub
-            MATCH (s:Source {canonical_key: $canonical_key})
-            MERGE (sub)-[:SUBMITTED_FOR]->(s)",
-        )
-        .param("id", submission.id.to_string())
-        .param("url", submission.url.as_str())
-        .param("reason", submission.reason.clone().unwrap_or_default())
-        .param("submitted_at", format_datetime(&submission.submitted_at))
-        .param("canonical_key", source_canonical_key);
-
-        self.client.graph.run(q).await?;
-        Ok(())
     }
 
     /// Get all active sources (global — used for dedup checks).
@@ -944,7 +513,7 @@ impl GraphStore {
         );
 
         let mut sources = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(source) = row_to_source_node(&row) {
                 sources.push(source);
@@ -1001,7 +570,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut sources = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(source) = row_to_source_node(&row) {
                 sources.push(source);
@@ -1009,59 +578,6 @@ impl GraphStore {
         }
 
         Ok(sources)
-    }
-
-    /// Record that a source produced signals this run.
-    /// Updates last_scraped, signals_produced, consecutive_empty_runs.
-    pub async fn record_source_scrape(
-        &self,
-        canonical_key: &str,
-        signals_produced: u32,
-        now: DateTime<Utc>,
-    ) -> Result<(), neo4rs::Error> {
-        if signals_produced > 0 {
-            let q = query(
-                "MATCH (s:Source {canonical_key: $key})
-                 SET s.last_scraped = datetime($now),
-                     s.last_produced_signal = datetime($now),
-                     s.signals_produced = s.signals_produced + $count,
-                     s.consecutive_empty_runs = 0,
-                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
-            )
-            .param("key", canonical_key)
-            .param("now", format_datetime(&now))
-            .param("count", signals_produced as i64);
-            self.client.graph.run(q).await?;
-        } else {
-            let q = query(
-                "MATCH (s:Source {canonical_key: $key})
-                 SET s.last_scraped = datetime($now),
-                     s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
-                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
-            )
-            .param("key", canonical_key)
-            .param("now", format_datetime(&now));
-            self.client.graph.run(q).await?;
-        }
-        Ok(())
-    }
-
-    /// Update weight and cadence for a source based on computed metrics.
-    pub async fn update_source_weight(
-        &self,
-        canonical_key: &str,
-        weight: f64,
-        cadence_hours: u32,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Source {canonical_key: $key})
-             SET s.weight = $weight, s.cadence_hours = $cadence",
-        )
-        .param("key", canonical_key)
-        .param("weight", weight)
-        .param("cadence", cadence_hours as i64);
-        self.client.graph.run(q).await?;
-        Ok(())
     }
 
     /// Count tension signals produced by a specific source.
@@ -1076,7 +592,7 @@ impl GraphStore {
         )
         .param("key", canonical_key);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(row.get::<i64>("cnt").unwrap_or(0) as u32)
         } else {
@@ -1084,34 +600,36 @@ impl GraphStore {
         }
     }
 
-    /// Deactivate sources that have had too many consecutive empty runs.
-    /// Protects curated and human-submitted sources.
-    pub async fn deactivate_dead_sources(&self, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
+    /// Find sources that should be deactivated due to consecutive empty runs.
+    /// Returns IDs only — caller emits `SourceDeactivated` events.
+    /// Same criteria as `deactivate_dead_sources`: 10+ consecutive empty runs,
+    /// excluding curated and human-submitted sources.
+    pub async fn find_dead_sources(&self, max_empty_runs: u32) -> Result<Vec<Uuid>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {active: true})
              WHERE s.consecutive_empty_runs >= $max
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
-             SET s.active = false
-             RETURN count(s) AS deactivated",
+             RETURN s.id AS id",
         )
         .param("max", max_empty_runs as i64);
 
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
-        } else {
-            Ok(0)
+        let mut ids = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                ids.push(id);
+            }
         }
+        Ok(ids)
     }
 
-    /// Deactivate web query sources that have proven unproductive.
-    /// Stricter criteria than general `deactivate_dead_sources`:
-    /// - 5+ consecutive empty runs (backoff has already slowed them)
-    /// - 3+ total scrapes (gave it a fair chance)
-    /// - 0 signals ever produced (never contributed anything)
-    /// Protects curated and human-submitted sources.
-    pub async fn deactivate_dead_web_queries(&self) -> Result<u32, neo4rs::Error> {
+    /// Find unproductive web query sources that should be deactivated.
+    /// Returns IDs only — caller emits `SourceDeactivated` events.
+    /// Same criteria as `deactivate_dead_web_queries`: 5+ consecutive empty runs,
+    /// 3+ total scrapes, 0 signals ever produced, excluding curated/human sources.
+    pub async fn find_dead_web_queries(&self) -> Result<Vec<Uuid>, neo4rs::Error> {
         let q = query(
             "MATCH (s:Source {active: true})
              WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
@@ -1120,16 +638,18 @@ impl GraphStore {
                AND s.signals_produced = 0
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
-             SET s.active = false
-             RETURN count(s) AS deactivated",
+             RETURN s.id AS id",
         );
 
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
-        } else {
-            Ok(0)
+        let mut ids = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                ids.push(id);
+            }
         }
+        Ok(ids)
     }
 
     /// Get all active WebQuery canonical_values (used for expansion dedup).
@@ -1141,7 +661,7 @@ impl GraphStore {
         );
 
         let mut queries = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let query_str: String = row.get("query").unwrap_or_default();
             if !query_str.is_empty() {
@@ -1173,7 +693,7 @@ impl GraphStore {
         .param("embedding", embedding.to_vec())
         .param("threshold", threshold);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let ck: String = row.get("canonical_key").unwrap_or_default();
             let score: f64 = row.get("score").unwrap_or(0.0);
@@ -1182,73 +702,6 @@ impl GraphStore {
             }
         }
         Ok(None)
-    }
-
-    /// Store an embedding on a Source node's `query_embedding` property.
-    /// Used after creating a new WebQuery source so it can be found by
-    /// `find_similar_query` on subsequent runs.
-    pub async fn set_query_embedding(
-        &self,
-        canonical_key: &str,
-        embedding: &[f32],
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Source {canonical_key: $key})
-             SET s.query_embedding = $embedding",
-        )
-        .param("key", canonical_key)
-        .param("embedding", embedding.to_vec());
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Get implied queries from Aid/Gathering signals recently linked to heated tensions.
-    /// These signals were extracted with implied_queries but deferred expansion until
-    /// response mapping connected them to a tension. Clears queries after collection
-    /// to prevent replay on subsequent runs.
-    pub async fn get_recently_linked_signals_with_queries(
-        &self,
-    ) -> Result<Vec<String>, neo4rs::Error> {
-        // Find Aid/Gathering signals with implied_queries that are linked to heated tensions
-        let q = query(
-            "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Tension)
-             WHERE (s:Aid OR s:Gathering)
-               AND s.implied_queries IS NOT NULL
-               AND size(s.implied_queries) > 0
-               AND coalesce(t.cause_heat, 0.0) >= 0.1
-             WITH DISTINCT s
-             RETURN s.implied_queries AS queries, s.id AS id",
-        );
-
-        let mut all_queries = Vec::new();
-        let mut signal_ids = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            // neo4rs returns List<String> as Vec<String>
-            let queries: Vec<String> = row.get("queries").unwrap_or_default();
-            all_queries.extend(queries);
-            let id: String = row.get("id").unwrap_or_default();
-            if !id.is_empty() {
-                signal_ids.push(id);
-            }
-        }
-
-        // Clear implied_queries on processed signals to prevent replay
-        if !signal_ids.is_empty() {
-            for id in &signal_ids {
-                let clear_q = query(
-                    "MATCH (s {id: $id})
-                     WHERE s:Aid OR s:Gathering
-                     SET s.implied_queries = null",
-                )
-                .param("id", id.as_str());
-                if let Err(e) = self.client.graph.run(clear_q).await {
-                    warn!(id = id.as_str(), error = %e, "Failed to clear implied_queries");
-                }
-            }
-        }
-
-        Ok(all_queries)
     }
 
     /// Get tension response shape analysis for discovery briefing.
@@ -1280,7 +733,7 @@ impl GraphStore {
         .param("limit", limit as i64);
 
         let mut shapes = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let what_would_help: Option<String> = row.get("what_would_help").ok();
@@ -1312,7 +765,7 @@ impl GraphStore {
         )
         .param("url", url);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
 
@@ -1331,7 +784,7 @@ impl GraphStore {
         )
         .param("urls", urls.to_vec());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         let mut blocked = HashSet::new();
         while let Some(row) = stream.next().await? {
             if let Ok(url) = row.get::<String>("url") {
@@ -1351,7 +804,7 @@ impl GraphStore {
                     count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
         );
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(SourceStats {
                 total: row.get::<i64>("total").unwrap_or(0) as u32,
@@ -1386,7 +839,7 @@ impl GraphStore {
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         let mut results = Vec::new();
 
         while let Some(row) = stream.next().await? {
@@ -1505,7 +958,7 @@ impl GraphStore {
         )
         .param("canonical_key", canonical_key);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -1523,7 +976,7 @@ impl GraphStore {
         )
         .param("name", name);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -1531,48 +984,6 @@ impl GraphStore {
             }
         }
         Ok(None)
-    }
-
-    /// Update actor signal count and last_active.
-    pub async fn update_actor_stats(
-        &self,
-        actor_id: Uuid,
-        now: DateTime<Utc>,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $id})
-             SET a.signal_count = a.signal_count + 1,
-                 a.last_active = datetime($now)",
-        )
-        .param("id", actor_id.to_string())
-        .param("now", format_datetime(&now));
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    // --- Response mapping operations ---
-
-    /// Create a RESPONDS_TO edge between a Aid/Gathering signal and a Tension.
-    pub async fn create_response_edge(
-        &self,
-        responder_id: Uuid,
-        tension_id: Uuid,
-        match_strength: f64,
-        explanation: &str,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
-             MATCH (t:Tension {id: $tension_id})
-             MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
-        )
-        .param("resp_id", responder_id.to_string())
-        .param("tension_id", tension_id.to_string())
-        .param("strength", match_strength)
-        .param("explanation", explanation);
-
-        self.client.graph.run(q).await?;
-        Ok(())
     }
 
     /// Get recent tension titles and what_would_help for discovery queries.
@@ -1589,7 +1000,7 @@ impl GraphStore {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let help: String = row.get("help").unwrap_or_default();
@@ -1632,7 +1043,7 @@ impl GraphStore {
         }
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let name: String = row.get("name").unwrap_or_default();
             let domains: Vec<String> = row.get("domains").unwrap_or_default();
@@ -1646,43 +1057,6 @@ impl GraphStore {
     }
 
     // --- Pin operations ---
-
-    /// Create a Pin node. MERGE on (source_id, location_lat, location_lng) for idempotency.
-    pub async fn create_pin(&self, pin: &PinNode) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MERGE (p:Pin {source_id: $source_id, location_lat: $location_lat, location_lng: $location_lng})
-             ON CREATE SET
-                p.id = $id,
-                p.created_by = $created_by,
-                p.created_at = datetime($created_at)",
-        )
-        .param("id", pin.id.to_string())
-        .param("source_id", pin.source_id.to_string())
-        .param("location_lat", pin.location_lat)
-        .param("location_lng", pin.location_lng)
-        .param("created_by", pin.created_by.as_str())
-        .param("created_at", format_datetime(&pin.created_at));
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Delete pins by ID. Uses UNWIND for batch deletion.
-    pub async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<(), neo4rs::Error> {
-        if pin_ids.is_empty() {
-            return Ok(());
-        }
-        let ids: Vec<String> = pin_ids.iter().map(|id| id.to_string()).collect();
-        let q = query(
-            "UNWIND $ids AS pid
-             MATCH (p:Pin {id: pid})
-             DETACH DELETE p",
-        )
-        .param("ids", ids);
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
 
     /// Find pins within a bounding box, joined with their source nodes.
     pub async fn find_pins_in_region(
@@ -1705,7 +1079,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let p: neo4rs::Node = match row.get("p") {
                 Ok(n) => n,
@@ -1807,7 +1181,7 @@ impl GraphStore {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             if title.is_empty() {
@@ -1858,7 +1232,7 @@ impl GraphStore {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(SituationBrief {
                 headline: row.get("headline").unwrap_or_default(),
@@ -1882,58 +1256,6 @@ impl GraphStore {
         Ok(results)
     }
 
-    /// Boost source weights for sources that contributed signals evidencing a hot situation.
-    /// The boost is multiplicative (e.g. factor=1.2 means 20% increase), capped at 5.0.
-    pub async fn boost_sources_for_situation_headline(
-        &self,
-        headline: &str,
-        factor: f64,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (sig)-[:PART_OF]->(s:Situation {headline: $headline})
-             WITH collect(DISTINCT sig.source_url) AS urls
-             UNWIND urls AS url
-             MATCH (src:Source {active: true})
-             WHERE src.url = url AND src.weight IS NOT NULL
-             SET src.weight = CASE WHEN src.weight * $factor > 5.0 THEN 5.0 ELSE src.weight * $factor END",
-        )
-        .param("headline", headline)
-        .param("factor", factor);
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Queue signals from emerging/fuzzy situations for re-investigation by the tension linker.
-    /// Uses a 7-day cooldown per situation to avoid repeated re-triggering.
-    /// Returns the number of signals queued.
-    pub async fn trigger_situation_curiosity(&self) -> Result<u32, neo4rs::Error> {
-        // Find situations that are emerging or fuzzy, haven't been curiosity-triggered in 7 days
-        let q = query(
-            "MATCH (sig)-[:PART_OF]->(s:Situation)
-             WHERE (s.arc = 'emerging' OR s.clarity = 'Fuzzy')
-               AND s.temperature >= 0.3
-               AND s.sensitivity <> 'SENSITIVE' AND s.sensitivity <> 'RESTRICTED'
-               AND (s.curiosity_triggered_at IS NULL
-                    OR datetime(s.curiosity_triggered_at) < datetime() - duration('P7D'))
-             WITH s, collect(sig) AS signals
-             LIMIT 5
-             UNWIND signals AS sig
-             WITH s, sig
-             WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
-               AND NOT sig:Tension
-             SET sig.curiosity_investigated = NULL
-             WITH DISTINCT s
-             SET s.curiosity_triggered_at = datetime()
-             RETURN count(s) AS triggered",
-        );
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            Ok(row.get::<i64>("triggered").unwrap_or(0) as u32)
-        } else {
-            Ok(0)
-        }
-    }
-
     /// Aggregate counts of each active signal type. Reveals systemic imbalances.
     pub async fn get_signal_type_counts(&self) -> Result<SignalTypeCounts, neo4rs::Error> {
         let mut counts = SignalTypeCounts::default();
@@ -1950,7 +1272,7 @@ impl GraphStore {
                  WHERE datetime(n.last_confirmed_active) >= datetime() - duration('P30D')
                  RETURN count(n) AS cnt"
             ));
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client().graph.execute(q).await?;
             if let Some(row) = stream.next().await? {
                 let cnt = row.get::<i64>("cnt").unwrap_or(0) as u32;
                 match *field {
@@ -1985,7 +1307,7 @@ impl GraphStore {
         );
 
         let mut successes = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             successes.push(SourceBrief {
                 canonical_value: row.get("cv").unwrap_or_default(),
@@ -2017,7 +1339,7 @@ impl GraphStore {
         );
 
         let mut failures = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             failures.push(SourceBrief {
                 canonical_value: row.get("cv").unwrap_or_default(),
@@ -2060,7 +1382,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -2103,7 +1425,7 @@ impl GraphStore {
             .param("min_lng", min_lng)
             .param("max_lng", max_lng);
 
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client().graph.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 let similarity: f64 = row.get("similarity").unwrap_or(0.0);
@@ -2130,7 +1452,7 @@ impl GraphStore {
             ))
             .param("id", id.to_string());
 
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client().graph.execute(q).await?;
             if let Some(row) = stream.next().await? {
                 return Ok(Some((
                     row.get("title").unwrap_or_default(),
@@ -2234,7 +1556,7 @@ impl GraphStore {
         seen_domains: &mut std::collections::HashSet<String>,
         q: neo4rs::Query,
     ) -> Result<(), neo4rs::Error> {
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
@@ -2278,139 +1600,6 @@ impl GraphStore {
         Ok(())
     }
 
-    /// Mark a signal as investigated (sets investigated_at, 7-day cooldown).
-    pub async fn mark_investigated(
-        &self,
-        signal_id: Uuid,
-        node_type: NodeType,
-    ) -> Result<(), neo4rs::Error> {
-        let label = match node_type {
-            NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
-            NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
-            NodeType::Citation => return Ok(()),
-        };
-
-        let q = query(&format!(
-            "MATCH (n:{} {{id: $id}})
-             SET n.investigated_at = datetime($now)",
-            label
-        ))
-        .param("id", signal_id.to_string())
-        .param("now", format_datetime(&Utc::now()));
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    // --- Curiosity loop methods ---
-
-    /// Find signals that have no RESPONDS_TO edge to any Tension and haven't been
-    /// curiosity-investigated yet (or were `failed` with retry budget remaining).
-    ///
-    /// Pre-pass: signals with `failed` + retry_count >= 3 are auto-promoted to `abandoned`.
-    pub async fn find_tension_linker_targets(
-        &self,
-        limit: u32,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
-        // Pre-pass: promote exhausted retries to abandoned
-        let promote = query(
-            "MATCH (n)
-             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
-               AND n.curiosity_investigated = 'failed'
-               AND n.curiosity_retry_count >= 3
-             SET n.curiosity_investigated = 'abandoned'",
-        );
-        self.client.graph.run(promote).await?;
-
-        let q = query(
-            "MATCH (n)
-             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
-               AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
-               AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)
-               AND n.confidence >= 0.5
-               AND n.lat >= $min_lat AND n.lat <= $max_lat
-               AND n.lng >= $min_lng AND n.lng <= $max_lng
-             RETURN n.id AS id, n.title AS title, n.summary AS summary,
-                    n.source_url AS source_url,
-                    CASE WHEN n:Gathering THEN 'Gathering'
-                         WHEN n:Aid THEN 'Aid'
-                         WHEN n:Need THEN 'Need'
-                         WHEN n:Notice THEN 'Notice'
-                    END AS label
-             ORDER BY n.extracted_at DESC
-             LIMIT $limit",
-        )
-        .param("limit", limit as i64)
-        .param("min_lat", min_lat)
-        .param("max_lat", max_lat)
-        .param("min_lng", min_lng)
-        .param("max_lng", max_lng);
-
-        let mut targets = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-            targets.push(TensionLinkerTarget {
-                signal_id: id,
-                title: row.get("title").unwrap_or_default(),
-                summary: row.get("summary").unwrap_or_default(),
-                label: row.get("label").unwrap_or_default(),
-                source_url: row.get("source_url").unwrap_or_default(),
-            });
-        }
-        Ok(targets)
-    }
-
-    /// Mark a signal with its curiosity investigation outcome.
-    ///
-    /// - `Done`/`Skipped`/`Abandoned`: permanent — signal won't be retried.
-    /// - `Failed`: increments retry_count — signal reappears in `find_tension_linker_targets`
-    ///   until retry_count reaches 3 (then auto-promoted to `Abandoned`).
-    pub async fn mark_tension_linker_investigated(
-        &self,
-        signal_id: Uuid,
-        label: &str,
-        outcome: TensionLinkerOutcome,
-    ) -> Result<(), neo4rs::Error> {
-        let label = match label {
-            "Gathering" | "Aid" | "Need" | "Notice" => label,
-            _ => return Ok(()),
-        };
-
-        let cypher = if outcome == TensionLinkerOutcome::Failed {
-            format!(
-                "MATCH (n:{label} {{id: $id}})
-                 SET n.curiosity_investigated = $outcome,
-                     n.curiosity_retry_count = coalesce(n.curiosity_retry_count, 0) + 1"
-            )
-        } else {
-            format!(
-                "MATCH (n:{label} {{id: $id}})
-                 SET n.curiosity_investigated = $outcome"
-            )
-        };
-
-        let q = query(&cypher)
-            .param("id", signal_id.to_string())
-            .param("outcome", outcome.as_str());
-
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
     /// Get existing tension titles+summaries for the curiosity loop's context window,
     /// scoped to a geographic bounding box so the LLM only sees region-local tensions.
     pub async fn get_tension_landscape(
@@ -2434,7 +1623,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut tensions = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let summary: String = row.get("summary").unwrap_or_default();
@@ -2483,7 +1672,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut hubs = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("tension_id").unwrap_or_default();
             let tension_id = match Uuid::parse_str(&id_str) {
@@ -2538,179 +1727,12 @@ impl GraphStore {
                AND n.curiosity_investigated = 'abandoned'
              RETURN count(n) AS cnt",
         );
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(cnt as u32);
         }
         Ok(0)
-    }
-
-    /// Merge near-duplicate Tension nodes within a geographic bounding box.
-    ///
-    /// Loads tension embeddings within the bbox, finds pairs above `threshold`
-    /// cosine similarity, and merges the newer into the older — re-pointing all
-    /// incoming RESPONDS_TO and DRAWN_TO edges to the survivor and deleting the
-    /// duplicate.
-    ///
-    /// Returns the number of tensions merged (deleted).
-    pub async fn merge_duplicate_tensions(
-        &self,
-        threshold: f64,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<u32, neo4rs::Error> {
-        // Load tensions with embeddings within the bounding box
-        let q = query(
-            "MATCH (t:Tension)
-             WHERE t.embedding IS NOT NULL
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
-             RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
-             ORDER BY t.extracted_at ASC",
-        )
-        .param("min_lat", min_lat)
-        .param("max_lat", max_lat)
-        .param("min_lng", min_lng)
-        .param("max_lng", max_lng);
-
-        struct TensionEmbed {
-            id: String,
-            embedding: Vec<f64>,
-        }
-
-        let mut tensions: Vec<TensionEmbed> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
-            if !embedding.is_empty() {
-                tensions.push(TensionEmbed { id, embedding });
-            }
-        }
-
-        if tensions.len() < 2 {
-            return Ok(0);
-        }
-
-        // Find pairs to merge (older survives, newer is absorbed)
-        let mut to_delete: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut merges: Vec<(String, String)> = Vec::new(); // (survivor, duplicate)
-
-        for i in 0..tensions.len() {
-            if to_delete.contains(&tensions[i].id) {
-                continue;
-            }
-            for j in (i + 1)..tensions.len() {
-                if to_delete.contains(&tensions[j].id) {
-                    continue;
-                }
-                let sim = cosine_sim_f64(&tensions[i].embedding, &tensions[j].embedding);
-                if sim >= threshold {
-                    to_delete.insert(tensions[j].id.clone());
-                    merges.push((tensions[i].id.clone(), tensions[j].id.clone()));
-                }
-            }
-        }
-
-        // Execute merges
-        for (survivor_id, dup_id) in &merges {
-            // Re-point RESPONDS_TO edges from duplicate to survivor
-            let q = query(
-                "MATCH (sig)-[r:RESPONDS_TO]->(dup:Tension {id: $dup_id})
-                 MATCH (survivor:Tension {id: $survivor_id})
-                 WITH sig, r, survivor, dup
-                 WHERE NOT (sig)-[:RESPONDS_TO]->(survivor)
-                 CREATE (sig)-[:RESPONDS_TO {match_strength: r.match_strength, explanation: r.explanation}]->(survivor)
-                 WITH r, dup
-                 DELETE r"
-            )
-            .param("dup_id", dup_id.as_str())
-            .param("survivor_id", survivor_id.as_str());
-            self.client.graph.run(q).await?;
-
-            // Re-point DRAWN_TO edges from duplicate to survivor
-            let q = query(
-                "MATCH (sig)-[r:DRAWN_TO]->(dup:Tension {id: $dup_id})
-                 MATCH (survivor:Tension {id: $survivor_id})
-                 WITH sig, r, survivor, dup
-                 WHERE NOT (sig)-[:DRAWN_TO]->(survivor)
-                 CREATE (sig)-[:DRAWN_TO {match_strength: r.match_strength, explanation: r.explanation, gathering_type: r.gathering_type}]->(survivor)
-                 WITH r, dup
-                 DELETE r"
-            )
-            .param("dup_id", dup_id.as_str())
-            .param("survivor_id", survivor_id.as_str());
-            self.client.graph.run(q).await?;
-
-            // Re-point PART_OF edges to situations
-            let q = query(
-                "MATCH (dup:Tension {id: $dup_id})-[r:PART_OF]->(s:Situation)
-                 MATCH (survivor:Tension {id: $survivor_id})
-                 WHERE NOT (survivor)-[:PART_OF]->(s)
-                 CREATE (survivor)-[:PART_OF]->(s)
-                 WITH r
-                 DELETE r",
-            )
-            .param("dup_id", dup_id.as_str())
-            .param("survivor_id", survivor_id.as_str());
-            self.client.graph.run(q).await?;
-
-            // Bump survivor's corroboration count
-            let q = query(
-                "MATCH (t:Tension {id: $survivor_id})
-                 SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1",
-            )
-            .param("survivor_id", survivor_id.as_str());
-            self.client.graph.run(q).await?;
-
-            // Delete the duplicate and any remaining edges
-            let q = query("MATCH (t:Tension {id: $dup_id}) DETACH DELETE t")
-                .param("dup_id", dup_id.as_str());
-            self.client.graph.run(q).await?;
-
-            info!(
-                survivor_id = survivor_id.as_str(),
-                duplicate_id = dup_id.as_str(),
-                "Merged duplicate tension"
-            );
-        }
-
-        Ok(merges.len() as u32)
-    }
-
-    // --- Feedback loop methods ---
-
-    /// Update a signal's confidence value. Same label-dispatch as mark_investigated.
-    pub async fn update_signal_confidence(
-        &self,
-        signal_id: Uuid,
-        node_type: NodeType,
-        new_confidence: f32,
-    ) -> Result<(), neo4rs::Error> {
-        let label = match node_type {
-            NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
-            NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
-            NodeType::Citation => return Ok(()),
-        };
-
-        let q = query(&format!(
-            "MATCH (n:{} {{id: $id}})
-             SET n.confidence = $confidence",
-            label
-        ))
-        .param("id", signal_id.to_string())
-        .param("confidence", new_confidence as f64);
-
-        self.client.graph.run(q).await?;
-        Ok(())
     }
 
     /// Read current confidence for a signal. Returns 0.5 if not found.
@@ -2737,7 +1759,7 @@ impl GraphStore {
         ))
         .param("id", signal_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let conf: f64 = row.get("confidence").unwrap_or(0.5);
             return Ok(conf as f32);
@@ -2770,7 +1792,7 @@ impl GraphStore {
         .param("id", signal_id.to_string());
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let relevance: String = row.get("relevance").unwrap_or_default();
             let confidence: f64 = row.get("confidence").unwrap_or(0.0);
@@ -2796,7 +1818,7 @@ impl GraphStore {
 
         let mut map: std::collections::HashMap<String, (u32, u32, f64)> =
             std::collections::HashMap::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let gc: String = row.get("gc").unwrap_or_default();
             let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
@@ -2864,7 +1886,7 @@ impl GraphStore {
 
         let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> =
             std::collections::HashMap::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let st: String = row.get("st").unwrap_or_default();
             let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
@@ -2893,7 +1915,7 @@ impl GraphStore {
                     )
                     .param("url", url.as_str());
 
-                    let mut stream = self.client.graph.execute(q).await?;
+                    let mut stream = self.client().graph.execute(q).await?;
                     if let Some(row) = stream.next().await? {
                         survived += row.get::<i64>("cnt").unwrap_or(0) as u32;
                     }
@@ -2912,7 +1934,7 @@ impl GraphStore {
                     )
                     .param("url", url.as_str());
 
-                    let mut stream = self.client.graph.execute(q).await?;
+                    let mut stream = self.client().graph.execute(q).await?;
                     if let Some(row) = stream.next().await? {
                         contradicted += row.get::<i64>("cnt").unwrap_or(0) as u32;
                     }
@@ -2948,7 +1970,7 @@ impl GraphStore {
         )
         .param("story_id", story_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(Some(cnt as u32));
@@ -2972,7 +1994,7 @@ impl GraphStore {
         )
         .param("story_id", story_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let gap: i64 = row.get("gap").unwrap_or(0);
             return Ok(Some(gap as i32));
@@ -3019,7 +2041,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
@@ -3070,7 +2092,7 @@ impl GraphStore {
         .param("id", tension_id.to_string());
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(ResponseHeuristic {
                 title: row.get("title").unwrap_or_default(),
@@ -3080,23 +2102,6 @@ impl GraphStore {
         }
         Ok(results)
     }
-
-    /// Mark a tension as having been scouted for responses.
-    pub async fn mark_response_found(&self, tension_id: Uuid) -> Result<(), neo4rs::Error> {
-        let now = format_datetime(&Utc::now());
-        let q = query(
-            "MATCH (t:Tension {id: $id})
-             SET t.response_scouted_at = $now",
-        )
-        .param("id", tension_id.to_string())
-        .param("now", now);
-
-        self.client.graph.run(q).await
-    }
-
-    // =============================================================================
-    // Gravity Scout operations
-    // =============================================================================
 
     /// Find tensions with active heat that need gravity scouting.
     /// Requires cause_heat >= 0.1 (cold tensions don't create gatherings).
@@ -3138,7 +2143,7 @@ impl GraphStore {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
@@ -3197,7 +2202,7 @@ impl GraphStore {
         .param("lng_max", center_lng + lng_delta);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(ResponseHeuristic {
                 title: row.get("title").unwrap_or_default(),
@@ -3208,28 +2213,1179 @@ impl GraphStore {
         Ok(results)
     }
 
-    /// Mark a tension as having been gravity-scouted.
-    /// Resets miss_count to 0 on success, increments on failure.
-    pub async fn mark_gathering_found(
+    /// Look up a Resource node by its slug. Returns the UUID if found.
+    pub async fn find_resource_by_slug(&self, slug: &str) -> Result<Option<Uuid>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource {slug: $slug})
+             RETURN r.id AS resource_id",
+        )
+        .param("slug", slug);
+
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("resource_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find the closest existing Resource by embedding similarity.
+    /// Returns (UUID, similarity) if a Resource exceeds the threshold.
+    /// Uses brute-force pairwise comparison (Resource count expected < 500).
+    pub async fn find_resource_by_embedding(
         &self,
-        tension_id: Uuid,
-        found_gatherings: bool,
+        embedding: &[f32],
+        threshold: f64,
+    ) -> Result<Option<(Uuid, f64)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Resource)
+             WHERE r.embedding IS NOT NULL
+             RETURN r.id AS rid, r.embedding AS emb",
+        );
+
+        let emb_f64 = embedding_to_f64(embedding);
+        let mut best: Option<(Uuid, f64)> = None;
+
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("rid").unwrap_or_default();
+            let stored: Vec<f64> = row.get("emb").unwrap_or_default();
+            if stored.is_empty() {
+                continue;
+            }
+            let sim = cosine_sim_f64(&emb_f64, &stored);
+            if sim >= threshold {
+                if best.as_ref().map_or(true, |(_, s)| sim > *s) {
+                    if let Ok(id) = Uuid::parse_str(&id_str) {
+                        best = Some((id, sim));
+                    }
+                }
+            }
+        }
+        Ok(best)
+    }
+
+    /// Verify that all signal UUIDs actually exist in the graph. Returns the set of missing IDs.
+    pub async fn verify_signal_ids(&self, signal_ids: &[Uuid]) -> Result<Vec<Uuid>, neo4rs::Error> {
+        let g = &self.client().graph;
+        let mut missing = Vec::new();
+
+        for id in signal_ids {
+            let q = query(
+                "MATCH (n) WHERE n.id = $id
+                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                 RETURN n.id AS id",
+            )
+            .param("id", id.to_string());
+
+            let mut stream = g.execute(q).await?;
+            if stream.next().await?.is_none() {
+                missing.push(*id);
+            }
+        }
+
+        Ok(missing)
+    }
+
+    /// Find signals from a scout run that aren't yet assigned to any situation.
+    pub async fn find_unassigned_signals(
+        &self,
+        scout_run_id: &str,
+    ) -> Result<Vec<(Uuid, String)>, neo4rs::Error> {
+        let g = &self.client().graph;
+
+        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        let mut results = Vec::new();
+
+        for label in &labels {
+            let q = query(&format!(
+                "MATCH (n:{label} {{scout_run_id: $run_id}})
+                 WHERE NOT (n)-[:PART_OF]->(:Situation)
+                 RETURN n.id AS id"
+            ))
+            .param("run_id", scout_run_id);
+
+            let mut stream = g.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id: String = row.get("id").unwrap_or_default();
+                if let Ok(uuid) = Uuid::parse_str(&id) {
+                    results.push((uuid, label.to_string()));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Get signal location observations for an actor's authored signals.
+    /// Returns (lat, lng, location_name, extracted_at) for each signal with about_location.
+    pub async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $id})-[:ACTED_IN {role: 'authored'}]->(n)
+             WHERE n.about_lat IS NOT NULL
+             RETURN n.about_lat AS lat, n.about_lng AS lng,
+                    n.about_location_name AS name, n.extracted_at AS ts",
+        )
+        .param("id", actor_id.to_string());
+
+        let g = self.client().graph.clone();
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            let lat: f64 = match row.get("lat") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let lng: f64 = match row.get("lng") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let name: String = row.get("name").unwrap_or_default();
+            let ts: String = row.get("ts").unwrap_or_default();
+            let parsed_ts = ts.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
+            results.push((lat, lng, name, parsed_ts));
+        }
+
+        Ok(results)
+    }
+
+    /// List all actors with their linked sources.
+    pub async fn list_all_actors(
+        &self,
+    ) -> Result<Vec<(ActorNode, Vec<SourceNode>)>, neo4rs::Error> {
+        // Reuse find_actors_in_region with world-spanning bounds
+        self.find_actors_in_region(-90.0, 90.0, -180.0, 180.0).await
+    }
+
+    /// Batch-fetch inference data for all Notices in a bounding box.
+    pub async fn notice_inference_batch(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<NoticeInferenceRow>, neo4rs::Error> {
+        let cypher = r#"
+            MATCH (n:Notice)
+            WHERE n.lat >= $min_lat AND n.lat <= $max_lat
+              AND n.lng >= $min_lng AND n.lng <= $max_lng
+              AND n.review_status IN ['staged', 'accepted']
+            OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
+            WITH n, s, EXISTS((n)-[:EVIDENCE_OF]->(:Tension)) AS has_evidence
+            RETURN n.id AS id, n.severity AS severity,
+                   n.corroboration_count AS corr, n.source_diversity AS div,
+                   has_evidence,
+                   s.scrape_count AS sc, s.signals_corroborated AS scorr,
+                   s.quality_penalty AS qp, s.avg_signals_per_scrape AS avg_sps
+        "#;
+
+        let mut result = self
+            .client
+            .graph
+            .execute(
+                query(cypher)
+                    .param("min_lat", min_lat)
+                    .param("max_lat", max_lat)
+                    .param("min_lng", min_lng)
+                    .param("max_lng", max_lng),
+            )
+            .await?;
+
+        let mut rows = Vec::new();
+        while let Some(row) = result.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Some(notice_id) = Uuid::parse_str(&id_str).ok() else {
+                continue;
+            };
+            let severity: String = row.get("severity").unwrap_or_default();
+            let corr: i64 = row.get("corr").unwrap_or(0);
+            let div: i64 = row.get("div").unwrap_or(0);
+            let has_evidence: bool = row.get("has_evidence").unwrap_or(false);
+
+            let source = {
+                let sc: Option<i64> = row.get("sc").ok();
+                sc.map(|sc| {
+                    let mut s = SourceNode::new(
+                        String::new(),
+                        String::new(),
+                        None,
+                        rootsignal_common::DiscoveryMethod::Curated,
+                        0.5,
+                        rootsignal_common::SourceRole::Mixed,
+                        None,
+                    );
+                    s.scrape_count = sc as u32;
+                    s.signals_corroborated = row.get::<i64>("scorr").unwrap_or(0) as u32;
+                    s.quality_penalty = row.get("qp").unwrap_or(1.0);
+                    s.avg_signals_per_scrape = row.get("avg_sps").unwrap_or(0.0);
+                    s
+                })
+            };
+
+            rows.push(NoticeInferenceRow {
+                notice_id,
+                severity,
+                corroboration_count: corr as u32,
+                source_diversity: div as u32,
+                has_evidence_of: has_evidence,
+                source,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// Find situations eligible for curiosity re-investigation.
+    /// Returns (situation_id, signal_ids) pairs for emerging/fuzzy situations
+    /// that haven't been curiosity-triggered in 7 days.
+    pub async fn find_curiosity_candidates(
+        &self,
+    ) -> Result<Vec<(Uuid, Vec<Uuid>)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
+             WHERE (s.arc = 'emerging' OR s.clarity = 'Fuzzy')
+               AND s.temperature >= 0.3
+               AND s.sensitivity <> 'SENSITIVE' AND s.sensitivity <> 'RESTRICTED'
+               AND (s.curiosity_triggered_at IS NULL
+                    OR datetime(s.curiosity_triggered_at) < datetime() - duration('P7D'))
+             WITH s, collect(sig) AS signals
+             LIMIT 5
+             UNWIND signals AS sig
+             WITH s, sig
+             WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
+               AND NOT sig:Tension
+             WITH s, collect(sig.id) AS sig_ids
+             WHERE size(sig_ids) > 0
+             RETURN s.id AS situation_id, sig_ids",
+        );
+        let mut stream = self.client().graph.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let sit_id_str: String = row.get("situation_id").unwrap_or_default();
+            let sig_id_strs: Vec<String> = row.get("sig_ids").unwrap_or_default();
+            if let Ok(sit_id) = Uuid::parse_str(&sit_id_str) {
+                let sig_ids: Vec<Uuid> = sig_id_strs
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
+                if !sig_ids.is_empty() {
+                    results.push((sit_id, sig_ids));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    // =============================================================================
+    // Read-only methods (split from former GraphStore mixed read+write methods)
+    // =============================================================================
+
+    /// Get implied queries from Aid/Gathering signals recently linked to heated tensions.
+    /// Returns (queries, signal_ids) — the caller emits ImpliedQueriesConsumed with the IDs.
+    pub async fn get_recently_linked_signals_with_queries(
+        &self,
+    ) -> Result<(Vec<String>, Vec<Uuid>), neo4rs::Error> {
+        let q = query(
+            "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+             WHERE (s:Aid OR s:Gathering)
+               AND s.implied_queries IS NOT NULL
+               AND size(s.implied_queries) > 0
+               AND coalesce(t.cause_heat, 0.0) >= 0.1
+             WITH DISTINCT s
+             RETURN s.implied_queries AS queries, s.id AS id",
+        );
+
+        let mut all_queries = Vec::new();
+        let mut signal_ids = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let queries: Vec<String> = row.get("queries").unwrap_or_default();
+            all_queries.extend(queries);
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                signal_ids.push(id);
+            }
+        }
+
+        Ok((all_queries, signal_ids))
+    }
+
+    /// Find signals eligible for tension-linker investigation.
+    /// Read-only — the pre-pass promotion of exhausted retries is handled by ExhaustedRetriesPromoted event.
+    pub async fn find_tension_linker_targets(
+        &self,
+        limit: u32,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
+        let q = query(
+            "MATCH (n)
+             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
+               AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
+               AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)
+               AND n.confidence >= 0.5
+               AND n.lat >= $min_lat AND n.lat <= $max_lat
+               AND n.lng >= $min_lng AND n.lng <= $max_lng
+             RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                    n.source_url AS source_url,
+                    CASE WHEN n:Gathering THEN 'Gathering'
+                         WHEN n:Aid THEN 'Aid'
+                         WHEN n:Need THEN 'Need'
+                         WHEN n:Notice THEN 'Notice'
+                    END AS label
+             ORDER BY n.extracted_at DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64)
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
+
+        let mut targets = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            targets.push(TensionLinkerTarget {
+                signal_id: id,
+                title: row.get("title").unwrap_or_default(),
+                summary: row.get("summary").unwrap_or_default(),
+                label: row.get("label").unwrap_or_default(),
+                source_url: row.get("source_url").unwrap_or_default(),
+            });
+        }
+        Ok(targets)
+    }
+
+    /// Find near-duplicate Tension pairs within a bounding box.
+    /// Returns (survivor_id, duplicate_id) pairs — the caller emits DuplicateTensionMerged per pair.
+    pub async fn find_duplicate_tension_pairs(
+        &self,
+        threshold: f64,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+    ) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:Tension)
+             WHERE t.embedding IS NOT NULL
+               AND t.lat >= $min_lat AND t.lat <= $max_lat
+               AND t.lng >= $min_lng AND t.lng <= $max_lng
+             RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
+             ORDER BY t.extracted_at ASC",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng);
+
+        struct TensionEmbed {
+            id: String,
+            embedding: Vec<f64>,
+        }
+
+        let mut tensions: Vec<TensionEmbed> = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
+            if !embedding.is_empty() {
+                tensions.push(TensionEmbed { id, embedding });
+            }
+        }
+
+        if tensions.len() < 2 {
+            return Ok(Vec::new());
+        }
+
+        let mut to_delete: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut merges: Vec<(Uuid, Uuid)> = Vec::new();
+
+        for i in 0..tensions.len() {
+            if to_delete.contains(&tensions[i].id) {
+                continue;
+            }
+            for j in (i + 1)..tensions.len() {
+                if to_delete.contains(&tensions[j].id) {
+                    continue;
+                }
+                let sim = cosine_sim_f64(&tensions[i].embedding, &tensions[j].embedding);
+                if sim >= threshold {
+                    to_delete.insert(tensions[j].id.clone());
+                    if let (Ok(survivor), Ok(duplicate)) = (
+                        Uuid::parse_str(&tensions[i].id),
+                        Uuid::parse_str(&tensions[j].id),
+                    ) {
+                        merges.push((survivor, duplicate));
+                    }
+                }
+            }
+        }
+
+        Ok(merges)
+    }
+}
+
+/// Graph store for scout — reads and writes.
+/// Derefs to `GraphReader` for read access; write methods live here.
+#[derive(Clone)]
+pub struct GraphStore {
+    inner: GraphReader,
+}
+
+impl std::ops::Deref for GraphStore {
+    type Target = GraphReader;
+    fn deref(&self) -> &GraphReader {
+        &self.inner
+    }
+}
+
+impl GraphStore {
+    pub fn new(client: GraphClient) -> Self {
+        Self { inner: GraphReader::new(client) }
+    }
+
+    /// Reap expired signals from the graph. Runs at the start of each scout cycle.
+    ///
+    /// Deletes:
+    /// - Non-recurring events whose end (or start) is past the grace period
+    /// - Need signals older than NEED_EXPIRE_DAYS
+    /// - Any signal not confirmed within FRESHNESS_MAX_DAYS (except ongoing gives, recurring events)
+    ///
+    /// Also detaches and deletes orphaned Evidence nodes.
+    pub async fn reap_expired(&self) -> Result<ReapStats, neo4rs::Error> {
+        let mut stats = ReapStats::default();
+
+        // 1. Past non-recurring events (only those with a known start date)
+        let q = query(&format!(
+            "MATCH (n:Gathering)
+             WHERE n.is_recurring = false
+               AND n.starts_at IS NOT NULL AND n.starts_at <> ''
+               AND CASE
+                   WHEN n.ends_at IS NOT NULL AND n.ends_at <> ''
+                   THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
+                   ELSE datetime(n.starts_at) < datetime() - duration('PT{}H')
+               END
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
+        ));
+        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+            stats.gatherings = row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 2. Expired needs
+        let q = query(&format!(
+            "MATCH (n:Need)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            NEED_EXPIRE_DAYS
+        ));
+        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+            stats.needs = row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 3. Expired notices
+        let q = query(&format!(
+            "MATCH (n:Notice)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             DETACH DELETE n, ev
+             RETURN count(DISTINCT n) AS deleted",
+            NOTICE_EXPIRE_DAYS
+        ));
+        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+            stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
+        }
+
+        // 4. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
+        for label in &["Aid", "Tension"] {
+            let q = query(&format!(
+                "MATCH (n:{label})
+                 WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
+                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+                 DETACH DELETE n, ev
+                 RETURN count(DISTINCT n) AS deleted",
+                label = label,
+                days = FRESHNESS_MAX_DAYS,
+            ));
+            if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+                stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
+            }
+        }
+
+        let total = stats.gatherings + stats.needs + stats.stale;
+        if total > 0 {
+            info!(
+                gatherings = stats.gatherings,
+                needs = stats.needs,
+                stale = stats.stale,
+                "Reaped expired signals"
+            );
+        }
+
+        Ok(stats)
+    }
+
+    /// Delete all nodes sourced from a given URL (opt-out support).
+    pub async fn delete_by_source_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
+        // Delete evidence nodes linked to signals from this URL, then the signals themselves
+        let q = query(
+            "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             WHERE n.source_url = $url
+             DETACH DELETE n, ev
+             RETURN count(*) AS deleted",
+        )
+        .param("url", url);
+
+        let mut stream = self.client().graph.execute(q).await?;
+        let deleted = if let Some(row) = stream.next().await? {
+            row.get::<i64>("deleted").unwrap_or(0) as u64
+        } else {
+            0
+        };
+
+        warn!(%url, deleted, "Deleted nodes by source URL (opt-out)");
+        Ok(deleted)
+    }
+
+    /// Atomically transition a region's scout run status. Returns false if the current
+    /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
+    /// Cleans up stale running statuses (>5 min) before attempting transition.
+    // --- Task-scoped phase status operations ---
+
+    /// CAS guard: only transitions if current phase_status is in allowed_from set.
+    /// Also auto-resets stale running statuses (>5 min) on the same task.
+    pub async fn transition_task_phase_status(
+        &self,
+        task_id: &str,
+        allowed_from: &[&str],
+        new_status: &str,
+    ) -> Result<bool, neo4rs::Error> {
+        // Clean up stale running status for this task (>5 min).
+        self.client
+            .graph
+            .run(
+                query(
+                    "MATCH (t:ScoutTask {id: $id}) \
+                 WHERE t.phase_status STARTS WITH 'running_' \
+                   AND t.phase_status_updated_at < datetime() - duration('PT5M') \
+                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()",
+                )
+                .param("id", task_id),
+            )
+            .await?;
+
+        // Atomic conditional SET: only transitions if current phase_status is allowed
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             WHERE t.phase_status IN $allowed_from
+             SET t.phase_status = $new_status, t.phase_status_updated_at = datetime()
+             RETURN true AS transitioned",
+        )
+        .param("id", task_id)
+        .param("allowed_from", allowed_from.to_vec())
+        .param("new_status", new_status);
+
+        let mut result = self.client().graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let transitioned: bool = row.get("transitioned").unwrap_or(false);
+            return Ok(transitioned);
+        }
+
+        // No row returned means the WHERE filtered it out
+        Ok(false)
+    }
+
+    /// Directly set a task's phase status.
+    pub async fn set_task_phase_status(
+        &self,
+        task_id: &str,
+        status: &str,
     ) -> Result<(), neo4rs::Error> {
+        self.client
+            .graph
+            .run(
+                query(
+                    "MATCH (t:ScoutTask {id: $id})
+                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()",
+                )
+                .param("id", task_id)
+                .param("status", status),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Reset a stuck task's phase status to "idle".
+    pub async fn reset_task_phase_status(&self, task_id: &str) -> Result<(), neo4rs::Error> {
+        self.client
+            .graph
+            .run(query(
+                "MATCH (t:ScoutTask {id: $id}) SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
+            ).param("id", task_id))
+            .await?;
+        Ok(())
+    }
+
+    /// Clean up all stale running task statuses (>30 min).
+    pub async fn cleanup_stale_task_statuses(&self) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask)
+             WHERE t.phase_status STARTS WITH 'running_'
+               AND t.phase_status_updated_at < datetime() - duration('PT30M')
+             SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()
+             RETURN count(t) AS cleaned",
+        );
+
+        let mut result = self.client().graph.execute(q).await?;
+        if let Some(row) = result.next().await? {
+            let cleaned: i64 = row.get("cleaned").unwrap_or(0);
+            return Ok(cleaned as u32);
+        }
+        Ok(0)
+    }
+
+    /// Create or update a ScoutTask node. MERGE on id for idempotency.
+    pub async fn upsert_scout_task(&self, task: &ScoutTask) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (t:ScoutTask {id: $id})
+             SET t.center_lat = $center_lat,
+                 t.center_lng = $center_lng,
+                 t.radius_km = $radius_km,
+                 t.context = $context,
+                 t.geo_terms = $geo_terms,
+                 t.priority = $priority,
+                 t.source = $source,
+                 t.status = $status,
+                 t.phase_status = coalesce(t.phase_status, $phase_status),
+                 t.created_at = datetime($created_at)",
+        )
+        .param("id", task.id.to_string())
+        .param("center_lat", task.center_lat)
+        .param("center_lng", task.center_lng)
+        .param("radius_km", task.radius_km)
+        .param("context", task.context.as_str())
+        .param("geo_terms", task.geo_terms.clone())
+        .param("priority", task.priority)
+        .param("source", task.source.to_string())
+        .param("status", task.status.to_string())
+        .param("phase_status", task.phase_status.as_str())
+        .param("created_at", format_datetime(&task.created_at));
+
+        self.client().graph.run(q).await?;
+        info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
+        Ok(())
+    }
+
+    /// Cancel a scout task by setting its status to "cancelled".
+    pub async fn cancel_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             WHERE t.status IN ['pending', 'running']
+             SET t.status = 'cancelled'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
+
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Mark a scout task as completed.
+    pub async fn complete_scout_task(&self, id: &str) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id})
+             SET t.status = 'completed', t.completed_at = datetime()",
+        )
+        .param("id", id);
+
+        self.client().graph.run(q).await
+    }
+
+    /// Claim a scout task by setting its status from pending → running.
+    pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (t:ScoutTask {id: $id, status: 'pending'})
+             SET t.status = 'running'
+             RETURN count(t) AS updated",
+        )
+        .param("id", id);
+
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let updated: i64 = row.get("updated").unwrap_or(0);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // --- Demand Signal operations (Driver A) ---
+
+    /// Store a raw demand signal from a user search.
+    pub async fn upsert_demand_signal(&self, signal: &DemandSignal) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (d:DemandSignal {id: $id})
+             SET d.query = $query,
+                 d.center_lat = $center_lat,
+                 d.center_lng = $center_lng,
+                 d.radius_km = $radius_km,
+                 d.created_at = datetime($created_at)",
+        )
+        .param("id", signal.id.to_string())
+        .param("query", signal.query.as_str())
+        .param("center_lat", signal.center_lat)
+        .param("center_lng", signal.center_lng)
+        .param("radius_km", signal.radius_km)
+        .param("created_at", format_datetime(&signal.created_at));
+
+        self.client().graph.run(q).await?;
+        info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
+        Ok(())
+    }
+
+    /// Aggregate recent demand signals into ScoutTasks.
+    /// Buckets by geohash-5 (~5km cells), creates tasks for cells with ≥ 2 signals.
+    /// Deletes consumed demand signals.
+    pub async fn aggregate_demand(&self) -> Result<Vec<ScoutTask>, neo4rs::Error> {
+        // Fetch recent demand signals (last 24h)
+        let q = query(
+            "MATCH (d:DemandSignal)
+             WHERE d.created_at > datetime() - duration('P1D')
+             RETURN d.id AS id, d.query AS query,
+                    d.center_lat AS center_lat, d.center_lng AS center_lng,
+                    d.radius_km AS radius_km",
+        );
+
+        let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
+        let mut stream = self.client().graph.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let q_text: String = row.get("query").unwrap_or_default();
+            let lat: f64 = row.get("center_lat").unwrap_or(0.0);
+            let lng: f64 = row.get("center_lng").unwrap_or(0.0);
+            let radius: f64 = row.get("radius_km").unwrap_or(30.0);
+            signals.push((id, q_text, lat, lng, radius));
+        }
+
+        if signals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Bucket by truncated lat/lng (~5km grid cells)
+        // Using 0.05 degree resolution ≈ 5km
+        let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
+        for sig in &signals {
+            let lat_cell = (sig.2 / 0.05).round() as i64;
+            let lng_cell = (sig.3 / 0.05).round() as i64;
+            cells.entry((lat_cell, lng_cell)).or_default().push(sig);
+        }
+
+        let mut tasks = Vec::new();
+        let mut consumed_ids = Vec::new();
+
+        for ((_lat_cell, _lng_cell), cell_signals) in &cells {
+            if cell_signals.len() < 2 {
+                continue;
+            }
+
+            // Compute centroid
+            let n = cell_signals.len() as f64;
+            let avg_lat: f64 = cell_signals.iter().map(|s| s.2).sum::<f64>() / n;
+            let avg_lng: f64 = cell_signals.iter().map(|s| s.3).sum::<f64>() / n;
+            let avg_radius: f64 = cell_signals.iter().map(|s| s.4).sum::<f64>() / n;
+
+            // Collect unique query terms for context
+            let queries: Vec<&str> = cell_signals.iter().map(|s| s.1.as_str()).collect();
+            let context = queries.join("; ");
+
+            let task = ScoutTask {
+                id: Uuid::new_v4(),
+                center_lat: avg_lat,
+                center_lng: avg_lng,
+                radius_km: avg_radius.min(100.0),
+                context,
+                geo_terms: queries.iter().map(|q| q.to_string()).collect(),
+                priority: 0.5,
+                source: ScoutTaskSource::DriverA,
+                status: ScoutTaskStatus::Pending,
+                phase_status: "idle".to_string(),
+                created_at: chrono::Utc::now(),
+                completed_at: None,
+            };
+
+            self.upsert_scout_task(&task).await?;
+            tasks.push(task);
+
+            // Mark these signals as consumed
+            for sig in cell_signals {
+                consumed_ids.push(sig.0.clone());
+            }
+        }
+
+        // Delete consumed demand signals
+        if !consumed_ids.is_empty() {
+            let q = query(
+                "UNWIND $ids AS id
+                 MATCH (d:DemandSignal {id: id})
+                 DELETE d",
+            )
+            .param("ids", consumed_ids);
+            self.client().graph.run(q).await?;
+        }
+
+        info!(tasks = tasks.len(), "Demand aggregation complete");
+        Ok(tasks)
+    }
+
+    // --- Source operations (emergent source discovery) ---
+
+    /// Create a Submission node and link it to its associated Source.
+    pub async fn upsert_submission(
+        &self,
+        submission: &rootsignal_common::SubmissionNode,
+        source_canonical_key: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "CREATE (sub:Submission {
+                id: $id,
+                url: $url,
+                reason: $reason,
+                submitted_at: datetime($submitted_at)
+            })
+            WITH sub
+            MATCH (s:Source {canonical_key: $canonical_key})
+            MERGE (sub)-[:SUBMITTED_FOR]->(s)",
+        )
+        .param("id", submission.id.to_string())
+        .param("url", submission.url.as_str())
+        .param("reason", submission.reason.clone().unwrap_or_default())
+        .param("submitted_at", format_datetime(&submission.submitted_at))
+        .param("canonical_key", source_canonical_key);
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Record that a source produced signals this run.
+    /// Updates last_scraped, signals_produced, consecutive_empty_runs.
+    pub async fn record_source_scrape(
+        &self,
+        canonical_key: &str,
+        signals_produced: u32,
+        now: DateTime<Utc>,
+    ) -> Result<(), neo4rs::Error> {
+        if signals_produced > 0 {
+            let q = query(
+                "MATCH (s:Source {canonical_key: $key})
+                 SET s.last_scraped = datetime($now),
+                     s.last_produced_signal = datetime($now),
+                     s.signals_produced = s.signals_produced + $count,
+                     s.consecutive_empty_runs = 0,
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
+            )
+            .param("key", canonical_key)
+            .param("now", format_datetime(&now))
+            .param("count", signals_produced as i64);
+            self.client().graph.run(q).await?;
+        } else {
+            let q = query(
+                "MATCH (s:Source {canonical_key: $key})
+                 SET s.last_scraped = datetime($now),
+                     s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
+                     s.scrape_count = coalesce(s.scrape_count, 0) + 1",
+            )
+            .param("key", canonical_key)
+            .param("now", format_datetime(&now));
+            self.client().graph.run(q).await?;
+        }
+        Ok(())
+    }
+
+    /// Update weight and cadence for a source based on computed metrics.
+    pub async fn update_source_weight(
+        &self,
+        canonical_key: &str,
+        weight: f64,
+        cadence_hours: u32,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {canonical_key: $key})
+             SET s.weight = $weight, s.cadence_hours = $cadence",
+        )
+        .param("key", canonical_key)
+        .param("weight", weight)
+        .param("cadence", cadence_hours as i64);
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Deactivate sources that have had too many consecutive empty runs.
+    /// Protects curated and human-submitted sources.
+    pub async fn deactivate_dead_sources(&self, max_empty_runs: u32) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {active: true})
+             WHERE s.consecutive_empty_runs >= $max
+               AND s.discovery_method <> 'curated'
+               AND s.discovery_method <> 'human_submission'
+             SET s.active = false
+             RETURN count(s) AS deactivated",
+        )
+        .param("max", max_empty_runs as i64);
+
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Deactivate web query sources that have proven unproductive.
+    /// Stricter criteria than general `deactivate_dead_sources`:
+    /// - 5+ consecutive empty runs (backoff has already slowed them)
+    /// - 3+ total scrapes (gave it a fair chance)
+    /// - 0 signals ever produced (never contributed anything)
+    /// Protects curated and human-submitted sources.
+    pub async fn deactivate_dead_web_queries(&self) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {active: true})
+             WHERE NOT (s.canonical_value STARTS WITH 'http://' OR s.canonical_value STARTS WITH 'https://')
+               AND s.consecutive_empty_runs >= 5
+               AND coalesce(s.scrape_count, 0) >= 3
+               AND s.signals_produced = 0
+               AND s.discovery_method <> 'curated'
+               AND s.discovery_method <> 'human_submission'
+             SET s.active = false
+             RETURN count(s) AS deactivated",
+        );
+
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Store an embedding on a Source node's `query_embedding` property.
+    /// Used after creating a new WebQuery source so it can be found by
+    /// `find_similar_query` on subsequent runs.
+    pub async fn set_query_embedding(
+        &self,
+        canonical_key: &str,
+        embedding: &[f32],
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Source {canonical_key: $key})
+             SET s.query_embedding = $embedding",
+        )
+        .param("key", canonical_key)
+        .param("embedding", embedding.to_vec());
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Update actor signal count and last_active.
+    pub async fn update_actor_stats(
+        &self,
+        actor_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (a:Actor {id: $id})
+             SET a.signal_count = a.signal_count + 1,
+                 a.last_active = datetime($now)",
+        )
+        .param("id", actor_id.to_string())
+        .param("now", format_datetime(&now));
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    // --- Response mapping operations ---
+
+    /// Create a RESPONDS_TO edge between a Aid/Gathering signal and a Tension.
+    pub async fn create_response_edge(
+        &self,
+        responder_id: Uuid,
+        tension_id: Uuid,
+        match_strength: f64,
+        explanation: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
+             MATCH (t:Tension {id: $tension_id})
+             MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
+        )
+        .param("resp_id", responder_id.to_string())
+        .param("tension_id", tension_id.to_string())
+        .param("strength", match_strength)
+        .param("explanation", explanation);
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Create a Pin node. MERGE on (source_id, location_lat, location_lng) for idempotency.
+    pub async fn create_pin(&self, pin: &PinNode) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (p:Pin {source_id: $source_id, location_lat: $location_lat, location_lng: $location_lng})
+             ON CREATE SET
+                p.id = $id,
+                p.created_by = $created_by,
+                p.created_at = datetime($created_at)",
+        )
+        .param("id", pin.id.to_string())
+        .param("source_id", pin.source_id.to_string())
+        .param("location_lat", pin.location_lat)
+        .param("location_lng", pin.location_lng)
+        .param("created_by", pin.created_by.as_str())
+        .param("created_at", format_datetime(&pin.created_at));
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Delete pins by ID. Uses UNWIND for batch deletion.
+    pub async fn delete_pins(&self, pin_ids: &[Uuid]) -> Result<(), neo4rs::Error> {
+        if pin_ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = pin_ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "UNWIND $ids AS pid
+             MATCH (p:Pin {id: pid})
+             DETACH DELETE p",
+        )
+        .param("ids", ids);
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Boost source weights for sources that contributed signals evidencing a hot situation.
+    /// The boost is multiplicative (e.g. factor=1.2 means 20% increase), capped at 5.0.
+    pub async fn boost_sources_for_situation_headline(
+        &self,
+        headline: &str,
+        factor: f64,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (sig)-[:PART_OF]->(s:Situation {headline: $headline})
+             WITH collect(DISTINCT sig.source_url) AS urls
+             UNWIND urls AS url
+             MATCH (src:Source {active: true})
+             WHERE src.url = url AND src.weight IS NOT NULL
+             SET src.weight = CASE WHEN src.weight * $factor > 5.0 THEN 5.0 ELSE src.weight * $factor END",
+        )
+        .param("headline", headline)
+        .param("factor", factor);
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Queue signals from emerging/fuzzy situations for re-investigation by the tension linker.
+    /// Uses a 7-day cooldown per situation to avoid repeated re-triggering.
+    /// Returns the number of signals queued.
+    pub async fn trigger_situation_curiosity(&self) -> Result<u32, neo4rs::Error> {
+        // Find situations that are emerging or fuzzy, haven't been curiosity-triggered in 7 days
+        let q = query(
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
+             WHERE (s.arc = 'emerging' OR s.clarity = 'Fuzzy')
+               AND s.temperature >= 0.3
+               AND s.sensitivity <> 'SENSITIVE' AND s.sensitivity <> 'RESTRICTED'
+               AND (s.curiosity_triggered_at IS NULL
+                    OR datetime(s.curiosity_triggered_at) < datetime() - duration('P7D'))
+             WITH s, collect(sig) AS signals
+             LIMIT 5
+             UNWIND signals AS sig
+             WITH s, sig
+             WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
+               AND NOT sig:Tension
+             SET sig.curiosity_investigated = NULL
+             WITH DISTINCT s
+             SET s.curiosity_triggered_at = datetime()
+             RETURN count(s) AS triggered",
+        );
+        let mut stream = self.client().graph.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("triggered").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    // --- Feedback loop methods ---
+
+    /// Update a signal's confidence value. Same label-dispatch as mark_investigated.
+    pub async fn update_signal_confidence(
+        &self,
+        signal_id: Uuid,
+        node_type: NodeType,
+        new_confidence: f32,
+    ) -> Result<(), neo4rs::Error> {
+        let label = match node_type {
+            NodeType::Gathering => "Gathering",
+            NodeType::Aid => "Aid",
+            NodeType::Need => "Need",
+            NodeType::Notice => "Notice",
+            NodeType::Tension => "Tension",
+            NodeType::Condition => "Condition",
+            NodeType::Incident => "Incident",
+            NodeType::Citation => return Ok(()),
+        };
+
+        let q = query(&format!(
+            "MATCH (n:{} {{id: $id}})
+             SET n.confidence = $confidence",
+            label
+        ))
+        .param("id", signal_id.to_string())
+        .param("confidence", new_confidence as f64);
+
+        self.client().graph.run(q).await?;
+        Ok(())
+    }
+
+    /// Mark a tension as having been scouted for responses.
+    pub async fn mark_response_found(&self, tension_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
         let q = query(
             "MATCH (t:Tension {id: $id})
-             SET t.gravity_scouted_at = datetime($now),
-                 t.gravity_scout_miss_count = CASE
-                     WHEN $found THEN 0
-                     ELSE coalesce(t.gravity_scout_miss_count, 0) + 1
-                 END",
+             SET t.response_scouted_at = $now",
         )
         .param("id", tension_id.to_string())
-        .param("now", now)
-        .param("found", found_gatherings);
+        .param("now", now);
 
-        self.client.graph.run(q).await
+        self.client().graph.run(q).await
     }
+
+    // =============================================================================
+    // Gravity Scout operations
+    // =============================================================================
 
     /// Create a DRAWN_TO edge between a gathering signal and a Tension.
     /// Uses MERGE with ON CREATE/ON MATCH for defensive idempotency.
@@ -3260,66 +3416,7 @@ impl GraphStore {
         .param("explanation", explanation)
         .param("gathering_type", gathering_type);
 
-        self.client.graph.run(q).await?;
-        Ok(())
-    }
-
-    /// Find or create a Place node, deduplicating on slug.
-    /// Returns the Place's UUID (existing or newly created).
-    pub async fn find_or_create_place(
-        &self,
-        name: &str,
-        lat: f64,
-        lng: f64,
-    ) -> Result<Uuid, neo4rs::Error> {
-        let slug = rootsignal_common::slugify(name);
-        let new_id = Uuid::new_v4();
-        let now = format_datetime(&Utc::now());
-
-        let q = query(
-            "MERGE (p:Place {slug: $slug})
-             ON CREATE SET
-                 p.id = $id,
-                 p.name = $name,
-                 p.lat = $lat,
-                 p.lng = $lng,
-                 p.geocoded = false,
-                 p.created_at = datetime($now)
-             RETURN p.id AS place_id",
-        )
-        .param("slug", slug.as_str())
-        .param("id", new_id.to_string())
-        .param("name", name)
-        .param("lat", lat)
-        .param("lng", lng)
-        .param("now", now);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("place_id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(id);
-            }
-        }
-        // Fallback: if MERGE returned nothing (shouldn't happen), return the new_id
-        Ok(new_id)
-    }
-
-    /// Create a GATHERS_AT edge from a gathering signal to a Place.
-    pub async fn create_gathers_at_edge(
-        &self,
-        signal_id: Uuid,
-        place_id: Uuid,
-    ) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Aid OR s:Gathering OR s:Need)
-             MATCH (p:Place {id: $pid})
-             MERGE (s)-[:GATHERS_AT]->(p)",
-        )
-        .param("sid", signal_id.to_string())
-        .param("pid", place_id.to_string());
-
-        self.client.graph.run(q).await?;
+        self.client().graph.run(q).await?;
         Ok(())
     }
 
@@ -3360,7 +3457,7 @@ impl GraphStore {
         .param("embedding", emb)
         .param("now", now);
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("resource_id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -3399,7 +3496,7 @@ impl GraphStore {
         .param("qty", quantity.unwrap_or(""))
         .param("notes", notes.unwrap_or(""));
 
-        self.client.graph.run(q).await?;
+        self.client().graph.run(q).await?;
         Ok(())
     }
 
@@ -3422,7 +3519,7 @@ impl GraphStore {
         .param("rid", resource_id.to_string())
         .param("conf", confidence as f64);
 
-        self.client.graph.run(q).await?;
+        self.client().graph.run(q).await?;
         Ok(())
     }
 
@@ -3451,62 +3548,8 @@ impl GraphStore {
         .param("conf", confidence as f64)
         .param("cap", capacity.unwrap_or(""));
 
-        self.client.graph.run(q).await?;
+        self.client().graph.run(q).await?;
         Ok(())
-    }
-
-    /// Look up a Resource node by its slug. Returns the UUID if found.
-    pub async fn find_resource_by_slug(&self, slug: &str) -> Result<Option<Uuid>, neo4rs::Error> {
-        let q = query(
-            "MATCH (r:Resource {slug: $slug})
-             RETURN r.id AS resource_id",
-        )
-        .param("slug", slug);
-
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let id_str: String = row.get("resource_id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                return Ok(Some(id));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Find the closest existing Resource by embedding similarity.
-    /// Returns (UUID, similarity) if a Resource exceeds the threshold.
-    /// Uses brute-force pairwise comparison (Resource count expected < 500).
-    pub async fn find_resource_by_embedding(
-        &self,
-        embedding: &[f32],
-        threshold: f64,
-    ) -> Result<Option<(Uuid, f64)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (r:Resource)
-             WHERE r.embedding IS NOT NULL
-             RETURN r.id AS rid, r.embedding AS emb",
-        );
-
-        let emb_f64 = embedding_to_f64(embedding);
-        let mut best: Option<(Uuid, f64)> = None;
-
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("rid").unwrap_or_default();
-            let stored: Vec<f64> = row.get("emb").unwrap_or_default();
-            if stored.is_empty() {
-                continue;
-            }
-            let sim = cosine_sim_f64(&emb_f64, &stored);
-            if sim >= threshold {
-                if best.as_ref().map_or(true, |(_, s)| sim > *s) {
-                    if let Ok(id) = Uuid::parse_str(&id_str) {
-                        best = Some((id, sim));
-                    }
-                }
-            }
-        }
-        Ok(best)
     }
 
     /// Merge near-duplicate Resource nodes based on embedding similarity.
@@ -3532,7 +3575,7 @@ impl GraphStore {
         }
 
         let mut resources: Vec<ResourceEmbed> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client().graph.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id: String = row.get("id").unwrap_or_default();
             let slug: String = row.get("slug").unwrap_or_default();
@@ -3597,7 +3640,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client.graph.execute(q).await {
+            if let Ok(mut s) = self.client().graph.execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3615,7 +3658,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client.graph.execute(q).await {
+            if let Ok(mut s) = self.client().graph.execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3633,7 +3676,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client.graph.execute(q).await {
+            if let Ok(mut s) = self.client().graph.execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3646,12 +3689,12 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            self.client.graph.run(q).await?;
+            self.client().graph.run(q).await?;
 
             // Delete the duplicate
             let q =
                 query("MATCH (r:Resource {id: $id}) DETACH DELETE r").param("id", dup_id.as_str());
-            self.client.graph.run(q).await?;
+            self.client().graph.run(q).await?;
 
             stats.nodes_merged += 1;
             info!(canonical_id, dup_id, "Merged duplicate resource");
@@ -3683,7 +3726,7 @@ impl GraphStore {
         .param("sid", situation_id.to_string())
         .param("now", now);
 
-        self.client.graph.run(q).await
+        self.client().graph.run(q).await
     }
 
     /// Remove a tag from a situation: delete TAGGED edge + create SUPPRESSED_TAG.
@@ -3705,7 +3748,7 @@ impl GraphStore {
         .param("slug", tag_slug)
         .param("now", now);
 
-        self.client.graph.run(q).await
+        self.client().graph.run(q).await
     }
 
     /// Merge source tag into target tag. Atomic: repoints all edges, deletes source.
@@ -3727,7 +3770,7 @@ impl GraphStore {
         .param("source", source_slug)
         .param("target", target_slug);
 
-        self.client.graph.run(q1).await?;
+        self.client().graph.run(q1).await?;
 
         // Repoint SUPPRESSED_TAG edges
         let q2 = query(
@@ -3742,13 +3785,13 @@ impl GraphStore {
         .param("source", source_slug)
         .param("target", target_slug);
 
-        self.client.graph.run(q2).await?;
+        self.client().graph.run(q2).await?;
 
         // Delete source tag
         let q3 =
             query("MATCH (t:Tag {slug: $source}) DETACH DELETE t").param("source", source_slug);
 
-        self.client.graph.run(q3).await
+        self.client().graph.run(q3).await
     }
 
     // ========== Supervisor / Validation Issues ==========
@@ -3773,7 +3816,7 @@ impl GraphStore {
 
     /// Create a Schedule node in the graph. Returns the schedule's UUID.
     pub async fn create_schedule(&self, schedule: &ScheduleNode) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let rdates_str: Vec<String> = schedule.rdates.iter().map(|d| format_datetime(d)).collect();
         let exdates_str: Vec<String> = schedule
@@ -3831,7 +3874,7 @@ impl GraphStore {
         signal_id: Uuid,
         schedule_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "OPTIONAL MATCH (e:Gathering {id: $signal_id})
@@ -3850,7 +3893,9 @@ impl GraphStore {
         g.run(q).await?;
         Ok(())
     }
+
 }
+
 
 /// Stats from resource consolidation batch job.
 #[derive(Debug, Default)]
@@ -4289,6 +4334,7 @@ pub fn row_datetime_opt_pub(row: &neo4rs::Row, key: &str) -> Option<DateTime<Utc
 
 // --- Situation / Dispatch writer methods ---
 
+
 impl GraphStore {
     /// Create a Situation node in the graph. Returns the situation's UUID.
     pub async fn create_situation(
@@ -4297,7 +4343,7 @@ impl GraphStore {
         narrative_embedding: &[f32],
         causal_embedding: &[f32],
     ) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "CREATE (s:Situation {
@@ -4365,7 +4411,7 @@ impl GraphStore {
         &self,
         dispatch: &rootsignal_common::DispatchNode,
     ) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let signal_ids_json: Vec<String> = dispatch
             .signal_ids
@@ -4421,7 +4467,7 @@ impl GraphStore {
         situation_id: &Uuid,
         match_confidence: f64,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(&format!(
             "MATCH (sig:{signal_label} {{id: $signal_id}})
@@ -4445,7 +4491,7 @@ impl GraphStore {
         dispatch_id: &Uuid,
         signal_ids: &[Uuid],
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         for signal_id in signal_ids {
             let q = query(
@@ -4462,35 +4508,13 @@ impl GraphStore {
         Ok(())
     }
 
-    /// Verify that all signal UUIDs actually exist in the graph. Returns the set of missing IDs.
-    pub async fn verify_signal_ids(&self, signal_ids: &[Uuid]) -> Result<Vec<Uuid>, neo4rs::Error> {
-        let g = &self.client.graph;
-        let mut missing = Vec::new();
-
-        for id in signal_ids {
-            let q = query(
-                "MATCH (n) WHERE n.id = $id
-                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-                 RETURN n.id AS id",
-            )
-            .param("id", id.to_string());
-
-            let mut stream = g.execute(q).await?;
-            if stream.next().await?.is_none() {
-                missing.push(*id);
-            }
-        }
-
-        Ok(missing)
-    }
-
     /// Update a situation's structured_state JSON blob.
     pub async fn update_situation_state(
         &self,
         situation_id: &Uuid,
         structured_state: &str,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4516,7 +4540,7 @@ impl GraphStore {
         arc: &rootsignal_common::SituationArc,
         clarity: &rootsignal_common::Clarity,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4550,7 +4574,7 @@ impl GraphStore {
         narrative_embedding: &[f32],
         causal_embedding: &[f32],
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4564,36 +4588,6 @@ impl GraphStore {
         g.run(q).await
     }
 
-    /// Find signals from a scout run that aren't yet assigned to any situation.
-    pub async fn find_unassigned_signals(
-        &self,
-        scout_run_id: &str,
-    ) -> Result<Vec<(Uuid, String)>, neo4rs::Error> {
-        let g = &self.client.graph;
-
-        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
-        let mut results = Vec::new();
-
-        for label in &labels {
-            let q = query(&format!(
-                "MATCH (n:{label} {{scout_run_id: $run_id}})
-                 WHERE NOT (n)-[:PART_OF]->(:Situation)
-                 RETURN n.id AS id"
-            ))
-            .param("run_id", scout_run_id);
-
-            let mut stream = g.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                let id: String = row.get("id").unwrap_or_default();
-                if let Ok(uuid) = Uuid::parse_str(&id) {
-                    results.push((uuid, label.to_string()));
-                }
-            }
-        }
-
-        Ok(results)
-    }
-
     /// Flag a dispatch for review by post-hoc verification.
     pub async fn flag_dispatch_for_review(
         &self,
@@ -4601,7 +4595,7 @@ impl GraphStore {
         flag_reason: &str,
         fidelity_score: Option<f64>,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client().graph;
 
         let q = query(
             "MATCH (d:Dispatch {id: $id})
@@ -4617,127 +4611,6 @@ impl GraphStore {
     }
 
     // --- Actor location enrichment ---
-
-    /// Get signal location observations for an actor's authored signals.
-    /// Returns (lat, lng, location_name, extracted_at) for each signal with about_location.
-    pub async fn get_signals_for_actor(
-        &self,
-        actor_id: Uuid,
-    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $id})-[:ACTED_IN {role: 'authored'}]->(n)
-             WHERE n.about_lat IS NOT NULL
-             RETURN n.about_lat AS lat, n.about_lng AS lng,
-                    n.about_location_name AS name, n.extracted_at AS ts",
-        )
-        .param("id", actor_id.to_string());
-
-        let g = self.client.graph.clone();
-        let mut stream = g.execute(q).await?;
-        let mut results = Vec::new();
-
-        while let Some(row) = stream.next().await? {
-            let lat: f64 = match row.get("lat") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let lng: f64 = match row.get("lng") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let name: String = row.get("name").unwrap_or_default();
-            let ts: String = row.get("ts").unwrap_or_default();
-            let parsed_ts = ts.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
-            results.push((lat, lng, name, parsed_ts));
-        }
-
-        Ok(results)
-    }
-
-    /// List all actors with their linked sources.
-    pub async fn list_all_actors(
-        &self,
-    ) -> Result<Vec<(ActorNode, Vec<SourceNode>)>, neo4rs::Error> {
-        // Reuse find_actors_in_region with world-spanning bounds
-        self.find_actors_in_region(-90.0, 90.0, -180.0, 180.0).await
-    }
-
-    /// Batch-fetch inference data for all Notices in a bounding box.
-    pub async fn notice_inference_batch(
-        &self,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Vec<NoticeInferenceRow>, neo4rs::Error> {
-        let cypher = r#"
-            MATCH (n:Notice)
-            WHERE n.lat >= $min_lat AND n.lat <= $max_lat
-              AND n.lng >= $min_lng AND n.lng <= $max_lng
-              AND n.review_status IN ['staged', 'accepted']
-            OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
-            WITH n, s, EXISTS((n)-[:EVIDENCE_OF]->(:Tension)) AS has_evidence
-            RETURN n.id AS id, n.severity AS severity,
-                   n.corroboration_count AS corr, n.source_diversity AS div,
-                   has_evidence,
-                   s.scrape_count AS sc, s.signals_corroborated AS scorr,
-                   s.quality_penalty AS qp, s.avg_signals_per_scrape AS avg_sps
-        "#;
-
-        let mut result = self
-            .client
-            .graph
-            .execute(
-                query(cypher)
-                    .param("min_lat", min_lat)
-                    .param("max_lat", max_lat)
-                    .param("min_lng", min_lng)
-                    .param("max_lng", max_lng),
-            )
-            .await?;
-
-        let mut rows = Vec::new();
-        while let Some(row) = result.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let Some(notice_id) = Uuid::parse_str(&id_str).ok() else {
-                continue;
-            };
-            let severity: String = row.get("severity").unwrap_or_default();
-            let corr: i64 = row.get("corr").unwrap_or(0);
-            let div: i64 = row.get("div").unwrap_or(0);
-            let has_evidence: bool = row.get("has_evidence").unwrap_or(false);
-
-            let source = {
-                let sc: Option<i64> = row.get("sc").ok();
-                sc.map(|sc| {
-                    let mut s = SourceNode::new(
-                        String::new(),
-                        String::new(),
-                        None,
-                        rootsignal_common::DiscoveryMethod::Curated,
-                        0.5,
-                        rootsignal_common::SourceRole::Mixed,
-                        None,
-                    );
-                    s.scrape_count = sc as u32;
-                    s.signals_corroborated = row.get::<i64>("scorr").unwrap_or(0) as u32;
-                    s.quality_penalty = row.get("qp").unwrap_or(1.0);
-                    s.avg_signals_per_scrape = row.get("avg_sps").unwrap_or(0.0);
-                    s
-                })
-            };
-
-            rows.push(NoticeInferenceRow {
-                notice_id,
-                severity,
-                corroboration_count: corr as u32,
-                source_diversity: div as u32,
-                has_evidence_of: has_evidence,
-                source,
-            });
-        }
-        Ok(rows)
-    }
 
     /// Update allowlisted fields on a signal node by ID.
     pub async fn update_signal_fields(
@@ -4785,12 +4658,14 @@ impl GraphStore {
                 }
             }
 
-            self.client.graph.run(q).await?;
+            self.client().graph.run(q).await?;
         }
 
         Ok(())
     }
+
 }
+
 
 #[cfg(test)]
 mod tests {

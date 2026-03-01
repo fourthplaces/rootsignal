@@ -9,7 +9,7 @@ use seesaw_core::Events;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 /// Output from mid-run discovery.
 pub struct MidRunOutput {
@@ -21,7 +21,7 @@ pub struct MidRunOutput {
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
 pub async fn discover_sources_mid_run(
-    graph: &GraphStore,
+    graph: &GraphReader,
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,
@@ -36,12 +36,13 @@ pub async fn discover_sources_mid_run(
     )
     .with_embedder(embedder);
 
-    let (stats, social_topics, sources) = discoverer.run().await;
+    let (stats, social_topics, sources, finder_events) = discoverer.run().await;
     if stats.actor_sources + stats.gap_sources > 0 {
         info!("{stats}");
     }
 
     let mut scout_events = Events::new();
+    scout_events.extend(finder_events);
     if !sources.is_empty() {
         scout_events.extend(ScrapePhase::register_sources_events(
             sources,

@@ -6,8 +6,9 @@
 
 use std::collections::HashSet;
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 use tracing::{info, warn};
 
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
@@ -25,6 +26,8 @@ pub struct ExpansionOutput {
     pub sources: Vec<SourceNode>,
     /// Social topics to queue for the social flywheel.
     pub social_expansion_topics: Vec<String>,
+    /// Events emitted during expansion (e.g. QueryEmbeddingStored).
+    pub events: seesaw_core::Events,
     /// Stats from the expansion stage.
     pub expansion_deferred_expanded: u32,
     pub expansion_queries_collected: u32,
@@ -41,14 +44,14 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 // --- Expansion stage ---
 
 pub(crate) struct Expansion<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {
@@ -75,8 +78,9 @@ impl<'a> Expansion<'a> {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         let mut deferred_expanded = 0u32;
+        let mut deferred_events = seesaw_core::Events::new();
         match self.graph.get_recently_linked_signals_with_queries().await {
-            Ok(deferred) => {
+            Ok((deferred, signal_ids)) => {
                 let deferred_count = deferred.len();
                 all_queries.extend(deferred);
                 if deferred_count > 0 {
@@ -86,6 +90,9 @@ impl<'a> Expansion<'a> {
                     );
                 }
                 deferred_expanded = deferred_count as u32;
+                if !signal_ids.is_empty() {
+                    deferred_events.push(SystemEvent::ImpliedQueriesConsumed { signal_ids });
+                }
             }
             Err(e) => warn!(error = %e, "Failed to get deferred expansion queries"),
         }
@@ -96,12 +103,14 @@ impl<'a> Expansion<'a> {
             return ExpansionOutput {
                 sources: Vec::new(),
                 social_expansion_topics: Vec::new(),
+                events: seesaw_core::Events::new(),
                 expansion_deferred_expanded: deferred_expanded,
                 expansion_queries_collected: 0,
                 expansion_sources_created: 0,
                 expansion_social_topics_queued: 0,
             };
         }
+        let mut expansion_events = deferred_events;
 
         let existing = self
             .graph
@@ -159,11 +168,12 @@ impl<'a> Expansion<'a> {
                 source_url: ck.clone(),
             });
             sources.push(source);
-            // Store embedding for future dedup
+            // Emit embedding event — projector stores on Source node for future dedup
             if let Ok(embedding) = self.embedder.embed(query_text).await {
-                if let Err(e) = self.graph.set_query_embedding(&ck, &embedding).await {
-                    warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
-                }
+                expansion_events.push(SystemEvent::QueryEmbeddingStored {
+                    canonical_key: ck.clone(),
+                    embedding,
+                });
             }
         }
         let expansion_sources_created = sources.len() as u32;
@@ -186,6 +196,7 @@ impl<'a> Expansion<'a> {
         ExpansionOutput {
             sources,
             social_expansion_topics,
+            events: expansion_events,
             expansion_deferred_expanded: deferred_expanded,
             expansion_queries_collected: queries_collected,
             expansion_sources_created,

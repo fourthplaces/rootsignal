@@ -3,11 +3,13 @@
 pub mod activities;
 pub mod events;
 
+use std::sync::Arc;
+
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use seesaw_core::{events, handle, handlers, on, Context, Events, Handler};
 use tracing::info;
 
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
@@ -19,10 +21,6 @@ fn is_engine_started(e: &LifecycleEvent) -> bool {
 
 fn is_reap_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::ReapExpired))
-}
-
-fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Synthesis))
 }
 
 #[handlers]
@@ -56,7 +54,7 @@ pub mod handlers {
             (Some(r), Some(g)) => (r, g),
             _ => return Ok(events![]),
         };
-        let graph = GraphStore::new(graph_client.clone());
+        let graph = GraphReader::new(graph_client.clone());
 
         let output = activities::schedule_sources(&graph, region).await;
 
@@ -72,24 +70,55 @@ pub mod handlers {
             response_count,
         }])
     }
+}
 
-    /// PhaseCompleted(Synthesis) → save run stats, emit RunCompleted.
-    #[handle(on = LifecycleEvent, id = "lifecycle:finalize", filter = is_synthesis_completed)]
-    async fn finalize(
-        _event: LifecycleEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
+// ---------------------------------------------------------------------------
+// Standalone finalize handlers — one per engine variant
+// ---------------------------------------------------------------------------
 
-        let state = deps.state.read().await;
-        let stats = state.stats.clone();
-        drop(state);
+async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
+    let deps = ctx.deps();
 
-        if let Some(ref budget) = deps.budget {
-            budget.log_status();
-        }
+    let state = deps.state.read().await;
+    let stats = state.stats.clone();
+    drop(state);
 
-        info!("{}", stats);
-        Ok(events![LifecycleEvent::RunCompleted { stats }])
+    if let Some(ref budget) = deps.budget {
+        budget.log_status();
     }
+
+    info!("{}", stats);
+    Ok(events![LifecycleEvent::RunCompleted { stats }])
+}
+
+/// Finalize handler for the scrape chain: triggers on PhaseCompleted(Synthesis).
+pub fn scrape_finalize_handler() -> Handler<ScoutEngineDeps> {
+    on::<LifecycleEvent>()
+        .id("lifecycle:finalize")
+        .filter(|e: &LifecycleEvent| {
+            matches!(
+                e,
+                LifecycleEvent::PhaseCompleted { phase }
+                    if matches!(phase, PipelinePhase::Synthesis)
+            )
+        })
+        .then(|_event: Arc<LifecycleEvent>, ctx: Context<ScoutEngineDeps>| {
+            finalize_impl(ctx)
+        })
+}
+
+/// Finalize handler for the full chain: triggers on PhaseCompleted(Supervisor).
+pub fn full_finalize_handler() -> Handler<ScoutEngineDeps> {
+    on::<LifecycleEvent>()
+        .id("lifecycle:finalize")
+        .filter(|e: &LifecycleEvent| {
+            matches!(
+                e,
+                LifecycleEvent::PhaseCompleted { phase }
+                    if matches!(phase, PipelinePhase::Supervisor)
+            )
+        })
+        .then(|_event: Arc<LifecycleEvent>, ctx: Context<ScoutEngineDeps>| {
+            finalize_impl(ctx)
+        })
 }

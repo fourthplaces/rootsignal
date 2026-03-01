@@ -1,14 +1,15 @@
 //! Restate durable workflow for the supervisor.
 //!
-//! Wraps post-run cleanup: `Supervisor::run()` + `compute_cause_heat`
-//! + beacon detection.
+//! Emits PhaseCompleted(SituationWeaving) into a full engine — triggers
+//! supervisor and finalize.
 
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
-use tracing::{info, warn};
+use tracing::info;
 
-use rootsignal_graph::GraphStore;
+use crate::core::events::PipelinePhase;
+use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{EmptyRequest, SupervisorResult, TaskRequest};
 use super::ScoutDeps;
@@ -69,9 +70,19 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                supervise_region(&deps, &scope)
+                let run_id = uuid::Uuid::new_v4().to_string();
+                let engine = deps.build_full_engine(&scope, &run_id, 0);
+
+                // Emit PhaseCompleted(SituationWeaving) — triggers supervisor + finalize
+                engine
+                    .emit(LifecycleEvent::PhaseCompleted {
+                        phase: PipelinePhase::SituationWeaving,
+                    })
+                    .settled()
                     .await
-                    .map_err(|e| -> HandlerError { e.into() })
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
+
+                Ok(SupervisorResult { issues_found: 0 })
             })
             .retry_policy(super::phase_retry_policy())
             .await
@@ -106,71 +117,4 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
     ) -> Result<String, HandlerError> {
         super::read_workflow_status(&ctx).await
     }
-}
-
-pub async fn supervise_region(
-    deps: &ScoutDeps,
-    scope: &rootsignal_common::ScoutScope,
-) -> anyhow::Result<SupervisorResult> {
-    let graph = GraphStore::new(deps.graph_client.clone());
-    let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
-
-    // 1. Run supervisor checks
-    let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
-        Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
-
-    let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
-        deps.graph_client.clone(),
-        deps.pg_pool.clone(),
-        scope.clone(),
-        deps.anthropic_api_key.clone(),
-        notifier,
-    );
-
-    let issues_found = match supervisor.run().await {
-        Ok(stats) => {
-            info!(%stats, "Supervisor run complete");
-            stats.issues_created as u32
-        }
-        Err(e) => {
-            warn!(error = %e, "Supervisor run failed");
-            0
-        }
-    };
-
-    // 2. Merge duplicate tensions (before heat computation)
-    match graph
-        .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
-        .await
-    {
-        Ok(merged) if merged > 0 => info!(merged, "Duplicate tensions merged"),
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "Failed to merge duplicate tensions"),
-    }
-
-    // 3. Compute cause heat
-    match rootsignal_graph::cause_heat::compute_cause_heat(
-        &deps.graph_client,
-        0.7,
-        min_lat,
-        max_lat,
-        min_lng,
-        max_lng,
-    )
-    .await
-    {
-        Ok(_) => info!("Cause heat computed"),
-        Err(e) => warn!(error = %e, "Failed to compute cause heat"),
-    }
-
-    // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
-    match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &graph).await {
-        Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "Beacon detection failed"),
-    }
-
-    Ok(SupervisorResult {
-        issues_found: issues_found as u32,
-    })
 }

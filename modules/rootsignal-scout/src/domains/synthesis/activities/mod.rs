@@ -12,7 +12,7 @@ use std::sync::Arc;
 use seesaw_core::Events;
 use tracing::{info, warn};
 
-use rootsignal_graph::{severity_inference::run_severity_inference, GraphClient, GraphStore, SimilarityBuilder};
+use rootsignal_graph::{GraphClient, GraphReader, SimilarityBuilder};
 
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::infra::embedder::TextEmbedder;
@@ -28,7 +28,7 @@ pub struct SynthesisOutput {
 ///
 /// Pure: takes specific deps, returns events and discovered sources.
 pub async fn run_synthesis(
-    graph: &GraphStore,
+    graph: &GraphReader,
     graph_client: &GraphClient,
     archive: Arc<rootsignal_archive::Archive>,
     embedder: &dyn TextEmbedder,
@@ -226,31 +226,6 @@ pub async fn run_synthesis(
                 discovered_by: "synthesis".into(),
             });
         }
-    }
-
-    // Severity inference — re-evaluate Notice severity after tension linking
-    let lat_delta = region_owned.radius_km / 111.0;
-    let lng_delta = region_owned.radius_km
-        / (111.0 * region_owned.center_lat.to_radians().cos());
-    let (min_lat, max_lat) = (
-        region_owned.center_lat - lat_delta,
-        region_owned.center_lat + lat_delta,
-    );
-    let (min_lng, max_lng) = (
-        region_owned.center_lng - lng_delta,
-        region_owned.center_lng + lng_delta,
-    );
-    match run_severity_inference(
-        graph, min_lat, max_lat, min_lng, max_lng,
-    )
-    .await
-    {
-        Ok(updated) => {
-            if updated > 0 {
-                info!(updated, "Severity inference updated notices");
-            }
-        }
-        Err(e) => warn!(error = %e, "Severity inference failed (non-fatal)"),
     }
 
     info!("Parallel synthesis complete");

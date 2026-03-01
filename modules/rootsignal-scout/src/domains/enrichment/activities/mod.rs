@@ -13,16 +13,17 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::SourceNode;
-use rootsignal_graph::{GraphClient, GraphStore};
+use rootsignal_graph::{GraphClient, GraphReader};
 
 use crate::domains::scheduling::activities::metrics::Metrics;
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::SignalReader;
 
-/// Run post-scrape enrichment: delete consumed pins, actor extraction, embeddings, metrics.
+/// Compute post-scrape enrichment: emit PinsConsumed, actor extraction, embeddings, metrics.
 /// Returns enrichment events.
-pub async fn enrich_scraped_signals(
+pub async fn compute_post_scrape_enrichment(
     store: &dyn SignalReader,
     graph_client: &GraphClient,
     region: &rootsignal_common::ScoutScope,
@@ -30,14 +31,14 @@ pub async fn enrich_scraped_signals(
     embedder: &dyn TextEmbedder,
     consumed_pin_ids: &[Uuid],
 ) -> seesaw_core::Events {
-    let graph = GraphStore::new(graph_client.clone());
+    let mut pin_events = seesaw_core::Events::new();
 
-    // Delete consumed pins
+    // Emit PinsConsumed event (projector handles the graph delete)
     if !consumed_pin_ids.is_empty() {
-        match graph.delete_pins(consumed_pin_ids).await {
-            Ok(()) => info!(count = consumed_pin_ids.len(), "Deleted consumed pins"),
-            Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
-        }
+        info!(count = consumed_pin_ids.len(), "Emitting PinsConsumed for consumed pins");
+        pin_events.push(SystemEvent::PinsConsumed {
+            pin_ids: consumed_pin_ids.to_vec(),
+        });
     }
 
     // Actor extraction
@@ -80,12 +81,13 @@ pub async fn enrich_scraped_signals(
         Err(e) => warn!(error = %e, "Metric enrichment failed, continuing"),
     }
 
-    actor_events
+    pin_events.extend(actor_events);
+    pin_events
 }
 
-/// Update source weights and cadence metrics.
-pub async fn update_source_weights(
-    graph: &GraphStore,
+/// Compute source weight and cadence metrics, returning events.
+pub async fn compute_source_metrics(
+    graph: &GraphReader,
     region_name: &str,
     all_sources: &[SourceNode],
     source_signal_counts: &HashMap<String, u32>,
@@ -93,6 +95,6 @@ pub async fn update_source_weights(
 ) -> seesaw_core::Events {
     let metrics = Metrics::new(graph, region_name);
     metrics
-        .update_weights_and_cadence(all_sources, source_signal_counts, query_api_errors, Utc::now())
+        .compute_source_metrics(all_sources, source_signal_counts, query_api_errors, Utc::now())
         .await
 }

@@ -1,19 +1,18 @@
 //! Restate durable workflow for the scrape pipeline.
 //!
-//! Encapsulates the core scrape cycle from `Scout::run_inner()`:
-//! reap → load/schedule → Phase A → mid-run discovery → Phase B →
-//! topic discovery → expansion → metrics → end-of-run discovery.
+//! Builds a scrape-chain engine and emits `EngineStarted` — the handler chain
+//! runs reap → schedule → scrape → enrichment → expansion → synthesis → finalize.
+//! Does NOT include situation weaving or supervisor.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphStore;
+use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{EmptyRequest, ScrapeResult, TaskRequest};
-use super::{create_archive, ScoutDeps};
+use super::ScoutDeps;
 
 #[restate_sdk::workflow]
 #[name = "ScrapeWorkflow"]
@@ -77,9 +76,28 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                scrape_region(&deps, &scope)
+                let run_id = uuid::Uuid::new_v4().to_string();
+                let engine = deps.build_scrape_engine(&scope, &run_id);
+                engine
+                    .emit(LifecycleEvent::EngineStarted {
+                        run_id: run_id.clone(),
+                    })
+                    .settled()
                     .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })
+                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
+
+                let state = engine.deps().state.read().await;
+                let budget = engine
+                    .deps()
+                    .budget
+                    .as_ref()
+                    .map(|b| b.total_spent())
+                    .unwrap_or(0);
+                Ok(ScrapeResult {
+                    urls_scraped: state.stats.urls_scraped,
+                    signals_stored: state.stats.signals_stored,
+                    spent_cents: budget,
+                })
             })
             .await
         {
@@ -115,47 +133,4 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
     ) -> Result<String, HandlerError> {
         super::read_workflow_status(&ctx).await
     }
-}
-
-async fn scrape_region(
-    deps: &ScoutDeps,
-    scope: &rootsignal_common::ScoutScope,
-) -> anyhow::Result<ScrapeResult> {
-    let graph = GraphStore::new(deps.graph_client.clone());
-    let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
-    let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
-        Arc::new(crate::core::extractor::Extractor::new(
-            &deps.anthropic_api_key,
-            scope.name.as_str(),
-            scope.center_lat,
-            scope.center_lng,
-        ));
-    let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
-        Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
-    let archive = create_archive(deps);
-    let budget = Arc::new(crate::domains::scheduling::activities::budget::BudgetTracker::new(deps.daily_budget_cents));
-    let run_id = uuid::Uuid::new_v4().to_string();
-
-    let pipeline = crate::workflows::scrape_pipeline::ScrapePipeline::new(
-        graph,
-        deps.graph_client.clone(),
-        event_store,
-        extractor,
-        embedder,
-        archive,
-        deps.anthropic_api_key.clone(),
-        scope.clone(),
-        budget.clone(),
-        Arc::new(AtomicBool::new(false)),
-        run_id.clone(),
-        deps.pg_pool.clone(),
-    );
-
-    let stats = pipeline.dispatch_pipeline().await?;
-
-    Ok(ScrapeResult {
-        urls_scraped: stats.urls_scraped,
-        signals_stored: stats.signals_stored,
-        spent_cents: budget.total_spent(),
-    })
 }

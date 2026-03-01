@@ -3,7 +3,7 @@
 //!
 //! Moved from `rootsignal-graph::response` — this is discovery logic (query → LLM
 //! verify → write), not a graph primitive. Follows the same pattern as the other
-//! finders: `&GraphStore` for reads, engine dispatch for writes.
+//! finders: `&GraphReader` for reads, engine dispatch for writes.
 
 use ai_client::claude::Claude;
 use schemars::JsonSchema;
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 use seesaw_core::Events;
 
 
@@ -26,7 +26,7 @@ struct ResponseVerdict {
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     anthropic_api_key: String,
     min_lat: f64,
     max_lat: f64,
@@ -36,7 +36,7 @@ pub struct ResponseMapper<'a> {
 
 impl<'a> ResponseMapper<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         anthropic_api_key: &str,
         center_lat: f64,
         center_lng: f64,

@@ -10,7 +10,6 @@ pub mod bootstrap;
 pub mod full_run;
 pub mod news_scanner;
 pub mod scrape;
-pub mod scrape_pipeline;
 pub mod situation_weaver;
 pub mod supervisor;
 pub mod synthesis;
@@ -24,7 +23,7 @@ use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 
-use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
+use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::{ContentFetcher, SignalReader};
 
@@ -59,31 +58,78 @@ impl ScoutDeps {
         crate::store::build_signal_reader(self.graph_client.clone())
     }
 
-    /// Build a ScoutEngine with all deps baked in.
+    /// Construct engine deps with all per-invocation resources.
     ///
-    /// Caller provides per-invocation resources (store, embedder, fetcher, region);
-    /// shared resources (graph_client, anthropic_api_key, event_store, projector)
-    /// come from ScoutDeps.
-    pub fn build_engine(
+    /// Shared helper for both engine variants. `spent_cents` seeds the budget
+    /// tracker so standalone workflows can carry forward prior spend.
+    fn build_engine_deps(
         &self,
-        store: Arc<dyn SignalReader>,
-        embedder: Arc<dyn TextEmbedder>,
-        fetcher: Option<Arc<dyn ContentFetcher>>,
-        region: Option<rootsignal_common::ScoutScope>,
+        scope: &rootsignal_common::ScoutScope,
         run_id: &str,
-    ) -> ScoutEngine {
+        spent_cents: u64,
+    ) -> ScoutEngineDeps {
+        let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
+        let embedder: Arc<dyn TextEmbedder> =
+            Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
+        let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
+            Arc::new(crate::core::extractor::Extractor::new(
+                &self.anthropic_api_key,
+                scope.name.as_str(),
+                scope.center_lat,
+                scope.center_lng,
+            ));
+        let archive = create_archive(self);
+        let budget = Arc::new(
+            crate::domains::scheduling::activities::budget::BudgetTracker::new_with_spent(
+                self.daily_budget_cents,
+                spent_cents,
+            ),
+        );
+
         let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
         let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
-        let archive = create_archive(self);
+
         let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
-        deps.region = region;
-        deps.fetcher = fetcher;
+        deps.region = Some(scope.clone());
+        deps.fetcher = Some(archive.clone() as Arc<dyn crate::traits::ContentFetcher>);
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
         deps.graph_client = Some(self.graph_client.clone());
+        deps.extractor = Some(extractor);
         deps.graph_projector = Some(projector);
         deps.event_store = Some(event_store);
         deps.archive = Some(archive);
-        build_engine(deps)
+        deps.budget = Some(budget);
+        deps.cancelled = Some(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        deps.pg_pool = Some(self.pg_pool.clone());
+        deps
+    }
+
+    /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
+    /// expansion → synthesis → finalize.
+    ///
+    /// Does NOT include situation_weaving or supervisor.
+    pub fn build_scrape_engine(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: &str,
+    ) -> ScoutEngine {
+        let deps = self.build_engine_deps(scope, run_id, 0);
+        engine::build_engine(deps)
+    }
+
+    /// Build a full-chain engine: extends the scrape chain with
+    /// situation_weaving → supervisor before finalize.
+    ///
+    /// `spent_cents` seeds the budget tracker so standalone workflows
+    /// can carry forward prior spend from earlier phases.
+    pub fn build_full_engine(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: &str,
+        spent_cents: u64,
+    ) -> ScoutEngine {
+        let deps = self.build_engine_deps(scope, run_id, spent_cents);
+        engine::build_full_engine(deps)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

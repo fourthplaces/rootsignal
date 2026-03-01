@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
 use ai_client::claude::Claude;
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
-    ExtractionYield, GapTypeStats, GraphStore, SignalTypeCounts, SituationBrief, SourceBrief,
+    ExtractionYield, GapTypeStats, GraphReader, SignalTypeCounts, SituationBrief, SourceBrief,
     TensionResponseShape, UnmetTension,
 };
 use schemars::JsonSchema;
@@ -431,7 +432,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
-    graph: &'a GraphStore,
+    graph: &'a GraphReader,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -446,7 +447,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 
 impl<'a> SourceFinder<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,
@@ -474,17 +475,18 @@ impl<'a> SourceFinder<'a> {
         self
     }
 
-    /// Run all discovery triggers. Returns stats, social topics, and discovered sources.
-    pub async fn run(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>) {
+    /// Run all discovery triggers. Returns stats, social topics, discovered sources, and events.
+    pub async fn run(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>, seesaw_core::Events) {
         let mut stats = SourceFinderStats::default();
         let mut social_topics = Vec::new();
         let mut sources = Vec::new();
+        let mut events = seesaw_core::Events::new();
 
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
         self.discover_from_actors(&mut stats, &mut sources).await;
 
         // 2. LLM-driven curiosity engine (with mechanical fallback)
-        self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources)
+        self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources, &mut events)
             .await;
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
@@ -498,7 +500,7 @@ impl<'a> SourceFinder<'a> {
             );
         }
 
-        (stats, social_topics, sources)
+        (stats, social_topics, sources, events)
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
@@ -613,6 +615,7 @@ impl<'a> SourceFinder<'a> {
         stats: &mut SourceFinderStats,
         social_topics: &mut Vec<String>,
         sources: &mut Vec<SourceNode>,
+        sources_events: &mut seesaw_core::Events,
     ) {
         // Guard: no Claude client → mechanical fallback
         let claude = match &self.claude {
@@ -776,12 +779,13 @@ impl<'a> SourceFinder<'a> {
                 "LLM discovery: created query source"
             );
             sources.push(source);
-            // Store query embedding so future runs can dedup against it
+            // Emit embedding event — projector stores on Source node for future dedup
             if let Some(embedder) = self.embedder {
                 if let Ok(embedding) = embedder.embed(&dq.query).await {
-                    if let Err(e) = self.graph.set_query_embedding(&ck, &embedding).await {
-                        warn!(error = %e, "Failed to store query embedding (non-fatal)");
-                    }
+                    sources_events.push(SystemEvent::QueryEmbeddingStored {
+                        canonical_key: ck.clone(),
+                        embedding,
+                    });
                 }
             }
         }

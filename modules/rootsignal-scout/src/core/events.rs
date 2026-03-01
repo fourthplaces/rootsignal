@@ -18,6 +18,8 @@ pub enum PipelinePhase {
     SocialDiscovery,
     ActorEnrichment,
     Synthesis,
+    SituationWeaving,
+    Supervisor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,13 @@
 //! Seesaw engine setup for scout.
 //!
-//! `ScoutEngineDeps` holds everything handlers need. The engine is built
-//! via `build_engine()`, which registers all domain handlers plus the
-//! persist/reduce/project infrastructure.
+//! Two engine variants share the same deps and infrastructure handlers:
+//!
+//! - **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment →
+//!   expansion → synthesis → finalize. Used by standalone scrape/bootstrap workflows.
+//!
+//! - **Full engine** (`build_full_engine`): extends the scrape chain with
+//!   situation_weaving → supervisor before finalize. Used by full_run and
+//!   standalone synthesis/situation_weaver/supervisor workflows.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -15,7 +20,10 @@ use tokio::sync::RwLock;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::projection;
-use crate::domains::{discovery, enrichment, expansion, lifecycle, scrape, signals, synthesis};
+use crate::domains::{
+    discovery, enrichment, expansion, lifecycle, scrape, signals, situation_weaving, supervisor,
+    synthesis,
+};
 use crate::infra::embedder::TextEmbedder;
 use crate::core::extractor::SignalExtractor;
 use crate::traits::{ContentFetcher, SignalReader};
@@ -86,13 +94,11 @@ pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
 /// Public alias — canonical name for the scout engine.
 pub type ScoutEngine = SeesawEngine;
 
-/// Build a fully-wired seesaw engine for a scout run.
+/// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
+/// expansion → synthesis → finalize.
 ///
-/// Handler registration order matches the old dispatch loop:
-/// 1. **persist** (priority 0) — persist event to rootsignal event store
-/// 2. **apply_to_aggregate** (priority 1) — apply event to shared PipelineState
-/// 3. **neo4j_projection** (priority 2) — project to graph (projectable events only)
-/// 4. **domain handlers** (default priority) — react to events, emit children
+/// Finalize triggers on PhaseCompleted(Synthesis). Does NOT include
+/// situation_weaving or supervisor handlers.
 pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
 
@@ -108,7 +114,43 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handlers(discovery::handlers::handlers())
         .with_handlers(enrichment::handlers::handlers())
         .with_handlers(expansion::handlers::handlers())
-        .with_handlers(synthesis::handlers::handlers());
+        .with_handlers(synthesis::handlers::handlers())
+        // Scrape chain finalize — triggers on PhaseCompleted(Synthesis)
+        .with_handler(lifecycle::scrape_finalize_handler());
+
+    // Test-only: register capture handler when sink is provided
+    if let Some(sink) = capture_sink {
+        engine = engine.with_handler(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a full-chain engine: extends the scrape chain with situation_weaving →
+/// supervisor → finalize.
+///
+/// Finalize triggers on PhaseCompleted(Supervisor).
+pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
+    let capture_sink = deps.captured_events.clone();
+
+    let mut engine = seesaw_core::Engine::new(deps)
+        // Infrastructure handlers (priority 0–2)
+        .with_handler(projection::persist_handler())
+        .with_handler(projection::apply_to_aggregate_handler())
+        .with_handler(projection::project_to_graph_handler())
+        // Domain handlers — scrape chain
+        .with_handlers(signals::handlers::handlers())
+        .with_handlers(lifecycle::handlers::handlers())
+        .with_handlers(scrape::handlers::handlers())
+        .with_handlers(discovery::handlers::handlers())
+        .with_handlers(enrichment::handlers::handlers())
+        .with_handlers(expansion::handlers::handlers())
+        .with_handlers(synthesis::handlers::handlers())
+        // Full chain — situation weaving + supervisor
+        .with_handlers(situation_weaving::handlers::handlers())
+        .with_handlers(supervisor::handlers::handlers())
+        // Full chain finalize — triggers on PhaseCompleted(Supervisor)
+        .with_handler(lifecycle::full_finalize_handler());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {

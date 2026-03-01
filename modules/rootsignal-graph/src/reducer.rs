@@ -1678,6 +1678,14 @@ impl GraphProjector {
                                 .param("value", new);
                         self.client.graph.run(q).await?;
                     }
+                    SourceChange::Cadence { new, .. } => {
+                        if let Some(hours) = new {
+                            let q = query("MATCH (s:Source {canonical_key: $key}) SET s.cadence_hours = $value")
+                                .param("key", key)
+                                .param("value", hours as i64);
+                            self.client.graph.run(q).await?;
+                        }
+                    }
                 }
                 Ok(ApplyResult::Applied)
             }
@@ -1797,6 +1805,266 @@ impl GraphProjector {
             }
 
             // ---------------------------------------------------------
+            // Response scouting
+            // ---------------------------------------------------------
+            SystemEvent::ResponseScouted {
+                tension_id,
+                scouted_at,
+            } => {
+                let ts = format_dt(&scouted_at);
+                let q = query(
+                    "MATCH (t:Tension {id: $id})
+                     SET t.response_scouted_at = datetime($ts)",
+                )
+                .param("id", tension_id.to_string())
+                .param("ts", ts.as_str());
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Query embedding storage
+            // ---------------------------------------------------------
+            SystemEvent::QueryEmbeddingStored {
+                canonical_key,
+                embedding,
+            } => {
+                let q = query(
+                    "MATCH (s:Source {canonical_key: $key})
+                     SET s.query_embedding = $embedding",
+                )
+                .param("key", canonical_key.as_str())
+                .param("embedding", embedding);
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Situation curiosity
+            // ---------------------------------------------------------
+            SystemEvent::CuriosityTriggered {
+                situation_id,
+                signal_ids,
+            } => {
+                let sig_id_strings: Vec<String> =
+                    signal_ids.iter().map(|id| id.to_string()).collect();
+                let q = query(
+                    "MATCH (s:Situation {id: $sit_id})
+                     SET s.curiosity_triggered_at = datetime()
+                     WITH s
+                     UNWIND $sig_ids AS sid
+                     MATCH (sig {id: sid})-[:PART_OF]->(s)
+                     SET sig.curiosity_investigated = NULL",
+                )
+                .param("sit_id", situation_id.to_string())
+                .param("sig_ids", sig_id_strings);
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Investigation & curiosity bookkeeping
+            // ---------------------------------------------------------
+            SystemEvent::SignalInvestigated {
+                signal_id,
+                node_type,
+                investigated_at,
+            } => {
+                let label = match node_type {
+                    NodeType::Gathering => "Gathering",
+                    NodeType::Aid => "Aid",
+                    NodeType::Need => "Need",
+                    NodeType::Notice => "Notice",
+                    NodeType::Tension => "Tension",
+                    NodeType::Condition => "Condition",
+                    NodeType::Incident => "Incident",
+                    NodeType::Citation => return Ok(ApplyResult::NoOp),
+                };
+                let q = query(&format!(
+                    "MATCH (n:{label} {{id: $id}})
+                     SET n.investigated_at = datetime($ts)"
+                ))
+                .param("id", signal_id.to_string())
+                .param("ts", format_dt(&investigated_at));
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::ExhaustedRetriesPromoted { .. } => {
+                let q = query(
+                    "MATCH (n)
+                     WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
+                       AND n.curiosity_investigated = 'failed'
+                       AND n.curiosity_retry_count >= 3
+                     SET n.curiosity_investigated = 'abandoned'",
+                );
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::TensionLinkerOutcomeRecorded {
+                signal_id,
+                label,
+                outcome,
+                increment_retry,
+            } => {
+                let label = match label.as_str() {
+                    "Gathering" | "Aid" | "Need" | "Notice" => label.as_str(),
+                    _ => return Ok(ApplyResult::NoOp),
+                };
+                let cypher = if increment_retry {
+                    format!(
+                        "MATCH (n:{label} {{id: $id}})
+                         SET n.curiosity_investigated = $outcome,
+                             n.curiosity_retry_count = coalesce(n.curiosity_retry_count, 0) + 1"
+                    )
+                } else {
+                    format!(
+                        "MATCH (n:{label} {{id: $id}})
+                         SET n.curiosity_investigated = $outcome"
+                    )
+                };
+                let q = query(&cypher)
+                    .param("id", signal_id.to_string())
+                    .param("outcome", outcome.as_str());
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::GatheringScouted {
+                tension_id,
+                found_gatherings,
+                scouted_at,
+            } => {
+                let q = query(
+                    "MATCH (t:Tension {id: $id})
+                     SET t.gravity_scouted_at = datetime($ts),
+                         t.gravity_scout_miss_count = CASE
+                             WHEN $found THEN 0
+                             ELSE coalesce(t.gravity_scout_miss_count, 0) + 1
+                         END",
+                )
+                .param("id", tension_id.to_string())
+                .param("ts", format_dt(&scouted_at))
+                .param("found", found_gatherings);
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Place & gathering geography
+            // ---------------------------------------------------------
+            SystemEvent::PlaceDiscovered {
+                place_id,
+                name,
+                slug,
+                lat,
+                lng,
+                discovered_at,
+            } => {
+                let q = query(
+                    "MERGE (p:Place {slug: $slug})
+                     ON CREATE SET
+                         p.id = $id,
+                         p.name = $name,
+                         p.lat = $lat,
+                         p.lng = $lng,
+                         p.geocoded = false,
+                         p.created_at = datetime($ts)",
+                )
+                .param("slug", slug.as_str())
+                .param("id", place_id.to_string())
+                .param("name", name.as_str())
+                .param("lat", lat)
+                .param("lng", lng)
+                .param("ts", format_dt(&discovered_at));
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::GathersAtPlaceLinked {
+                signal_id,
+                place_slug,
+            } => {
+                let q = query(
+                    "MATCH (s) WHERE s.id = $sid AND (s:Aid OR s:Gathering OR s:Need)
+                     MATCH (p:Place {slug: $slug})
+                     MERGE (s)-[:GATHERS_AT]->(p)",
+                )
+                .param("sid", signal_id.to_string())
+                .param("slug", place_slug.as_str());
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Tension deduplication
+            // ---------------------------------------------------------
+            SystemEvent::DuplicateTensionMerged {
+                survivor_id,
+                duplicate_id,
+            } => {
+                let sid = survivor_id.to_string();
+                let did = duplicate_id.to_string();
+
+                // Re-point RESPONDS_TO edges
+                let q = query(
+                    "MATCH (sig)-[r:RESPONDS_TO]->(dup:Tension {id: $dup_id})
+                     MATCH (survivor:Tension {id: $survivor_id})
+                     WITH sig, r, survivor, dup
+                     WHERE NOT (sig)-[:RESPONDS_TO]->(survivor)
+                     CREATE (sig)-[:RESPONDS_TO {match_strength: r.match_strength, explanation: r.explanation}]->(survivor)
+                     WITH r, dup
+                     DELETE r"
+                )
+                .param("dup_id", did.as_str())
+                .param("survivor_id", sid.as_str());
+                self.client.graph.run(q).await?;
+
+                // Re-point DRAWN_TO edges
+                let q = query(
+                    "MATCH (sig)-[r:DRAWN_TO]->(dup:Tension {id: $dup_id})
+                     MATCH (survivor:Tension {id: $survivor_id})
+                     WITH sig, r, survivor, dup
+                     WHERE NOT (sig)-[:DRAWN_TO]->(survivor)
+                     CREATE (sig)-[:DRAWN_TO {match_strength: r.match_strength, explanation: r.explanation, gathering_type: r.gathering_type}]->(survivor)
+                     WITH r, dup
+                     DELETE r"
+                )
+                .param("dup_id", did.as_str())
+                .param("survivor_id", sid.as_str());
+                self.client.graph.run(q).await?;
+
+                // Re-point PART_OF edges
+                let q = query(
+                    "MATCH (dup:Tension {id: $dup_id})-[r:PART_OF]->(s:Situation)
+                     MATCH (survivor:Tension {id: $survivor_id})
+                     WHERE NOT (survivor)-[:PART_OF]->(s)
+                     CREATE (survivor)-[:PART_OF]->(s)
+                     WITH r
+                     DELETE r",
+                )
+                .param("dup_id", did.as_str())
+                .param("survivor_id", sid.as_str());
+                self.client.graph.run(q).await?;
+
+                // Bump corroboration count
+                let q = query(
+                    "MATCH (t:Tension {id: $survivor_id})
+                     SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1",
+                )
+                .param("survivor_id", sid.as_str());
+                self.client.graph.run(q).await?;
+
+                // Delete duplicate
+                let q = query("MATCH (t:Tension {id: $dup_id}) DETACH DELETE t")
+                    .param("dup_id", did.as_str());
+                self.client.graph.run(q).await?;
+
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
             // System curiosity
             // ---------------------------------------------------------
             SystemEvent::ExpansionQueryCollected { .. } => {
@@ -1837,6 +2105,114 @@ impl GraphProjector {
                     .param("now", now.as_str());
                     self.client.graph.run(q).await?;
                 }
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Investigation & curiosity bookkeeping
+            // ---------------------------------------------------------
+            SystemEvent::SignalInvestigated {
+                signal_id,
+                node_type,
+                investigated_at,
+            } => {
+                let label = node_type_label(node_type);
+                let q = query(&format!(
+                    "MATCH (n:{label} {{id: $id}})
+                     SET n.last_investigated = datetime($ts)"
+                ))
+                .param("id", signal_id.to_string())
+                .param("ts", format_dt(&investigated_at));
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::ExhaustedRetriesPromoted { .. } => {
+                debug!(seq = event.seq, "No-op (exhausted retries promoted — informational)");
+                Ok(ApplyResult::NoOp)
+            }
+
+            SystemEvent::TensionLinkerOutcomeRecorded { .. } => {
+                debug!(seq = event.seq, "No-op (tension linker outcome — informational)");
+                Ok(ApplyResult::NoOp)
+            }
+
+            SystemEvent::GatheringScouted {
+                tension_id,
+                scouted_at,
+                ..
+            } => {
+                let q = query(
+                    "MATCH (t:Tension {id: $id})
+                     SET t.last_gathering_scouted = datetime($ts)",
+                )
+                .param("id", tension_id.to_string())
+                .param("ts", format_dt(&scouted_at));
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Place & gathering geography
+            // ---------------------------------------------------------
+            SystemEvent::PlaceDiscovered {
+                place_id,
+                name,
+                slug,
+                lat,
+                lng,
+                discovered_at,
+            } => {
+                let q = query(
+                    "MERGE (p:Place {slug: $slug})
+                     ON CREATE SET p.id = $id, p.name = $name,
+                         p.lat = $lat, p.lng = $lng,
+                         p.discovered_at = datetime($ts)
+                     ON MATCH SET p.name = $name,
+                         p.lat = $lat, p.lng = $lng",
+                )
+                .param("slug", slug.as_str())
+                .param("id", place_id.to_string())
+                .param("name", name.as_str())
+                .param("lat", lat)
+                .param("lng", lng)
+                .param("ts", format_dt(&discovered_at));
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::GathersAtPlaceLinked {
+                signal_id,
+                place_slug,
+            } => {
+                let q = query(
+                    "MATCH (g:Gathering {id: $signal_id})
+                     MATCH (p:Place {slug: $slug})
+                     MERGE (g)-[:GATHERS_AT]->(p)",
+                )
+                .param("signal_id", signal_id.to_string())
+                .param("slug", place_slug.as_str());
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Tension deduplication
+            // ---------------------------------------------------------
+            SystemEvent::DuplicateTensionMerged {
+                survivor_id,
+                duplicate_id,
+            } => {
+                let q = query(
+                    "MATCH (dup:Tension {id: $dup_id})
+                     MATCH (surv:Tension {id: $surv_id})
+                     OPTIONAL MATCH (dup)-[r]-()
+                     DELETE r
+                     SET dup.expired = true, dup.merged_into = $surv_id",
+                )
+                .param("dup_id", duplicate_id.to_string())
+                .param("surv_id", survivor_id.to_string());
+                self.client.graph.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
         }

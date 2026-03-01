@@ -5,4 +5,6 @@ pub mod lifecycle;
 pub mod scheduling;
 pub mod scrape;
 pub mod signals;
+pub mod situation_weaving;
+pub mod supervisor;
 pub mod synthesis;

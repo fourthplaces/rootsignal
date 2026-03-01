@@ -7,7 +7,7 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
@@ -104,7 +104,7 @@ pub mod handlers {
                 }]);
             }
         };
-        let graph = GraphStore::new(graph_client.clone());
+        let graph = GraphReader::new(graph_client.clone());
 
         let output = discover_sources_mid_run(
             &graph,

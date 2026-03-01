@@ -16,7 +16,7 @@ use rootsignal_common::{
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
     Urgency,
 };
-use rootsignal_graph::{GatheringFinderTarget, GraphStore, ResponseHeuristic};
+use rootsignal_graph::{GatheringFinderTarget, GraphReader, ResponseHeuristic};
 use rootsignal_archive::Archive;
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
@@ -269,7 +269,7 @@ Return valid JSON matching the GravityFinding schema.";
 // =============================================================================
 
 pub struct GatheringFinderDeps<'a> {
-    pub graph: &'a GraphStore,
+    pub graph: &'a GraphReader,
     pub claude: Claude,
     pub embedder: &'a dyn TextEmbedder,
     pub region: ScoutScope,
@@ -283,7 +283,7 @@ pub struct GatheringFinderDeps<'a> {
 
 impl<'a> GatheringFinderDeps<'a> {
     pub fn new(
-        graph: &'a GraphStore,
+        graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -381,17 +381,11 @@ pub async fn find_gatherings(
         };
 
         // Mark scouted with backoff (success resets miss count, failure increments)
-        if let Err(e) = deps
-            .graph
-            .mark_gathering_found(target.tension_id, found_gatherings)
-            .await
-        {
-            warn!(
-                tension_id = %target.tension_id,
-                error = %e,
-                "Failed to mark tension as gravity-scouted"
-            );
-        }
+        events.push(SystemEvent::GatheringScouted {
+            tension_id: target.tension_id,
+            found_gatherings,
+            scouted_at: Utc::now(),
+        });
     }
 
     (stats, discovered_sources)
@@ -597,24 +591,20 @@ async fn process_gathering(
     // Place creation: promote venue string to first-class Place node
     if let Some(ref venue) = gathering.venue {
         if !venue.is_empty() {
-            match deps
-                .graph
-                .find_or_create_place(venue, deps.region.center_lat, deps.region.center_lng)
-                .await
-            {
-                Ok(place_id) => {
-                    if let Err(e) = deps
-                        .graph
-                        .create_gathers_at_edge(signal_id, place_id)
-                        .await
-                    {
-                        warn!(venue, error = %e, "Failed to create GATHERS_AT edge (non-fatal)");
-                    }
-                }
-                Err(e) => {
-                    warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)")
-                }
-            }
+            let slug = rootsignal_common::slugify(venue);
+            let place_id = Uuid::new_v4();
+            events.push(SystemEvent::PlaceDiscovered {
+                place_id,
+                name: venue.clone(),
+                slug: slug.clone(),
+                lat: deps.region.center_lat,
+                lng: deps.region.center_lng,
+                discovered_at: Utc::now(),
+            });
+            events.push(SystemEvent::GathersAtPlaceLinked {
+                signal_id,
+                place_slug: slug,
+            });
 
             // Venue seeding: create future source for the venue
             let venue_query = format!("{} {} community events", venue, deps.region.name);
