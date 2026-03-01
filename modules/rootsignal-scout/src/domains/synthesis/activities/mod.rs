@@ -28,7 +28,7 @@ pub struct SynthesisOutput {
 ///
 /// Pure: takes specific deps, returns events and discovered sources.
 pub async fn run_synthesis(
-    writer: &GraphStore,
+    graph: &GraphStore,
     graph_client: &GraphClient,
     archive: Arc<rootsignal_archive::Archive>,
     embedder: &dyn TextEmbedder,
@@ -92,7 +92,7 @@ pub async fn run_synthesis(
                 info!("Starting response mapping...");
                 let response_mapper =
                     response_mapper::ResponseMapper::new(
-                        writer,
+                        graph,
                         api_key,
                         region_owned.center_lat,
                         region_owned.center_lng,
@@ -116,7 +116,7 @@ pub async fn run_synthesis(
                 info!("Starting tension linker...");
                 let tension_linker =
                     tension_linker::TensionLinker::new(
-                        writer,
+                        graph,
                         archive.clone(),
                         embedder,
                         api_key,
@@ -138,7 +138,7 @@ pub async fn run_synthesis(
                 info!("Starting response finder...");
                 let response_finder =
                     response_finder::ResponseFinder::new(
-                        writer,
+                        graph,
                         archive.clone(),
                         embedder,
                         api_key,
@@ -162,18 +162,17 @@ pub async fn run_synthesis(
             let mut events = Events::new();
             if run_gathering_finder {
                 info!("Starting gathering finder...");
-                let gathering_finder =
-                    gathering_finder::GatheringFinder::new(
-                        writer,
-                        archive.clone(),
-                        embedder,
-                        api_key,
-                        region_owned.clone(),
-                        cancelled.clone(),
-                        run_id.clone(),
-                    );
+                let gf_deps = gathering_finder::GatheringFinderDeps::new(
+                    graph,
+                    archive.clone(),
+                    embedder,
+                    api_key,
+                    region_owned.clone(),
+                    cancelled.clone(),
+                    run_id.clone(),
+                );
                 let (gf_stats, gf_sources) =
-                    gathering_finder.run(&mut events).await;
+                    gathering_finder::find_gatherings(&gf_deps, &mut events).await;
                 info!("{gf_stats}");
                 (events, gf_sources)
             } else {
@@ -190,7 +189,7 @@ pub async fn run_synthesis(
                 info!("Starting investigation phase...");
                 let investigator =
                     investigator::Investigator::new(
-                        writer,
+                        graph,
                         archive.clone(),
                         api_key,
                         &region_owned,
@@ -242,7 +241,7 @@ pub async fn run_synthesis(
         region_owned.center_lng + lng_delta,
     );
     match run_severity_inference(
-        writer, min_lat, max_lat, min_lng, max_lng,
+        graph, min_lat, max_lat, min_lng, max_lng,
     )
     .await
     {

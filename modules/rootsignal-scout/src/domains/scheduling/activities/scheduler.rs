@@ -5,15 +5,12 @@ use tracing::info;
 
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 
-/// Determines which sources to scrape this run based on weight, cadence, and exploration policy.
-pub struct SourceScheduler {
-    /// Fraction of scrape slots reserved for exploring low-weight sources (default 0.1).
-    exploration_ratio: f64,
-    /// Sources below this weight are considered "low weight" for exploration.
-    exploration_weight_threshold: f64,
-    /// Minimum days since last scrape before a low-weight source is eligible for exploration.
-    exploration_min_stale_days: i64,
-}
+/// Fraction of scrape slots reserved for exploring low-weight sources.
+const EXPLORATION_RATIO: f64 = 0.10;
+/// Sources below this weight are considered "low weight" for exploration.
+const EXPLORATION_WEIGHT_THRESHOLD: f64 = 0.3;
+/// Minimum days since last scrape before a low-weight source is eligible for exploration.
+const EXPLORATION_MIN_STALE_DAYS: i64 = 5;
 
 /// Result of scheduling: which sources to scrape and why.
 pub struct ScheduleResult {
@@ -44,135 +41,125 @@ pub enum ScheduleReason {
     Exploration,
 }
 
-impl SourceScheduler {
-    pub fn new() -> Self {
-        Self {
-            exploration_ratio: 0.10,
-            exploration_weight_threshold: 0.3,
-            exploration_min_stale_days: 5,
-        }
-    }
+/// Schedule sources for this run. Returns which to scrape and which to skip.
+pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
+    let mut scheduled = Vec::new();
+    let mut exploration_candidates = Vec::new();
+    let mut skipped = 0usize;
 
-    /// Schedule sources for this run. Returns which to scrape and which to skip.
-    pub fn schedule(&self, sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
-        let mut scheduled = Vec::new();
-        let mut exploration_candidates = Vec::new();
-        let mut skipped = 0usize;
-
-        for source in sources {
-            if self.should_scrape(source, now) {
-                scheduled.push(ScheduledSource {
-                    canonical_key: source.canonical_key.clone(),
-                    reason: if source.last_scraped.is_none() {
-                        ScheduleReason::NeverScraped
-                    } else {
-                        ScheduleReason::Cadence
-                    },
-                });
-            } else if self.is_exploration_candidate(source, now) {
-                exploration_candidates.push(source);
-            } else {
-                skipped += 1;
-            }
-        }
-
-        // Reserve exploration slots: 10% of total scheduled, minimum 1 if candidates exist
-        let total_slots = scheduled.len() + exploration_candidates.len();
-        let exploration_slots = if exploration_candidates.is_empty() {
-            0
+    for source in sources {
+        if should_scrape(source, now) {
+            scheduled.push(ScheduledSource {
+                canonical_key: source.canonical_key.clone(),
+                reason: if source.last_scraped.is_none() {
+                    ScheduleReason::NeverScraped
+                } else {
+                    ScheduleReason::Cadence
+                },
+            });
+        } else if is_exploration_candidate(source, now) {
+            exploration_candidates.push(source);
         } else {
-            ((total_slots as f64 * self.exploration_ratio).ceil() as usize).max(1)
-        };
-
-        // Pick exploration sources — deterministic: sort by staleness (most stale first)
-        let mut exploration_candidates: Vec<_> = exploration_candidates.into_iter().collect();
-        exploration_candidates.sort_by(|a, b| {
-            let a_stale = a
-                .last_scraped
-                .map(|t| (now - t).num_days())
-                .unwrap_or(i64::MAX);
-            let b_stale = b
-                .last_scraped
-                .map(|t| (now - t).num_days())
-                .unwrap_or(i64::MAX);
-            b_stale.cmp(&a_stale) // most stale first
-        });
-
-        let exploration: Vec<ScheduledSource> = exploration_candidates
-            .into_iter()
-            .take(exploration_slots)
-            .map(|s| ScheduledSource {
-                canonical_key: s.canonical_key.clone(),
-                reason: ScheduleReason::Exploration,
-            })
-            .collect();
-
-        let exploration_picked = exploration.len();
-        if exploration_picked > 0 {
-            info!(
-                scheduled = scheduled.len(),
-                exploration = exploration_picked,
-                skipped,
-                "Source scheduling complete"
-            );
+            skipped += 1;
         }
+    }
 
-        // Build role lookup for partition
-        let role_map: std::collections::HashMap<&str, SourceRole> = sources
-            .iter()
-            .map(|s| (s.canonical_key.as_str(), s.source_role))
-            .collect();
+    // Reserve exploration slots: 10% of total scheduled, minimum 1 if candidates exist
+    let total_slots = scheduled.len() + exploration_candidates.len();
+    let exploration_slots = if exploration_candidates.is_empty() {
+        0
+    } else {
+        ((total_slots as f64 * EXPLORATION_RATIO).ceil() as usize).max(1)
+    };
 
-        // Partition all scheduled+exploration keys by source role
-        let all_keys: Vec<&str> = scheduled
-            .iter()
-            .chain(exploration.iter())
-            .map(|s| s.canonical_key.as_str())
-            .collect();
+    // Pick exploration sources — deterministic: sort by staleness (most stale first)
+    let mut exploration_candidates: Vec<_> = exploration_candidates.into_iter().collect();
+    exploration_candidates.sort_by(|a, b| {
+        let a_stale = a
+            .last_scraped
+            .map(|t| (now - t).num_days())
+            .unwrap_or(i64::MAX);
+        let b_stale = b
+            .last_scraped
+            .map(|t| (now - t).num_days())
+            .unwrap_or(i64::MAX);
+        b_stale.cmp(&a_stale) // most stale first
+    });
 
-        let mut tension_phase = Vec::new();
-        let mut response_phase = Vec::new();
-        for key in all_keys {
-            match role_map.get(key).copied().unwrap_or(SourceRole::Mixed) {
-                SourceRole::Response => response_phase.push(key.to_string()),
-                // Tension and Mixed both go in Phase A
-                SourceRole::Tension | SourceRole::Mixed => tension_phase.push(key.to_string()),
-            }
-        }
+    let exploration: Vec<ScheduledSource> = exploration_candidates
+        .into_iter()
+        .take(exploration_slots)
+        .map(|s| ScheduledSource {
+            canonical_key: s.canonical_key.clone(),
+            reason: ScheduleReason::Exploration,
+        })
+        .collect();
 
-        ScheduleResult {
-            scheduled,
-            exploration,
+    let exploration_picked = exploration.len();
+    if exploration_picked > 0 {
+        info!(
+            scheduled = scheduled.len(),
+            exploration = exploration_picked,
             skipped,
-            tension_phase,
-            response_phase,
+            "Source scheduling complete"
+        );
+    }
+
+    // Build role lookup for partition
+    let role_map: std::collections::HashMap<&str, SourceRole> = sources
+        .iter()
+        .map(|s| (s.canonical_key.as_str(), s.source_role))
+        .collect();
+
+    // Partition all scheduled+exploration keys by source role
+    let all_keys: Vec<&str> = scheduled
+        .iter()
+        .chain(exploration.iter())
+        .map(|s| s.canonical_key.as_str())
+        .collect();
+
+    let mut tension_phase = Vec::new();
+    let mut response_phase = Vec::new();
+    for key in all_keys {
+        match role_map.get(key).copied().unwrap_or(SourceRole::Mixed) {
+            SourceRole::Response => response_phase.push(key.to_string()),
+            // Tension and Mixed both go in Phase A
+            SourceRole::Tension | SourceRole::Mixed => tension_phase.push(key.to_string()),
         }
     }
 
-    /// Check if a source is due for scraping based on its weight-derived cadence.
-    fn should_scrape(&self, source: &SourceNode, now: DateTime<Utc>) -> bool {
-        let last = match source.last_scraped {
-            Some(t) => t,
-            None => return true, // Never scraped — always due
-        };
-
-        let cadence_hours = source
-            .cadence_hours
-            .unwrap_or_else(|| cadence_hours_for_weight(source.weight));
-        let hours_since = (now - last).num_hours();
-
-        hours_since >= cadence_hours as i64
+    ScheduleResult {
+        scheduled,
+        exploration,
+        skipped,
+        tension_phase,
+        response_phase,
     }
+}
 
-    /// Check if a source is eligible for exploration sampling.
-    fn is_exploration_candidate(&self, source: &SourceNode, now: DateTime<Utc>) -> bool {
-        if source.weight >= self.exploration_weight_threshold {
-            return false;
-        }
-        match source.last_scraped {
-            Some(t) => (now - t).num_days() >= self.exploration_min_stale_days,
-            None => true,
-        }
+/// Check if a source is due for scraping based on its weight-derived cadence.
+fn should_scrape(source: &SourceNode, now: DateTime<Utc>) -> bool {
+    let last = match source.last_scraped {
+        Some(t) => t,
+        None => return true, // Never scraped — always due
+    };
+
+    let cadence_hours = source
+        .cadence_hours
+        .unwrap_or_else(|| cadence_hours_for_weight(source.weight));
+    let hours_since = (now - last).num_hours();
+
+    hours_since >= cadence_hours as i64
+}
+
+/// Check if a source is eligible for exploration sampling.
+fn is_exploration_candidate(source: &SourceNode, now: DateTime<Utc>) -> bool {
+    if source.weight >= EXPLORATION_WEIGHT_THRESHOLD {
+        return false;
+    }
+    match source.last_scraped {
+        Some(t) => (now - t).num_days() >= EXPLORATION_MIN_STALE_DAYS,
+        None => true,
     }
 }
 
@@ -539,48 +526,44 @@ mod tests {
 
     #[test]
     fn never_scraped_always_scheduled() {
-        let scheduler = SourceScheduler::new();
         let sources = vec![make_source(0.5, None)];
-        let result = scheduler.schedule(&sources, Utc::now());
+        let result = schedule(&sources, Utc::now());
         assert_eq!(result.scheduled.len(), 1);
         assert_eq!(result.scheduled[0].reason, ScheduleReason::NeverScraped);
     }
 
     #[test]
     fn high_weight_source_scraped_every_6_hours() {
-        let scheduler = SourceScheduler::new();
         let now = Utc::now();
 
         // Last scraped 7 hours ago, weight > 0.8 → cadence is 6h → due
         let sources = vec![make_source(0.9, Some(now - Duration::hours(7)))];
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 1);
 
         // Last scraped 3 hours ago → not due
         let sources = vec![make_source(0.9, Some(now - Duration::hours(3)))];
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 0);
     }
 
     #[test]
     fn low_weight_source_scraped_every_7_days() {
-        let scheduler = SourceScheduler::new();
         let now = Utc::now();
 
         // Weight 0.1, last scraped 8 days ago → due (cadence = 168h = 7 days)
         let sources = vec![make_source(0.1, Some(now - Duration::days(8)))];
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 1);
 
         // Last scraped 3 days ago → not due
         let sources = vec![make_source(0.1, Some(now - Duration::days(3)))];
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 0);
     }
 
     #[test]
     fn exploration_picks_stale_low_weight_sources() {
-        let scheduler = SourceScheduler::new();
         let now = Utc::now();
 
         // 10 high-weight sources (recently scraped so they're scheduled via cadence)
@@ -600,7 +583,7 @@ mod tests {
             sources.push(s);
         }
 
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(result.scheduled.len(), 10);
         assert!(
             !result.exploration.is_empty(),
@@ -710,13 +693,12 @@ mod tests {
 
     #[test]
     fn low_weight_source_reaches_exploration_not_just_cadence() {
-        let scheduler = SourceScheduler::new();
         let now = Utc::now();
         // Weight 0.15, last scraped 6 days ago.
         // Cadence for weight 0.15 = 168h (7 days) → NOT due by cadence (6 < 7).
         // With min_stale_days=5, IS eligible for exploration (6 >= 5).
         let sources = vec![make_source(0.15, Some(now - Duration::days(6)))];
-        let result = scheduler.schedule(&sources, now);
+        let result = schedule(&sources, now);
         assert_eq!(
             result.scheduled.len(),
             0,

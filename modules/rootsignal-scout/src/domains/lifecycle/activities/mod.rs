@@ -11,7 +11,7 @@ use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphStore;
 
 use crate::core::aggregate::{ScheduleOutput, ScheduledData};
-use crate::domains::scheduling::activities::scheduler::{schedule_web_queries, SourceScheduler};
+use crate::domains::scheduling::activities::scheduler::{self as scheduler, schedule_web_queries};
 use crate::infra::util::sanitize_url;
 use crate::traits::SignalReader;
 
@@ -52,11 +52,11 @@ pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
 
 /// Load, boost, and schedule sources. Returns ScheduleOutput for state application.
 pub async fn schedule_sources(
-    writer: &GraphStore,
+    graph: &GraphStore,
     region: &rootsignal_common::ScoutScope,
 ) -> ScheduleOutput {
     // Load sources
-    let mut all_sources = match writer
+    let mut all_sources = match graph
         .get_sources_for_region(region.center_lat, region.center_lng, region.radius_km)
         .await
     {
@@ -80,7 +80,7 @@ pub async fn schedule_sources(
 
     // Actor sources — inject known actor accounts with elevated priority
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-    let actor_pairs = match writer
+    let actor_pairs = match graph
         .find_actors_in_region(min_lat, max_lat, min_lng, max_lng)
         .await
     {
@@ -123,7 +123,7 @@ pub async fn schedule_sources(
         .iter()
         .map(|s| s.canonical_key.clone())
         .collect();
-    let consumed_pin_ids = match writer
+    let consumed_pin_ids = match graph
         .find_pins_in_region(min_lat, max_lat, min_lng, max_lng)
         .await
     {
@@ -148,8 +148,7 @@ pub async fn schedule_sources(
 
     // Schedule sources
     let now_schedule = Utc::now();
-    let scheduler = SourceScheduler::new();
-    let schedule = scheduler.schedule(&all_sources, now_schedule);
+    let schedule = scheduler::schedule(&all_sources, now_schedule);
     let scheduled_keys: HashSet<String> = schedule
         .scheduled
         .iter()

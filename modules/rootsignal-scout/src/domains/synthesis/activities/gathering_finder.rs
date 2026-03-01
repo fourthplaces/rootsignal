@@ -265,26 +265,25 @@ Also report:
 Return valid JSON matching the GravityFinding schema.";
 
 // =============================================================================
-// GatheringFinder
+// GatheringFinder — deps struct + free functions
 // =============================================================================
 
-pub struct GatheringFinder<'a> {
-    writer: &'a GraphStore,
-    claude: Claude,
-    embedder: &'a dyn TextEmbedder,
-    region: ScoutScope,
-    region_slug: String,
-    min_lat: f64,
-    max_lat: f64,
-    min_lng: f64,
-    max_lng: f64,
-    cancelled: Arc<AtomicBool>,
-    run_id: String,
+pub struct GatheringFinderDeps<'a> {
+    pub graph: &'a GraphStore,
+    pub claude: Claude,
+    pub embedder: &'a dyn TextEmbedder,
+    pub region: ScoutScope,
+    pub min_lat: f64,
+    pub max_lat: f64,
+    pub min_lng: f64,
+    pub max_lng: f64,
+    pub cancelled: Arc<AtomicBool>,
+    pub run_id: String,
 }
 
-impl<'a> GatheringFinder<'a> {
+impl<'a> GatheringFinderDeps<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -309,9 +308,8 @@ impl<'a> GatheringFinder<'a> {
 
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
-        let region_slug = region.name.clone();
         Self {
-            writer,
+            graph,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -319,500 +317,506 @@ impl<'a> GatheringFinder<'a> {
             min_lng: region.center_lng - lng_delta,
             max_lng: region.center_lng + lng_delta,
             region,
-            region_slug,
             cancelled,
             run_id,
         }
     }
+}
 
-    pub async fn run(&self, events: &mut seesaw_core::Events) -> (GatheringFinderStats, Vec<SourceNode>) {
-        let mut stats = GatheringFinderStats::default();
-        let mut discovered_sources = Vec::new();
+pub async fn find_gatherings(
+    deps: &GatheringFinderDeps<'_>,
+    events: &mut seesaw_core::Events,
+) -> (GatheringFinderStats, Vec<SourceNode>) {
+    let mut stats = GatheringFinderStats::default();
+    let mut discovered_sources = Vec::new();
 
-        let targets = match self
-            .writer
-            .find_gathering_finder_targets(
-                MAX_GRAVITY_TARGETS_PER_RUN as u32,
-                self.min_lat,
-                self.max_lat,
-                self.min_lng,
-                self.max_lng,
-            )
+    let targets = match deps
+        .graph
+        .find_gathering_finder_targets(
+            MAX_GRAVITY_TARGETS_PER_RUN as u32,
+            deps.min_lat,
+            deps.max_lat,
+            deps.min_lng,
+            deps.max_lng,
+        )
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            warn!(error = %e, "Failed to find gathering finder targets");
+            return (stats, discovered_sources);
+        }
+    };
+
+    stats.targets_found = targets.len() as u32;
+    if targets.is_empty() {
+        info!("No gathering finder targets found");
+        return (stats, discovered_sources);
+    }
+
+    info!(count = targets.len(), "Gathering finder targets selected");
+
+    for target in &targets {
+        if deps.cancelled.load(Ordering::Relaxed) {
+            info!("Gathering finder cancelled");
+            break;
+        }
+
+        let found_gatherings = match investigate_tension(deps, target, &mut stats, &mut discovered_sources, events)
             .await
         {
-            Ok(t) => t,
+            Ok(found) => {
+                stats.targets_investigated += 1;
+                found
+            }
             Err(e) => {
-                warn!(error = %e, "Failed to find gathering finder targets");
-                return (stats, discovered_sources);
+                warn!(
+                    tension_id = %target.tension_id,
+                    title = target.title.as_str(),
+                    error = %e,
+                    "Gathering finder investigation failed"
+                );
+                false
             }
         };
 
-        stats.targets_found = targets.len() as u32;
-        if targets.is_empty() {
-            info!("No gathering finder targets found");
-            return (stats, discovered_sources);
+        // Mark scouted with backoff (success resets miss count, failure increments)
+        if let Err(e) = deps
+            .graph
+            .mark_gathering_found(target.tension_id, found_gatherings)
+            .await
+        {
+            warn!(
+                tension_id = %target.tension_id,
+                error = %e,
+                "Failed to mark tension as gravity-scouted"
+            );
         }
-
-        info!(count = targets.len(), "Gathering finder targets selected");
-
-        for target in &targets {
-            if self.cancelled.load(Ordering::Relaxed) {
-                info!("Gathering finder cancelled");
-                break;
-            }
-
-            let found_gatherings = match self
-                .investigate_tension(target, &mut stats, &mut discovered_sources, events)
-                .await
-            {
-                Ok(found) => {
-                    stats.targets_investigated += 1;
-                    found
-                }
-                Err(e) => {
-                    warn!(
-                        tension_id = %target.tension_id,
-                        title = target.title.as_str(),
-                        error = %e,
-                        "Gathering finder investigation failed"
-                    );
-                    false
-                }
-            };
-
-            // Mark scouted with backoff (success resets miss count, failure increments)
-            if let Err(e) = self
-                .writer
-                .mark_gathering_found(target.tension_id, found_gatherings)
-                .await
-            {
-                warn!(
-                    tension_id = %target.tension_id,
-                    error = %e,
-                    "Failed to mark tension as gravity-scouted"
-                );
-            }
-        }
-
-        (stats, discovered_sources)
     }
 
-    /// Investigate a single tension for gatherings. Returns true if gatherings were found.
-    async fn investigate_tension(
-        &self,
-        target: &GatheringFinderTarget,
-        stats: &mut GatheringFinderStats,
-        discovered_sources: &mut Vec<SourceNode>,
-        events: &mut seesaw_core::Events,
-    ) -> Result<bool> {
-        // Fetch existing gravity signals for context
-        let existing = self
-            .writer
-            .get_existing_gathering_signals(
-                target.tension_id,
-                self.region.center_lat,
-                self.region.center_lng,
-                self.region.radius_km,
-            )
-            .await
-            .unwrap_or_default();
+    (stats, discovered_sources)
+}
 
-        let system = investigation_system_prompt(&self.region.name);
-        let user = investigation_user_prompt(target, &existing);
+/// Investigate a single tension for gatherings. Returns true if gatherings were found.
+async fn investigate_tension(
+    deps: &GatheringFinderDeps<'_>,
+    target: &GatheringFinderTarget,
+    stats: &mut GatheringFinderStats,
+    discovered_sources: &mut Vec<SourceNode>,
+    events: &mut seesaw_core::Events,
+) -> Result<bool> {
+    // Fetch existing gravity signals for context
+    let existing = deps
+        .graph
+        .get_existing_gathering_signals(
+            target.tension_id,
+            deps.region.center_lat,
+            deps.region.center_lng,
+            deps.region.radius_km,
+        )
+        .await
+        .unwrap_or_default();
 
-        // Phase 1: Agentic investigation with web_search + read_page tools
-        let reasoning = self
-            .claude
-            .prompt(&user)
-            .preamble(&system)
-            .temperature(0.7)
-            .multi_turn(MAX_TOOL_TURNS)
-            .send()
-            .await?;
+    let system = investigation_system_prompt(&deps.region.name);
+    let user = investigation_user_prompt(target, &existing);
 
-        // Phase 2: Structure the findings
-        let structuring_user = format!(
-            "Tension investigated: {} — {}\n\nInvestigation findings:\n{}",
-            target.title, target.summary, reasoning,
+    // Phase 1: Agentic investigation with web_search + read_page tools
+    let reasoning = deps
+        .claude
+        .prompt(&user)
+        .preamble(&system)
+        .temperature(0.7)
+        .multi_turn(MAX_TOOL_TURNS)
+        .send()
+        .await?;
+
+    // Phase 2: Structure the findings
+    let structuring_user = format!(
+        "Tension investigated: {} — {}\n\nInvestigation findings:\n{}",
+        target.title, target.summary, reasoning,
+    );
+
+    let finding: GravityFinding = deps
+        .claude
+        .extract(STRUCTURING_SYSTEM, &structuring_user)
+        .await?;
+
+    // Handle no_gravity early termination
+    if finding.no_gravity {
+        info!(
+            tension_id = %target.tension_id,
+            title = target.title.as_str(),
+            reason = finding.no_gravity_reason.as_deref().unwrap_or("unknown"),
+            "No gravity found — early termination"
         );
+        stats.targets_no_gravity += 1;
 
-        let finding: GravityFinding = self
-            .claude
-            .extract(STRUCTURING_SYSTEM, &structuring_user)
-            .await?;
-
-        // Handle no_gravity early termination
-        if finding.no_gravity {
-            info!(
-                tension_id = %target.tension_id,
-                title = target.title.as_str(),
-                reason = finding.no_gravity_reason.as_deref().unwrap_or("unknown"),
-                "No gravity found — early termination"
-            );
-            stats.targets_no_gravity += 1;
-
-            // Still create future queries even on no_gravity
-            for query in finding
-                .future_queries
-                .iter()
-                .take(MAX_FUTURE_QUERIES_PER_TENSION)
-            {
-                discovered_sources.push(self.build_future_query_source(query, target));
-                stats.future_sources_created += 1;
-            }
-
-            return Ok(false);
-        }
-
-        // Handle contradiction: no_gravity=false but check if gatherings is empty
-        if finding.gatherings.is_empty() {
-            info!(
-                tension_id = %target.tension_id,
-                title = target.title.as_str(),
-                "Investigation complete but no gatherings extracted"
-            );
-            return Ok(false);
-        }
-
-        stats.gatherings_discovered += finding.gatherings.len() as u32;
-
-        // Process discovered gatherings
-        for gathering in finding
-            .gatherings
-            .into_iter()
-            .take(MAX_GATHERINGS_PER_TENSION)
-        {
-            if let Err(e) = self
-                .process_gathering(target, &gathering, stats, discovered_sources, events)
-                .await
-            {
-                warn!(
-                    tension_id = %target.tension_id,
-                    gathering_title = gathering.title.as_str(),
-                    error = %e,
-                    "Failed to process discovered gathering"
-                );
-            }
-        }
-
-        // Create future query sources
+        // Still create future queries even on no_gravity
         for query in finding
             .future_queries
             .iter()
             .take(MAX_FUTURE_QUERIES_PER_TENSION)
         {
-            discovered_sources.push(self.build_future_query_source(query, target));
+            discovered_sources.push(build_future_query_source(query, target));
             stats.future_sources_created += 1;
         }
 
+        return Ok(false);
+    }
+
+    // Handle contradiction: no_gravity=false but check if gatherings is empty
+    if finding.gatherings.is_empty() {
         info!(
             tension_id = %target.tension_id,
             title = target.title.as_str(),
-            gatherings = stats.gatherings_discovered,
-            "Tension gravity investigation complete"
+            "Investigation complete but no gatherings extracted"
         );
-
-        Ok(true)
+        return Ok(false);
     }
 
-    async fn process_gathering(
-        &self,
-        target: &GatheringFinderTarget,
-        gathering: &DiscoveredGathering,
-        stats: &mut GatheringFinderStats,
-        discovered_sources: &mut Vec<SourceNode>,
-        events: &mut seesaw_core::Events,
-    ) -> Result<()> {
-        let embed_text = format!("{} {}", gathering.title, gathering.summary);
-        let embedding = self.embedder.embed(&embed_text).await?;
+    stats.gatherings_discovered += finding.gatherings.len() as u32;
 
-        let node_type = match gathering.signal_type.to_lowercase().as_str() {
-            "gathering" => NodeType::Gathering,
-            "need" => NodeType::Need,
-            _ => NodeType::Aid, // Default to Aid for unknown types
-        };
+    // Process discovered gatherings
+    for gathering in finding
+        .gatherings
+        .into_iter()
+        .take(MAX_GATHERINGS_PER_TENSION)
+    {
+        if let Err(e) = process_gathering(deps, target, &gathering, stats, discovered_sources, events)
+            .await
+        {
+            warn!(
+                tension_id = %target.tension_id,
+                gathering_title = gathering.title.as_str(),
+                error = %e,
+                "Failed to process discovered gathering"
+            );
+        }
+    }
 
-        // Check for duplicate (region-scoped)
-        let existing = self
-            .writer
-            .find_duplicate(
-                &embedding,
-                node_type,
-                0.85,
-                self.min_lat,
-                self.max_lat,
-                self.min_lng,
-                self.max_lng,
-            )
-            .await;
+    // Create future query sources
+    for query in finding
+        .future_queries
+        .iter()
+        .take(MAX_FUTURE_QUERIES_PER_TENSION)
+    {
+        discovered_sources.push(build_future_query_source(query, target));
+        stats.future_sources_created += 1;
+    }
 
-        let was_new;
-        let signal_id = match existing {
-            Ok(Some(dup)) => {
-                info!(
-                    existing_id = %dup.id,
-                    similarity = dup.similarity,
-                    title = gathering.title.as_str(),
-                    "Matched existing signal for gathering"
-                );
-                stats.gatherings_deduped += 1;
-                was_new = false;
+    info!(
+        tension_id = %target.tension_id,
+        title = target.title.as_str(),
+        gatherings = stats.gatherings_discovered,
+        "Tension gravity investigation complete"
+    );
 
-                // Touch the existing signal so it doesn't age out
-                events.push(SystemEvent::FreshnessConfirmed {
-                    signal_ids: vec![dup.id],
-                    node_type: NodeType::Gathering,
-                    confirmed_at: Utc::now(),
-                });
+    Ok(true)
+}
 
-                dup.id
+async fn process_gathering(
+    deps: &GatheringFinderDeps<'_>,
+    target: &GatheringFinderTarget,
+    gathering: &DiscoveredGathering,
+    stats: &mut GatheringFinderStats,
+    discovered_sources: &mut Vec<SourceNode>,
+    events: &mut seesaw_core::Events,
+) -> Result<()> {
+    let embed_text = format!("{} {}", gathering.title, gathering.summary);
+    let embedding = deps.embedder.embed(&embed_text).await?;
+
+    let node_type = match gathering.signal_type.to_lowercase().as_str() {
+        "gathering" => NodeType::Gathering,
+        "need" => NodeType::Need,
+        _ => NodeType::Aid, // Default to Aid for unknown types
+    };
+
+    // Check for duplicate (region-scoped)
+    let existing = deps
+        .graph
+        .find_duplicate(
+            &embedding,
+            node_type,
+            0.85,
+            deps.min_lat,
+            deps.max_lat,
+            deps.min_lng,
+            deps.max_lng,
+        )
+        .await;
+
+    let was_new;
+    let signal_id = match existing {
+        Ok(Some(dup)) => {
+            info!(
+                existing_id = %dup.id,
+                similarity = dup.similarity,
+                title = gathering.title.as_str(),
+                "Matched existing signal for gathering"
+            );
+            stats.gatherings_deduped += 1;
+            was_new = false;
+
+            // Touch the existing signal so it doesn't age out
+            events.push(SystemEvent::FreshnessConfirmed {
+                signal_ids: vec![dup.id],
+                node_type: NodeType::Gathering,
+                confirmed_at: Utc::now(),
+            });
+
+            dup.id
+        }
+        _ => {
+            if let Err(ref e) = existing {
+                warn!(error = %e, "Gathering dedup check failed, creating new");
             }
-            _ => {
-                if let Err(ref e) = existing {
-                    warn!(error = %e, "Gathering dedup check failed, creating new");
-                }
-                was_new = true;
-                self.create_gathering_node(gathering, events).await?
-            }
-        };
+            was_new = true;
+            create_gathering_node(deps, gathering, events).await?
+        }
+    };
 
-        // Wire DRAWN_TO edge to the target tension
-        events.push(SystemEvent::TensionLinked {
-            signal_id,
-            tension_id: target.tension_id,
-            strength: gathering.match_strength.clamp(0.0, 1.0),
-            explanation: gathering.explanation.clone(),
-            source_url: None,
-        });
-        stats.edges_created += 1;
+    // Wire DRAWN_TO edge to the target tension
+    events.push(SystemEvent::TensionLinked {
+        signal_id,
+        tension_id: target.tension_id,
+        strength: gathering.match_strength.clamp(0.0, 1.0),
+        explanation: gathering.explanation.clone(),
+        source_url: None,
+    });
+    stats.edges_created += 1;
 
-        // Wire additional DRAWN_TO edges for also_addresses
-        if !gathering.also_addresses.is_empty() {
-            if let Err(e) = self
-                .wire_also_addresses(signal_id, &gathering.also_addresses, &gathering.explanation, events)
+    // Wire additional DRAWN_TO edges for also_addresses
+    if !gathering.also_addresses.is_empty() {
+        if let Err(e) = wire_also_addresses(deps, signal_id, &gathering.also_addresses, &gathering.explanation, events)
+            .await
+        {
+            warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
+        }
+    }
+
+    // Place creation: promote venue string to first-class Place node
+    if let Some(ref venue) = gathering.venue {
+        if !venue.is_empty() {
+            match deps
+                .graph
+                .find_or_create_place(venue, deps.region.center_lat, deps.region.center_lng)
                 .await
             {
-                warn!(error = %e, "Failed to wire also_addresses (non-fatal)");
-            }
-        }
-
-        // Place creation: promote venue string to first-class Place node
-        if let Some(ref venue) = gathering.venue {
-            if !venue.is_empty() {
-                match self
-                    .writer
-                    .find_or_create_place(venue, self.region.center_lat, self.region.center_lng)
-                    .await
-                {
-                    Ok(place_id) => {
-                        if let Err(e) = self
-                            .writer
-                            .create_gathers_at_edge(signal_id, place_id)
-                            .await
-                        {
-                            warn!(venue, error = %e, "Failed to create GATHERS_AT edge (non-fatal)");
-                        }
-                    }
-                    Err(e) => {
-                        warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)")
+                Ok(place_id) => {
+                    if let Err(e) = deps
+                        .graph
+                        .create_gathers_at_edge(signal_id, place_id)
+                        .await
+                    {
+                        warn!(venue, error = %e, "Failed to create GATHERS_AT edge (non-fatal)");
                     }
                 }
-
-                // Venue seeding: create future source for the venue
-                let venue_query = format!("{} {} community events", venue, self.region.name);
-                discovered_sources.push(self.build_future_query_source(&venue_query, target));
-                stats.future_sources_created += 1;
+                Err(e) => {
+                    warn!(venue, error = %e, "Failed to find_or_create_place (non-fatal)")
+                }
             }
-        }
 
-        if was_new {
-            stats.signals_created += 1;
+            // Venue seeding: create future source for the venue
+            let venue_query = format!("{} {} community events", venue, deps.region.name);
+            discovered_sources.push(build_future_query_source(&venue_query, target));
+            stats.future_sources_created += 1;
         }
-
-        Ok(())
     }
 
-    async fn create_gathering_node(&self, gathering: &DiscoveredGathering, events: &mut seesaw_core::Events) -> Result<Uuid> {
-        let now = Utc::now();
-        let meta = NodeMeta {
-            id: Uuid::new_v4(),
-            title: gathering.title.clone(),
-            summary: gathering.summary.clone(),
-            sensitivity: SensitivityLevel::General,
-            confidence: 0.7,
+    if was_new {
+        stats.signals_created += 1;
+    }
 
-            corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat: self.region.center_lat,
-                lng: self.region.center_lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            from_location: None,
-            about_location_name: Some(self.region.name.clone()),
-            source_url: gathering.url.clone(),
-            extracted_at: now,
-            published_at: None,
-            last_confirmed_active: now,
-            source_diversity: 1,
+    Ok(())
+}
 
-            cause_heat: 0.0,
-            channel_diversity: 1,
-            implied_queries: vec![],
-            review_status: ReviewStatus::Staged,
-            was_corrected: false,
-            corrections: None,
-            rejection_reason: None,
-            mentioned_actors: Vec::new(),
-        };
+async fn create_gathering_node(
+    deps: &GatheringFinderDeps<'_>,
+    gathering: &DiscoveredGathering,
+    events: &mut seesaw_core::Events,
+) -> Result<Uuid> {
+    let now = Utc::now();
+    let meta = NodeMeta {
+        id: Uuid::new_v4(),
+        title: gathering.title.clone(),
+        summary: gathering.summary.clone(),
+        sensitivity: SensitivityLevel::General,
+        confidence: 0.7,
 
-        let node = match gathering.signal_type.to_lowercase().as_str() {
-            "gathering" => {
-                let starts_at = gathering.event_date.as_deref().and_then(|d| {
-                    chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                        .ok()
-                        .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
-                });
-                Node::Gathering(GatheringNode {
-                    meta,
-                    starts_at,
-                    ends_at: None,
-                    action_url: gathering.url.clone(),
-                    organizer: gathering.organizer.clone(),
-                    is_recurring: gathering.is_recurring,
-                })
-            }
-            "need" => Node::Need(NeedNode {
+        corroboration_count: 0,
+        about_location: Some(GeoPoint {
+            lat: deps.region.center_lat,
+            lng: deps.region.center_lng,
+            precision: GeoPrecision::Approximate,
+        }),
+        from_location: None,
+        about_location_name: Some(deps.region.name.clone()),
+        source_url: gathering.url.clone(),
+        extracted_at: now,
+        published_at: None,
+        last_confirmed_active: now,
+        source_diversity: 1,
+
+        cause_heat: 0.0,
+        channel_diversity: 1,
+        implied_queries: vec![],
+        review_status: ReviewStatus::Staged,
+        was_corrected: false,
+        corrections: None,
+        rejection_reason: None,
+        mentioned_actors: Vec::new(),
+    };
+
+    let node = match gathering.signal_type.to_lowercase().as_str() {
+        "gathering" => {
+            let starts_at = gathering.event_date.as_deref().and_then(|d| {
+                chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                    .ok()
+                    .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc())
+            });
+            Node::Gathering(GatheringNode {
                 meta,
-                urgency: Urgency::Medium,
-                what_needed: Some(gathering.summary.clone()),
-                action_url: Some(gathering.url.clone()),
-                goal: None,
-            }),
-            _ => Node::Aid(AidNode {
-                meta,
+                starts_at,
+                ends_at: None,
                 action_url: gathering.url.clone(),
-                availability: None,
-                is_ongoing: gathering.is_recurring,
-            }),
-        };
-
-        let node_id = node.meta().unwrap().id;
-
-        // Collect world event + system events for causal chain dispatch
-        let world_event = node_to_world_event(&node);
-        let system_events = node_system_events(&node);
-
-        events.push(world_event);
-        for se in system_events {
-            events.push(se);
+                organizer: gathering.organizer.clone(),
+                is_recurring: gathering.is_recurring,
+            })
         }
+        "need" => Node::Need(NeedNode {
+            meta,
+            urgency: Urgency::Medium,
+            what_needed: Some(gathering.summary.clone()),
+            action_url: Some(gathering.url.clone()),
+            goal: None,
+        }),
+        _ => Node::Aid(AidNode {
+            meta,
+            action_url: gathering.url.clone(),
+            availability: None,
+            is_ongoing: gathering.is_recurring,
+        }),
+    };
 
-        info!(
-            node_id = %node_id,
-            title = gathering.title.as_str(),
-            signal_type = gathering.signal_type.as_str(),
-            gathering_type = gathering.gathering_type.as_str(),
-            is_recurring = gathering.is_recurring,
-            "New gathering signal created"
-        );
+    let node_id = node.meta().unwrap().id;
 
-        Ok(node_id)
+    // Collect world event + system events for causal chain dispatch
+    let world_event = node_to_world_event(&node);
+    let system_events = node_system_events(&node);
+
+    events.push(world_event);
+    for se in system_events {
+        events.push(se);
     }
 
-    /// Wire tension edges to additional tensions that this gathering also addresses.
-    /// Uses embedding similarity against all active tensions (>0.85 threshold).
-    async fn wire_also_addresses(
-        &self,
-        signal_id: Uuid,
-        also_addresses: &[String],
-        explanation: &str,
-        events: &mut seesaw_core::Events,
-    ) -> Result<()> {
-        let lat_delta = self.region.radius_km / 111.0;
-        let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
-        let active_tensions = self
-            .writer
-            .get_active_tensions(
-                self.region.center_lat - lat_delta,
-                self.region.center_lat + lat_delta,
-                self.region.center_lng - lng_delta,
-                self.region.center_lng + lng_delta,
-            )
-            .await?;
-        if active_tensions.is_empty() {
-            return Ok(());
-        }
+    info!(
+        node_id = %node_id,
+        title = gathering.title.as_str(),
+        signal_type = gathering.signal_type.as_str(),
+        gathering_type = gathering.gathering_type.as_str(),
+        is_recurring = gathering.is_recurring,
+        "New gathering signal created"
+    );
 
-        for tension_title in also_addresses {
-            let title_embedding = self.embedder.embed(tension_title).await?;
-            let title_emb_f64: Vec<f64> = title_embedding.iter().map(|&v| v as f64).collect();
+    Ok(node_id)
+}
 
-            let mut best_match: Option<(Uuid, f64)> = None;
-            for (tid, temb) in &active_tensions {
-                let sim = cosine_sim_f64(&title_emb_f64, temb);
-                if sim >= 0.85 {
-                    if best_match.as_ref().map_or(true, |b| sim > b.1) {
-                        best_match = Some((*tid, sim));
-                    }
+/// Wire tension edges to additional tensions that this gathering also addresses.
+/// Uses embedding similarity against all active tensions (>0.85 threshold).
+async fn wire_also_addresses(
+    deps: &GatheringFinderDeps<'_>,
+    signal_id: Uuid,
+    also_addresses: &[String],
+    explanation: &str,
+    events: &mut seesaw_core::Events,
+) -> Result<()> {
+    let lat_delta = deps.region.radius_km / 111.0;
+    let lng_delta = deps.region.radius_km / (111.0 * deps.region.center_lat.to_radians().cos());
+    let active_tensions = deps
+        .graph
+        .get_active_tensions(
+            deps.region.center_lat - lat_delta,
+            deps.region.center_lat + lat_delta,
+            deps.region.center_lng - lng_delta,
+            deps.region.center_lng + lng_delta,
+        )
+        .await?;
+    if active_tensions.is_empty() {
+        return Ok(());
+    }
+
+    for tension_title in also_addresses {
+        let title_embedding = deps.embedder.embed(tension_title).await?;
+        let title_emb_f64: Vec<f64> = title_embedding.iter().map(|&v| v as f64).collect();
+
+        let mut best_match: Option<(Uuid, f64)> = None;
+        for (tid, temb) in &active_tensions {
+            let sim = cosine_sim_f64(&title_emb_f64, temb);
+            if sim >= 0.85 {
+                if best_match.as_ref().map_or(true, |b| sim > b.1) {
+                    best_match = Some((*tid, sim));
                 }
             }
-
-            if let Some((tension_id, sim)) = best_match {
-                info!(
-                    signal_id = %signal_id,
-                    tension_id = %tension_id,
-                    similarity = sim,
-                    also_addresses = tension_title.as_str(),
-                    "Wiring gravity also_addresses edge"
-                );
-                events.push(SystemEvent::TensionLinked {
-                    signal_id,
-                    tension_id,
-                    strength: sim.clamp(0.0, 1.0),
-                    explanation: explanation.to_string(),
-                    source_url: None,
-                });
-            }
         }
 
-        Ok(())
+        if let Some((tension_id, sim)) = best_match {
+            info!(
+                signal_id = %signal_id,
+                tension_id = %tension_id,
+                similarity = sim,
+                also_addresses = tension_title.as_str(),
+                "Wiring gravity also_addresses edge"
+            );
+            events.push(SystemEvent::TensionLinked {
+                signal_id,
+                tension_id,
+                strength: sim.clamp(0.0, 1.0),
+                explanation: explanation.to_string(),
+                source_url: None,
+            });
+        }
     }
 
-    fn build_future_query_source(&self, query: &str, target: &GatheringFinderTarget) -> SourceNode {
-        let cv = query.to_string();
-        let ck = canonical_value(&cv);
-        let gap_context = format!(
-            "Gathering finder: gathering discovery for \"{}\"",
-            target.title,
-        );
+    Ok(())
+}
 
-        info!(
-            query = query,
-            tension = target.title.as_str(),
-            "Future query source built by gathering finder"
-        );
+fn build_future_query_source(
+    query: &str,
+    target: &GatheringFinderTarget,
+) -> SourceNode {
+    let cv = query.to_string();
+    let ck = canonical_value(&cv);
+    let gap_context = format!(
+        "Gathering finder: gathering discovery for \"{}\"",
+        target.title,
+    );
 
-        SourceNode {
-            id: Uuid::new_v4(),
-            canonical_key: ck,
-            canonical_value: cv,
-            url: None,
-            discovery_method: DiscoveryMethod::GapAnalysis,
-            created_at: Utc::now(),
-            last_scraped: None,
-            last_produced_signal: None,
-            signals_produced: 0,
-            signals_corroborated: 0,
-            consecutive_empty_runs: 0,
-            active: true,
-            gap_context: Some(gap_context),
-            weight: initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
-            cadence_hours: None,
-            avg_signals_per_scrape: 0.0,
-            quality_penalty: 1.0,
-            source_role: SourceRole::Response,
-            scrape_count: 0,
-        }
+    info!(
+        query = query,
+        tension = target.title.as_str(),
+        "Future query source built by gathering finder"
+    );
+
+    SourceNode {
+        id: Uuid::new_v4(),
+        canonical_key: ck,
+        canonical_value: cv,
+        url: None,
+        discovery_method: DiscoveryMethod::GapAnalysis,
+        created_at: Utc::now(),
+        last_scraped: None,
+        last_produced_signal: None,
+        signals_produced: 0,
+        signals_corroborated: 0,
+        consecutive_empty_runs: 0,
+        active: true,
+        gap_context: Some(gap_context),
+        weight: initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
+        cadence_hours: None,
+        avg_signals_per_scrape: 0.0,
+        quality_penalty: 1.0,
+        source_role: SourceRole::Response,
+        scrape_count: 0,
     }
 }
 

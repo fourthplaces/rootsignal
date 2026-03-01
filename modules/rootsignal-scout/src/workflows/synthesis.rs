@@ -46,8 +46,8 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphStore::new(graph_client);
-            let transitioned = writer
+            let graph = rootsignal_graph::GraphStore::new(graph_client);
+            let transitioned = graph
                 .transition_task_phase_status(
                     &tid,
                     &[
@@ -113,7 +113,7 @@ pub async fn synthesize_region(
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,
 ) -> anyhow::Result<SynthesisResult> {
-    let writer = GraphStore::new(deps.graph_client.clone());
+    let graph = GraphStore::new(deps.graph_client.clone());
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let archive = create_archive(deps);
@@ -174,7 +174,7 @@ pub async fn synthesize_region(
             if run_response_mapping {
                 info!("Starting response mapping...");
                 let response_mapper = crate::domains::synthesis::activities::response_mapper::ResponseMapper::new(
-                    &writer,
+                    &graph,
                     &deps.anthropic_api_key,
                     scope.center_lat,
                     scope.center_lng,
@@ -194,7 +194,7 @@ pub async fn synthesize_region(
             if run_tension_linker {
                 info!("Starting tension linker...");
                 let tension_linker = crate::domains::synthesis::activities::tension_linker::TensionLinker::new(
-                    &writer,
+                    &graph,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -214,7 +214,7 @@ pub async fn synthesize_region(
             if run_response_finder {
                 info!("Starting response finder...");
                 let response_finder = crate::domains::synthesis::activities::response_finder::ResponseFinder::new(
-                    &writer,
+                    &graph,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -236,8 +236,8 @@ pub async fn synthesize_region(
             let mut events = seesaw_core::Events::new();
             if run_gathering_finder {
                 info!("Starting gathering finder...");
-                let gathering_finder = crate::domains::synthesis::activities::gathering_finder::GatheringFinder::new(
-                    &writer,
+                let gf_deps = crate::domains::synthesis::activities::gathering_finder::GatheringFinderDeps::new(
+                    &graph,
                     archive.clone(),
                     &*embedder,
                     &deps.anthropic_api_key,
@@ -245,7 +245,7 @@ pub async fn synthesize_region(
                     cancelled.clone(),
                     run_id_owned.clone(),
                 );
-                let (gf_stats, gf_sources) = gathering_finder.run(&mut events).await;
+                let (gf_stats, gf_sources) = crate::domains::synthesis::activities::gathering_finder::find_gatherings(&gf_deps, &mut events).await;
                 info!("{gf_stats}");
                 (events, gf_sources)
             } else {
@@ -260,7 +260,7 @@ pub async fn synthesize_region(
             if run_investigation {
                 info!("Starting investigation phase...");
                 let investigator = crate::domains::synthesis::activities::investigator::Investigator::new(
-                    &writer,
+                    &graph,
                     archive.clone(),
                     &deps.anthropic_api_key,
                     scope,
@@ -315,7 +315,7 @@ pub async fn synthesize_region(
     let (min_lat, max_lat) = (scope.center_lat - lat_delta, scope.center_lat + lat_delta);
     let (min_lng, max_lng) = (scope.center_lng - lng_delta, scope.center_lng + lng_delta);
     match rootsignal_graph::severity_inference::run_severity_inference(
-        &writer, min_lat, max_lat, min_lng, max_lng,
+        &graph, min_lat, max_lat, min_lng, max_lng,
     )
     .await
     {
