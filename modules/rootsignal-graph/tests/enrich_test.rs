@@ -1,16 +1,17 @@
+#![cfg(feature = "test-utils")]
+
+// Integration tests for enrichment passes.
+//
+// These tests verify that compute_diversity and compute_actor_stats
+// write correct derived properties to Neo4j nodes.
+//
+// Requirements: Docker (for Neo4j via testcontainers)
+//
+// Run with: cargo test -p rootsignal-graph --features test-utils --test enrich_test
+
 use chrono::Utc;
 use uuid::Uuid;
 use rootsignal_graph::{enrich, query, GraphClient};
-//! Integration tests for enrichment passes.
-//!
-//! These tests verify that compute_diversity and compute_actor_stats
-//! write correct derived properties to Neo4j nodes.
-//!
-//! Requirements: Docker (for Neo4j via testcontainers)
-//!
-//! Run with: cargo test -p rootsignal-graph --features test-utils --test enrich_test
-
-#![cfg(feature = "test-utils")]
 
 
 async fn setup() -> (impl std::any::Any, GraphClient) {

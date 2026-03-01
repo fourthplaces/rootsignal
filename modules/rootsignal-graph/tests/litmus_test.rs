@@ -1,21 +1,20 @@
+#![cfg(feature = "test-utils")]
+// Integration tests for litmus-test scenarios.
+//
+// Validates datetime storage, keyword search, geo queries, source diversity,
+// actor linking, and cross-type topic search against a real Neo4j instance.
+//
+// Requirements: Docker (for Neo4j via testcontainers)
+//
+// Run with: cargo test -p rootsignal-graph --features test-utils --test litmus_test
+
 use chrono::Utc;
 use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, WorldEvent};
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
-use rootsignal_world::types::{Entity, EntityType, Reference};
 use rootsignal_events::StoredEvent;
-use rootsignal_graph::{query, BBox, GraphClient, GraphStore, Pipeline};
-//! Integration tests for litmus-test scenarios.
-//!
-//! Validates datetime storage, keyword search, geo queries, source diversity,
-//! actor linking, and cross-type topic search against a real Neo4j instance.
-//!
-//! Requirements: Docker (for Neo4j via testcontainers)
-//!
-//! Run with: cargo test -p rootsignal-graph --features test-utils --test litmus_test
-
-#![cfg(feature = "test-utils")]
+use rootsignal_graph::{query, BBox, GraphClient, GraphProjector, GraphStore, Pipeline};
 
 
 /// Spin up a fresh Neo4j container and run migrations.
@@ -1477,11 +1476,20 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     assert_eq!(count, 4, "Should have 4 tensions before merge");
 
     // Run merge (bbox covering Twin Cities test data)
-    let merged = writer
-        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+    let pairs = writer
+        .find_duplicate_tension_pairs(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
-        .expect("merge failed");
-    assert_eq!(merged, 2, "Should merge 2 duplicates (keep 1 of 3)");
+        .expect("find pairs failed");
+    assert_eq!(pairs.len(), 2, "Should find 2 duplicate pairs (keep 1 of 3)");
+    let projector = GraphProjector::new(client.clone());
+    for (i, (survivor_id, duplicate_id)) in pairs.iter().enumerate() {
+        let event = Event::System(SystemEvent::DuplicateTensionMerged {
+            survivor_id: *survivor_id,
+            duplicate_id: *duplicate_id,
+        });
+        let se = stored(100 + i as i64, &event);
+        projector.project(&se).await.expect("project merge failed");
+    }
 
     // Verify: 2 tensions after merge (1 youth violence survivor + 1 housing)
     let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
@@ -1547,11 +1555,11 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
     create_tension_with_embedding(&client, Uuid::new_v4(), "Youth Violence", &emb1).await;
     create_tension_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
 
-    let merged = writer
-        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+    let pairs = writer
+        .find_duplicate_tension_pairs(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
-        .expect("merge failed");
-    assert_eq!(merged, 0, "No duplicates should be merged");
+        .expect("find pairs failed");
+    assert_eq!(pairs.len(), 0, "No duplicates should be found");
 
     let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
     let mut stream = client.inner().execute(q).await.unwrap();
@@ -1599,11 +1607,11 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     .await;
 
     // Merge scoped to Twin Cities bbox — should not touch Chicago
-    let merged = writer
-        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+    let pairs = writer
+        .find_duplicate_tension_pairs(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
-        .expect("merge failed");
-    assert_eq!(merged, 0, "Cross-region tensions must not be merged");
+        .expect("find pairs failed");
+    assert_eq!(pairs.len(), 0, "Cross-region tensions must not be merged");
 
     // Both tensions survive
     let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
@@ -1686,11 +1694,20 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     client.inner().run(q).await.expect("Create PART_OF edge");
 
     // Run merge
-    let merged = writer
-        .merge_duplicate_tensions(0.85, 44.0, 46.0, -94.0, -92.0)
+    let pairs = writer
+        .find_duplicate_tension_pairs(0.85, 44.0, 46.0, -94.0, -92.0)
         .await
-        .expect("merge failed");
-    assert_eq!(merged, 1, "Should merge 1 duplicate");
+        .expect("find pairs failed");
+    assert_eq!(pairs.len(), 1, "Should find 1 duplicate pair");
+    let projector = GraphProjector::new(client.clone());
+    for (i, (surv, dup)) in pairs.iter().enumerate() {
+        let event = Event::System(SystemEvent::DuplicateTensionMerged {
+            survivor_id: *surv,
+            duplicate_id: *dup,
+        });
+        let se = stored(100 + i as i64, &event);
+        projector.project(&se).await.expect("project merge failed");
+    }
 
     // Survivor now has PART_OF edge to Situation
     let q = query(
@@ -2212,10 +2229,14 @@ async fn gathering_finder_backoff_resets_on_success() {
     .await;
 
     // Mark as scouted with success — should reset miss_count to 0
-    writer
-        .mark_gathering_found(t1, true)
-        .await
-        .expect("mark failed");
+    let projector = GraphProjector::new(client.clone());
+    let event = Event::System(SystemEvent::GatheringScouted {
+        tension_id: t1,
+        found_gatherings: true,
+        scouted_at: Utc::now(),
+    });
+    let se = stored(100, &event);
+    projector.project(&se).await.expect("project scouted failed");
 
     // Verify miss_count is 0
     let q = query(
@@ -2789,7 +2810,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
     client.inner().run(q).await.expect("edge creation failed");
 
     // First call: should collect the queries
-    let queries = writer
+    let (queries, _signal_ids) = writer
         .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
@@ -2798,7 +2819,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
     assert!(queries.contains(&"tenant legal aid Minneapolis".to_string()));
 
     // Second call: should return empty — queries were cleared after first collection
-    let queries_again = writer
+    let (queries_again, _) = writer
         .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
@@ -2852,7 +2873,7 @@ async fn recently_linked_signals_ignores_cold_tensions() {
     .param("tid", tension_id.to_string());
     client.inner().run(q).await.expect("edge failed");
 
-    let queries = writer
+    let (queries, _) = writer
         .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");
@@ -2911,7 +2932,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
         .await
         .expect("create_drawn_to failed");
 
-    let collected = writer
+    let (collected, _) = writer
         .get_recently_linked_signals_with_queries()
         .await
         .expect("query failed");

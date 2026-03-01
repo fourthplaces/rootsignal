@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_graph::{GraphReader, GraphStore};
+use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::scheduling::activities::budget::OperationCost;
@@ -26,7 +26,6 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     };
 
     let graph = GraphReader::new(graph_client.clone());
-    let graph_rw = GraphStore::new(graph_client.clone());
     let run_id = deps.run_id.clone();
 
     // 1. Situation weaving (assigns signals to living situations)
@@ -57,12 +56,10 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
             if !hot.is_empty() {
                 info!(count = hot.len(), "Hot situations boosting source cadence");
                 for sit in &hot {
-                    if let Err(e) = graph_rw
-                        .boost_sources_for_situation_headline(&sit.headline, 1.2)
-                        .await
-                    {
-                        warn!(error = %e, headline = sit.headline.as_str(), "Failed to boost sources for hot situation");
-                    }
+                    events.push(SystemEvent::SourcesBoostedForSituation {
+                        headline: sit.headline.clone(),
+                        factor: 1.2,
+                    });
                 }
             }
 

@@ -466,6 +466,14 @@ pub enum SystemEvent {
         survivor_id: Uuid,
         duplicate_id: Uuid,
     },
+
+    // -----------------------------------------------------------------------
+    // Source weight adjustments
+    // -----------------------------------------------------------------------
+    SourcesBoostedForSituation {
+        headline: String,
+        factor: f64,
+    },
 }
 
 impl Eventlike for SystemEvent {
@@ -529,6 +537,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::PlaceDiscovered { .. } => "place_discovered",
             SystemEvent::GathersAtPlaceLinked { .. } => "gathers_at_place_linked",
             SystemEvent::DuplicateTensionMerged { .. } => "duplicate_tension_merged",
+            SystemEvent::SourcesBoostedForSituation { .. } => "sources_boosted_for_situation",
         }
     }
 

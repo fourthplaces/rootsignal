@@ -1,3 +1,14 @@
+#![cfg(feature = "test-utils")]
+
+// End-to-end pipeline integration tests.
+//
+// These tests verify that events processed through the Pipeline
+// produce correct graph state (factual + derived properties).
+//
+// Requirements: Docker (for Neo4j via testcontainers)
+//
+// Run with: cargo test -p rootsignal-graph --features test-utils --test pipeline_test
+
 use chrono::Utc;
 use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, SystemEvent, WorldEvent};
@@ -5,16 +16,6 @@ use rootsignal_common::{ActorType, ChannelType, GeoPoint, GeoPrecision};
 use rootsignal_world::types::{Entity, EntityType, Reference};
 use rootsignal_events::StoredEvent;
 use rootsignal_graph::{query, BBox, GraphClient, Pipeline};
-//! End-to-end pipeline integration tests.
-//!
-//! These tests verify that events processed through the Pipeline
-//! produce correct graph state (factual + derived properties).
-//!
-//! Requirements: Docker (for Neo4j via testcontainers)
-//!
-//! Run with: cargo test -p rootsignal-graph --features test-utils --test pipeline_test
-
-#![cfg(feature = "test-utils")]
 
 
 async fn setup() -> (impl std::any::Any, GraphClient) {

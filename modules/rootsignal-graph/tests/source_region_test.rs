@@ -1,17 +1,18 @@
+#![cfg(feature = "test-utils")]
+
+// Integration tests for get_sources_for_region filtering.
+//
+// Verifies that:
+// - Never-scraped sources are included (deserve a chance)
+// - Scraped sources with signals geolocated in region are included (proven relevant)
+// - Scraped-but-unproductive sources are excluded (scheduler handles their lifecycle)
+//
+// Requirements: Docker (for Neo4j via testcontainers)
+//
+// Run with: cargo test -p rootsignal-graph --features test-utils --test source_region_test
+
 use uuid::Uuid;
 use rootsignal_graph::{query, GraphClient, GraphStore};
-//! Integration tests for get_sources_for_region filtering.
-//!
-//! Verifies that:
-//! - Never-scraped sources are included (deserve a chance)
-//! - Scraped sources with signals geolocated in region are included (proven relevant)
-//! - Scraped-but-unproductive sources are excluded (scheduler handles their lifecycle)
-//!
-//! Requirements: Docker (for Neo4j via testcontainers)
-//!
-//! Run with: cargo test -p rootsignal-graph --features test-utils --test source_region_test
-
-#![cfg(feature = "test-utils")]
 
 
 async fn setup() -> (impl std::any::Any, GraphClient) {

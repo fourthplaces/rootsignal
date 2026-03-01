@@ -8,7 +8,7 @@ pub(crate) mod scrape_phase;
 use std::collections::HashSet;
 
 use rootsignal_common::{scraping_strategy, ScrapingStrategy, SourceNode};
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::GraphReader;
 use tracing::{info, warn};
 
 use crate::core::aggregate::PipelineState;
@@ -88,7 +88,7 @@ pub async fn scrape_response(
     phase: &ScrapePhase,
     state: &PipelineState,
     social_topics: Vec<String>,
-    graph: &GraphStore,
+    graph: &GraphReader,
     region: &rootsignal_common::ScoutScope,
     run_log: &RunLogger,
 ) -> ScrapeOutput {
