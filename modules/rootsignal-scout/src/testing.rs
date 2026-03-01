@@ -23,7 +23,7 @@ use rootsignal_common::types::{
 };
 use rootsignal_graph::DuplicateMatch;
 
-use crate::pipeline::extractor::{ExtractionResult, SignalExtractor};
+use crate::core::extractor::{ExtractionResult, SignalExtractor};
 use crate::traits::{ContentFetcher, SignalReader};
 
 // ---------------------------------------------------------------------------
@@ -1426,7 +1426,7 @@ pub fn run_log() -> crate::infra::run_log::RunLogger {
 }
 
 /// Create a test engine with a dummy store, no event store, no projector.
-pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+pub fn test_engine() -> std::sync::Arc<crate::core::engine::ScoutEngine> {
     test_engine_for_store(
         std::sync::Arc::new(MockSignalReader::new()) as std::sync::Arc<dyn crate::traits::SignalReader>,
     )
@@ -1435,7 +1435,7 @@ pub fn test_engine() -> std::sync::Arc<crate::pipeline::ScoutEngine> {
 /// Create a test engine wired to the given store.
 pub fn test_engine_for_store(
     store: std::sync::Arc<dyn crate::traits::SignalReader>,
-) -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+) -> std::sync::Arc<crate::core::engine::ScoutEngine> {
     test_engine_for_store_with_embedder(
         store,
         std::sync::Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
@@ -1446,7 +1446,7 @@ pub fn test_engine_for_store(
 pub fn test_engine_for_store_with_embedder(
     store: std::sync::Arc<dyn crate::traits::SignalReader>,
     embedder: std::sync::Arc<dyn crate::infra::embedder::TextEmbedder>,
-) -> std::sync::Arc<crate::pipeline::ScoutEngine> {
+) -> std::sync::Arc<crate::core::engine::ScoutEngine> {
     std::sync::Arc::new(crate::core::engine::build_engine(
         crate::core::engine::ScoutEngineDeps {
             store,
@@ -1473,7 +1473,7 @@ pub fn test_engine_for_store_with_embedder(
 
 /// Create a test engine that captures all dispatched events for inspection.
 pub fn test_engine_with_capture() -> (
-    std::sync::Arc<crate::pipeline::ScoutEngine>,
+    std::sync::Arc<crate::core::engine::ScoutEngine>,
     std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
 ) {
     test_engine_with_capture_for_store(
@@ -1487,7 +1487,7 @@ pub fn test_engine_with_capture_for_store(
     store: std::sync::Arc<dyn crate::traits::SignalReader>,
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
-    std::sync::Arc<crate::pipeline::ScoutEngine>,
+    std::sync::Arc<crate::core::engine::ScoutEngine>,
     std::sync::Arc<std::sync::Mutex<Vec<crate::core::events::ScoutEvent>>>,
 ) {
     let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

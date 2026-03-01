@@ -3,6 +3,8 @@
 //! Each function takes specific inputs and returns accumulated output.
 //! No `&mut PipelineState` — state flows through `ScrapeOutput`.
 
+pub(crate) mod scrape_phase;
+
 use std::collections::HashSet;
 
 use rootsignal_common::{scraping_strategy, ScrapingStrategy, SourceNode};
@@ -15,7 +17,7 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::infra::run_log::RunLogger;
 use crate::infra::util::sanitize_url;
-use crate::pipeline::scrape_phase::{ScrapeOutput, ScrapePhase};
+use self::scrape_phase::{ScrapeOutput, ScrapePhase};
 
 /// Partition collected events: convert PipelineEvent::SignalsExtracted to
 /// SignalEvent::SignalsExtracted for TypeId routing, keep everything else as ScoutEvent.

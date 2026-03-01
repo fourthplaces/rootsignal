@@ -1,11 +1,13 @@
 //! Discovery domain activity functions: pure logic extracted from handlers.
 
+pub(crate) mod bootstrap;
+
 use tracing::info;
 
 use crate::core::events::ScoutEvent;
 use crate::discovery::source_finder;
 use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::scrape_phase::ScrapePhase;
+use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 use rootsignal_graph::GraphWriter;
 
 /// Output from mid-run discovery.

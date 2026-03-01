@@ -11,8 +11,8 @@ use rootsignal_common::types::ActorContext;
 use rootsignal_common::{canonical_value, ScheduleNode};
 use uuid::Uuid;
 
-use crate::pipeline::extractor::ExtractionResult;
-use crate::pipeline::scrape_phase::{RunContext, ScrapePhase};
+use crate::core::extractor::ExtractionResult;
+use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapePhase};
 use crate::testing::*;
 use crate::core::events::{PipelineEvent, ScoutEvent};
 use crate::domains::signals::events::SignalEvent;
@@ -56,7 +56,7 @@ async fn dispatch_events(
 
 /// Take events from scrape output, apply state, and dispatch through engine.
 async fn scrape_and_dispatch(
-    output: crate::pipeline::scrape_phase::ScrapeOutput,
+    output: crate::domains::scrape::activities::scrape_phase::ScrapeOutput,
     ctx: &mut RunContext,
     store: &Arc<MockSignalReader>,
 ) {

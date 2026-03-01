@@ -5,7 +5,7 @@
 
 use chrono::Datelike;
 use rootsignal_common::*;
-use rootsignal_scout::pipeline::extractor::{ExtractionResponse, Extractor};
+use rootsignal_scout::core::extractor::{ExtractionResponse, Extractor};
 
 fn parse_response(json: &str) -> ExtractionResponse {
     serde_json::from_str(json).expect("invalid test JSON")

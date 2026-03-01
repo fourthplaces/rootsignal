@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::Datelike;
-use rootsignal_scout::pipeline::extractor::{
+use rootsignal_scout::core::extractor::{
     build_system_prompt, ExtractionResponse, ExtractionResult, Extractor,
 };
 

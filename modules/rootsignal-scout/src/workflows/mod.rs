@@ -66,7 +66,7 @@ impl ScoutDeps {
         fetcher: Option<std::sync::Arc<dyn crate::traits::ContentFetcher>>,
         region: Option<rootsignal_common::ScoutScope>,
         run_id: &str,
-    ) -> crate::pipeline::ScoutEngine {
+    ) -> crate::core::engine::ScoutEngine {
         let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
         let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
         let archive = create_archive(self);

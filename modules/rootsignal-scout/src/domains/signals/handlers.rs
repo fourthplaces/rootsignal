@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::events::SignalEvent;
-use crate::pipeline::handlers::{creation, dedup};
+use crate::domains::signals::activities::{creation, dedup};
 
 /// SignalsExtracted → run 4-layer dedup on the extracted batch.
 pub fn dedup_handler() -> Handler<ScoutEngineDeps> {

@@ -11,7 +11,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::{PipelinePhase, ScoutEvent};
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::{make_run_log, partition_into_events, scrape_response, scrape_tension};
-use crate::pipeline::scrape_phase::ScrapePhase;
+use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 
 use rootsignal_graph::GraphWriter;
 

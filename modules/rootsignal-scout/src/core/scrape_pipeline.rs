@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::pipeline::ScoutEngine;
+use crate::core::engine::ScoutEngine;
 use crate::traits::SignalReader;
 
 use rootsignal_common::ScoutScope;
@@ -24,7 +24,7 @@ use crate::store::event_sourced::EventSourcedReader;
 
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
-use crate::pipeline::extractor::SignalExtractor;
+use crate::core::extractor::SignalExtractor;
 use crate::core::stats::ScoutStats;
 use crate::scheduling::budget::BudgetTracker;
 

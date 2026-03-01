@@ -1,9 +1,12 @@
 // Core engine types: aggregate, events, stats, engine, projection.
 
 pub mod aggregate;
+pub(crate) mod embedding_cache;
 pub mod engine;
 pub mod events;
+pub mod extractor;
 pub mod projection;
+pub mod scrape_pipeline;
 pub mod stats;
 
 #[cfg(test)]

@@ -51,7 +51,7 @@ impl SignalReaderFactory {
 /// Used by API mutations to dispatch `SourceDiscovered` through the engine
 /// instead of calling `upsert_source` directly.
 pub struct EngineFactory {
-    create_fn: Box<dyn Fn() -> crate::pipeline::ScoutEngine + Send + Sync>,
+    create_fn: Box<dyn Fn() -> crate::core::engine::ScoutEngine + Send + Sync>,
 }
 
 impl EngineFactory {
@@ -122,7 +122,7 @@ impl EngineFactory {
     }
 
     /// Create an engine for a single operation.
-    pub fn create(&self) -> crate::pipeline::ScoutEngine {
+    pub fn create(&self) -> crate::core::engine::ScoutEngine {
         (self.create_fn)()
     }
 }

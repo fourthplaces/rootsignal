@@ -1,5 +1,7 @@
 //! Expansion domain activity functions: pure logic extracted from handlers.
 
+pub(crate) mod expansion;
+
 use tracing::info;
 
 use rootsignal_common::SourceNode;
@@ -9,8 +11,8 @@ use crate::core::aggregate::PipelineState;
 use crate::core::events::ScoutEvent;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::RunLogger;
-use crate::pipeline::expansion::{Expansion, ExpansionOutput};
-use crate::pipeline::scrape_phase::{ScrapeOutput, ScrapePhase};
+use self::expansion::{Expansion, ExpansionOutput};
+use crate::domains::scrape::activities::scrape_phase::{ScrapeOutput, ScrapePhase};
 use crate::scheduling::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.

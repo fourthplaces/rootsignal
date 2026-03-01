@@ -12,8 +12,8 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::expansion::activities;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::pipeline::expansion::Expansion;
-use crate::pipeline::scrape_phase::ScrapePhase;
+use crate::domains::expansion::activities::expansion::Expansion;
+use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 
 /// MetricsCompleted → signal expansion + end-of-run discovery, emit PhaseCompleted(Expansion).
 pub fn expansion_handler() -> Handler<ScoutEngineDeps> {

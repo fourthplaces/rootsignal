@@ -1,4 +1,4 @@
 // Content activities: extraction, fetching.
-// Canonical location: crate::pipeline::extractor
+// Canonical location: crate::core::extractor
 
-pub use crate::pipeline::extractor;
+pub use crate::core::extractor;

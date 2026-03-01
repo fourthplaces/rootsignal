@@ -13,7 +13,7 @@ use rootsignal_common::ScoutScope;
 
 use super::types::{EmptyRequest, ScrapeUrlRequest, ScrapeUrlResult};
 use super::ScoutDeps;
-use crate::pipeline::scrape_phase::scrape_single_url;
+use crate::domains::scrape::activities::scrape_phase::scrape_single_url;
 use crate::workflows::scrape::build_phase;
 
 #[restate_sdk::workflow]

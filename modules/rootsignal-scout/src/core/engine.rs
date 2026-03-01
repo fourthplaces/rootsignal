@@ -17,7 +17,7 @@ use crate::core::aggregate::PipelineState;
 use crate::core::projection;
 use crate::domains::{discovery, enrichment, expansion, lifecycle, scrape, signals, synthesis};
 use crate::infra::embedder::TextEmbedder;
-use crate::pipeline::extractor::SignalExtractor;
+use crate::core::extractor::SignalExtractor;
 use crate::traits::{ContentFetcher, SignalReader};
 
 /// Dependencies shared by all seesaw handlers.
@@ -54,6 +54,9 @@ pub struct ScoutEngineDeps {
 
 /// The seesaw-backed scout engine type.
 pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
+
+/// Public alias — canonical name for the scout engine.
+pub type ScoutEngine = SeesawEngine;
 
 /// Build a fully-wired seesaw engine for a scout run.
 ///

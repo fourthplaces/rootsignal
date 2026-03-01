@@ -13,7 +13,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::{PipelinePhase, ScoutEvent};
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::enrichment::link_promoter::{self, PromotionConfig};
-use crate::pipeline::handlers::bootstrap;
+use crate::domains::discovery::activities::bootstrap;
 
 /// EngineStarted → seed sources when the region has none.
 pub fn bootstrap_handler() -> Handler<ScoutEngineDeps> {

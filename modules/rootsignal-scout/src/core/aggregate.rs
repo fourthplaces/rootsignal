@@ -21,8 +21,8 @@ use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::enrichment::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
-use crate::pipeline::extractor::ResourceTag;
-use crate::pipeline::scrape_phase::EmbeddingCache;
+use crate::core::extractor::ResourceTag;
+use crate::core::embedding_cache::EmbeddingCache;
 
 /// Scheduling data passed between schedule_handler and scrape handlers.
 pub struct ScheduledData {
@@ -358,7 +358,7 @@ impl PipelineState {
     // -----------------------------------------------------------------
 
     /// Apply accumulated scrape output to pipeline state.
-    pub fn apply_scrape_output(&mut self, output: crate::pipeline::scrape_phase::ScrapeOutput) {
+    pub fn apply_scrape_output(&mut self, output: crate::domains::scrape::activities::scrape_phase::ScrapeOutput) {
         self.url_to_canonical_key.extend(output.url_mappings);
         for (k, v) in output.source_signal_counts {
             *self.source_signal_counts.entry(k).or_default() += v;
@@ -373,7 +373,7 @@ impl PipelineState {
     }
 
     /// Apply accumulated expansion output to pipeline state.
-    pub fn apply_expansion_output(&mut self, output: crate::pipeline::expansion::ExpansionOutput) {
+    pub fn apply_expansion_output(&mut self, output: crate::domains::expansion::activities::expansion::ExpansionOutput) {
         self.social_expansion_topics
             .extend(output.social_expansion_topics);
         self.stats.expansion_deferred_expanded = output.expansion_deferred_expanded;

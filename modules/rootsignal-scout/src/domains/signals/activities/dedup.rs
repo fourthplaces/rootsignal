@@ -18,7 +18,7 @@ use tracing::{info, warn};
 
 use crate::domains::signals::events::SignalEvent;
 use crate::infra::util::sanitize_url;
-use crate::pipeline::scrape_phase::{dedup_verdict, normalize_title, DedupVerdict};
+use crate::domains::signals::activities::dedup_utils::{dedup_verdict, normalize_title, DedupVerdict};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::{ExtractedBatch, PendingNode, PipelineState};
 

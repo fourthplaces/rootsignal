@@ -225,7 +225,7 @@ pub async fn handle_signal_stored(
 
     // Actor wiring — only for owned (social) sources
     let strategy = rootsignal_common::scraping_strategy(source_url);
-    if crate::pipeline::scrape_phase::is_owned_source(&strategy) {
+    if crate::domains::signals::activities::dedup_utils::is_owned_source(&strategy) {
         if let Some(ref author_name) = ctx.author_name {
             let discovery_depth = state
                 .actor_contexts

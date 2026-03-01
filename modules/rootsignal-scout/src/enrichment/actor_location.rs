@@ -199,7 +199,7 @@ pub async fn collect_actor_location_events(
 /// Returns the count of actors whose location was updated.
 pub async fn enrich_actor_locations(
     store: &dyn crate::traits::SignalReader,
-    engine: &crate::pipeline::ScoutEngine,
+    engine: &crate::core::engine::ScoutEngine,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,

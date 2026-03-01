@@ -22,7 +22,7 @@ use rootsignal_archive::Archive;
 use crate::discovery::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::core::events::ScoutEvent;
-use crate::pipeline::extractor::ResourceTag;
+use crate::core::extractor::ResourceTag;
 
 
 const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";

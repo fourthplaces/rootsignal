@@ -222,8 +222,8 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
-                rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+            .emit(rootsignal_scout::core::events::ScoutEvent::Pipeline(
+                rootsignal_scout::core::events::PipelineEvent::SourceDiscovered {
                     source,
                     discovered_by: "admin".into(),
                 },
@@ -445,8 +445,8 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::pipeline::events::ScoutEvent::Pipeline(
-                rootsignal_scout::pipeline::events::PipelineEvent::SourceDiscovered {
+            .emit(rootsignal_scout::core::events::ScoutEvent::Pipeline(
+                rootsignal_scout::core::events::PipelineEvent::SourceDiscovered {
                     source,
                     discovered_by: "human_submission".into(),
                 },
@@ -676,7 +676,7 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 }
 
 /// Create a per-mutation engine via the factory.
-fn require_engine(ctx: &Context<'_>) -> Result<rootsignal_scout::pipeline::ScoutEngine> {
+fn require_engine(ctx: &Context<'_>) -> Result<rootsignal_scout::core::engine::ScoutEngine> {
     ctx.data_unchecked::<Option<EngineFactory>>()
         .as_ref()
         .ok_or_else(|| async_graphql::Error::new("Engine not configured (Postgres required)"))

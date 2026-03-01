@@ -123,8 +123,8 @@ async fn run_scrape_from_deps(
 ) -> anyhow::Result<ScrapeResult> {
     let writer = GraphWriter::new(deps.graph_client.clone());
     let event_store = rootsignal_events::EventStore::new(deps.pg_pool.clone());
-    let extractor: Arc<dyn crate::pipeline::extractor::SignalExtractor> =
-        Arc::new(crate::pipeline::extractor::Extractor::new(
+    let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
+        Arc::new(crate::core::extractor::Extractor::new(
             &deps.anthropic_api_key,
             scope.name.as_str(),
             scope.center_lat,
@@ -136,7 +136,7 @@ async fn run_scrape_from_deps(
     let budget = Arc::new(crate::scheduling::budget::BudgetTracker::new(deps.daily_budget_cents));
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    let pipeline = crate::pipeline::scrape_pipeline::ScrapePipeline::new(
+    let pipeline = crate::core::scrape_pipeline::ScrapePipeline::new(
         writer,
         deps.graph_client.clone(),
         event_store,
