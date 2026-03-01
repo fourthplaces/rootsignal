@@ -48,7 +48,7 @@ pub mod handlers {
             }
         };
 
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
         let cancelled = deps
             .cancelled
             .clone()
@@ -69,7 +69,7 @@ pub mod handlers {
         };
 
         let output = activities::run_synthesis(
-            &writer,
+            &graph,
             graph_client,
             archive,
             &*deps.embedder,

@@ -16,17 +16,17 @@ use rootsignal_graph::GraphStore;
 use seesaw_core::Events;
 
 pub(crate) struct Metrics<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         region_slug: &'a str,
     ) -> Self {
         Self {
-            writer,
+            graph,
             _region_slug: region_slug,
         }
     }
@@ -60,7 +60,7 @@ impl<'a> Metrics<'a> {
         // Update source weights based on scrape results.
         for source in all_sources {
             let tension_count = self
-                .writer
+                .graph
                 .count_source_tensions(&source.canonical_key)
                 .await
                 .unwrap_or(0);
@@ -104,7 +104,7 @@ impl<'a> Metrics<'a> {
                 super::scheduler::cadence_hours_for_weight(new_weight)
             };
             if let Err(e) = self
-                .writer
+                .graph
                 .update_source_weight(&source.canonical_key, new_weight, cadence)
                 .await
             {
@@ -113,21 +113,21 @@ impl<'a> Metrics<'a> {
         }
 
         // Deactivate dead sources (10+ consecutive empty runs, non-curated/human only)
-        match self.writer.deactivate_dead_sources(10).await {
+        match self.graph.deactivate_dead_sources(10).await {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead sources"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead sources"),
         }
 
         // Deactivate dead web queries (stricter: 5+ empty, 3+ scrapes, 0 signals)
-        match self.writer.deactivate_dead_web_queries().await {
+        match self.graph.deactivate_dead_web_queries().await {
             Ok(n) if n > 0 => info!(deactivated = n, "Deactivated dead web queries"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "Failed to deactivate dead web queries"),
         }
 
         // Source stats
-        match self.writer.get_source_stats().await {
+        match self.graph.get_source_stats().await {
             Ok(ss) => {
                 info!(
                     total = ss.total,

@@ -22,7 +22,7 @@ const MAX_SIGNALS_INVESTIGATED: usize = 8;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     archive: Arc<Archive>,
     claude: Claude,
     region: String,
@@ -116,7 +116,7 @@ const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 
 impl<'a> Investigator<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         archive: Arc<Archive>,
         anthropic_api_key: &str,
         region: &ScoutScope,
@@ -125,7 +125,7 @@ impl<'a> Investigator<'a> {
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         Self {
-            writer,
+            graph,
             archive,
             claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
             region: region.name.clone(),
@@ -142,7 +142,7 @@ impl<'a> Investigator<'a> {
         let mut stats = InvestigationStats::default();
 
         let targets = match self
-            .writer
+            .graph
             .find_investigation_targets(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
             .await
         {
@@ -204,7 +204,7 @@ impl<'a> Investigator<'a> {
 
             // Always mark investigated (even on failure — prevents retry loops)
             if let Err(e) = self
-                .writer
+                .graph
                 .mark_investigated(target.signal_id, target.node_type)
                 .await
             {
@@ -370,7 +370,7 @@ impl<'a> Investigator<'a> {
         stats: &mut InvestigationStats,
     ) {
         let evidence = match self
-            .writer
+            .graph
             .get_evidence_summary(target.signal_id, target.node_type)
             .await
         {
@@ -391,7 +391,7 @@ impl<'a> Investigator<'a> {
         }
 
         let old_confidence = match self
-            .writer
+            .graph
             .get_signal_confidence(target.signal_id, target.node_type)
             .await
         {
@@ -408,7 +408,7 @@ impl<'a> Investigator<'a> {
         }
 
         if let Err(e) = self
-            .writer
+            .graph
             .update_signal_confidence(target.signal_id, target.node_type, new_confidence)
             .await
         {

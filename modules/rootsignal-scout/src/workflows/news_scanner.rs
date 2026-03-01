@@ -78,12 +78,12 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 /// Run a news scan using shared deps. Usable from both Restate and CLI.
 pub async fn scan_news(deps: &ScoutDeps) -> anyhow::Result<NewsScanResult> {
     let archive = super::create_archive(deps);
-    let writer = GraphStore::new(deps.graph_client.clone());
+    let graph = GraphStore::new(deps.graph_client.clone());
 
     let scanner = crate::news_scanner::NewsScanner::new(
         archive,
         &deps.anthropic_api_key,
-        writer,
+        graph,
         deps.daily_budget_cents,
     );
 

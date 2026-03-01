@@ -275,7 +275,7 @@ Return valid JSON matching the ResponseFinding schema.";
 // =============================================================================
 
 pub struct ResponseFinder<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     anthropic_api_key: String,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -291,7 +291,7 @@ pub struct ResponseFinder<'a> {
 
 impl<'a> ResponseFinder<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -303,7 +303,7 @@ impl<'a> ResponseFinder<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
         let region_slug = region.name.clone();
         Self {
-            writer,
+            graph,
             anthropic_api_key: anthropic_api_key.to_string(),
             archive,
             embedder,
@@ -343,7 +343,7 @@ impl<'a> ResponseFinder<'a> {
         let mut discovered_sources = Vec::new();
 
         let targets = match self
-            .writer
+            .graph
             .find_response_finder_targets(
                 MAX_RESPONSE_TARGETS_PER_RUN as u32,
                 self.min_lat,
@@ -369,7 +369,7 @@ impl<'a> ResponseFinder<'a> {
         info!(count = targets.len(), "Response scout targets selected");
 
         // Load situation landscape — unmet response gaps from situations guide investigation
-        let situation_context = match self.writer.get_situation_landscape(15).await {
+        let situation_context = match self.graph.get_situation_landscape(15).await {
             Ok(situations) => format_situation_context(&situations),
             Err(e) => {
                 warn!(error = %e, "Failed to load situation landscape for response finder");
@@ -407,7 +407,7 @@ impl<'a> ResponseFinder<'a> {
             }
 
             // Mark scouted regardless of success/failure (timestamp prevents re-investigation)
-            if let Err(e) = self.writer.mark_response_found(target.tension_id).await {
+            if let Err(e) = self.graph.mark_response_found(target.tension_id).await {
                 warn!(
                     tension_id = %target.tension_id,
                     error = %e,
@@ -429,7 +429,7 @@ impl<'a> ResponseFinder<'a> {
     ) -> Result<()> {
         // Fetch existing response heuristics
         let existing = self
-            .writer
+            .graph
             .get_existing_responses(target.tension_id)
             .await
             .unwrap_or_default();
@@ -558,7 +558,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Check for duplicate (region-scoped)
         let existing = self
-            .writer
+            .graph
             .find_duplicate(
                 &embedding,
                 node_type,
@@ -786,7 +786,7 @@ impl<'a> ResponseFinder<'a> {
         let lat_delta = self.region.radius_km / 111.0;
         let lng_delta = self.region.radius_km / (111.0 * self.region.center_lat.to_radians().cos());
         let active_tensions = self
-            .writer
+            .graph
             .get_active_tensions(
                 self.region.center_lat - lat_delta,
                 self.region.center_lat + lat_delta,
@@ -845,7 +845,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Dedup check (region-scoped)
         let existing = self
-            .writer
+            .graph
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,

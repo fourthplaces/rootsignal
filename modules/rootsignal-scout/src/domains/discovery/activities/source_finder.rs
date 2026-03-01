@@ -431,7 +431,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     region_slug: String,
     region_name: String,
     claude: Option<Claude>,
@@ -446,7 +446,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 
 impl<'a> SourceFinder<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         region_slug: &str,
         region_name: &str,
         anthropic_api_key: Option<&str>,
@@ -456,7 +456,7 @@ impl<'a> SourceFinder<'a> {
             .filter(|k| !k.is_empty())
             .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
-            writer,
+            graph,
             region_slug: region_slug.to_string(),
             region_name: region_name.to_string(),
             claude,
@@ -508,7 +508,7 @@ impl<'a> SourceFinder<'a> {
         sources: &mut Vec<SourceNode>,
     ) {
         let actors = match self
-            .writer
+            .graph
             .get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH))
             .await
         {
@@ -519,7 +519,7 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        let existing = match self.writer.get_active_sources().await {
+        let existing = match self.graph.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get existing sources for dedup");
@@ -708,7 +708,7 @@ impl<'a> SourceFinder<'a> {
                 match embedder.embed(&dq.query).await {
                     Ok(embedding) => {
                         match self
-                            .writer
+                            .graph
                             .find_similar_query(&embedding, QUERY_DEDUP_SIMILARITY_THRESHOLD)
                             .await
                         {
@@ -779,7 +779,7 @@ impl<'a> SourceFinder<'a> {
             // Store query embedding so future runs can dedup against it
             if let Some(embedder) = self.embedder {
                 if let Ok(embedding) = embedder.embed(&dq.query).await {
-                    if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                    if let Err(e) = self.graph.set_query_embedding(&ck, &embedding).await {
                         warn!(error = %e, "Failed to store query embedding (non-fatal)");
                     }
                 }
@@ -790,50 +790,50 @@ impl<'a> SourceFinder<'a> {
     /// Build a DiscoveryBriefing from graph queries.
     async fn build_briefing(&self) -> anyhow::Result<DiscoveryBriefing> {
         let tensions = self
-            .writer
+            .graph
             .get_unmet_tensions(10)
             .await
             .map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
 
         let situations = self
-            .writer
+            .graph
             .get_situation_landscape(10)
             .await
             .map_err(|e| anyhow::anyhow!("get_situation_landscape: {e}"))?;
 
         let signal_counts = self
-            .writer
+            .graph
             .get_signal_type_counts()
             .await
             .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
 
         let (successes, failures) = self
-            .writer
+            .graph
             .get_discovery_performance()
             .await
             .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
 
         let gap_type_stats = self
-            .writer
+            .graph
             .get_gap_type_stats()
             .await
             .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
 
         let extraction_yield = self
-            .writer
+            .graph
             .get_extraction_yield()
             .await
             .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
 
         let response_shapes = self
-            .writer
+            .graph
             .get_tension_response_shape(10)
             .await
             .map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
 
         // Get existing WebQuery sources for dedup
         let existing = self
-            .writer
+            .graph
             .get_active_sources()
             .await
             .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
@@ -869,7 +869,7 @@ impl<'a> SourceFinder<'a> {
         sources: &mut Vec<SourceNode>,
     ) {
         // Get tensions with engagement data, sorted by engagement within unmet-first grouping
-        let mut tensions = match self.writer.get_unmet_tensions(20).await {
+        let mut tensions = match self.graph.get_unmet_tensions(20).await {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to get tensions for gap analysis");
@@ -892,7 +892,7 @@ impl<'a> SourceFinder<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let existing = match self.writer.get_active_sources().await {
+        let existing = match self.graph.get_active_sources().await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get sources for gap analysis");

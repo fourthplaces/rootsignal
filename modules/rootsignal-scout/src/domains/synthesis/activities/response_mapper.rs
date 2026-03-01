@@ -26,7 +26,7 @@ struct ResponseVerdict {
 
 /// Maps responses (Aid/Gathering) to active Tensions/Needs using embedding similarity + LLM verification.
 pub struct ResponseMapper<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     anthropic_api_key: String,
     min_lat: f64,
     max_lat: f64,
@@ -36,7 +36,7 @@ pub struct ResponseMapper<'a> {
 
 impl<'a> ResponseMapper<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         anthropic_api_key: &str,
         center_lat: f64,
         center_lng: f64,
@@ -45,7 +45,7 @@ impl<'a> ResponseMapper<'a> {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         Self {
-            writer,
+            graph,
             anthropic_api_key: anthropic_api_key.to_string(),
             min_lat: center_lat - lat_delta,
             max_lat: center_lat + lat_delta,
@@ -63,7 +63,7 @@ impl<'a> ResponseMapper<'a> {
         let mut stats = ResponseMappingStats::default();
 
         let tensions = self
-            .writer
+            .graph
             .get_active_tensions(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
             .await?;
         if tensions.is_empty() {
@@ -75,7 +75,7 @@ impl<'a> ResponseMapper<'a> {
 
         for (tension_id, tension_embedding) in &tensions {
             let candidates = self
-                .writer
+                .graph
                 .find_response_candidates(
                     tension_embedding,
                     self.min_lat,
@@ -90,13 +90,13 @@ impl<'a> ResponseMapper<'a> {
                 continue;
             }
 
-            let tension_info = self.writer.get_signal_info(*tension_id).await?;
+            let tension_info = self.graph.get_signal_info(*tension_id).await?;
             let Some((tension_title, tension_summary)) = tension_info else {
                 continue;
             };
 
             for (candidate_id, candidate_similarity) in candidates.iter().take(5) {
-                let candidate_info = self.writer.get_signal_info(*candidate_id).await?;
+                let candidate_info = self.graph.get_signal_info(*candidate_id).await?;
                 let Some((candidate_title, candidate_summary)) = candidate_info else {
                     continue;
                 };

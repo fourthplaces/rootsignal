@@ -88,7 +88,7 @@ pub async fn scrape_response(
     phase: &ScrapePhase,
     state: &PipelineState,
     social_topics: Vec<String>,
-    writer: &GraphStore,
+    graph: &GraphStore,
     region: &rootsignal_common::ScoutScope,
     run_log: &RunLogger,
 ) -> ScrapeOutput {
@@ -106,7 +106,7 @@ pub async fn scrape_response(
         .collect();
 
     // Reload sources from graph to pick up mid-run discoveries
-    let fresh_sources = match writer
+    let fresh_sources = match graph
         .get_sources_for_region(region.center_lat, region.center_lng, region.radius_km)
         .await
     {

@@ -121,7 +121,7 @@ pub mod handlers {
                 return Ok(events![LifecycleEvent::MetricsCompleted]);
             }
         };
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
 
         let state = deps.state.read().await;
         let all_sources = state
@@ -134,7 +134,7 @@ pub mod handlers {
         drop(state);
 
         let metric_events = activities::update_source_weights(
-            &writer,
+            &graph,
             &region.name,
             &all_sources,
             &source_signal_counts,

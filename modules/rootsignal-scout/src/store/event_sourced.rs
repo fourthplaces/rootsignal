@@ -23,12 +23,12 @@ use crate::traits::SignalReader;
 
 /// Read-only SignalReader backed by Neo4j via GraphStore.
 pub struct EventSourcedReader {
-    writer: GraphStore,
+    graph: GraphStore,
 }
 
 impl EventSourcedReader {
-    pub fn new(writer: GraphStore) -> Self {
-        Self { writer }
+    pub fn new(graph: GraphStore) -> Self {
+        Self { graph }
     }
 }
 
@@ -221,8 +221,8 @@ impl SignalReader for EventSourcedReader {
         ))
         .param("id", id.to_string());
 
-        let graph = self.writer.client().inner();
-        let mut stream = match graph.execute(q).await {
+        let neo4j = self.graph.client().inner();
+        let mut stream = match neo4j.execute(q).await {
             Ok(s) => s,
             Err(_) => return Ok(0),
         };
@@ -234,14 +234,14 @@ impl SignalReader for EventSourcedReader {
         }
     }
 
-    // --- URL/content guards (read-only, delegate to writer) ---
+    // --- URL/content guards (read-only, delegate to graph) ---
 
     async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>> {
-        Ok(self.writer.blocked_urls(urls).await?)
+        Ok(self.graph.blocked_urls(urls).await?)
     }
 
     async fn content_already_processed(&self, hash: &str, url: &str) -> Result<bool> {
-        Ok(self.writer.content_already_processed(hash, url).await?)
+        Ok(self.graph.content_already_processed(hash, url).await?)
     }
 
     async fn signal_ids_for_url(&self, url: &str) -> Result<Vec<(Uuid, NodeType)>> {
@@ -258,8 +258,8 @@ impl SignalReader for EventSourcedReader {
             ))
             .param("url", url);
 
-            let graph = self.writer.client().inner();
-            let mut stream = graph.execute(q).await?;
+            let neo4j = self.graph.client().inner();
+            let mut stream = neo4j.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -270,17 +270,17 @@ impl SignalReader for EventSourcedReader {
         Ok(results)
     }
 
-    // --- Dedup queries (read-only, delegate to writer) ---
+    // --- Dedup queries (read-only, delegate to graph) ---
 
     async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
-        Ok(self.writer.existing_titles_for_url(url).await?)
+        Ok(self.graph.existing_titles_for_url(url).await?)
     }
 
     async fn find_by_titles_and_types(
         &self,
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
-        Ok(self.writer.find_by_titles_and_types(pairs).await?)
+        Ok(self.graph.find_by_titles_and_types(pairs).await?)
     }
 
     async fn find_duplicate(
@@ -294,7 +294,7 @@ impl SignalReader for EventSourcedReader {
         max_lng: f64,
     ) -> Result<Option<DuplicateMatch>> {
         Ok(self
-            .writer
+            .graph
             .find_duplicate(
                 embedding,
                 primary_type,
@@ -310,12 +310,12 @@ impl SignalReader for EventSourcedReader {
     // --- Actor graph (append event → project to graph) ---
 
     async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>> {
-        Ok(self.writer.find_actor_by_name(name).await?)
+        Ok(self.graph.find_actor_by_name(name).await?)
     }
 
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         Ok(self
-            .writer
+            .graph
             .find_actor_by_canonical_key(canonical_key)
             .await?)
     }
@@ -323,11 +323,11 @@ impl SignalReader for EventSourcedReader {
     // --- Source management (append event → project to graph) ---
 
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
-        Ok(self.writer.get_active_sources().await?)
+        Ok(self.graph.get_active_sources().await?)
     }
 
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
-        let graph = self.writer.client().inner();
+        let neo4j = self.graph.client().inner();
         let mut expired = Vec::new();
 
         // 1. Past non-recurring gatherings
@@ -343,7 +343,7 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
         ));
-        let mut stream = graph.execute(q).await?;
+        let mut stream = neo4j.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -358,7 +358,7 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             NEED_EXPIRE_DAYS
         ));
-        let mut stream = graph.execute(q).await?;
+        let mut stream = neo4j.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -373,7 +373,7 @@ impl SignalReader for EventSourcedReader {
              RETURN n.id AS id",
             NOTICE_EXPIRE_DAYS
         ));
-        let mut stream = graph.execute(q).await?;
+        let mut stream = neo4j.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -390,7 +390,7 @@ impl SignalReader for EventSourcedReader {
                 label = label,
                 days = FRESHNESS_MAX_DAYS,
             ));
-            let mut stream = graph.execute(q).await?;
+            let mut stream = neo4j.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -408,11 +408,11 @@ impl SignalReader for EventSourcedReader {
         &self,
         actor_id: Uuid,
     ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> {
-        Ok(self.writer.get_signals_for_actor(actor_id).await?)
+        Ok(self.graph.get_signals_for_actor(actor_id).await?)
     }
 
     async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
-        Ok(self.writer.list_all_actors().await?)
+        Ok(self.graph.list_all_actors().await?)
     }
 }
 

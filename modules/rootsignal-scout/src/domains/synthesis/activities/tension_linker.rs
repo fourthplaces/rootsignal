@@ -175,7 +175,7 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 // =============================================================================
 
 pub struct TensionLinker<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -189,7 +189,7 @@ pub struct TensionLinker<'a> {
 
 impl<'a> TensionLinker<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         anthropic_api_key: &str,
@@ -216,7 +216,7 @@ impl<'a> TensionLinker<'a> {
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
 
         Self {
-            writer,
+            graph,
             claude,
             embedder,
             min_lat: region.center_lat - lat_delta,
@@ -233,7 +233,7 @@ impl<'a> TensionLinker<'a> {
         let mut stats = TensionLinkerStats::default();
 
         let targets = match self
-            .writer
+            .graph
             .find_tension_linker_targets(
                 MAX_TENSION_LINKER_TARGETS_PER_RUN,
                 self.min_lat,
@@ -260,7 +260,7 @@ impl<'a> TensionLinker<'a> {
 
         // Load tension landscape for context
         let tension_landscape = match self
-            .writer
+            .graph
             .get_tension_landscape(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
             .await
         {
@@ -283,7 +283,7 @@ impl<'a> TensionLinker<'a> {
         };
 
         // Load situation landscape — emerging/fuzzy situations guide investigation priority
-        let situation_landscape = match self.writer.get_situation_landscape(15).await {
+        let situation_landscape = match self.graph.get_situation_landscape(15).await {
             Ok(situations) => format_situation_landscape(&situations),
             Err(e) => {
                 warn!(error = %e, "Failed to load situation landscape for tension linker");
@@ -352,7 +352,7 @@ impl<'a> TensionLinker<'a> {
             };
 
             if let Err(e) = self
-                .writer
+                .graph
                 .mark_tension_linker_investigated(target.signal_id, &target.label, outcome)
                 .await
             {
@@ -418,7 +418,7 @@ impl<'a> TensionLinker<'a> {
 
         // Check for duplicate tension (region-scoped)
         let existing = self
-            .writer
+            .graph
             .find_duplicate(
                 &embedding,
                 NodeType::Tension,

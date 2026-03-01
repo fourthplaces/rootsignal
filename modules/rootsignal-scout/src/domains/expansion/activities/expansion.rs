@@ -41,19 +41,19 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 // --- Expansion stage ---
 
 pub(crate) struct Expansion<'a> {
-    writer: &'a GraphStore,
+    graph: &'a GraphStore,
     embedder: &'a dyn TextEmbedder,
     region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
-        writer: &'a GraphStore,
+        graph: &'a GraphStore,
         embedder: &'a dyn TextEmbedder,
         region_slug: &'a str,
     ) -> Self {
         Self {
-            writer,
+            graph,
             embedder,
             region_slug,
         }
@@ -75,7 +75,7 @@ impl<'a> Expansion<'a> {
         // Deferred expansion: collect implied queries from Give/Event signals
         // that are now linked to tensions via response mapping.
         let mut deferred_expanded = 0u32;
-        match self.writer.get_recently_linked_signals_with_queries().await {
+        match self.graph.get_recently_linked_signals_with_queries().await {
             Ok(deferred) => {
                 let deferred_count = deferred.len();
                 all_queries.extend(deferred);
@@ -104,7 +104,7 @@ impl<'a> Expansion<'a> {
         }
 
         let existing = self
-            .writer
+            .graph
             .get_active_web_queries()
             .await
             .unwrap_or_default();
@@ -124,7 +124,7 @@ impl<'a> Expansion<'a> {
         for query_text in &deduped {
             // Embedding-based dedup for expansion queries
             if let Ok(embedding) = self.embedder.embed(query_text).await {
-                match self.writer.find_similar_query(&embedding, 0.90).await {
+                match self.graph.find_similar_query(&embedding, 0.90).await {
                     Ok(Some((existing_ck, sim))) => {
                         info!(
                             query = query_text.as_str(),
@@ -161,7 +161,7 @@ impl<'a> Expansion<'a> {
             sources.push(source);
             // Store embedding for future dedup
             if let Ok(embedding) = self.embedder.embed(query_text).await {
-                if let Err(e) = self.writer.set_query_embedding(&ck, &embedding).await {
+                if let Err(e) = self.graph.set_query_embedding(&ck, &embedding).await {
                     warn!(error = %e, "Failed to store expansion query embedding (non-fatal)");
                 }
             }

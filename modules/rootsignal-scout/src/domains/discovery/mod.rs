@@ -104,10 +104,10 @@ pub mod handlers {
                 }]);
             }
         };
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
 
         let output = discover_sources_mid_run(
-            &writer,
+            &graph,
             &region.name,
             &*deps.embedder,
             deps.anthropic_api_key.as_deref(),

@@ -33,7 +33,7 @@ pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
     phase: Option<&ScrapePhase>,
     state: &PipelineState,
-    writer: &GraphStore,
+    graph: &GraphStore,
     region_name: &str,
     api_key: Option<&str>,
     budget: &BudgetTracker,
@@ -54,7 +54,7 @@ pub async fn expand_and_discover(
 
     // End-of-run discovery
     let end_discoverer = SourceFinder::new(
-        writer,
+        graph,
         region_name,
         region_name,
         api_key,

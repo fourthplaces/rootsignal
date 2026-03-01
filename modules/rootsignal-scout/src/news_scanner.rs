@@ -47,7 +47,7 @@ const NEWS_FEEDS: &[&str] = &[
 pub struct NewsScanner {
     archive: Arc<Archive>,
     extractor: Box<dyn SignalExtractor>,
-    writer: GraphStore,
+    graph: GraphStore,
     budget: BudgetTracker,
 }
 
@@ -55,7 +55,7 @@ impl NewsScanner {
     pub fn new(
         archive: Arc<Archive>,
         anthropic_api_key: &str,
-        writer: GraphStore,
+        graph: GraphStore,
         daily_budget_cents: u64,
     ) -> Self {
         // Use a generic "Global" scope for extraction — no region bias
@@ -64,7 +64,7 @@ impl NewsScanner {
         Self {
             archive,
             extractor,
-            writer,
+            graph,
             budget: BudgetTracker::new(daily_budget_cents),
         }
     }
@@ -111,7 +111,7 @@ impl NewsScanner {
         for (url, title) in all_urls {
             if seen.insert(url.clone()) {
                 // Check if source already exists in graph
-                let exists = self.writer.source_exists(&url).await.unwrap_or(false);
+                let exists = self.graph.source_exists(&url).await.unwrap_or(false);
                 if !exists {
                     new_urls.push((url, title));
                 }
@@ -185,7 +185,7 @@ impl NewsScanner {
 
         // 4. Create beacon tasks from clustered candidates
         let beacons_created =
-            rootsignal_graph::beacon::create_beacons_from_news(&self.writer, beacon_candidates)
+            rootsignal_graph::beacon::create_beacons_from_news(&self.graph, beacon_candidates)
                 .await?;
 
         info!(articles_scanned, beacons_created, "News scan complete");

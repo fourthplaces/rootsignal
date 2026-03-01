@@ -94,7 +94,7 @@ pub mod handlers {
                 }]);
             }
         };
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
 
         let phase = ScrapePhase::new(
             deps.store.clone(),
@@ -115,7 +115,7 @@ pub mod handlers {
 
         let state = deps.state.read().await;
         let mut output =
-            scrape_response(&phase, &state, social_topics, &writer, region, &run_log).await;
+            scrape_response(&phase, &state, social_topics, &graph, region, &run_log).await;
         drop(state);
 
         let events = output.take_events();

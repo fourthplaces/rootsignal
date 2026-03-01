@@ -45,8 +45,8 @@ impl SituationWeaverWorkflow for SituationWeaverWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphStore::new(graph_client);
-            let transitioned = writer
+            let graph = rootsignal_graph::GraphStore::new(graph_client);
+            let transitioned = graph
                 .transition_task_phase_status(
                     &tid,
                     &[
@@ -120,7 +120,7 @@ pub async fn weave_situations(
     scope: &rootsignal_common::ScoutScope,
     spent_cents: u64,
 ) -> anyhow::Result<SituationWeaverResult> {
-    let writer = GraphStore::new(deps.graph_client.clone());
+    let graph = GraphStore::new(deps.graph_client.clone());
     let embedder: Arc<dyn crate::infra::embedder::TextEmbedder> =
         Arc::new(crate::infra::embedder::Embedder::new(&deps.voyage_api_key));
     let budget = BudgetTracker::new_with_spent(deps.daily_budget_cents, spent_cents);
@@ -151,7 +151,7 @@ pub async fn weave_situations(
     // ================================================================
     // Situation-driven source boost
     // ================================================================
-    match writer.get_situation_landscape(20).await {
+    match graph.get_situation_landscape(20).await {
         Ok(situations) => {
             let hot: Vec<_> = situations
                 .iter()
@@ -164,7 +164,7 @@ pub async fn weave_situations(
             if !hot.is_empty() {
                 info!(count = hot.len(), "Hot situations boosting source cadence");
                 for sit in &hot {
-                    if let Err(e) = writer
+                    if let Err(e) = graph
                         .boost_sources_for_situation_headline(&sit.headline, 1.2)
                         .await
                     {
@@ -195,7 +195,7 @@ pub async fn weave_situations(
     // ================================================================
     // Situation-triggered curiosity re-investigation
     // ================================================================
-    match writer.trigger_situation_curiosity().await {
+    match graph.trigger_situation_curiosity().await {
         Ok(0) => {}
         Ok(n) => info!(count = n, "Situations triggered curiosity re-investigation"),
         Err(e) => warn!(error = %e, "Failed to trigger situation curiosity"),

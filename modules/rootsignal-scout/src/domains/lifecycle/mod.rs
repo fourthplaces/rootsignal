@@ -56,9 +56,9 @@ pub mod handlers {
             (Some(r), Some(g)) => (r, g),
             _ => return Ok(events![]),
         };
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
 
-        let output = activities::schedule_sources(&writer, region).await;
+        let output = activities::schedule_sources(&graph, region).await;
 
         let tension_count = output.tension_count;
         let response_count = output.response_count;

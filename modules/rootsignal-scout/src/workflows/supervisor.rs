@@ -43,8 +43,8 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = rootsignal_graph::GraphStore::new(graph_client);
-            let transitioned = writer
+            let graph = rootsignal_graph::GraphStore::new(graph_client);
+            let transitioned = graph
                 .transition_task_phase_status(
                     &tid,
                     &["lint_complete", "situation_weaver_complete", "complete"],
@@ -112,7 +112,7 @@ pub async fn supervise_region(
     deps: &ScoutDeps,
     scope: &rootsignal_common::ScoutScope,
 ) -> anyhow::Result<SupervisorResult> {
-    let writer = GraphStore::new(deps.graph_client.clone());
+    let graph = GraphStore::new(deps.graph_client.clone());
     let (min_lat, max_lat, min_lng, max_lng) = scope.bounding_box();
 
     // 1. Run supervisor checks
@@ -139,7 +139,7 @@ pub async fn supervise_region(
     };
 
     // 2. Merge duplicate tensions (before heat computation)
-    match writer
+    match graph
         .merge_duplicate_tensions(0.85, min_lat, max_lat, min_lng, max_lng)
         .await
     {
@@ -164,7 +164,7 @@ pub async fn supervise_region(
     }
 
     // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
-    match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &writer).await {
+    match rootsignal_graph::beacon::detect_beacons(&deps.graph_client, &graph).await {
         Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
         Ok(_) => {}
         Err(e) => warn!(error = %e, "Beacon detection failed"),

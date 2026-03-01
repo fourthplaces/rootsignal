@@ -30,11 +30,11 @@ pub async fn enrich_scraped_signals(
     embedder: &dyn TextEmbedder,
     consumed_pin_ids: &[Uuid],
 ) -> seesaw_core::Events {
-    let writer = GraphStore::new(graph_client.clone());
+    let graph = GraphStore::new(graph_client.clone());
 
     // Delete consumed pins
     if !consumed_pin_ids.is_empty() {
-        match writer.delete_pins(consumed_pin_ids).await {
+        match graph.delete_pins(consumed_pin_ids).await {
             Ok(()) => info!(count = consumed_pin_ids.len(), "Deleted consumed pins"),
             Err(e) => warn!(error = %e, "Failed to delete consumed pins"),
         }
@@ -85,13 +85,13 @@ pub async fn enrich_scraped_signals(
 
 /// Update source weights and cadence metrics.
 pub async fn update_source_weights(
-    writer: &GraphStore,
+    graph: &GraphStore,
     region_name: &str,
     all_sources: &[SourceNode],
     source_signal_counts: &HashMap<String, u32>,
     query_api_errors: &HashSet<String>,
 ) -> seesaw_core::Events {
-    let metrics = Metrics::new(writer, region_name);
+    let metrics = Metrics::new(graph, region_name);
     metrics
         .update_weights_and_cadence(all_sources, source_signal_counts, query_api_errors, Utc::now())
         .await

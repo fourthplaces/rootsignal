@@ -43,7 +43,7 @@ pub mod handlers {
                 }]);
             }
         };
-        let writer = GraphStore::new(graph_client.clone());
+        let graph = GraphStore::new(graph_client.clone());
 
         let run_log = match deps.pg_pool.as_ref() {
             Some(pool) => {
@@ -57,7 +57,7 @@ pub mod handlers {
             None => RunLogger::noop(),
         };
 
-        let expansion = Expansion::new(&writer, &*deps.embedder, &region.name);
+        let expansion = Expansion::new(&graph, &*deps.embedder, &region.name);
         let phase = ScrapePhase::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
@@ -72,7 +72,7 @@ pub mod handlers {
             &expansion,
             Some(&phase),
             &state,
-            &writer,
+            &graph,
             &region.name,
             deps.anthropic_api_key.as_deref(),
             budget,

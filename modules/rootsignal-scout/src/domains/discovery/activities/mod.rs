@@ -21,14 +21,14 @@ pub struct MidRunOutput {
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
 pub async fn discover_sources_mid_run(
-    writer: &GraphStore,
+    graph: &GraphStore,
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,
     budget: &BudgetTracker,
 ) -> MidRunOutput {
     let discoverer = source_finder::SourceFinder::new(
-        writer,
+        graph,
         region_name,
         region_name,
         api_key,

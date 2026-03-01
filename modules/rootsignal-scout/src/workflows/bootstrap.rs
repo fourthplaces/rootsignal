@@ -45,8 +45,8 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let tid = task_id.clone();
         let graph_client = self.deps.graph_client.clone();
         ctx.run(|| async move {
-            let writer = GraphStore::new(graph_client);
-            let transitioned = writer
+            let graph = GraphStore::new(graph_client);
+            let transitioned = graph
                 .transition_task_phase_status(
                     &tid,
                     &[
