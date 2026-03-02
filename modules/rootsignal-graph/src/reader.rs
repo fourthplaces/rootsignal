@@ -1433,6 +1433,7 @@ fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
         Node::HelpRequest(n) => Some(&mut n.meta),
         Node::Announcement(n) => Some(&mut n.meta),
         Node::Concern(n) => Some(&mut n.meta),
+        Node::Condition(n) => Some(&mut n.meta),
         Node::Citation(_) => None,
     }
 }

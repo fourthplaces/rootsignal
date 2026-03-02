@@ -1151,7 +1151,7 @@ impl GraphProjector {
                         self.set_str(
                             "Concern",
                             signal_id,
-                            "what_would_help",
+                            "opposing",
                             new.as_deref().unwrap_or(""),
                         )
                         .await?

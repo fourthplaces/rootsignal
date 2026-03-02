@@ -37,7 +37,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
         Node::Resource(g) => (!g.action_url.is_empty(), g.is_ongoing),
         Node::HelpRequest(a) => (a.action_url.is_some(), false),
         Node::Announcement(_) => (false, false),
-        Node::Concern(_) => (false, false),
+        Node::Concern(_) | Node::Condition(_) => (false, false),
         Node::Citation(_) => (false, false),
     };
 
@@ -66,7 +66,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
             let filled = has_location as u8 + has_action_url as u8;
             (filled, 2)
         }
-        Node::Announcement(_) | Node::Concern(_) => {
+        Node::Announcement(_) | Node::Concern(_) | Node::Condition(_) => {
             // location only
             (has_location as u8, 1)
         }

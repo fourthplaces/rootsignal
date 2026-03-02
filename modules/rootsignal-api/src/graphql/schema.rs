@@ -368,7 +368,7 @@ impl QueryRoot {
                     title: t.title.clone(),
                     severity: t.severity.clone(),
                     category: t.category.clone(),
-                    what_would_help: t.what_would_help.clone(),
+                    opposing: t.opposing.clone(),
                 })
                 .collect(),
             top_sources: top_sources
@@ -967,7 +967,7 @@ pub struct AdminConcernRow {
     pub title: String,
     pub severity: String,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
 }
 
 #[derive(SimpleObject)]

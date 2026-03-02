@@ -75,9 +75,9 @@ impl DiscoveryBriefing {
         if !unmet.is_empty() {
             out.push_str("## UNMET TENSIONS (no response found)\n");
             for (i, t) in unmet.iter().enumerate() {
-                let help = t.what_would_help.as_deref().unwrap_or("unknown");
+                let help = t.opposing.as_deref().unwrap_or("unknown");
                 out.push_str(&format!(
-                    "{}. [{}] \"{}\" — What would help: {}\n",
+                    "{}. [{}] \"{}\" — Opposing: {}\n",
                     i + 1,
                     t.severity.to_uppercase(),
                     t.title,
@@ -94,9 +94,9 @@ impl DiscoveryBriefing {
         if !met.is_empty() {
             out.push_str("## TENSIONS WITH RESPONSES (lower priority)\n");
             for (i, t) in met.iter().enumerate() {
-                let help = t.what_would_help.as_deref().unwrap_or("unknown");
+                let help = t.opposing.as_deref().unwrap_or("unknown");
                 out.push_str(&format!(
-                    "{}. [{}] \"{}\" — What would help: {}\n",
+                    "{}. [{}] \"{}\" — Opposing: {}\n",
                     i + 1,
                     t.severity.to_uppercase(),
                     t.title,
@@ -121,12 +121,12 @@ impl DiscoveryBriefing {
             );
             out.push_str("If it has events but no donation channels, search for giving.\n\n");
             for rs in &self.response_shapes {
-                let help = rs.what_would_help.as_deref().unwrap_or("unknown");
+                let help = rs.opposing.as_deref().unwrap_or("unknown");
                 out.push_str(&format!(
                     "- \"{}\" (heat: {:.1})\n",
                     rs.title, rs.cause_heat,
                 ));
-                out.push_str(&format!("  What would help: {}\n", help));
+                out.push_str(&format!("  Opposing: {}\n", help));
                 out.push_str(&format!(
                     "  Aids: {}, Gatherings: {}, Needs: {}\n",
                     rs.aid_count, rs.gathering_count, rs.need_count,
@@ -918,7 +918,7 @@ impl<'a> SourceFinder<'a> {
                 break;
             }
 
-            let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
+            let help_text = t.opposing.as_deref().unwrap_or(&t.title);
             let query = format!("{} resources services {}", help_text, self.region_slug);
             let query_lower = query.to_lowercase();
 
@@ -960,7 +960,7 @@ impl<'a> SourceFinder<'a> {
         // Generate social topics from the same tensions — mechanical fallback parity
         const MAX_MECHANICAL_SOCIAL_TOPICS: usize = 3;
         for t in tensions.iter().take(MAX_MECHANICAL_SOCIAL_TOPICS) {
-            let help_text = t.what_would_help.as_deref().unwrap_or(&t.title);
+            let help_text = t.opposing.as_deref().unwrap_or(&t.title);
             social_topics.push(format!("{} {}", help_text, self.region_name));
         }
     }
@@ -975,13 +975,13 @@ mod tests {
     fn make_tension(
         title: &str,
         severity: &str,
-        what_would_help: Option<&str>,
+        opposing: Option<&str>,
         unmet: bool,
     ) -> UnmetTension {
         UnmetTension {
             title: title.to_string(),
             severity: severity.to_string(),
-            what_would_help: what_would_help.map(|s| s.to_string()),
+            opposing: opposing.map(|s| s.to_string()),
             category: None,
             unmet,
             corroboration_count: 0,
@@ -993,7 +993,7 @@ mod tests {
     fn make_tension_with_engagement(
         title: &str,
         severity: &str,
-        what_would_help: Option<&str>,
+        opposing: Option<&str>,
         unmet: bool,
         corroboration_count: u32,
         source_diversity: u32,
@@ -1002,7 +1002,7 @@ mod tests {
         UnmetTension {
             title: title.to_string(),
             severity: severity.to_string(),
-            what_would_help: what_would_help.map(|s| s.to_string()),
+            opposing: opposing.map(|s| s.to_string()),
             category: None,
             unmet,
             corroboration_count,
@@ -1128,11 +1128,11 @@ mod tests {
             "Missing EXISTING QUERIES section"
         );
 
-        // Tensions include severity and what_would_help
+        // Tensions include severity and opposing
         assert!(prompt.contains("[HIGH]"), "Missing severity tag");
         assert!(
             prompt.contains("grocery co-op"),
-            "Missing what_would_help text"
+            "Missing opposing text"
         );
 
         // Situations include arc and temperature
@@ -1861,7 +1861,7 @@ mod tests {
         let mut briefing = make_briefing();
         briefing.response_shapes = vec![ConcernResponseShape {
             title: "Immigration Enforcement Fear".to_string(),
-            what_would_help: Some(
+            opposing: Some(
                 "legal defense, emergency housing, mental health support".to_string(),
             ),
             cause_heat: 0.8,
@@ -1891,7 +1891,7 @@ mod tests {
         assert!(prompt.contains("ILCM Legal Clinic"), "Missing sample title");
         assert!(
             prompt.contains("legal defense, emergency housing"),
-            "Missing what_would_help"
+            "Missing opposing"
         );
     }
 

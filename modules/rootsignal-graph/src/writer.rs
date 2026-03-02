@@ -722,7 +722,7 @@ impl GraphReader {
                   collect(DISTINCT r.title)[..5] AS sample_titles
              WHERE aid_count + gathering_count + need_count > 0
              RETURN t.title AS title,
-                    t.what_would_help AS what_would_help,
+                    t.opposing AS opposing,
                     coalesce(t.cause_heat, 0.0) AS cause_heat,
                     aid_count, gathering_count, need_count,
                     sample_titles",
@@ -733,7 +733,7 @@ impl GraphReader {
         let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
-            let what_would_help: Option<String> = row.get("what_would_help").ok();
+            let opposing: Option<String> = row.get("opposing").ok();
             let cause_heat: f64 = row.get("cause_heat").unwrap_or(0.0);
             let aid_count: i64 = row.get("aid_count").unwrap_or(0);
             let gathering_count: i64 = row.get("gathering_count").unwrap_or(0);
@@ -742,7 +742,7 @@ impl GraphReader {
 
             shapes.push(ConcernResponseShape {
                 title,
-                what_would_help,
+                opposing,
                 cause_heat,
                 aid_count: aid_count as u32,
                 gathering_count: gathering_count as u32,
@@ -983,14 +983,14 @@ impl GraphReader {
         Ok(None)
     }
 
-    /// Get recent tension titles and what_would_help for discovery queries.
+    /// Get recent tension titles and opposing for discovery queries.
     pub async fn get_recent_tensions(
         &self,
         limit: u32,
     ) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Concern)
-             RETURN t.title AS title, t.what_would_help AS help
+             RETURN t.title AS title, t.opposing AS help
              ORDER BY t.extracted_at DESC
              LIMIT $limit",
         )
@@ -1164,7 +1164,7 @@ impl GraphReader {
              OPTIONAL MATCH (resp)-[:RESPONDS_TO]->(t)
              WITH t, count(resp) AS response_count
              RETURN t.title AS title, t.severity AS severity,
-                    t.what_would_help AS what_would_help, t.category AS category,
+                    t.opposing AS opposing, t.category AS category,
                     response_count = 0 AS unmet,
                     COALESCE(t.corroboration_count, 0) AS corroboration_count,
                     COALESCE(t.source_diversity, 0) AS source_diversity,
@@ -1187,8 +1187,8 @@ impl GraphReader {
             results.push(UnmetTension {
                 title,
                 severity: row.get("severity").unwrap_or_default(),
-                what_would_help: {
-                    let h: String = row.get("what_would_help").unwrap_or_default();
+                opposing: {
+                    let h: String = row.get("opposing").unwrap_or_default();
                     if h.is_empty() {
                         None
                     } else {
@@ -1656,7 +1656,7 @@ impl GraphReader {
              }) AS respondents
              WHERE size(respondents) >= 2
              RETURN t.id AS tension_id, t.title AS title, t.summary AS summary,
-                    t.category AS category, t.what_would_help AS what_would_help,
+                    t.category AS category, t.opposing AS opposing,
                     t.cause_heat AS cause_heat,
                     respondents
              ORDER BY size(respondents) DESC, coalesce(t.cause_heat, 0.0) DESC
@@ -1680,7 +1680,7 @@ impl GraphReader {
             let title: String = row.get("title").unwrap_or_default();
             let summary: String = row.get("summary").unwrap_or_default();
             let category: Option<String> = row.get("category").ok();
-            let what_would_help: Option<String> = row.get("what_would_help").ok();
+            let opposing: Option<String> = row.get("opposing").ok();
             let cause_heat: f64 = row.get("cause_heat").unwrap_or(0.0);
 
             // Parse respondents from neo4j map list
@@ -1707,7 +1707,7 @@ impl GraphReader {
                 title,
                 summary,
                 category,
-                what_would_help,
+                opposing,
                 cause_heat,
                 respondents,
             });
@@ -2023,7 +2023,7 @@ impl GraphReader {
              WITH t, count(r) AS response_count
              RETURN t.id AS id, t.title AS title, t.summary AS summary,
                     t.severity AS severity, t.category AS category,
-                    t.what_would_help AS what_would_help,
+                    t.opposing AS opposing,
                     coalesce(t.cause_heat, 0.0) AS cause_heat,
                     response_count
              ORDER BY response_count ASC, t.cause_heat DESC, t.confidence DESC
@@ -2055,8 +2055,8 @@ impl GraphReader {
                         Some(s)
                     }
                 },
-                what_would_help: {
-                    let s: String = row.get("what_would_help").unwrap_or_default();
+                opposing: {
+                    let s: String = row.get("opposing").unwrap_or_default();
                     if s.is_empty() {
                         None
                     } else {
@@ -2126,7 +2126,7 @@ impl GraphReader {
                      })
              RETURN t.id AS id, t.title AS title, t.summary AS summary,
                     t.severity AS severity, t.category AS category,
-                    t.what_would_help AS what_would_help,
+                    t.opposing AS opposing,
                     coalesce(t.cause_heat, 0.0) AS cause_heat
              ORDER BY t.cause_heat DESC, t.confidence DESC
              LIMIT $limit",
@@ -2157,8 +2157,8 @@ impl GraphReader {
                         Some(s)
                     }
                 },
-                what_would_help: {
-                    let s: String = row.get("what_would_help").unwrap_or_default();
+                opposing: {
+                    let s: String = row.get("opposing").unwrap_or_default();
                     if s.is_empty() {
                         None
                     } else {
@@ -4193,7 +4193,7 @@ pub struct DuplicateMatch {
 pub struct UnmetTension {
     pub title: String,
     pub severity: String,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
     pub category: Option<String>,
     pub unmet: bool,
     pub corroboration_count: u32,
@@ -4266,7 +4266,7 @@ pub struct ExtractionYield {
 #[derive(Debug, Clone)]
 pub struct ConcernResponseShape {
     pub title: String,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
     pub cause_heat: f64,
     pub aid_count: u32,
     pub gathering_count: u32,
@@ -4326,7 +4326,7 @@ pub struct ConcernHub {
     pub title: String,
     pub summary: String,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
     pub cause_heat: f64,
     pub respondents: Vec<ConcernRespondent>,
 }
@@ -4354,7 +4354,7 @@ pub struct ResponseFinderTarget {
     pub summary: String,
     pub severity: String,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
     pub cause_heat: f64,
     pub response_count: u32,
 }
@@ -4377,7 +4377,7 @@ pub struct GatheringFinderTarget {
     pub summary: String,
     pub severity: String,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
     pub cause_heat: f64,
 }
 
@@ -5003,7 +5003,7 @@ mod tests {
             title: "Housing affordability crisis".to_string(),
             summary: "Rents rising faster than wages".to_string(),
             category: Some("housing".to_string()),
-            what_would_help: Some("Rent stabilization policies".to_string()),
+            opposing: Some("Rent stabilization policies".to_string()),
             cause_heat: 0.7,
             respondents: vec![
                 ConcernRespondent {

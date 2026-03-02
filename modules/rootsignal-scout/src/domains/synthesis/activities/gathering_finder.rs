@@ -215,7 +215,7 @@ fn investigation_user_prompt(
         target.title, target.severity, target.summary, target.cause_heat,
     );
 
-    if let Some(ref wwh) = target.what_would_help {
+    if let Some(ref wwh) = target.opposing {
         prompt.push_str(&format!("\nWhat would help: {wwh}"));
     }
     if let Some(ref cat) = target.category {

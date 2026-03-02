@@ -9,8 +9,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use chrono::TimeZone;
 use uuid::Uuid;
 use rootsignal_common::{
-ActorNode, ResourceOfferNode, CitationNode, GatheringNode, HelpRequestNode, Node, NodeMeta, AnnouncementNode,
-ScheduleNode, TagNode, ConcernNode,
+ActorNode, ConditionNode, ResourceOfferNode, CitationNode, GatheringNode, HelpRequestNode,
+Node, NodeMeta, AnnouncementNode, ScheduleNode, TagNode, ConcernNode,
 };
 use rootsignal_graph::CachedReader;
 use super::loaders::{
@@ -337,6 +337,7 @@ pub enum GqlSignal {
     HelpRequest(GqlHelpRequestSignal),
     Announcement(GqlAnnouncementSignal),
     Concern(GqlConcernSignal),
+    Condition(GqlConditionSignal),
 }
 
 impl From<Node> for GqlSignal {
@@ -347,6 +348,7 @@ impl From<Node> for GqlSignal {
             Node::HelpRequest(n) => GqlSignal::HelpRequest(GqlHelpRequestSignal(n)),
             Node::Announcement(n) => GqlSignal::Announcement(GqlAnnouncementSignal(n)),
             Node::Concern(n) => GqlSignal::Concern(GqlConcernSignal(n)),
+            Node::Condition(n) => GqlSignal::Condition(GqlConditionSignal(n)),
             Node::Citation(_) => unreachable!("Citation nodes are not signals"),
         }
     }
@@ -880,6 +882,115 @@ impl GqlConcernSignal {
             .into_iter()
             .map(|tr| GqlSignal::from(tr.node))
             .collect())
+    }
+}
+
+// --- ConditionSignal ---
+
+pub struct GqlConditionSignal(pub ConditionNode);
+
+impl GqlConditionSignal {
+    fn meta(&self) -> &NodeMeta {
+        &self.0.meta
+    }
+}
+
+#[Object]
+impl GqlConditionSignal {
+    async fn id(&self) -> Uuid {
+        self.meta().id
+    }
+    async fn title(&self) -> &str {
+        &self.meta().title
+    }
+    async fn summary(&self) -> &str {
+        &self.meta().summary
+    }
+    async fn sensitivity(&self) -> GqlSensitivityLevel {
+        self.meta().sensitivity.into()
+    }
+    async fn confidence(&self) -> f32 {
+        self.meta().confidence
+    }
+    async fn location(&self) -> Option<GqlGeoPoint> {
+        self.meta().about_location.map(GqlGeoPoint)
+    }
+    async fn location_name(&self) -> Option<&str> {
+        self.meta().about_location_name.as_deref()
+    }
+    async fn source_url(&self) -> &str {
+        &self.meta().source_url
+    }
+    async fn extracted_at(&self) -> DateTime<Utc> {
+        self.meta().extracted_at
+    }
+    async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
+    async fn source_diversity(&self) -> u32 {
+        self.meta().source_diversity
+    }
+    async fn cause_heat(&self) -> f64 {
+        self.meta().cause_heat
+    }
+    async fn channel_diversity(&self) -> u32 {
+        self.meta().channel_diversity
+    }
+    async fn review_status(&self) -> &'static str {
+        match self.meta().review_status {
+            rootsignal_common::ReviewStatus::Staged => "staged",
+            rootsignal_common::ReviewStatus::Accepted => "accepted",
+            rootsignal_common::ReviewStatus::Rejected => "rejected",
+            rootsignal_common::ReviewStatus::Corrected => "corrected",
+        }
+    }
+    async fn was_corrected(&self) -> bool {
+        self.meta().was_corrected
+    }
+    async fn corrections(&self) -> Option<&str> {
+        self.meta().corrections.as_deref()
+    }
+    async fn rejection_reason(&self) -> Option<&str> {
+        self.meta().rejection_reason.as_deref()
+    }
+    async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
+        let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlCitation)
+            .collect())
+    }
+    async fn actors(&self, ctx: &Context<'_>) -> Result<Vec<GqlActor>> {
+        let loader = ctx.data_unchecked::<DataLoader<ActorsBySignalLoader>>();
+        Ok(loader
+            .load_one(self.meta().id)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(GqlActor)
+            .collect())
+    }
+
+    async fn severity(&self) -> GqlSeverity {
+        self.0.severity.into()
+    }
+    async fn category(&self) -> Option<&str> {
+        self.0.category.as_deref()
+    }
+    async fn subject(&self) -> Option<&str> {
+        self.0.subject.as_deref()
+    }
+    async fn observed_by(&self) -> Option<&str> {
+        self.0.observed_by.as_deref()
+    }
+    async fn measurement(&self) -> Option<&str> {
+        self.0.measurement.as_deref()
+    }
+    async fn affected_scope(&self) -> Option<&str> {
+        self.0.affected_scope.as_deref()
     }
 }
 

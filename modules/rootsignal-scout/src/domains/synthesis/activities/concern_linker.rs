@@ -48,7 +48,7 @@ pub struct DiscoveredTension {
     /// "low", "medium", "high", or "critical"
     pub severity: String,
     pub category: String,
-    pub what_would_help: String,
+    pub opposing: String,
     /// URL of the evidence that surfaced this tension
     pub source_url: String,
     /// How strongly the original signal relates (0.0-1.0)
@@ -137,7 +137,7 @@ Extract the tensions discovered in the investigation. For each tension:
 - summary: 2-3 sentence description of the tension
 - severity: \"low\", \"medium\", \"high\", or \"critical\"
 - category: One of: {}. These are guidance, not constraints — propose a new category if none fit.
-- what_would_help: What actions or resources would address this tension
+- opposing: What is being opposed (e.g. \"proposed rezoning\", \"budget cuts\")
 - source_url: The URL where you found the strongest evidence for this tension
 - match_strength: 0.0-1.0 for how strongly the original signal relates to this tension
 - explanation: Why the signal responds to this tension
@@ -509,7 +509,7 @@ impl<'a> ConcernLinker<'a> {
             severity,
             category: Some(tension.category.clone()),
             subject: None,
-            opposing: Some(tension.what_would_help.clone()),
+            opposing: Some(tension.opposing.clone()),
         };
 
         let tension_id = tension_node.meta.id;
@@ -572,7 +572,7 @@ mod tests {
                 "summary": "Immigration enforcement causing fear",
                 "severity": "high",
                 "category": "immigration",
-                "what_would_help": "Legal aid",
+                "opposing": "Legal aid",
                 "source_url": "https://example.com/article",
                 "match_strength": 0.9,
                 "explanation": "Workshop responds to enforcement fear"
@@ -600,7 +600,7 @@ mod tests {
             summary: "Community fear due to immigration enforcement".to_string(),
             severity: "high".to_string(),
             category: "immigration".to_string(),
-            what_would_help: "Legal aid resources".to_string(),
+            opposing: "Legal aid resources".to_string(),
             source_url: "https://example.com/article".to_string(),
             match_strength: 0.9,
             explanation: "Workshop responds to enforcement fear".to_string(),
@@ -650,7 +650,7 @@ mod tests {
             severity,
             category: Some(tension.category.clone()),
             subject: None,
-            opposing: Some(tension.what_would_help.clone()),
+            opposing: Some(tension.opposing.clone()),
         };
 
         // Key assertions: location is set to region center

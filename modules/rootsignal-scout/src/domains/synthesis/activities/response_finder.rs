@@ -80,7 +80,7 @@ pub struct EmergentTension {
     /// "low", "medium", "high", or "critical"
     pub severity: String,
     pub category: String,
-    pub what_would_help: String,
+    pub opposing: String,
     pub source_url: String,
     /// How this relates to the tension being investigated
     pub relationship: String,
@@ -183,7 +183,7 @@ fn investigation_user_prompt(
         target.title, target.severity, target.summary,
     );
 
-    if let Some(ref wwh) = target.what_would_help {
+    if let Some(ref wwh) = target.opposing {
         prompt.push_str(&format!("\nWhat would help: {wwh}"));
     }
     if let Some(ref cat) = target.category {
@@ -915,7 +915,7 @@ impl<'a> ResponseFinder<'a> {
             severity,
             category: Some(tension.category.clone()),
             subject: None,
-            opposing: Some(tension.what_would_help.clone()),
+            opposing: Some(tension.opposing.clone()),
         };
 
         let node = Node::Concern(tension_node);
@@ -1015,7 +1015,7 @@ mod tests {
                 "summary": "Workshop organizers facing threats",
                 "severity": "high",
                 "category": "safety",
-                "what_would_help": "Security resources and legal protection",
+                "opposing": "Security resources and legal protection",
                 "source_url": "https://example.com/threats",
                 "relationship": "Discovered while investigating ICE response landscape"
             }],
