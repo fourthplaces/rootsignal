@@ -1341,6 +1341,11 @@ impl GraphProjector {
                 sensitivity,
                 category,
                 structured_state,
+                tension_heat,
+                clarity,
+                signal_count,
+                narrative_embedding,
+                causal_embedding,
             } => {
                 let q = query(
                     "MERGE (s:Situation {id: $id})
@@ -1373,6 +1378,37 @@ impl GraphProjector {
                 .param("ts", format_dt_from_stored(event));
 
                 self.client.graph.run(q).await?;
+
+                // SET optional enrichment fields when present
+                let id_str = situation_id.to_string();
+                if let Some(th) = tension_heat {
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.tension_heat = $v")
+                        .param("id", id_str.clone()).param("v", th);
+                    self.client.graph.run(q).await?;
+                }
+                if let Some(ref cl) = clarity {
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.clarity = $v")
+                        .param("id", id_str.clone()).param("v", cl.as_str());
+                    self.client.graph.run(q).await?;
+                }
+                if let Some(sc) = signal_count {
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.signal_count = $v")
+                        .param("id", id_str.clone()).param("v", sc as i64);
+                    self.client.graph.run(q).await?;
+                }
+                if let Some(ref ne) = narrative_embedding {
+                    let vals: Vec<f64> = ne.iter().map(|v| *v as f64).collect();
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.narrative_embedding = $v")
+                        .param("id", id_str.clone()).param("v", vals);
+                    self.client.graph.run(q).await?;
+                }
+                if let Some(ref ce) = causal_embedding {
+                    let vals: Vec<f64> = ce.iter().map(|v| *v as f64).collect();
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.causal_embedding = $v")
+                        .param("id", id_str).param("v", vals);
+                    self.client.graph.run(q).await?;
+                }
+
                 Ok(ApplyResult::Applied)
             }
 
@@ -1442,9 +1478,168 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemEvent::DispatchCreated { .. } => {
-                debug!(seq = event.seq, "No-op (dispatch — not a graph node)");
-                Ok(ApplyResult::NoOp)
+            SystemEvent::DispatchCreated {
+                dispatch_id,
+                situation_id,
+                body,
+                signal_ids,
+                dispatch_type,
+                supersedes,
+                fidelity_score,
+                flagged_for_review,
+                flag_reason,
+            } => {
+                let ts = format_dt_from_stored(event);
+                let q = query(
+                    "MERGE (d:Dispatch {id: $id})
+                     ON CREATE SET
+                         d.situation_id = $situation_id,
+                         d.body = $body,
+                         d.dispatch_type = $dispatch_type,
+                         d.created_at = datetime($ts),
+                         d.flagged_for_review = $flagged,
+                         d.flag_reason = $flag_reason,
+                         d.fidelity_score = $fidelity
+                     ON MATCH SET
+                         d.body = $body,
+                         d.dispatch_type = $dispatch_type,
+                         d.flagged_for_review = $flagged,
+                         d.flag_reason = $flag_reason,
+                         d.fidelity_score = $fidelity
+                     WITH d
+                     MATCH (s:Situation {id: $situation_id})
+                     MERGE (d)-[:BELONGS_TO]->(s)",
+                )
+                .param("id", dispatch_id.to_string())
+                .param("situation_id", situation_id.to_string())
+                .param("body", body.as_str())
+                .param("dispatch_type", dispatch_type.to_string())
+                .param("ts", ts)
+                .param("flagged", flagged_for_review.unwrap_or(false))
+                .param("flag_reason", flag_reason.unwrap_or_default())
+                .param("fidelity", fidelity_score.unwrap_or(-1.0));
+
+                self.client.graph.run(q).await?;
+
+                // Supersedes edge
+                if let Some(ref sup_id) = supersedes {
+                    let q = query(
+                        "MATCH (d:Dispatch {id: $id}), (old:Dispatch {id: $old_id})
+                         MERGE (d)-[:SUPERSEDES]->(old)",
+                    )
+                    .param("id", dispatch_id.to_string())
+                    .param("old_id", sup_id.to_string());
+                    self.client.graph.run(q).await?;
+                }
+
+                // CITES edges to signals
+                if !signal_ids.is_empty() {
+                    let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+                    let q = query(
+                        "MATCH (d:Dispatch {id: $did})
+                         UNWIND $sids AS sid
+                         MATCH (sig) WHERE sig.id = sid
+                           AND (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+                         MERGE (d)-[:CITES]->(sig)",
+                    )
+                    .param("did", dispatch_id.to_string())
+                    .param("sids", ids);
+                    self.client.graph.run(q).await?;
+                }
+
+                // Update dispatch count on situation
+                let q = query(
+                    "MATCH (s:Situation {id: $sid})
+                     SET s.dispatch_count = coalesce(s.dispatch_count, 0) + 1",
+                )
+                .param("sid", situation_id.to_string());
+                self.client.graph.run(q).await?;
+
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::SignalAssignedToSituation {
+                signal_id,
+                situation_id,
+                signal_label,
+                confidence,
+                reasoning,
+            } => {
+                let q = query(
+                    "MATCH (sig) WHERE sig.id = $signal_id
+                       AND (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+                     MATCH (s:Situation {id: $situation_id})
+                     MERGE (sig)-[e:PART_OF]->(s)
+                     ON CREATE SET e.confidence = $confidence, e.reasoning = $reasoning, e.label = $label
+                     ON MATCH SET e.confidence = $confidence, e.reasoning = $reasoning
+                     WITH s
+                     SET s.signal_count = coalesce(s.signal_count, 0) + 1
+                     WITH s
+                     OPTIONAL MATCH (t:Tension)-[:PART_OF]->(s)
+                     WITH s, count(t) AS tc
+                     SET s.tension_count = tc",
+                )
+                .param("signal_id", signal_id.to_string())
+                .param("situation_id", situation_id.to_string())
+                .param("confidence", confidence)
+                .param("reasoning", reasoning.as_str())
+                .param("label", signal_label.as_str());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::SituationTagsAggregated {
+                situation_id,
+                tag_slugs,
+            } => {
+                for slug in &tag_slugs {
+                    let name = slug.replace('-', " ");
+                    let q = query(
+                        "MATCH (s:Situation {id: $sid})
+                         MERGE (t:Tag {slug: $slug})
+                         ON CREATE SET t.name = $name
+                         MERGE (s)-[:TAGGED]->(t)",
+                    )
+                    .param("sid", situation_id.to_string())
+                    .param("slug", slug.as_str())
+                    .param("name", name.as_str());
+                    self.client.graph.run(q).await?;
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::DispatchFlaggedForReview {
+                dispatch_id,
+                reason,
+            } => {
+                let q = query(
+                    "MATCH (d:Dispatch {id: $id})
+                     SET d.flagged_for_review = true,
+                         d.flag_reason = $reason",
+                )
+                .param("id", dispatch_id.to_string())
+                .param("reason", reason.as_str());
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::SignalsPendingWeaving {
+                signal_ids,
+                scout_run_id: _,
+            } => {
+                let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+                let q = query(
+                    "UNWIND $ids AS sid
+                     MATCH (n) WHERE n.id = sid
+                       AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                     SET n.situation_pending = true",
+                )
+                .param("ids", ids);
+
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
             }
 
             // ---------------------------------------------------------

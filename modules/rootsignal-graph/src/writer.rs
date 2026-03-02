@@ -2636,6 +2636,205 @@ impl GraphReader {
 
         Ok(merges)
     }
+
+    // -----------------------------------------------------------------
+    // Situation weaving reads
+    // -----------------------------------------------------------------
+
+    /// Discover unassigned signals from a scout run (signals without a PART_OF→Situation edge).
+    pub async fn discover_unassigned_signals(
+        &self,
+        scout_run_id: &str,
+    ) -> Result<Vec<WeaveSignal>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut signals = Vec::new();
+
+        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        for label in &labels {
+            let q = query(&format!(
+                "MATCH (n:{label} {{scout_run_id: $run_id}})
+                 WHERE NOT (n)-[:PART_OF]->(:Situation)
+                   AND NOT n:Citation
+                 RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                        '{label}' AS node_type, n.embedding AS embedding,
+                        n.source_url AS source_url,
+                        coalesce(n.cause_heat, 0.0) AS cause_heat,
+                        n.lat AS lat, n.lng AS lng,
+                        n.published_at AS published_at"
+            ))
+            .param("run_id", scout_run_id);
+
+            let mut stream = g.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                let id = match uuid::Uuid::parse_str(&id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let embedding: Vec<f32> = row.get("embedding").unwrap_or_default();
+                if embedding.is_empty() {
+                    continue;
+                }
+
+                signals.push(WeaveSignal {
+                    id,
+                    title: row.get("title").unwrap_or_default(),
+                    summary: row.get("summary").unwrap_or_default(),
+                    node_type: row.get("node_type").unwrap_or_default(),
+                    source_url: row.get("source_url").unwrap_or_default(),
+                    cause_heat: row.get("cause_heat").unwrap_or(0.0),
+                    lat: row.get("lat").ok(),
+                    lng: row.get("lng").ok(),
+                    embedding,
+                    published_at: row.get("published_at").ok(),
+                });
+            }
+        }
+
+        Ok(signals)
+    }
+
+    /// Load all situations as weaving candidates.
+    pub async fn load_weave_candidates(&self) -> Result<Vec<WeaveCandidate>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut candidates = Vec::new();
+
+        let q = query(
+            "MATCH (s:Situation)
+             RETURN s.id AS id, s.headline AS headline,
+                    s.structured_state AS structured_state,
+                    s.narrative_embedding AS narrative_embedding,
+                    s.causal_embedding AS causal_embedding,
+                    s.arc AS arc",
+        );
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match uuid::Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            candidates.push(WeaveCandidate {
+                id,
+                headline: row.get("headline").unwrap_or_default(),
+                structured_state: row.get("structured_state").unwrap_or_default(),
+                narrative_embedding: row.get("narrative_embedding").unwrap_or_default(),
+                causal_embedding: row.get("causal_embedding").unwrap_or_default(),
+                arc: row.get("arc").unwrap_or_default(),
+            });
+        }
+
+        Ok(candidates)
+    }
+
+    /// Find all situations that have signals from this scout run.
+    pub async fn find_affected_situations(
+        &self,
+        scout_run_id: &str,
+    ) -> Result<Vec<uuid::Uuid>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut situations = Vec::new();
+
+        let q = query(
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
+             WHERE sig.scout_run_id = $run_id
+             RETURN DISTINCT s.id AS id",
+        )
+        .param("run_id", scout_run_id);
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
+                situations.push(id);
+            }
+        }
+
+        Ok(situations)
+    }
+
+    /// Fetch unverified dispatches for post-hoc verification.
+    pub async fn unverified_dispatches(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(uuid::Uuid, String)>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut dispatches = Vec::new();
+
+        let q = query(
+            "MATCH (d:Dispatch)
+             WHERE d.flagged_for_review = false
+               AND d.fidelity_score IS NULL
+             RETURN d.id AS id, d.body AS body
+             ORDER BY d.created_at DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match uuid::Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let body: String = row.get("body").unwrap_or_default();
+            dispatches.push((id, body));
+        }
+
+        Ok(dispatches)
+    }
+
+    /// Check if signal IDs exist in the graph. Returns missing IDs.
+    pub async fn check_signal_ids_exist(
+        &self,
+        signal_ids: &[uuid::Uuid],
+    ) -> Result<Vec<uuid::Uuid>, neo4rs::Error> {
+        let g = &self.client.graph;
+        let mut missing = Vec::new();
+
+        for id in signal_ids {
+            let q = query(
+                "MATCH (n) WHERE n.id = $id
+                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                 RETURN n.id AS found",
+            )
+            .param("id", id.to_string());
+
+            let mut stream = g.execute(q).await?;
+            if stream.next().await?.is_none() {
+                missing.push(*id);
+            }
+        }
+
+        Ok(missing)
+    }
+}
+
+/// A signal discovered during weaving (returned by `discover_unassigned_signals`).
+pub struct WeaveSignal {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub summary: String,
+    pub node_type: String,
+    pub source_url: String,
+    pub cause_heat: f64,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub embedding: Vec<f32>,
+    pub published_at: Option<String>,
+}
+
+/// A candidate situation for weaving (returned by `load_weave_candidates`).
+pub struct WeaveCandidate {
+    pub id: uuid::Uuid,
+    pub headline: String,
+    pub structured_state: String,
+    pub narrative_embedding: Vec<f32>,
+    pub causal_embedding: Vec<f32>,
+    pub arc: String,
 }
 
 /// Graph store for scout — reads and writes.

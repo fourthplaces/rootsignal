@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, Utc};
 use neo4rs::query;
 use uuid::Uuid;
 
+use rootsignal_common::events::{SituationChange, SystemEvent};
 use rootsignal_common::{Clarity, SituationArc};
 
 use crate::writer::GraphStore;
@@ -150,6 +151,75 @@ pub async fn recompute_situation_temperature(
     }
 
     Ok(components)
+}
+
+/// Compute temperature for a situation and return SituationChanged events (no writes).
+pub async fn compute_temperature_events(
+    client: &GraphClient,
+    situation_id: &Uuid,
+) -> Result<(TemperatureComponents, Vec<SystemEvent>), Box<dyn std::error::Error + Send + Sync>> {
+    let components = compute_temperature(client, situation_id).await?;
+
+    // Fetch the previous temperature so we can emit a delta event
+    let prev_temp = fetch_previous_temperature(&client.graph, &situation_id.to_string()).await?;
+
+    let mut events = Vec::new();
+
+    // Temperature change
+    if (components.temperature - prev_temp).abs() > 0.001 {
+        events.push(SystemEvent::SituationChanged {
+            situation_id: *situation_id,
+            change: SituationChange::Temperature {
+                old: prev_temp,
+                new: components.temperature,
+            },
+        });
+    }
+
+    // Arc change
+    let prev_arc_str = fetch_previous_arc(&client.graph, &situation_id.to_string()).await?;
+    let prev_arc = prev_arc_str.parse::<SituationArc>().unwrap_or(SituationArc::Emerging);
+    if components.arc != prev_arc {
+        events.push(SystemEvent::SituationChanged {
+            situation_id: *situation_id,
+            change: SituationChange::Arc {
+                old: prev_arc,
+                new: components.arc.clone(),
+            },
+        });
+    }
+
+    Ok((components, events))
+}
+
+/// Fetch the current temperature from the graph for delta computation.
+async fn fetch_previous_temperature(
+    g: &neo4rs::Graph,
+    situation_id: &str,
+) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+    let q = query("MATCH (s:Situation {id: $id}) RETURN s.temperature AS t")
+        .param("id", situation_id);
+    let mut stream = g.execute(q).await?;
+    if let Some(row) = stream.next().await? {
+        Ok(row.get("t").unwrap_or(0.0))
+    } else {
+        Ok(0.0)
+    }
+}
+
+/// Fetch the current arc from the graph for delta computation.
+async fn fetch_previous_arc(
+    g: &neo4rs::Graph,
+    situation_id: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let q = query("MATCH (s:Situation {id: $id}) RETURN s.arc AS a")
+        .param("id", situation_id);
+    let mut stream = g.execute(q).await?;
+    if let Some(row) = stream.next().await? {
+        Ok(row.get("a").unwrap_or_default())
+    } else {
+        Ok(String::new())
+    }
 }
 
 // --- Component computations (all from graph queries) ---

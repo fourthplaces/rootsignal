@@ -31,14 +31,13 @@ pub use reader::{
 };
 pub use reducer::{ApplyResult, GraphProjector};
 pub use similarity::SimilarityBuilder;
-pub use situation_weaver::SituationWeaver;
 pub use writer::{
 ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
 FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphReader, GraphStore,
 InvestigationTarget, NoticeInferenceRow, ReapStats, ResponseFinderTarget, ResponseHeuristic,
 SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal,
 TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent, TensionResponseShape,
-UnmetTension,
+UnmetTension, WeaveCandidate, WeaveSignal,
 };
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).
 pub use neo4rs::query;

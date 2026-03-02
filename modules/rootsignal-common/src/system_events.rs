@@ -257,6 +257,16 @@ pub enum SystemEvent {
         sensitivity: SensitivityLevel,
         category: Option<String>,
         structured_state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tension_heat: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clarity: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal_count: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        narrative_embedding: Option<Vec<f32>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        causal_embedding: Option<Vec<f32>>,
     },
 
     SituationChanged {
@@ -276,6 +286,33 @@ pub enum SystemEvent {
         dispatch_type: DispatchType,
         supersedes: Option<Uuid>,
         fidelity_score: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flagged_for_review: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flag_reason: Option<String>,
+    },
+
+    SignalAssignedToSituation {
+        signal_id: Uuid,
+        situation_id: Uuid,
+        signal_label: String,
+        confidence: f64,
+        reasoning: String,
+    },
+
+    SituationTagsAggregated {
+        situation_id: Uuid,
+        tag_slugs: Vec<String>,
+    },
+
+    DispatchFlaggedForReview {
+        dispatch_id: Uuid,
+        reason: String,
+    },
+
+    SignalsPendingWeaving {
+        signal_ids: Vec<Uuid>,
+        scout_run_id: String,
     },
 
     // -----------------------------------------------------------------------
@@ -533,6 +570,10 @@ impl Eventlike for SystemEvent {
             SystemEvent::SituationChanged { .. } => "situation_changed",
             SystemEvent::SituationPromoted { .. } => "situation_promoted",
             SystemEvent::DispatchCreated { .. } => "dispatch_created",
+            SystemEvent::SignalAssignedToSituation { .. } => "signal_assigned_to_situation",
+            SystemEvent::SituationTagsAggregated { .. } => "situation_tags_aggregated",
+            SystemEvent::DispatchFlaggedForReview { .. } => "dispatch_flagged_for_review",
+            SystemEvent::SignalsPendingWeaving { .. } => "signals_pending_weaving",
             SystemEvent::SignalTagged { .. } => "signal_tagged",
             SystemEvent::TagSuppressed { .. } => "tag_suppressed",
             SystemEvent::TagsMerged { .. } => "tags_merged",
